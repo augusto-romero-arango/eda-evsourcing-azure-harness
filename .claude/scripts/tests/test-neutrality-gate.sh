@@ -14,6 +14,11 @@
 #                   salto de linea de mas (byte-exacto).
 #   [adapters-check] Una divergencia de generate-internal-adapters.sh --check
 #                   se reemite como "<ruta>: <estado>: adapters-check".
+#   [published-adapters-check] Una divergencia de
+#                   generate-published-adapters.sh --check se reemite como
+#                   "<ruta>: <estado>: published-adapters-check"; un exit != 0
+#                   sin lineas de divergencia produce la generica de exit; un
+#                   --root sin ese script no cambia [clean].
 #   [allowlist]     Una entrada de la allowlist sin 'motivo' hace abortar el
 #                   gate (exit 1) antes de escanear nada.
 #   [allowlist-origin] La allowlist se carga desde el gate (o --allowlist),
@@ -28,8 +33,11 @@
 #                   escenario e2e negativo (CLI falso del writer con una fuga
 #                   real) vive en test-tooling-runtime-neutral.sh, escenario [F].
 #   [perf]          CA-3 con margen: una corrida completa contra el repo real
-#                   termina en menos de 20s (el limite de CA-3 es 10s),
-#                   exit 0 o 1 indistinto.
+#                   termina en menos de 20s. El limite de CA-3 (10s) es el de
+#                   las reglas de texto R1-R4; las dos verificaciones
+#                   estructurales lanzan un generador completo cada una y hoy
+#                   dominan el reloj, asi que este bloque mide el total.
+#                   Exit 0 o 1 indistinto.
 #
 # Los arboles de fixture son repos git minimos bajo un directorio temporal
 # propio (nunca el repo real, salvo en [perf] y en la allowlist real que usa
@@ -92,6 +100,35 @@ write_dirty_generator() {
 #!/usr/bin/env bash
 if [ "${1:-}" = "--check" ]; then
     echo ".claude/agents/fx-agent.md: distinta"
+    exit 1
+fi
+exit 0
+EOF
+}
+
+# write_dirty_published_generator <dir> -- stub de
+# generate-published-adapters.sh cuyo --check reporta una divergencia.
+write_dirty_published_generator() {
+    local dir="$1"
+    mkdir -p "$dir/src/published/scripts"
+    cat > "$dir/src/published/scripts/generate-published-adapters.sh" <<'EOF'
+#!/usr/bin/env bash
+if [ "${1:-}" = "--check" ]; then
+    echo "dist/claude/agents/fx-agent.md: distinta"
+    exit 1
+fi
+exit 0
+EOF
+}
+
+# write_dirty_published_generator_no_lines <dir> -- stub cuyo --check falla
+# (exit 1) sin imprimir ninguna linea de divergencia.
+write_dirty_published_generator_no_lines() {
+    local dir="$1"
+    mkdir -p "$dir/src/published/scripts"
+    cat > "$dir/src/published/scripts/generate-published-adapters.sh" <<'EOF'
+#!/usr/bin/env bash
+if [ "${1:-}" = "--check" ]; then
     exit 1
 fi
 exit 0
@@ -276,6 +313,36 @@ if [ "$AC_RC" -ne 0 ] && printf '%s\n' "$AC_OUT" | grep -qF '.claude/agents/fx-a
     pass "reporta '.claude/agents/fx-agent.md: distinta: adapters-check' con exit != 0"
 else
     fail "no reporto la violacion adapters-check esperada. exit=$AC_RC salida: $AC_OUT"
+fi
+
+echo ""
+echo "[published-adapters-check] generate-published-adapters.sh --check con divergencia -> violacion published-adapters-check"
+DIR_PAC="$(new_tree published-adapters-check-neg)"
+write_allowlist "$DIR_PAC" "$EMPTY_ALLOWLIST"
+write_clean_generator "$DIR_PAC"
+write_dirty_published_generator "$DIR_PAC"
+git_add_all "$DIR_PAC"
+PAC_OUT="$(run_gate "$DIR_PAC")"
+PAC_RC=$?
+if [ "$PAC_RC" -ne 0 ] && printf '%s\n' "$PAC_OUT" | grep -qF 'dist/claude/agents/fx-agent.md: distinta: published-adapters-check'; then
+    pass "reporta 'dist/claude/agents/fx-agent.md: distinta: published-adapters-check' con exit != 0"
+else
+    fail "no reporto la violacion published-adapters-check esperada. exit=$PAC_RC salida: $PAC_OUT"
+fi
+
+echo ""
+echo "[published-adapters-check-no-lines] exit != 0 sin lineas de divergencia -> violacion generica de exit"
+DIR_PAC_NL="$(new_tree published-adapters-check-no-lines)"
+write_allowlist "$DIR_PAC_NL" "$EMPTY_ALLOWLIST"
+write_clean_generator "$DIR_PAC_NL"
+write_dirty_published_generator_no_lines "$DIR_PAC_NL"
+git_add_all "$DIR_PAC_NL"
+PAC_NL_OUT="$(run_gate "$DIR_PAC_NL")"
+PAC_NL_RC=$?
+if [ "$PAC_NL_RC" -ne 0 ] && printf '%s\n' "$PAC_NL_OUT" | grep -qF 'src/published/scripts/generate-published-adapters.sh: exit 1 sin lineas de divergencia: published-adapters-check'; then
+    pass "reporta la violacion generica de exit sin lineas de divergencia"
+else
+    fail "no reporto la violacion generica esperada. exit=$PAC_NL_RC salida: $PAC_NL_OUT"
 fi
 
 echo ""

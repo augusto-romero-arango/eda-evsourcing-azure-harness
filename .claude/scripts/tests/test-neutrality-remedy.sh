@@ -7,12 +7,14 @@
 #                   exactamente una linea de remedio para esa regla.
 #   [mezcla]        Varias reglas mezcladas y en orden aleatorio en la
 #                   entrada salen deduplicadas y en el orden fijo
-#                   R1, R2, R3, R4, adapters-check.
+#                   R1, R2, R3, R4, adapters-check, published-adapters-check.
 #   [R4]            Una violacion R4 produce su propio remedio (restaurar el
 #                   shim o registrar not_migrated), distinto del de R1-R3.
 #   [adapters-check] Las dos formas de violacion de adapters-check ("<ruta>:
 #                   <estado>: adapters-check" y la generica de exit sin
 #                   lineas) producen la MISMA (unica) linea de remedio.
+#   [published-adapters-check] Mismo contrato que [adapters-check] mas la
+#                   propia regla published-adapters-check.
 #   [desconocido]   Un sufijo de regla no reconocido produce una linea
 #                   generica propia, sin tocar las reglas conocidas.
 #   [vacio]         Entrada vacia no emite nada y retorna 0.
@@ -48,10 +50,11 @@ fi
 
 # --- [mezcla] ----------------------------------------------------------------
 echo ""
-echo "[mezcla] reglas mezcladas y desordenadas -> deduplicadas, orden fijo R1,R2,R3,R4,adapters-check"
+echo "[mezcla] reglas mezcladas y desordenadas -> deduplicadas, orden fijo R1,R2,R3,R4,adapters-check,published-adapters-check"
 
 MIXED_INPUT='src/internal/scripts/generate-internal-adapters.sh: exit 1 sin lineas de divergencia: adapters-check
 src/internal/agents/b.md:9: R3
+dist/claude/agents/fx-agent.md: distinta: published-adapters-check
 src/internal/agents/a.md:5: R1
 .claude/scripts/mefisto-x.sh:1: R4
 src/internal/agents/a2.md:6: R1
@@ -59,7 +62,7 @@ src/internal/scripts/foo.sh:2: R2
 src/internal/agents/b2.md:10: R3'
 
 OUT_MIXED="$(printf '%s\n' "$MIXED_INPUT" | mefisto_neutrality_remedy)"
-EXPECTED_PREFIXES="R1: R2: R3: R4: adapters-check:"
+EXPECTED_PREFIXES="R1: R2: R3: R4: adapters-check: published-adapters-check:"
 ACTUAL_PREFIXES="$(printf '%s\n' "$OUT_MIXED" | cut -d' ' -f1 | tr '\n' ' ' | sed 's/ $//')"
 if [ "$ACTUAL_PREFIXES" = "$EXPECTED_PREFIXES" ]; then
     pass "mezcla-1: orden y deduplicacion correctos ($ACTUAL_PREFIXES)"
@@ -68,10 +71,10 @@ else
 fi
 
 N_MIXED_LINES=$(printf '%s\n' "$OUT_MIXED" | grep -c .)
-if [ "$N_MIXED_LINES" -eq 5 ]; then
-    pass "mezcla-2: exactamente 5 lineas (una por regla presente, sin repetir R1/R3)"
+if [ "$N_MIXED_LINES" -eq 6 ]; then
+    pass "mezcla-2: exactamente 6 lineas (una por regla presente, sin repetir R1/R3)"
 else
-    fail "mezcla-2: esperaba 5 lineas, obtuve $N_MIXED_LINES: [$OUT_MIXED]"
+    fail "mezcla-2: esperaba 6 lineas, obtuve $N_MIXED_LINES: [$OUT_MIXED]"
 fi
 
 # --- [R4] ----------------------------------------------------------------
@@ -105,6 +108,28 @@ if printf '%s' "$OUT_ADAPTERS_A" | grep -qF -- '--check'; then
     pass "adapters-check-2: el remedio menciona regenerar sin --check"
 else
     fail "adapters-check-2: el remedio no menciona '--check': [$OUT_ADAPTERS_A]"
+fi
+
+# --- [published-adapters-check] -----------------------------------------------
+echo ""
+echo "[published-adapters-check] las dos formas de violacion producen la MISMA linea de remedio, distinta de adapters-check"
+
+OUT_PUBLISHED_A="$(printf 'dist/claude/agents/fx-agent.md: distinta: published-adapters-check\n' | mefisto_neutrality_remedy)"
+OUT_PUBLISHED_B="$(printf 'src/published/scripts/generate-published-adapters.sh: exit 2 sin lineas de divergencia: published-adapters-check\n' | mefisto_neutrality_remedy)"
+if [ "$OUT_PUBLISHED_A" = "$OUT_PUBLISHED_B" ] && [ -n "$OUT_PUBLISHED_A" ]; then
+    pass "published-adapters-check-1: la forma '<ruta>: <estado>: published-adapters-check' y la generica de exit producen la misma linea"
+else
+    fail "published-adapters-check-1: las dos formas deberian producir la misma linea -- a=[$OUT_PUBLISHED_A] b=[$OUT_PUBLISHED_B]"
+fi
+if printf '%s' "$OUT_PUBLISHED_A" | grep -qF -- '--check'; then
+    pass "published-adapters-check-2: el remedio menciona regenerar sin --check"
+else
+    fail "published-adapters-check-2: el remedio no menciona '--check': [$OUT_PUBLISHED_A]"
+fi
+if [ "$OUT_PUBLISHED_A" != "$OUT_ADAPTERS_A" ]; then
+    pass "published-adapters-check-3: el remedio es distinto del de adapters-check"
+else
+    fail "published-adapters-check-3: el remedio coincide con el de adapters-check: [$OUT_PUBLISHED_A]"
 fi
 
 # --- [desconocido] -------------------------------------------------------------
