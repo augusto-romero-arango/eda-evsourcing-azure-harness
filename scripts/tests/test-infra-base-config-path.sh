@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# test-infra-base-config-path.sh -- Contratos de config, naming y PostgreSQL de /infra-base (#1212, #1219, #1222, #1251).
+# test-infra-base-config-path.sh -- Contratos de config, instrucciones, naming y PostgreSQL de /infra-base (#1212, #1219, #1222, #1251, #1517).
 #
 # Cubre MEF-ADR-0053 para el prompt de infra-base-scaffolder: canonico, ambos
 # divergentes (prevalece canonico), legacy y ausencia. Tambien evita que una
@@ -51,6 +51,14 @@ assert_effective() {
     else
         fail "$label esperaba '$expected' y obtuvo '${actual:-<sin ruta>}'"
     fi
+}
+
+extract_instructions_resolver() {
+    awk '
+        /^if \[ -f "AGENTS\.md" \]; then$/ { inside=1 }
+        inside { print }
+        inside && /^export MEFISTO_INSTRUCTIONS_PATH$/ { exit }
+    ' "$AGENT"
 }
 
 echo "[1] Consumidor canonico"
@@ -212,6 +220,73 @@ if grep -Fq 'high_availability[0].standby_availability_zone' <<< "$POSTGRESQL_RE
     pass "la receta documenta recomendacion del provider, HA futura y migracion de consumidores"
 else
     fail "la receta debe documentar provider, standby de HA y migracion de modulos existentes"
+fi
+
+echo "[8] Instrucciones efectivas para RootNamespace"
+INSTRUCTIONS_RESOLVER=$(extract_instructions_resolver)
+if [ -z "$INSTRUCTIONS_RESOLVER" ]; then
+    fail "no se pudo extraer el resolver de instrucciones del agente"
+else
+    resolve_instructions() {
+        local root="$1"
+        (cd "$root" && bash -c "$INSTRUCTIONS_RESOLVER"$'\n''printf "%s\\n" "$MEFISTO_INSTRUCTIONS_PATH"')
+    }
+
+    INSTRUCTIONS_CANONICAL="$TMP_DIR/instructions-canonical"
+    mkdir -p "$INSTRUCTIONS_CANONICAL"
+    printf '## Tokens del harness\nRootNamespace: Canonical.Projections\n' > "$INSTRUCTIONS_CANONICAL/AGENTS.md"
+    printf '@AGENTS.md\n' > "$INSTRUCTIONS_CANONICAL/CLAUDE.md"
+    out=$(resolve_instructions "$INSTRUCTIONS_CANONICAL" 2>"$TMP_DIR/instructions-canonical.err"); rc=$?
+    if [ "$rc" -eq 0 ] && [ "$out" = 'AGENTS.md' ] && grep -Fq 'se ignora el legacy CLAUDE.md' "$TMP_DIR/instructions-canonical.err"; then
+        pass "canonico resuelve AGENTS.md y conserva visible el aviso de coexistencia"
+    else
+        fail "canonico no resolvio AGENTS.md con aviso (rc=$rc, out='$out', err='$(cat "$TMP_DIR/instructions-canonical.err")')"
+    fi
+
+    INSTRUCTIONS_LEGACY="$TMP_DIR/instructions-legacy"
+    mkdir -p "$INSTRUCTIONS_LEGACY"
+    printf '## Tokens del harness\nRootNamespace: Legacy.Projections\n' > "$INSTRUCTIONS_LEGACY/CLAUDE.md"
+    out=$(resolve_instructions "$INSTRUCTIONS_LEGACY" 2>"$TMP_DIR/instructions-legacy.err"); rc=$?
+    if [ "$rc" -eq 0 ] && [ "$out" = 'CLAUDE.md' ] && [ ! -s "$TMP_DIR/instructions-legacy.err" ]; then
+        pass "solo legacy resuelve CLAUDE.md como fallback de lectura"
+    else
+        fail "legacy no resolvio como fallback (rc=$rc, out='$out', err='$(cat "$TMP_DIR/instructions-legacy.err")')"
+    fi
+
+    INSTRUCTIONS_BOTH="$TMP_DIR/instructions-both"
+    mkdir -p "$INSTRUCTIONS_BOTH"
+    printf '## Tokens del harness\nRootNamespace: Canonical.Projections\n' > "$INSTRUCTIONS_BOTH/AGENTS.md"
+    printf '## Tokens del harness\nRootNamespace: Legacy.Projections\n' > "$INSTRUCTIONS_BOTH/CLAUDE.md"
+    out=$(resolve_instructions "$INSTRUCTIONS_BOTH" 2>"$TMP_DIR/instructions-both.err"); rc=$?
+    if [ "$rc" -eq 0 ] && [ "$out" = 'AGENTS.md' ] && grep -Fq 'AVISO: se usara AGENTS.md; se ignora el legacy CLAUDE.md.' "$TMP_DIR/instructions-both.err"; then
+        pass "coexistencia conserva AGENTS.md y avisa que ignora el legacy"
+    else
+        fail "coexistencia no preservo la precedencia canonica (rc=$rc, out='$out', err='$(cat "$TMP_DIR/instructions-both.err")')"
+    fi
+
+    INSTRUCTIONS_MISSING="$TMP_DIR/instructions-missing"
+    mkdir -p "$INSTRUCTIONS_MISSING"
+    out=$(resolve_instructions "$INSTRUCTIONS_MISSING" 2>"$TMP_DIR/instructions-missing.err"); rc=$?
+    if [ "$rc" -ne 0 ] && [ -z "$out" ] && grep -Fq '/mefisto:onboard' "$TMP_DIR/instructions-missing.err"; then
+        pass "ausencia de instrucciones aborta y remite a onboard"
+    else
+        fail "ausencia de instrucciones no aborto como corresponde (rc=$rc, out='$out', err='$(cat "$TMP_DIR/instructions-missing.err")')"
+    fi
+fi
+if grep -Fq 'CLAUDE.md raiz' "$AGENT" || grep -Fq 'Lee ademas `CLAUDE.md`' "$AGENT"; then
+    fail "el agente vuelve a presentar CLAUDE.md como fuente directa de tokens"
+else
+    pass "el agente no presenta CLAUDE.md como fuente directa de tokens"
+fi
+if grep -Eq 'derivacion desde `?CLAUDE\.md`?|CLAUDE\.md.*token `?RootNamespace`?|token `?RootNamespace`?.*CLAUDE\.md' "$AGENT"; then
+    fail "RootNamespace vuelve a leerse desde CLAUDE.md fuera del fallback"
+else
+    pass "RootNamespace se deriva solo del archivo efectivo de instrucciones"
+fi
+if grep -Eq 'declare `?RootNamespace`?.*CLAUDE\.md|CLAUDE\.md.*declare `?RootNamespace`?' "$AGENT"; then
+    fail "el Paso 5 vuelve a pedir declarar RootNamespace en CLAUDE.md"
+else
+    pass "el Paso 5 no pide declarar RootNamespace en CLAUDE.md"
 fi
 
 echo "----------------------------------------"
