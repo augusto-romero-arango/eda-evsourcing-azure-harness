@@ -88,7 +88,7 @@ Uso: $0 --subscription <id> [--env <dev|staging|prod>] [--location <region>]
                         primer argumento posicional).
   --env <env>           Ambiente: dev | staging | prod. Default: dev.
   --location <region>   Region de Azure (ej: eastus2). Si se omite, se lee
-                         'azureLocation' de harness.config.json.
+                        'azureLocation' de harness.config.json.
 
 Ejemplo: $0 --subscription 50fc1901-9723-4971-9d63-b3f1a015e8b8 --env dev
 EOF

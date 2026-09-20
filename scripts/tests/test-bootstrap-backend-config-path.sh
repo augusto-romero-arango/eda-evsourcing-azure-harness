@@ -71,7 +71,15 @@ mkdir -p "$BOTH_ROOT"
 git -C "$BOTH_ROOT" init -q
 write_config "$BOTH_ROOT/.mefisto/harness.config.json" "eastus2"
 write_config "$BOTH_ROOT/.claude/harness.config.json" "centralus"
-assert_region "coexistencia usa el canonico" "$BOTH_ROOT" "eastus2"
+BOTH_ROOT_PHYSICAL=$(cd "$BOTH_ROOT" && pwd -P)
+BOTH_OUTPUT=$(run_bootstrap "$BOTH_ROOT") || true
+if grep -Fq "Region:          eastus2" <<< "$BOTH_OUTPUT" \
+    && ! grep -Fq "Region:          centralus" <<< "$BOTH_OUTPUT" \
+    && grep -Fq "AVISO: se usara el config canonico $BOTH_ROOT_PHYSICAL/.mefisto/harness.config.json; se ignora el legacy $BOTH_ROOT_PHYSICAL/.claude/harness.config.json." <<< "$BOTH_OUTPUT"; then
+    pass "coexistencia avisa y usa solo el config canonico"
+else
+    fail "coexistencia no respeto la precedencia canonica: $BOTH_OUTPUT"
+fi
 
 echo "[3] Consumidor legacy"
 LEGACY_ROOT="$TMP_DIR/legacy"
@@ -110,10 +118,10 @@ if grep -Eq '(^|[;&|[:space:]])(jq|cat)[[:space:]].*\.claude/harness\.config\.js
 else
     pass "no hay lecturas directas del config legacy"
 fi
-if grep -E '^[[:space:]]*(echo|cat[[:space:]]+<<EOF).*\.claude/harness\.config\.json' "$SCRIPT" >/dev/null; then
-    fail "reaparecio un mensaje de usuario que nombra la ruta legacy"
+if grep -Fq '.claude/harness.config.json' "$SCRIPT"; then
+    fail "reaparecio la ruta legacy en el script"
 else
-    pass "los mensajes de usuario no nombran la ruta legacy"
+    pass "el script no nombra la ruta legacy"
 fi
 if grep -Fq "jq -r '.azureLocation // empty' \"\$HARNESS_CONFIG_PATH\"" "$SCRIPT"; then
     pass "azureLocation se lee desde HARNESS_CONFIG_PATH"
