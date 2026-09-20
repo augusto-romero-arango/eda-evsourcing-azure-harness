@@ -47,13 +47,25 @@
 #        _mefisto-common.sh), o bien esta listado en "not_migrated" de la
 #        allowlist.
 #
-# Mas una verificacion estructural (no un grep de texto):
-#   adapters-check - `src/internal/scripts/generate-internal-adapters.sh
+# Mas dos verificaciones estructurales (no un grep de texto):
+#   adapters-check           - `src/internal/scripts/generate-internal-adapters.sh
 #        --check` (el del propio --root) no reporta divergencias.
+#   published-adapters-check - `src/published/scripts/generate-published-adapters.sh
+#        --check` (el del propio --root, si existe) no reporta divergencias.
+#
+# Alcance de las dos verificaciones estructurales: las reglas de texto R1-R4
+# siguen siendo solo del lado interno (src/internal/**, .claude/**,
+# .opencode/**, AGENTS.md, opencode.json); adapters-check y
+# published-adapters-check entre las dos cubren ambos generadores -- el
+# interno (src/internal/{agents,commands}/*.md -> .claude/ + .opencode/) y el
+# publicado (src/published/** -> dist/claude/ + dist/opencode/), asi que un
+# `main` con cualquiera de las dos distribuciones desactualizada respecto a su
+# fuente lo detecta este mismo gate (issue #1496).
 #
 # Cada violacion imprime una linea `<ruta>:<linea>: <regla>` (R1-R4) o
-# `<ruta>: <estado>: adapters-check` (CA-2, reemitiendo tal cual lo que
-# --check ya reporta). Exit 1 si hubo alguna, 0 si no.
+# `<ruta>: <estado>: adapters-check` / `<ruta>: <estado>: published-adapters-check`
+# (reemitiendo tal cual lo que el --check correspondiente ya reporta). Exit 1
+# si hubo alguna, 0 si no.
 #
 # Rendimiento (CA-3): la lista de archivos se construye UNA vez y cada regla
 # de texto (R1-R3) lanza un unico `grep -nHE` sobre su subconjunto -- nunca un
@@ -326,6 +338,30 @@ if [ -f "$ADAPTERS_SCRIPT" ]; then
         done <<< "$ADAPTERS_OUT"
         if [ "$ADAPTERS_ANY" -eq 0 ]; then
             VIOLATIONS+=("src/internal/scripts/generate-internal-adapters.sh: exit $ADAPTERS_RC sin lineas de divergencia: adapters-check")
+        fi
+    fi
+fi
+
+# --- published-adapters-check (issue #1496): estructural, mismo patron ------
+# Mismo criterio que adapters-check pero sobre el generador PUBLICADO: se
+# ejecuta el del propio --root (el artefacto bajo revision), sin --out, para
+# que resuelva su REPO_ROOT/OUT_ROOT desde su propio BASH_SOURCE y compare la
+# fuente publicada (src/published/, src/runtime/) y sus salidas (dist/) del
+# mismo arbol. Solo un exit distinto de 0 anade violaciones; el stderr del
+# generador pasa al stderr de este gate sin capturarse.
+PUBLISHED_SCRIPT="$ROOT/src/published/scripts/generate-published-adapters.sh"
+if [ -f "$PUBLISHED_SCRIPT" ]; then
+    PUBLISHED_OUT="$(bash "$PUBLISHED_SCRIPT" --check)"
+    PUBLISHED_RC=$?
+    if [ "$PUBLISHED_RC" -ne 0 ]; then
+        PUBLISHED_ANY=0
+        while IFS= read -r pline; do
+            [ -n "$pline" ] || continue
+            VIOLATIONS+=("$pline: published-adapters-check")
+            PUBLISHED_ANY=1
+        done <<< "$PUBLISHED_OUT"
+        if [ "$PUBLISHED_ANY" -eq 0 ]; then
+            VIOLATIONS+=("src/published/scripts/generate-published-adapters.sh: exit $PUBLISHED_RC sin lineas de divergencia: published-adapters-check")
         fi
     fi
 fi

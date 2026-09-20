@@ -1760,11 +1760,12 @@ caffeinate_prefix() {
 #
 # Lee por stdin la salida cruda de mefisto-neutrality-gate.sh (una linea por
 # violacion, "<ruta>:<linea>: <regla>" para las reglas de texto o
-# "<ruta>: <estado>: adapters-check" / la generica de exit para la
-# verificacion estructural). Por cada linea, la regla es su ultimo campo tras
-# ": " (`${line##*: }`, Bash puro). Deduplica por regla y emite en stdout UNA
-# linea de remedio por regla presente, en orden fijo R1, R2, R3, R4,
-# adapters-check; una regla no reconocida (typo, version futura del gate)
+# "<ruta>: <estado>: adapters-check" / "<ruta>: <estado>: published-adapters-check"
+# / la generica de exit para cada verificacion estructural). Por cada linea,
+# la regla es su ultimo campo tras ": " (`${line##*: }`, Bash puro). Deduplica
+# por regla y emite en stdout UNA linea de remedio por regla presente, en
+# orden fijo R1, R2, R3, R4, adapters-check, published-adapters-check; una
+# regla no reconocida (typo, version futura del gate)
 # produce su propia linea generica, deduplicada por su propio texto, que
 # remite a la cabecera del gate. Entrada vacia no emite nada. Retorna siempre
 # 0 -- esto es composicion de texto para abort(), nunca una segunda pasada de
@@ -1787,7 +1788,7 @@ mefisto_neutrality_remedy() {
     raw="$(cat)"
     [ -z "$raw" ] && return 0
 
-    local have_r1=false have_r2=false have_r3=false have_r4=false have_adapters=false
+    local have_r1=false have_r2=false have_r3=false have_r4=false have_adapters=false have_published=false
     local unknown_rules=()
     local line rule known found
 
@@ -1800,6 +1801,7 @@ mefisto_neutrality_remedy() {
             R3) have_r3=true ;;
             R4) have_r4=true ;;
             adapters-check) have_adapters=true ;;
+            published-adapters-check) have_published=true ;;
             *)
                 found=false
                 for known in ${unknown_rules[@]+"${unknown_rules[@]}"}; do
@@ -1824,6 +1826,9 @@ mefisto_neutrality_remedy() {
     fi
     if [ "$have_adapters" = true ]; then
         echo "adapters-check: regenera los adaptadores con src/internal/scripts/generate-internal-adapters.sh (sin --check); su salida (.claude/{agents,commands}/, .opencode/{agents,commands}/) no se edita a mano -- se edita la fuente neutral de src/internal/{agents,commands}/ y se regenera."
+    fi
+    if [ "$have_published" = true ]; then
+        echo "published-adapters-check: regenera la distribucion publicada con src/published/scripts/generate-published-adapters.sh (sin --check); su salida (dist/) no se edita a mano -- se edita la fuente publicada de src/published/ o src/runtime/ y se regenera."
     fi
     for rule in ${unknown_rules[@]+"${unknown_rules[@]}"}; do
         echo "$rule: regla no reconocida por este remedio -- revisa la cabecera de src/internal/scripts/mefisto-neutrality-gate.sh."
