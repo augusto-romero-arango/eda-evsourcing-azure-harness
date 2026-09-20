@@ -42,7 +42,24 @@ Quien te invoque debe resolverte estos valores; no los adivines ni los pidas por
 
 ### 0.1 - Resolver tokens del consumidor
 
-Lee `CLAUDE.md` raiz del proyecto para resolver `<RootNamespace>` (token `RootNamespace`). Si no lo declara, detente y pide al usuario que lo declare antes de continuar (mismo contrato que `domain-scaffolder`).
+```bash
+if [ -f "AGENTS.md" ]; then
+    if [ -f "CLAUDE.md" ]; then
+        printf '%s\n' 'AVISO: se usara AGENTS.md; se ignora el legacy CLAUDE.md. Migra o elimina conscientemente el archivo legacy para evitar divergencias.' >&2
+    fi
+    MEFISTO_INSTRUCTIONS_PATH="AGENTS.md"
+elif [ -f "CLAUDE.md" ]; then
+    MEFISTO_INSTRUCTIONS_PATH="CLAUDE.md"
+else
+    printf '%s\n' 'ERROR: no se encontro AGENTS.md, la fuente canonica de directivas del consumidor.' >&2
+    printf '%s\n' '  Se acepta solo para lectura el fallback legacy CLAUDE.md.' >&2
+    printf '%s\n' '  Ejecuta /mefisto:onboard para diagnosticar y completar el contrato del consumidor.' >&2
+    exit 1
+fi
+export MEFISTO_INSTRUCTIONS_PATH
+```
+
+Lee `${MEFISTO_INSTRUCTIONS_PATH}` para resolver `<RootNamespace>` (token `RootNamespace`). Si el archivo efectivo no lo declara, detente e informa que falta declararlo en `AGENTS.md` antes de continuar (mismo contrato que `domain-scaffolder`).
 
 Deriva `{PascalCase}` del dominio destino recibido (si vino en kebab-case, aplica la misma regla de `domain-scaffolder` Paso 0: primera letra de cada palabra en mayuscula, sin guiones).
 
