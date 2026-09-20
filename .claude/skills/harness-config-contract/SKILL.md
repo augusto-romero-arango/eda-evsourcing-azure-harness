@@ -1,13 +1,18 @@
 ---
 name: harness-config-contract
-description: "Contrato que el harness Mefisto impone al repo consumidor: esquema completo de `.claude/harness.config.json`, las secciones obligatorias de `AGENTS.md` (Tokens del harness, Verificación de fuentes), el puente mínimo de `CLAUDE.md` y la estructura de carpetas esperada (src/, tests/, infra/, docs/). Usar cuando se haga onboarding, scaffolding (dominio, infra base, MCP, proyecciones), validacion de config, o cualquier tarea que lea o escriba `harness.config.json` o dependa de la estructura de carpetas del consumidor."
+description: "Contrato que el harness Mefisto impone al repo consumidor: esquema completo de `.mefisto/harness.config.json`, las secciones obligatorias de `AGENTS.md` (Tokens del harness, Verificación de fuentes), el puente mínimo de `CLAUDE.md` y la estructura de carpetas esperada (src/, tests/, infra/, docs/). Usar cuando se haga onboarding, scaffolding (dominio, infra base, MCP, proyecciones), validacion de config, o cualquier tarea que lea o escriba `harness.config.json` o dependa de la estructura de carpetas del consumidor."
 ---
 
 # Contrato con el proyecto consumidor
 
 El plugin asume que el repo consumidor cumple lo siguiente:
 
-## 1. Archivo `.claude/harness.config.json`
+## 1. Archivo `.mefisto/harness.config.json`
+
+Los lectores resuelven el archivo canonico `.mefisto/harness.config.json` y aceptan `.claude/harness.config.json` solo como fallback de lectura indefinido (MEF-ADR-0053, decision 4).
+Los escritores (`/onboard` paso 6, `/seed-secret` y `upsert_harness_secret`) escriben solo el canonico y rechazan un consumidor solo legacy, pidiendo migrar conscientemente el archivo completo.
+
+El resolver ejecutable de referencia es `scripts/_pipeline-common.sh:resolve_harness_config_path`; `load_harness_config` lo usa y exporta `HARNESS_CONFIG_PATH`. Para prompts, reutiliza la misma precedencia inline del Paso 0 de `agents/infra-base-scaffolder.md`, sin reinventarla.
 
 Tokens operativos consumidos por los scripts shell. Estructura:
 
@@ -121,6 +126,7 @@ Así ambos runtimes consumen la doctrina neutral desde la fuente canónica sin d
 - `tests/<RootNamespace>.PublicEvents.Tests/` — tests del ensamblado `PublicEvents`, uno por BC (MEF-ADR-0039)
 - `tests/<RootNamespace>.PrivateEvents.Tests/` — tests del ensamblado `PrivateEvents`, uno por BC (MEF-ADR-0039)
 - `infra/environments/{env}/` — Terraform por ambiente
-- `.claude/pipeline/` — estado runtime de los pipelines (lo crea el harness en primer arranque, y nunca viaja en un commit del consumidor); incluye `sessions.jsonl`, un log append-only que el hook `SessionStart` del plugin anota con `session_id`/`transcript_path`/`cwd`/`source`/`timestamp`/`harness_version` en **cada** arranque de sesion de Claude Code sobre el repo — las headless de `claude -p` que corren los stages y tambien las interactivas, con `source` distinguiendo `startup`/`resume`/`clear`/`compact` y `harness_version` tomando el basename de `${CLAUDE_PLUGIN_ROOT}` (`null` si esa variable llega vacia o no definida) —, para correlacionar un stage con su transcript completo en `~/.claude/projects/` y con la version de Mefisto que lo ejecuto; e incluye tambien `.plugin-root.previous`, el marker por sesion que `/upgrade` escribe con la version del plugin que la sesion cargo (y que el mismo hook `SessionStart` limpia en cada arranque) para no borrarla al podar el cache
+- `.mefisto/pipeline/` — ubicacion canonica del estado runtime de los pipelines (la crea el harness en primer arranque y nunca viaja en un commit del consumidor); incluye `sessions.jsonl`, un log append-only que el hook publicado `SessionStart` anota con `session_id`/`transcript_path`/`cwd`/`source`/`timestamp`/`harness_version` en **cada** arranque de sesion sobre el repo — las headless que corren los stages y tambien las interactivas, con `source` distinguiendo `startup`/`resume`/`clear`/`compact` y `harness_version` tomando la identidad de la distribucion cargada (`null` cuando no esta disponible) —, para correlacionar un stage con su transcript completo y con la version de Mefisto que lo ejecuto
+- `.claude/pipeline/` — exclusivamente el mirror transitorio del marcador de release autorizado por MEF-ADR-0053, decision 4, enmienda #1099: el hook publicado `SessionStart` mantiene `.plugin-root`; `/upgrade` escribe `.plugin-root.previous` con la version cargada y el mismo hook lo limpia en el siguiente arranque. No es destino de logs ni de otro estado runtime.
 - `docs/bitacora/field-notes/` — output de los agentes investigadores
 - `docs/ddd/ubiquitous-language.yaml` — glosario de lenguaje ubicuo (terminos, actores, preguntas abiertas), custodiado por el `planner` (MEF-ADR-0040)

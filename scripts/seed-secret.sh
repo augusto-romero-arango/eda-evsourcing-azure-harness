@@ -2,7 +2,7 @@
 # seed-secret.sh -- registra un secreto nuevo post-greenfield (issue #256).
 #
 # Agrega/actualiza, de forma idempotente, una entrada en
-# .claude/harness.config.json > secrets[] (que el step de siembra data-driven de
+# .mefisto/harness.config.json > secrets[] (que el step de siembra data-driven de
 # infra-cd.yml itera en runtime -- agents/infra-base-scaffolder.md, Paso 2b) y localiza
 # el archivo Terraform del dominio consumidor (infra/environments/<env>/dominio-{kebab}.tf,
 # la fuente de verdad que ya genero domain-scaffolder). Este script NO edita HCL: imprime
@@ -166,10 +166,11 @@ else
 fi
 
 upsert_harness_secret "$NAME" "$SOURCE_TYPE" "$SOURCE_VALUE" || {
-    echo "ERROR: no se pudo registrar '$NAME' en .claude/harness.config.json > secrets[]." >&2
+    echo "ERROR: no se pudo registrar '$NAME' en secrets[] del contrato canonico .mefisto/harness.config.json; revisa el diagnostico anterior." >&2
     exit 1
 }
-echo "OK: '$NAME' registrado en .claude/harness.config.json > secrets[] (source: ${SOURCE_TYPE}:${SOURCE_VALUE})."
+echo "OK: '$NAME' registrado en $HARNESS_CONFIG_PATH > secrets[] (source: ${SOURCE_TYPE}:${SOURCE_VALUE})."
+echo "Registro: $HARNESS_CONFIG_PATH"
 
 # --- CA-8: si el valor no es derivable, valida/recuerda el GitHub secret ------
 if [ "$SOURCE_TYPE" = "github-secret" ]; then

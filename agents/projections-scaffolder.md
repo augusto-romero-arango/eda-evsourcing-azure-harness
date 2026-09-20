@@ -1,7 +1,7 @@
 ---
 name: projections-scaffolder
 model: sonnet
-description: Genera el worker de proyecciones `{RootNamespace}.Projections` (Program.cs delgado + seam base ConfiguracionMartenProjections + seam de observabilidad ConfiguracionObservabilidadProjections con el sampler SamplerQueDescartaPollingDelDaemon (MEF-ADR-0038) + la supresion selectiva de metricas OTel que conserva solo la familia `dotnet.gc.*` (MEF-ADR-0038 seccion 10) + Dockerfile sobre runtime sin ingress + el `.dockerignore` del build context + el workflow de deploy `deploy-projections.yml`), la biblioteca `{RootNamespace}.ReadModels` y el config-test base `{RootNamespace}.Projections.Tests` (helper AssertOpcionesDeEvento + build del DocumentStore en memoria + guardrails del sampler y de la supresion selectiva de metricas) cuando el BC habilita el token `projections.enabled` de harness.config.json, al estilo idempotente de infra-base-scaffolder. Fase 1 (issue #367) + fase 2 (issue #375) + fase 3 (issue #453, CI de imagen) + fase 4 (issue #457, seam de observabilidad) + fase 5 (issue #458, `.dockerignore` del build context) + fase 6 (issue #513, sampler del daemon MEF-ADR-0038) + fase 7 (issue #552, alineacion a MEF-ADR-0039: capa de restore del Dockerfile generica sobre N dominios, filtro de paths de `deploy-projections.yml` y prohibicion mecanica de referenciar un Function App) + fase 8 (issue #778, enmienda MEF-ADR-0038 seccion 10: vista func-based que conserva unicamente la familia GC de metricas OTel, fallback de connection string del exporter de metricas y sus guardrails de composicion): no registra ningun store de dominio (issue #370, domain-scaffolder) ni genera los modulos Terraform del Container App (issue #368, infra-base-scaffolder).
+description: Genera el worker de proyecciones `{RootNamespace}.Projections` (Program.cs delgado + seam base ConfiguracionMartenProjections + seam de observabilidad ConfiguracionObservabilidadProjections con el sampler SamplerQueDescartaPollingDelDaemon (MEF-ADR-0038) + la supresion selectiva de metricas OTel que conserva solo la familia `dotnet.gc.*` (MEF-ADR-0038 seccion 10) + Dockerfile sobre runtime sin ingress + el `.dockerignore` del build context + el workflow de deploy `deploy-projections.yml`), la biblioteca `{RootNamespace}.ReadModels` y el config-test base `{RootNamespace}.Projections.Tests` (helper AssertOpcionesDeEvento + build del DocumentStore en memoria + guardrails del sampler y de la supresion selectiva de metricas) cuando el BC habilita el token `projections.enabled` del contrato canonico `.mefisto/harness.config.json` (con fallback legacy de solo lectura), al estilo idempotente de infra-base-scaffolder. Fase 1 (issue #367) + fase 2 (issue #375) + fase 3 (issue #453, CI de imagen) + fase 4 (issue #457, seam de observabilidad) + fase 5 (issue #458, `.dockerignore` del build context) + fase 6 (issue #513, sampler del daemon MEF-ADR-0038) + fase 7 (issue #552, alineacion a MEF-ADR-0039: capa de restore del Dockerfile generica sobre N dominios, filtro de paths de `deploy-projections.yml` y prohibicion mecanica de referenciar un Function App) + fase 8 (issue #778, enmienda MEF-ADR-0038 seccion 10: vista func-based que conserva unicamente la familia GC de metricas OTel, fallback de connection string del exporter de metricas y sus guardrails de composicion): no registra ningun store de dominio (issue #370, domain-scaffolder) ni genera los modulos Terraform del Container App (issue #368, infra-base-scaffolder).
 tools: Bash, Read, Write, Edit, Glob, Grep
 ---
 
@@ -27,13 +27,26 @@ Si el guard dispara, detente sin escribir nada.
 
 ## Guard defensivo: token `projections.enabled`
 
-Aunque `/scaffold-projections` (el skill que te invoca) ya valida este token, revalida aqui por si te invocan directo (`claude --agent projections-scaffolder ...`), sin pasar por el skill:
+Aunque `/scaffold-projections` (el skill que te invoca) ya valida este token, revalida aqui por si te invocan directo (`claude --agent projections-scaffolder ...`), sin pasar por el skill. Resuelve primero el contrato canonico `.mefisto/harness.config.json`; acepta `.claude/harness.config.json` solo como fallback de lectura si el canonico no existe (MEF-ADR-0053, decision 4). No copies, migres ni escribas ninguno de los dos archivos:
 
 ```bash
 REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || { echo "ERROR: no estas en un repositorio git"; exit 1; }
-RAW=$(jq -r '.projections.enabled' "$REPO_ROOT/.claude/harness.config.json" 2>/dev/null)
+CONFIG="$REPO_ROOT/.mefisto/harness.config.json"
+LEGACY_CONFIG="$REPO_ROOT/.claude/harness.config.json"
+if [ -f "$CONFIG" ]; then
+    if [ -f "$LEGACY_CONFIG" ]; then
+        echo "AVISO: se usara el config canonico $CONFIG; se ignora el legacy $LEGACY_CONFIG. Migra o elimina conscientemente el archivo legacy para evitar divergencias." >&2
+    fi
+elif [ -f "$LEGACY_CONFIG" ]; then
+    CONFIG="$LEGACY_CONFIG"
+else
+    echo "ERROR: no se encontro el config canonico requerido .mefisto/harness.config.json."
+    echo "  Se acepta solo para lectura el fallback legacy .claude/harness.config.json. Detente sin generar nada."
+    exit 1
+fi
+RAW=$(jq -r '.projections.enabled' "$CONFIG" 2>/dev/null)
 if [ "$RAW" != "true" ]; then
-    echo "ERROR: 'projections.enabled' no esta en 'true' (o falta .claude/harness.config.json). Detente sin generar nada."
+    echo "ERROR: 'projections.enabled' no esta en 'true' en .mefisto/harness.config.json. Detente sin generar nada."
     exit 1
 fi
 ```
@@ -50,12 +63,29 @@ fi
 
 ## Paso 0 - Resolver tokens del consumidor
 
-Lee `CLAUDE.md` raiz del proyecto (seccion "Tokens del harness") para resolver:
+```bash
+if [ -f "AGENTS.md" ]; then
+    if [ -f "CLAUDE.md" ]; then
+        printf '%s\n' 'AVISO: se usara AGENTS.md; se ignora el legacy CLAUDE.md. Migra o elimina conscientemente el archivo legacy para evitar divergencias.' >&2
+    fi
+    MEFISTO_INSTRUCTIONS_PATH="AGENTS.md"
+elif [ -f "CLAUDE.md" ]; then
+    MEFISTO_INSTRUCTIONS_PATH="CLAUDE.md"
+else
+    printf '%s\n' 'ERROR: no se encontro AGENTS.md, la fuente canonica de directivas del consumidor.' >&2
+    printf '%s\n' '  Se acepta solo para lectura el fallback legacy CLAUDE.md.' >&2
+    printf '%s\n' '  Ejecuta /mefisto:onboard para diagnosticar y completar el contrato del consumidor.' >&2
+    exit 1
+fi
+export MEFISTO_INSTRUCTIONS_PATH
+```
+
+Lee `${MEFISTO_INSTRUCTIONS_PATH}` (seccion "Tokens del harness") para resolver:
 
 - `<RootNamespace>` -- prefijo del namespace .NET (token `RootNamespace`).
 - `<SolutionFile>` -- nombre del archivo de solucion (token `SolutionFile`).
 
-Si `CLAUDE.md` no declara alguno de los dos, detente y pide al usuario que los declare antes de continuar.
+Si `AGENTS.md` no declara alguno de los dos, detente y pide al usuario que los declare antes de continuar. No crees, copies, migres ni escribas `AGENTS.md` ni el fallback legacy.
 
 **Probe de idempotencia (gate de todo el Paso 1):**
 

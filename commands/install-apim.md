@@ -42,7 +42,7 @@ Si falta `--domain`, responde con el uso exacto y detente sin ejecutar nada.
 | GitHub **variable** (client_id de login) | `WORKOS_CLIENT_ID` | Ya la registro `/install-workos` (MEF-ADR-0032 seccion 6/7); este skill solo la **lee/verifica**, nunca la crea desde cero. |
 | GitHub **variable** (origenes CORS) | `CORS_ALLOWED_ORIGINS` | JSON list; requerida sin default por `apim.tf` (`var.cors_allowed_origins`), solo la primera vez que se crea el archivo (`agents/apim-gateway-scaffolder.md` Paso 3b). |
 | GitHub **variable** (dominio AuthKit del entorno, issue #820) | `WORKOS_AUTHORIZATION_SERVER_URL` | No secreta (MEF-ADR-0032 seccion 6, mismo estatus que `WORKOS_CLIENT_ID`); requerida sin default por `apim-mcp-prm.tf` (`var.mcp_authorization_server_url`), solo la primera vez que este skill detecta al menos un servidor MCP (`agents/apim-gateway-scaffolder.md` Paso 3c). |
-| Token en `harness.config.json` | `tenancy.strategy = "multi-tenant-header"` | Flip que ejecuta CA-4 (MEF-ADR-0028 seccion 4). |
+| Token en `.mefisto/harness.config.json` | `tenancy.strategy = "multi-tenant-header"` | Flip que ejecuta CA-4 (MEF-ADR-0028 seccion 4). El legacy solo es fallback de lectura. |
 | Biblioteca de tenancy scaffoldeada | `src/<RootNamespace>.TenantResolver/` | `TenantExecutionContext` + `TenantContextMiddleware`, patron AsyncLocal + middleware (MEF-ADR-0028 seccion 4, enmendada por el issue #802). Una sola por BC, referenciada por todos los dominios migrados. |
 | Registro de `ITenantResolver` que reemplaza el transitorio (o el hibrido roto) | `services.AgregarTenantResolverAsyncLocal()` | Extension de la biblioteca scaffoldeada de arriba -- ya no de `Cosmos.MultiTenancy.CritterStack` (issue #802). |
 | Middleware del worker que puebla la identidad | `builder.UsarTenantContextMiddleware()` | Invocado en `Program.cs` de cada dominio migrado, antes de `builder.Build()` (MEF-ADR-0028 seccion 4). |
@@ -71,10 +71,30 @@ Si cualquiera de los dos falta, detente con el mensaje -- no continues con el re
 
 ### 2b. Detectar los servidores MCP del BC (CA-3 del issue #820)
 
-Resuelve primero `<RootNamespace>` leyendo el `CLAUDE.md` raiz del consumidor (seccion "Tokens del harness"), igual que el paso 9.1 -- este paso lo necesita antes que aquel. Si no esta declarado, **no te detengas aca**: reporta `SERVIDORES_MCP` como no determinable y segui (el paso 9.1 vuelve a intentarlo y ahi si es bloqueante).
+Resuelve primero `<RootNamespace>` desde el archivo efectivo de instrucciones (seccion "Tokens del harness"), igual que el paso 9.1 -- este paso lo necesita antes que aquel. Si no esta declarado en ese archivo, **no te detengas aca**: reporta `SERVIDORES_MCP` como no determinable y segui (el paso 9.1 vuelve a intentarlo y ahi si es bloqueante).
 
 ```bash
-ls -d src/<RootNamespace>.Mcp.*/ 2>/dev/null | sed -E 's#.*<RootNamespace>\.Mcp\.([^/]+)/#\1#'
+if [ -f "AGENTS.md" ]; then
+    if [ -f "CLAUDE.md" ]; then
+        printf '%s\n' 'AVISO: se usara AGENTS.md; se ignora el legacy CLAUDE.md. Migra o elimina conscientemente el archivo legacy para evitar divergencias.' >&2
+    fi
+    MEFISTO_INSTRUCTIONS_PATH="AGENTS.md"
+elif [ -f "CLAUDE.md" ]; then
+    MEFISTO_INSTRUCTIONS_PATH="CLAUDE.md"
+else
+    printf '%s\n' 'ERROR: no se encontro AGENTS.md, la fuente canonica de directivas del consumidor.' >&2
+    printf '%s\n' '  Se acepta solo para lectura el fallback legacy CLAUDE.md.' >&2
+    printf '%s\n' '  Ejecuta /mefisto:onboard para diagnosticar y completar el contrato del consumidor.' >&2
+    exit 1
+fi
+export MEFISTO_INSTRUCTIONS_PATH
+
+ROOT_NAMESPACE=$(awk '/^[[:space:]]*RootNamespace:[[:space:]]*/ { sub(/^[[:space:]]*RootNamespace:[[:space:]]*/, ""); print; exit }' "$MEFISTO_INSTRUCTIONS_PATH")
+if [ -z "$ROOT_NAMESPACE" ]; then
+    SERVIDORES_MCP="no determinable"
+else
+    SERVIDORES_MCP=$(ls -d "src/${ROOT_NAMESPACE}".Mcp.*/ 2>/dev/null | sed -E "s#.*${ROOT_NAMESPACE}\\.Mcp\\.([^/]+)/#\\1#")
+fi
 ```
 
 Cada nombre listado es un `{Proposito}` (PascalCase) ya scaffoldeado por `/scaffold-mcp`. Llama a esta lista `SERVIDORES_MCP` -- puede venir vacia, y **eso es un resultado normal, no un error** (CA-5): un BC sin servidores MCP sigue el resto del proceso exactamente igual que antes del issue #820, sin ningun paso adicional de MCP en ningun punto de este skill. No hay flag para elegir "cuales" servidores MCP exponer -- se exponen todos los detectados, igual que la migracion de tenancy del paso 9 aplica a todos los dominios.
@@ -190,22 +210,85 @@ El agente es aditivo/idempotente por su cuenta (sus Pasos 0.2/0.4/1/2/2b/3/3b/3c
 
 #### 9.1 Resolver `<RootNamespace>`
 
-Lee el `CLAUDE.md` raiz del proyecto consumidor (contrato, seccion "Tokens del harness") para resolver `<RootNamespace>` (si el paso 2b ya lo resolvio, reusa ese valor -- no lo releas). Si no esta declarado, detente y pide al usuario que lo declare -- mismo criterio que `domain-scaffolder`.
+Reusa `<RootNamespace>` resuelto en el paso 2b. Si este bloque corre en un shell nuevo y debe releerlo, usa el mismo archivo efectivo de instrucciones; nunca una ruta de instrucciones fija. Si no esta declarado, detente y pide al usuario que lo declare en `AGENTS.md` (seccion "Tokens del harness") -- mismo criterio que `domain-scaffolder`.
+
+```bash
+if [ -z "${ROOT_NAMESPACE:-}" ]; then
+    if [ -z "${MEFISTO_INSTRUCTIONS_PATH:-}" ]; then
+        if [ -f "AGENTS.md" ]; then
+            if [ -f "CLAUDE.md" ]; then
+                printf '%s\n' 'AVISO: se usara AGENTS.md; se ignora el legacy CLAUDE.md. Migra o elimina conscientemente el archivo legacy para evitar divergencias.' >&2
+            fi
+            MEFISTO_INSTRUCTIONS_PATH="AGENTS.md"
+        elif [ -f "CLAUDE.md" ]; then
+            MEFISTO_INSTRUCTIONS_PATH="CLAUDE.md"
+        else
+            printf '%s\n' 'ERROR: no se encontro AGENTS.md, la fuente canonica de directivas del consumidor.' >&2
+            printf '%s\n' '  Se acepta solo para lectura el fallback legacy CLAUDE.md.' >&2
+            printf '%s\n' '  Ejecuta /mefisto:onboard para diagnosticar y completar el contrato del consumidor.' >&2
+            exit 1
+        fi
+        export MEFISTO_INSTRUCTIONS_PATH
+    fi
+    ROOT_NAMESPACE=$(awk '/^[[:space:]]*RootNamespace:[[:space:]]*/ { sub(/^[[:space:]]*RootNamespace:[[:space:]]*/, ""); print; exit }' "$MEFISTO_INSTRUCTIONS_PATH")
+fi
+
+if [ -z "$ROOT_NAMESPACE" ]; then
+    echo "ERROR: falta declarar RootNamespace en AGENTS.md (seccion \"Tokens del harness\")."
+    exit 1
+fi
+```
 
 #### 9.2 Flip del token
 
 ```bash
-jq -r '.tenancy.strategy // "mono-tenant-transitorio"' .claude/harness.config.json
+REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || { echo "ERROR: no estas en un repositorio git"; exit 1; }
+
+PLUGIN_ROOT=$(cat .mefisto/pipeline/.plugin-root 2>/dev/null)
+[ -z "$PLUGIN_ROOT" ] && PLUGIN_ROOT=$(cat .claude/pipeline/.plugin-root 2>/dev/null)
+[ -z "$PLUGIN_ROOT" ] && PLUGIN_ROOT=$(ls -d "$HOME"/.claude/plugins/cache/*/mefisto/*/ 2>/dev/null | sort -V | tail -1)
+PLUGIN_SCRIPTS="${PLUGIN_ROOT%/}/scripts"
+COMMON="${PLUGIN_SCRIPTS%/}/_pipeline-common.sh"
+if [ ! -f "$COMMON" ]; then
+  echo "ERROR: no se hallo _pipeline-common.sh en el plugin ($COMMON)."
+  exit 1
+fi
+source "$COMMON"
+CONFIG=$(resolve_harness_config_path write "$REPO_ROOT") || exit 1
+
+if ! load_harness_config >/dev/null; then
+  echo "ERROR: el config efectivo no es válido. Corrígelo antes de escribir $CONFIG."
+  exit 1
+fi
+
+ESTRATEGIA=$(jq -r '.tenancy.strategy // "mono-tenant-transitorio"' "$HARNESS_CONFIG_PATH")
+TENANCY_TOKEN_FLIPPED=false
+if [ "$HARNESS_CONFIG_PATH" != "$CONFIG" ]; then
+  echo "ERROR: el config efectivo todavía es legacy ($HARNESS_CONFIG_PATH)."
+  echo "       Migra primero el config a $CONFIG; los escritores nuevos no modifican la ruta legacy."
+  exit 1
+elif [ "$ESTRATEGIA" = "multi-tenant-header" ]; then
+  echo "OK: tenancy.strategy ya esta en etapa (b) en $HARNESS_CONFIG_PATH."
+elif ! command -v jq >/dev/null 2>&1; then
+  echo "ERROR: jq no esta instalado. Requerido para escribir $CONFIG."
+  exit 1
+else
+  TMP=$(mktemp)
+  if jq --arg s "multi-tenant-header" '.tenancy = ((.tenancy // {}) + {strategy: $s})' "$CONFIG" > "$TMP" \
+      && jq empty "$TMP" && mv "$TMP" "$CONFIG"; then
+    TENANCY_TOKEN_FLIPPED=true
+    echo "OK: tenancy.strategy = \"multi-tenant-header\" escrito en $CONFIG."
+  else
+    rm -f "$TMP"
+    echo "ERROR: no se pudo escribir $CONFIG (revisa que sea JSON valido)."
+    exit 1
+  fi
+fi
 ```
 
 - Si ya es `"multi-tenant-header"`: no toques el archivo. Repórtalo "ya en etapa (b)" y segui directo al 9.3 -- puede haber dominios scaffoldeados entre corridas que todavia no se migraron.
-- Si es `"mono-tenant-transitorio"` o el campo esta ausente: agrega/actualiza en `.claude/harness.config.json`:
-
-  ```json
-  "tenancy": { "strategy": "multi-tenant-header" }
-  ```
-
-  (si el objeto `tenancy` ya existe con otros campos, preservalos; el archivo en si ya deberia existir -- si no existe, algo esta mal, `/onboard` deberia haberlo creado -- detente y avisa.)
+- Cualquier otro valor, incluido `"mono-tenant-transitorio"` o un campo ausente, se trata como etapa (a) y se actualiza exclusivamente en el config canónico. El objeto `tenancy` conserva sus demas campos.
+- Si no hay config efectivo o si solo existe el legacy, el bloque termina con un error bloqueante antes del 9.3. En el segundo caso migra primero el archivo completo a `.mefisto/harness.config.json`; este skill nunca crea, copia ni modifica `.claude/harness.config.json`.
 
 #### 9.3 Scaffold de la biblioteca `src/<RootNamespace>.TenantResolver/` (CA-1, MEF-ADR-0028 seccion 4)
 
@@ -600,7 +683,9 @@ dotnet test "tests/<RootNamespace>.{PascalCase}.Tests" --filter "FullyQualifiedN
 Solo si el paso 9 tuvo al menos un cambio (token flip, scaffold de la biblioteca, o algun dominio migrado):
 
 ```bash
-git add .claude/harness.config.json
+if [ "$TENANCY_TOKEN_FLIPPED" = true ]; then
+  git add "$CONFIG"
+fi
 # solo si el paso 9.3 la creo en esta corrida (incluido el <SolutionFile>, que el paso 9.3.g toco):
 git add "src/<RootNamespace>.TenantResolver" "tests/<RootNamespace>.TenantResolver.Tests" <SolutionFile>
 # por cada dominio migrado con exito (paso 9.4):
@@ -674,7 +759,7 @@ Resumen claro y en orden:
 - **Agente `apim-gateway-scaffolder`** (paso 8): modulos creados/omitidos, dominios agregados/omitidos (con el motivo si alguno fallo el guard de scaffold), resultado de `terraform validate`, gates B5/B10 pendientes que el agente haya reportado, y el delta manual de CORS (`<method>QUERY</method>` ausente en un modulo `api-management` preexistente, issue #608) si el agente lo reporto.
 - **Servidores MCP expuestos** (paso 8, issue #820), si `SERVIDORES_MCP` no vino vacia: `apim-mcp-api`/`apim-mcp-prm.tf` creados u omitidos; `apim-mcp-{proposito-kebab}.tf` por servidor, creado u omitido; cualquier servidor MCP que fallo el guard de scaffold del agente (indicar `/scaffold-mcp <Proposito>`); si el patch de `Mcp__ResourceUri`/`Mcp__AuthorizationServer` en `mcp-{proposito-kebab}.tf` se aplico o ya estaba resuelto (CA-4); gate B12 (dominio AuthKit del entorno) marcado `NO VERIFICADO` si el agente no pudo confirmarlo contra el discovery doc en vivo; si algun servidor MCP detectado todavia no tuvo su primer deploy de codigo exitoso (el `apply` de su modulo fallaria al leer `mcp_extension` -- avisa antes de mergear el PR).
 - **Checklist operativo CA-4, por cada servidor MCP expuesto**: el `resource_uri` resuelto y el recordatorio de confirmar en el dashboard de WorkOS que el Resource Indicator del cliente MCP es ese mismo string byte a byte (trailing slash incluido), y de reconectar cualquier cliente MCP ya conectado despues del `apply`.
-- **Migracion de tenancy** (paso 9): token flip (hecho / ya estaba en etapa b); biblioteca `src/<RootNamespace>.TenantResolver/` (creada y verificada por build+test / ya existia); lista de dominios migrados (distinguiendo si venian de la etapa (a) mono-tenant o del hibrido roto `AgregarTenantResolverHibrido()`, issue #802); lista de dominios ya migrados al patron nuevo (omitidos); lista de dominios degradados (con el motivo) o con resolver custom (revision manual pendiente).
+- **Migracion de tenancy** (paso 9): token flip en `.mefisto/harness.config.json` (hecho / ya estaba en etapa b); biblioteca `src/<RootNamespace>.TenantResolver/` (creada y verificada por build+test / ya existia); lista de dominios migrados (distinguiendo si venian de la etapa (a) mono-tenant o del hibrido roto `AgregarTenantResolverHibrido()`, issue #802); lista de dominios ya migrados al patron nuevo (omitidos); lista de dominios degradados (con el motivo) o con resolver custom (revision manual pendiente). Si el flip no pudo materializarse por config ausente o legacy-only, reporta ese bloqueo y no continues al 9.3.
 - **Siguiente paso**: push + PR (si todo quedo verde) o la lista de reconciliacion pendiente.
 - **Checklist post-deploy** (paso 12): recordatorio de correrlo tras el `apply` de CI.
 

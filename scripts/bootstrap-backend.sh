@@ -47,7 +47,7 @@
 #   --env <dev|staging|prod>   Ambiente. Default: dev.
 #   --location <region>        Region de Azure. Si se omite, se lee el campo
 #                              opcional 'azureLocation' de
-#                              .claude/harness.config.json. Si tampoco existe,
+#                              harness.config.json. Si tampoco existe,
 #                              aborta pidiendo el flag o el campo de config.
 #
 # Es del lado PUBLICADO (MEF-ADR-0019): opera sobre el repo consumidor, nunca sobre
@@ -88,7 +88,7 @@ Uso: $0 --subscription <id> [--env <dev|staging|prod>] [--location <region>]
                         primer argumento posicional).
   --env <env>           Ambiente: dev | staging | prod. Default: dev.
   --location <region>   Region de Azure (ej: eastus2). Si se omite, se lee
-                        'azureLocation' de .claude/harness.config.json.
+                        'azureLocation' de harness.config.json.
 
 Ejemplo: $0 --subscription 50fc1901-9723-4971-9d63-b3f1a015e8b8 --env dev
 EOF
@@ -134,24 +134,24 @@ if [ -z "$SUBSCRIPTION_ID" ]; then
 fi
 
 # Location: el flag tiene prioridad; si no se paso, se lee inline el campo
-# opcional 'azureLocation' del config (mismo patron que 'repoSlug' en
-# _pipeline-common.sh). Si tampoco existe, aborta con mensaje claro.
+# opcional 'azureLocation' de la ruta efectiva ya resuelta. Si tampoco existe,
+# aborta con mensaje claro.
 if [ -z "$LOCATION" ]; then
-    LOCATION=$(jq -r '.azureLocation // empty' .claude/harness.config.json 2>/dev/null)
+    LOCATION=$(jq -r '.azureLocation // empty' "$HARNESS_CONFIG_PATH" 2>/dev/null)
 fi
 if [ -z "$LOCATION" ]; then
     echo "ERROR: no se especifico la region de Azure." >&2
     echo "  Pasa --location <region> (ej: --location eastus2) o agrega el campo" >&2
-    echo "  opcional \"azureLocation\" a .claude/harness.config.json." >&2
+    echo "  opcional \"azureLocation\" a $HARNESS_CONFIG_PATH." >&2
     exit 1
 fi
 
 if [ -z "$HARNESS_RG_PREFIX" ]; then
-    echo "ERROR: 'infraResourceGroupPrefix' no esta definido en .claude/harness.config.json." >&2
+    echo "ERROR: 'infraResourceGroupPrefix' no esta definido en $HARNESS_CONFIG_PATH." >&2
     exit 1
 fi
 if [ -z "$HARNESS_TFSTATE_STORAGE" ]; then
-    echo "ERROR: 'terraformStateStorage' no esta definido en .claude/harness.config.json." >&2
+    echo "ERROR: 'terraformStateStorage' no esta definido en $HARNESS_CONFIG_PATH." >&2
     exit 1
 fi
 
@@ -201,7 +201,7 @@ if [ -n "$HARNESS_AZURE_REGION_SHORT" ]; then
     if ! printf '%s' "$STORAGE_BASE" | grep -Eq '^[a-z0-9]{3,24}$'; then
         echo "ERROR: el nombre CAF de la Storage Account del tfstate ('${STORAGE_BASE}', ${#STORAGE_BASE} chars) no cumple el naming de Azure Storage (3-24 chars, solo minusculas y digitos)." >&2
         echo "  Los componentes fijos del patron ('sttfstate' + env '${ENVIRONMENT}' + azureRegionShort '${HARNESS_AZURE_REGION_SHORT}' + resourceSequence '${HARNESS_RESOURCE_SEQUENCE}') ya no dejan espacio para {app}." >&2
-        echo "  Acorta 'azureRegionShort' o 'resourceSequence' en .claude/harness.config.json, o usa un nombre de ambiente mas corto (MEF-ADR-0045 seccion 4)." >&2
+        echo "  Acorta 'azureRegionShort' o 'resourceSequence' en $HARNESS_CONFIG_PATH, o usa un nombre de ambiente mas corto (MEF-ADR-0045 seccion 4)." >&2
         exit 1
     fi
 fi
@@ -213,7 +213,7 @@ echo "  Region:          ${LOCATION}"
 if [ -n "$HARNESS_AZURE_REGION_SHORT" ]; then
     echo "  Naming CAF:      activo (azureRegionShort='${HARNESS_AZURE_REGION_SHORT}', resourceSequence='${HARNESS_RESOURCE_SEQUENCE}', MEF-ADR-0045)"
 else
-    echo "  Naming CAF:      inactivo (falta 'azureRegionShort' en .claude/harness.config.json; naming legacy retrocompatible, MEF-ADR-0045)"
+    echo "  Naming CAF:      inactivo (falta 'azureRegionShort' en $HARNESS_CONFIG_PATH; naming legacy retrocompatible, MEF-ADR-0045)"
 fi
 echo "  Resource Group:  ${RG}"
 if [ -n "$HARNESS_AZURE_REGION_SHORT" ]; then
@@ -281,7 +281,7 @@ resolve_storage_account_name_caf() {
             printf '%s' "$STORAGE_BASE"; return 0 ;;
         [Ff]alse)
             echo "ERROR: el nombre '${STORAGE_BASE}' de Storage Account ya esta tomado en Azure (colision global)." >&2
-            echo "  Incrementa 'resourceSequence' en .claude/harness.config.json (actual: '${HARNESS_RESOURCE_SEQUENCE}') y reintenta -- MEF-ADR-0045 seccion 2 prohibe volver a un sufijo aleatorio." >&2
+            echo "  Incrementa 'resourceSequence' en $HARNESS_CONFIG_PATH (actual: '${HARNESS_RESOURCE_SEQUENCE}') y reintenta -- MEF-ADR-0045 seccion 2 prohibe volver a un sufijo aleatorio." >&2
             return 1 ;;
         *)
             echo "AVISO: 'az storage account check-name' no fue concluyente para '${STORAGE_BASE}'; se usara de todas formas (si colisiona, el create fallara de forma explicita)." >&2
