@@ -4,6 +4,39 @@ Todo cambio notable a este proyecto se documenta aquí. Sigue [Keep a Changelog]
 
 ## [Unreleased]
 
+## [0.38.1] - 2026-09-20
+
+### Added
+
+- Test `.claude/scripts/tests/test-release-neutrality-rollback.sh`: cubre el rollback de la rama de release en la fase prepare de `mefisto-release.sh` cuando el gate de neutralidad (MEF-ADR-0049) sale en rojo -- verifica el orden de `git switch -c`/`git switch`/`git branch -D`, la ausencia de efectos posteriores (generacion de metadata, `git add`/`commit`/`push`, `gh pr create`) y que el mensaje de aborto compone la salida cruda del gate con el remedio real; incluye un control positivo con el gate en verde que alcanza `gh pr create` (#1495).
+- El gate de neutralidad de runtime (`mefisto-neutrality-gate.sh`) suma `published-adapters-check`: ejecuta `generate-published-adapters.sh --check` del propio arbol bajo revision y reemite cada divergencia, cerrando el hueco que dejaba pasar a `main` una distribucion `dist/` desactualizada respecto a su fuente publicada (`src/published/`, `src/runtime/`). `mefisto_neutrality_remedy` gana el remedio correspondiente, deduplicado, en orden fijo tras `adapters-check`.
+
+### Changed
+
+- Se alinea el skill interno `harness-config-contract` al contrato canonico `.mefisto/harness.config.json` y al estado runtime bajo `.mefisto/pipeline/`.
+
+### Fixed
+
+- `generate-published-adapters.sh` deja de detectar colisiones con un proceso `jq` por cada plan de asset ya acumulado: los campos `adapter`, `id` y `destination` de cada plan viven ahora en arrays bash paralelos y los tres bucles que eran cuadraticos (colisiones de assets estaticos, colisiones de assets por adaptador e `is_supplemental_asset` en `--check`) los comparan sin procesos externos. Se recorta ademas el churn lineal de procesos: la resolucion y el checksum de cada fuente estatica se calculan una vez por asset en lugar de una vez por raiz, y `dirname`/`basename`/`mkdir` se resuelven con expansion bash. Medido en el repo real: `--check` pasa de 98-109 s a 13,8-14,0 s y `--out <tmp>` de 49 s a 12 s, con salida byte-identica (arbol y modos) y sin cambiar el contrato.
+- Se corrige `/scaffold-projections` y `projections-scaffolder` para resolver `projections.enabled` desde el contrato canonico, conservando el fallback legacy de solo lectura.
+- Se corrige `/scaffold-mcp` y `mcp-scaffolder` para resolver el contrato canonico `.mefisto/harness.config.json` antes del fallback legacy de solo lectura.
+- Se corrige `/purge-store` para validar dominios contra el contrato canonico del harness y conservar el config legacy solo como fallback de lectura.
+- Se corrige `bootstrap-backend.sh` para leer `azureLocation` desde la ruta efectiva del config del harness.
+- Corrige `/install-apim` para leer y materializar el flip de `tenancy.strategy` exclusivamente en el config canónico efectivo, sin crear ni modificar el fallback legacy.
+- Se alinea `/seed-secret` con el contrato canónico de secretos y se incluye el registro efectivo al preparar el commit.
+- Se corrige `mcp-scaffolder` para resolver los tokens del harness desde `AGENTS.md`, con `CLAUDE.md` como fallback de solo lectura.
+- Se habilitan 25 `test-*.sh` de `scripts/tests/` y `.claude/scripts/tests/` que estaban commiteados sin bit de ejecucion: `_mefisto_test_inventory_scan_lane` los descartaba en silencio del inventario de la suite completa (nunca aparecian como PASS ni FAIL). Se agrega el bloque `[L]` a `scripts/tests/test-guards.sh`, que falla el cierre del pipeline si un `test-*.sh` de primer nivel carece de bit de ejecucion en disco o esta versionado con modo `100644`.
+- El diagnostico de `validate_consumer_scope_changes` (`scripts/_pipeline-common.sh`) ahora lee `repoSlug` desde `"$HARNESS_CONFIG_PATH"` (la ruta efectiva resuelta por el pipeline, canonico o legacy como fallback) en vez de un `jq` directo relativo al cwd sobre `.claude/harness.config.json`, para que el mensaje de violacion de scope y el `gh issue create -R` sugerido nombren el fork correcto de un consumidor canonico (MEF-ADR-0053).
+- Los prompts de `tooling-writer` y `tooling-reviewer` (`scripts/tooling-pipeline.sh`) ahora listan `.mefisto/harness.config.json` como el contrato canonico del consumidor en el ALCANCE PERMITIDO de escritura, antes que `.claude/harness.config.json` (que queda calificado como fallback legacy de lectura, no crear).
+- `/onboard` ya no borra los demas campos del objeto `tenancy` al escribir `tenancy.strategy` (paso 6): el filtro `jq` ahora hace merge (`.tenancy = ((.tenancy // {}) + {strategy: $s})`) en vez de reemplazar el objeto completo, igual que el escritor equivalente de `/install-apim` (#1504).
+- Se corrige `projections-scaffolder` para resolver los tokens del harness desde `AGENTS.md`, con fallback legacy de solo lectura.
+- Se corrige `workos-identity-scaffolder` para resolver `RootNamespace` desde el archivo efectivo de instrucciones del consumidor.
+- Se corrige `/install-apim` para resolver `RootNamespace` desde el archivo efectivo de instrucciones al detectar servidores MCP y migrar tenancy.
+- Se resuelve `RootNamespace` de la alerta del worker de proyecciones desde el archivo efectivo de directivas del consumidor, con fallback legacy de solo lectura.
+- Se actualiza `README.md` para instruir el contrato canónico `.mefisto/harness.config.json` en instalación y onboarding (antes nombraba `.claude/harness.config.json`), con la regla de `.gitignore` (ignorar solo `.mefisto/pipeline/`, nunca `.mefisto/` completo), una subsección de migración del config para consumidores existentes y el enlace corregido al índice temático de ADRs (`docs/adr/INDICE-TEMATICO.md`).
+- Los tres caminos que crean un draft cross-repo hacia Mefisto (`planner`, `tooling-investigator` y `/fix-review`) ahora leen `repoSlug` desde la ruta efectiva del config (`.mefisto/harness.config.json`, con `.claude/harness.config.json` solo como fallback de lectura, MEF-ADR-0053) en vez de un `jq` directo relativo al cwd sobre la ruta legacy; el campo sigue siendo opcional y aplica el default sin abortar si falta.
+- Se corrige la prosa residual de `agents/bug-investigator.md`, `agents/tooling-investigator.md`, `agents/planner.md`, `agents/historiador.md`, `commands/fix-review.md` y `scripts/setup-github-labels.sh` que presentaba `CLAUDE.md` como el archivo efectivo de directivas del consumidor o `.claude/harness.config.json` como su contrato de config, contradiciendo MEF-ADR-0049 (decision 3) y MEF-ADR-0053 (decision 4); se agrega `scripts/tests/test-legacy-directive-mentions.sh` como anti-regresion.
+
 ## [0.38.0] - 2026-09-19
 
 ### Added
@@ -2735,7 +2768,8 @@ Y reemplazar referencias en `CLAUDE.md` del proyecto: `/eda-evsourcing-azure-har
 - Los agentes `reviewer` e `implementer` mantienen el placeholder literal `ADR-XXXX` en sus plantillas de reporte (no es un bug; el agente lo sustituye en tiempo de ejecución por el número real del ADR aplicable).
 - Los ejemplos de código en `test-writer.md`, `implementer.md` y `smoke-test-writer.md` conservan nombres concretos de un proyecto consumidor (`Programacion`, `ControlHoras`) anotados en el "Contrato con el consumidor" de cada agente como ejemplos pedagógicos.
 
-[Unreleased]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.38.0...HEAD
+[Unreleased]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.38.1...HEAD
+[0.38.1]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.38.0...v0.38.1
 [0.38.0]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.37.16...v0.38.0
 [0.37.16]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.37.15...v0.37.16
 [0.37.15]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.37.14...v0.37.15
