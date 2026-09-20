@@ -38,9 +38,17 @@ Si trae argumento, normaliza `<proposito>` a PascalCase (separa por espacios/gui
 
 ```bash
 REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || { echo "ERROR: no estas en un repositorio git"; exit 1; }
-CONFIG="$REPO_ROOT/.claude/harness.config.json"
+CONFIG="$REPO_ROOT/.mefisto/harness.config.json"
+if [ -f "$CONFIG" ]; then
+    if [ -f "$REPO_ROOT/.claude/harness.config.json" ]; then
+        echo "AVISO: se usara el config canonico $CONFIG; se ignora el legacy $REPO_ROOT/.claude/harness.config.json. Migra o elimina conscientemente el archivo legacy para evitar divergencias." >&2
+    fi
+else
+    CONFIG="$REPO_ROOT/.claude/harness.config.json"
+fi
 if [ ! -f "$CONFIG" ]; then
-    echo "ERROR: no existe .claude/harness.config.json. Corre /onboard antes de este skill."
+    echo "ERROR: no se encontro el config canonico requerido $REPO_ROOT/.mefisto/harness.config.json." >&2
+    echo "  Se acepta solo para lectura el fallback legacy $REPO_ROOT/.claude/harness.config.json." >&2
     exit 1
 fi
 
@@ -48,7 +56,7 @@ ROOT_NAMESPACE=$(jq -r '.namespacePrefix // ""' "$CONFIG")
 SOLUTION_FILE=$(jq -r '.solutionFile // ""' "$CONFIG")
 
 if [ -z "$ROOT_NAMESPACE" ] || [ -z "$SOLUTION_FILE" ]; then
-    echo "ERROR: faltan 'namespacePrefix' y/o 'solutionFile' en .claude/harness.config.json."
+    echo "ERROR: faltan 'namespacePrefix' y/o 'solutionFile' en .mefisto/harness.config.json."
     exit 1
 fi
 ```
