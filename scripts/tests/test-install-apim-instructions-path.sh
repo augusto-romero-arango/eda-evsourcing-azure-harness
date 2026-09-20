@@ -37,6 +37,11 @@ resolve_root() {
     (cd "$root" && bash -c "$ROOT_BLOCK"$'\n''printf "ROOT=%s PATH=%s\\n" "$ROOT_NAMESPACE" "$MEFISTO_INSTRUCTIONS_PATH"')
 }
 
+reuse_root() {
+    local root="$1"
+    (cd "$root" && ROOT_NAMESPACE='Previamente.Resuelto' bash -c "$ROOT_BLOCK"$'\n''printf "ROOT=%s\\n" "$ROOT_NAMESPACE"')
+}
+
 echo '[1] Canonico: AGENTS.md determina RootNamespace, descubre MCP y permite tenancy'
 CANON="$WORK/canonico"; mkdir -p "$CANON/src/Bitakora.ControlAsistencia.Mcp.Reportes"
 printf 'RootNamespace: Bitakora.ControlAsistencia\n' > "$CANON/AGENTS.md"
@@ -53,6 +58,13 @@ if [ "$rc" -eq 0 ] && [ "$out" = 'ROOT=Bitakora.ControlAsistencia PATH=AGENTS.md
     pass '9.1 relee AGENTS.md en un shell nuevo y continua'
 else
     fail "9.1 canonico no continuo (rc=$rc, out='$out', err='$(cat "$WORK/canonico-root.err")')"
+fi
+REUSE="$WORK/reuso"; mkdir -p "$REUSE"
+out="$(reuse_root "$REUSE" 2>"$WORK/reuso.err")"; rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = 'ROOT=Previamente.Resuelto' ] && [ ! -s "$WORK/reuso.err" ]; then
+    pass '9.1 reutiliza RootNamespace sin exigir ni releer el archivo'
+else
+    fail "9.1 no reutilizo RootNamespace (rc=$rc, out='$out', err='$(cat "$WORK/reuso.err")')"
 fi
 
 echo '[2] Solo legacy conserva el fallback de lectura'
@@ -90,7 +102,23 @@ else
     fail "ausencia no aborto correctamente (rc=$rc, out='$out', err='$(cat "$WORK/ausente.err")')"
 fi
 
-echo '[4] Antirregresion de fuentes legacy directas'
+echo '[4] Un archivo efectivo sin token degrada 2b y bloquea 9.1'
+TOKENLESS="$WORK/sin-token"; mkdir -p "$TOKENLESS"
+printf '## Tokens del harness\n' > "$TOKENLESS/AGENTS.md"
+out="$(resolve_mcp "$TOKENLESS" 2>"$WORK/sin-token-mcp.err")"; rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = 'ROOT= SERVIDORES=no determinable' ]; then
+    pass '2b degrada SERVIDORES_MCP cuando falta el token en el archivo efectivo'
+else
+    fail "2b no degrado el token ausente (rc=$rc, out='$out', err='$(cat "$WORK/sin-token-mcp.err")')"
+fi
+out="$(resolve_root "$TOKENLESS" 2>"$WORK/sin-token-root.err")"; rc=$?
+if [ "$rc" -ne 0 ] && grep -Fq 'falta declarar RootNamespace en AGENTS.md' <<< "$out"; then
+    pass '9.1 bloquea y nombra AGENTS.md cuando falta el token'
+else
+    fail "9.1 no bloqueo el token ausente con el diagnostico esperado (rc=$rc, out='$out')"
+fi
+
+echo '[5] Antirregresion de fuentes legacy directas'
 if grep -Fq 'CLAUDE.md raiz' "$COMMAND" || grep -Fq 'leyendo el `CLAUDE.md`' "$COMMAND"; then
     fail 'reaparecio una fuente directa CLAUDE.md fuera del fallback'
 else

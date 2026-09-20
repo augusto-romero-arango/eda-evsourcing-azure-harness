@@ -213,24 +213,26 @@ El agente es aditivo/idempotente por su cuenta (sus Pasos 0.2/0.4/1/2/2b/3/3b/3c
 Reusa `<RootNamespace>` resuelto en el paso 2b. Si este bloque corre en un shell nuevo y debe releerlo, usa el mismo archivo efectivo de instrucciones; nunca una ruta de instrucciones fija. Si no esta declarado, detente y pide al usuario que lo declare en `AGENTS.md` (seccion "Tokens del harness") -- mismo criterio que `domain-scaffolder`.
 
 ```bash
-if [ -z "${MEFISTO_INSTRUCTIONS_PATH:-}" ]; then
-    if [ -f "AGENTS.md" ]; then
-        if [ -f "CLAUDE.md" ]; then
-            printf '%s\n' 'AVISO: se usara AGENTS.md; se ignora el legacy CLAUDE.md. Migra o elimina conscientemente el archivo legacy para evitar divergencias.' >&2
+if [ -z "${ROOT_NAMESPACE:-}" ]; then
+    if [ -z "${MEFISTO_INSTRUCTIONS_PATH:-}" ]; then
+        if [ -f "AGENTS.md" ]; then
+            if [ -f "CLAUDE.md" ]; then
+                printf '%s\n' 'AVISO: se usara AGENTS.md; se ignora el legacy CLAUDE.md. Migra o elimina conscientemente el archivo legacy para evitar divergencias.' >&2
+            fi
+            MEFISTO_INSTRUCTIONS_PATH="AGENTS.md"
+        elif [ -f "CLAUDE.md" ]; then
+            MEFISTO_INSTRUCTIONS_PATH="CLAUDE.md"
+        else
+            printf '%s\n' 'ERROR: no se encontro AGENTS.md, la fuente canonica de directivas del consumidor.' >&2
+            printf '%s\n' '  Se acepta solo para lectura el fallback legacy CLAUDE.md.' >&2
+            printf '%s\n' '  Ejecuta /mefisto:onboard para diagnosticar y completar el contrato del consumidor.' >&2
+            exit 1
         fi
-        MEFISTO_INSTRUCTIONS_PATH="AGENTS.md"
-    elif [ -f "CLAUDE.md" ]; then
-        MEFISTO_INSTRUCTIONS_PATH="CLAUDE.md"
-    else
-        printf '%s\n' 'ERROR: no se encontro AGENTS.md, la fuente canonica de directivas del consumidor.' >&2
-        printf '%s\n' '  Se acepta solo para lectura el fallback legacy CLAUDE.md.' >&2
-        printf '%s\n' '  Ejecuta /mefisto:onboard para diagnosticar y completar el contrato del consumidor.' >&2
-        exit 1
+        export MEFISTO_INSTRUCTIONS_PATH
     fi
-    export MEFISTO_INSTRUCTIONS_PATH
+    ROOT_NAMESPACE=$(awk '/^[[:space:]]*RootNamespace:[[:space:]]*/ { sub(/^[[:space:]]*RootNamespace:[[:space:]]*/, ""); print; exit }' "$MEFISTO_INSTRUCTIONS_PATH")
 fi
 
-ROOT_NAMESPACE=$(awk '/^[[:space:]]*RootNamespace:[[:space:]]*/ { sub(/^[[:space:]]*RootNamespace:[[:space:]]*/, ""); print; exit }' "$MEFISTO_INSTRUCTIONS_PATH")
 if [ -z "$ROOT_NAMESPACE" ]; then
     echo "ERROR: falta declarar RootNamespace en AGENTS.md (seccion \"Tokens del harness\")."
     exit 1
