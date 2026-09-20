@@ -74,6 +74,13 @@ if grep -Fq 'Dominio canonico: calculo-horas' <<< "$BOTH_RESULT" \
 else
     fail "ambos no conserva precedencia o AVISO: $BOTH_RESULT"
 fi
+BOTH_LEGACY_RESULT=$(run_skill_block "$BOTH_ROOT" legacy)
+if grep -Fq "ERROR: el dominio 'legacy' no esta declarado" <<< "$BOTH_LEGACY_RESULT" \
+    && ! grep -Fq 'Dominio canonico: legacy' <<< "$BOTH_LEGACY_RESULT"; then
+    pass "ambos no incorpora dominios del config legacy"
+else
+    fail "el config legacy aporto dominios cuando coexistia el canonico: $BOTH_LEGACY_RESULT"
+fi
 
 echo "[3] Consumidor legacy"
 LEGACY_ROOT="$TMP_DIR/legacy"
@@ -117,6 +124,12 @@ if grep -Fq 'de .claude/harness.config.json' "$SCRIPT"; then
     fail "el error de dominio del script no usa HARNESS_CONFIG_PATH"
 else
     pass "el error de dominio del script usa la ruta efectiva"
+fi
+if grep -E '^[[:space:]]*echo .*\.claude/harness\.config\.json' "$COMMAND" "$SCRIPT" \
+    | grep -Ev 'fallback|se ignora el legacy|Se acepta solo para lectura' >/dev/null; then
+    fail "un mensaje de usuario nombra el legacy sin calificarlo"
+else
+    pass "los mensajes de usuario califican la ruta legacy"
 fi
 if ! grep -Fq 'fallback' "$SCRIPT" \
     || ! grep -Fq 'legacy solo de lectura en .claude/harness.config.json' "$SCRIPT" \
