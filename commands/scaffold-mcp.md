@@ -36,6 +36,10 @@ Si trae argumento, normaliza `<proposito>` a PascalCase (separa por espacios/gui
 
 ## Pre-condicion 3: config y tokens del harness
 
+Resuelve primero el contrato canonico `.mefisto/harness.config.json`; acepta
+`.claude/harness.config.json` **solo como fallback de lectura** si el canonico no existe
+(MEF-ADR-0053, decision 4). Nunca copies, migres ni escribas ninguno de esos archivos.
+
 ```bash
 REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || { echo "ERROR: no estas en un repositorio git"; exit 1; }
 CONFIG="$REPO_ROOT/.mefisto/harness.config.json"

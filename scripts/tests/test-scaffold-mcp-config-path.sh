@@ -17,10 +17,23 @@ TMP_DIR=$(mktemp -d)
 trap 'rm -rf "$TMP_DIR"' EXIT
 
 resolve_config() {
-    local root="$1" config="$root/.mefisto/harness.config.json"
-    [ -f "$config" ] || config="$root/.claude/harness.config.json"
-    [ -f "$config" ] || return 1
-    printf '%s\n' "$config"
+    local root="$1" canonical legacy
+    canonical="$root/.mefisto/harness.config.json"
+    legacy="$root/.claude/harness.config.json"
+    if [ -f "$canonical" ]; then
+        if [ -f "$legacy" ]; then
+            echo "AVISO: se usara el config canonico $canonical; se ignora el legacy $legacy. Migra o elimina conscientemente el archivo legacy para evitar divergencias." >&2
+        fi
+        printf '%s\n' "$canonical"
+        return 0
+    fi
+    if [ -f "$legacy" ]; then
+        printf '%s\n' "$legacy"
+        return 0
+    fi
+    echo "ERROR: no se encontro el config canonico requerido $canonical." >&2
+    echo "  Se acepta solo para lectura el fallback legacy $legacy." >&2
+    return 1
 }
 
 write_config() {
@@ -37,7 +50,7 @@ tokens() {
 
 assert_config() {
     local label="$1" root="$2" expected_path="$3" expected_tokens="$4" actual_path actual_tokens
-    actual_path=$(resolve_config "$root") || { fail "$label no resolvio config"; return; }
+    actual_path=$(resolve_config "$root" 2>"$TMP_DIR/$label.stderr") || { fail "$label no resolvio config"; return; }
     actual_tokens=$(tokens "$actual_path")
     if [ "$actual_path" = "$expected_path" ] && [ "$actual_tokens" = "$expected_tokens" ]; then
         pass "$label resuelve los cuatro tokens esperados"
@@ -56,6 +69,11 @@ BOTH_ROOT="$TMP_DIR/both"
 write_config "$BOTH_ROOT/.mefisto/harness.config.json" Canonical Canonical.slnx canonical-domain multi-tenant-header
 write_config "$BOTH_ROOT/.claude/harness.config.json" Legacy Legacy.slnx legacy-domain mono-tenant-transitorio
 assert_config "ambos" "$BOTH_ROOT" "$BOTH_ROOT/.mefisto/harness.config.json" "Canonical|Canonical.slnx|canonical-domain|multi-tenant-header"
+if grep -Fq "AVISO: se usara el config canonico $BOTH_ROOT/.mefisto/harness.config.json; se ignora el legacy $BOTH_ROOT/.claude/harness.config.json. Migra o elimina conscientemente el archivo legacy para evitar divergencias." "$TMP_DIR/ambos.stderr"; then
+    pass "ambos emite el AVISO canonico"
+else
+    fail "ambos no emite el AVISO canonico"
+fi
 
 echo "[3] Consumidor legacy"
 LEGACY_ROOT="$TMP_DIR/legacy"
@@ -65,10 +83,13 @@ assert_config "legacy" "$LEGACY_ROOT" "$LEGACY_ROOT/.claude/harness.config.json"
 echo "[4] Ausencia de ambos configs"
 MISSING_ROOT="$TMP_DIR/missing"
 mkdir -p "$MISSING_ROOT"
-if [ ! -f "$MISSING_ROOT/.mefisto/harness.config.json" ] && [ ! -f "$MISSING_ROOT/.claude/harness.config.json" ]; then
-    pass "ausencia aborta"
-else
+if resolve_config "$MISSING_ROOT" >"$TMP_DIR/missing.stdout" 2>"$TMP_DIR/missing.stderr"; then
     fail "ausencia debe abortar"
+elif grep -Fq "config canonico requerido $MISSING_ROOT/.mefisto/harness.config.json" "$TMP_DIR/missing.stderr" \
+    && grep -Fq "fallback legacy $MISSING_ROOT/.claude/harness.config.json" "$TMP_DIR/missing.stderr"; then
+    pass "ausencia aborta y explica el contrato canonico y el fallback"
+else
+    fail "ausencia no explica el contrato canonico y el fallback"
 fi
 
 echo "[5] Prompts conservan resolucion y fallback explicitos"
@@ -86,6 +107,45 @@ if [ "$(grep -Fc 'AVISO: se usara el config canonico $CONFIG; se ignora el legac
     pass "cada bloque emite el AVISO de coexistencia"
 else
     fail "falta el AVISO de coexistencia en algun bloque"
+fi
+if grep -Fq 'Resuelve primero el contrato canonico `.mefisto/harness.config.json`' "$COMMAND" \
+    && grep -Fq 'solo como fallback de lectura' "$COMMAND" \
+    && grep -Fq 'Nunca copies, migres ni escribas ninguno de esos archivos.' "$COMMAND" \
+    && grep -Fq '**El dominio de ejemplo**, del contrato canonico `.mefisto/harness.config.json`' "$AGENT" \
+    && grep -Fq 'Nunca copies, migres ni escribas el archivo legacy' "$AGENT" \
+    && grep -Fq '**Estado de auth del BC**, del mismo contrato canonico `.mefisto/harness.config.json`' "$AGENT"; then
+    pass "la prosa documenta canonico, fallback y prohibicion de escritura"
+else
+    fail "la prosa no documenta completamente el contrato de lectura"
+fi
+if python3 - "$COMMAND" "$AGENT" <<'PY'
+import re
+import sys
+from pathlib import Path
+
+expected = {sys.argv[1]: 1, sys.argv[2]: 3}
+notice = "AVISO: se usara el config canonico $CONFIG; se ignora el legacy $REPO_ROOT/.claude/harness.config.json."
+for path, count in expected.items():
+    text = Path(path).read_text()
+    blocks = [block for block in re.findall(r"```bash\n(.*?)\n```", text, re.S)
+              if 'CONFIG="$REPO_ROOT/.mefisto/harness.config.json"' in block]
+    if len(blocks) != count:
+        raise SystemExit(1)
+    for block in blocks:
+        required = (
+            'REPO_ROOT=$(git rev-parse --show-toplevel',
+            'CONFIG="$REPO_ROOT/.claude/harness.config.json"',
+            notice,
+            'config canonico requerido $REPO_ROOT/.mefisto/harness.config.json',
+            'fallback legacy $REPO_ROOT/.claude/harness.config.json',
+        )
+        if any(fragment not in block for fragment in required):
+            raise SystemExit(1)
+PY
+then
+    pass "cada bloque es autocontenido y conserva AVISO y aborto"
+else
+    fail "algun bloque no rederiva el resolver completo"
 fi
 if grep -Eq '(^|[;&|[:space:]])(jq|cat)[[:space:]].*\.claude/harness\.config\.json|<[[:space:]]*[^[:space:]]*\.claude/harness\.config\.json' "$COMMAND" "$AGENT"; then
     fail "reaparecio una lectura directa del config legacy"
