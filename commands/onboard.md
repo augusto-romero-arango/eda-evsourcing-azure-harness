@@ -261,7 +261,7 @@ elif ! command -v jq >/dev/null 2>&1; then
   echo "ERROR: jq no esta instalado. Requerido para escribir $CONFIG."
 else
   TMP=$(mktemp)
-  if jq --arg s "$ESTRATEGIA" '.tenancy = {strategy: $s}' "$CONFIG" > "$TMP" && mv "$TMP" "$CONFIG"; then
+  if jq --arg s "$ESTRATEGIA" '.tenancy = ((.tenancy // {}) + {strategy: $s})' "$CONFIG" > "$TMP" && mv "$TMP" "$CONFIG"; then
     echo "OK: tenancy.strategy = \"$ESTRATEGIA\" escrito en $CONFIG."
   else
     rm -f "$TMP"
