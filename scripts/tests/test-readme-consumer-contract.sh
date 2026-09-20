@@ -48,12 +48,17 @@ else
 fi
 
 echo "[3] Instruccion de .gitignore: ignora .mefisto/pipeline/, nunca .mefisto/ completo"
-if grep -Fq '.mefisto/pipeline/' "$README" && grep -Fq '.gitignore' "$README"; then
-    pass "el README menciona .mefisto/pipeline/ y .gitignore"
+if grep -F '.mefisto/pipeline/' "$README" | grep -Fq '.gitignore'; then
+    pass "una misma linea instruye .gitignore y .mefisto/pipeline/"
 else
-    fail "falta la mencion de .mefisto/pipeline/ o .gitignore"
+    fail "ninguna linea del README instruye .mefisto/pipeline/ en el .gitignore"
 fi
-BAD_IGNORE_LINES=$(grep -E "ignor(a|es|ar)[^.]*\`?\.mefisto/\`?[[:space:]]+completo" "$README" | grep -vi 'nunca\|no ignores' || true)
+if grep -F '.mefisto/pipeline/' "$README" | grep -Fq 'Agrega exactamente'; then
+    pass "la instruccion replica la regla de scripts/onboard-diagnose.sh (agrega exactamente)"
+else
+    fail "la instruccion no replica la regla de scripts/onboard-diagnose.sh (falta 'Agrega exactamente')"
+fi
+BAD_IGNORE_LINES=$(grep -nE 'ignor[a-z]+[^|]{0,60}\.mefisto/`? completo' "$README" | grep -viE 'nunca|no ignores' || true)
 if [ -n "$BAD_IGNORE_LINES" ]; then
     fail "el README sigue instruyendo ignorar .mefisto/ completo: $BAD_IGNORE_LINES"
 else

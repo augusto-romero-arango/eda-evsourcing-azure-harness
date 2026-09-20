@@ -550,9 +550,9 @@ Cuando descubras desde un consumidor un problema atribuible al plugin, el toolin
 
 El legacy `.claude/harness.config.json` sigue siendo legible como fallback de lectura indefinido (MEF-ADR-0053, decisión 4), pero los escritores (`/onboard` paso 6, `/seed-secret`) rechazan un consumidor solo-legacy y piden migrar conscientemente el archivo completo. No existe una herramienta automática: migra a mano.
 
-1. `git mv .claude/harness.config.json .mefisto/harness.config.json` (mueve el legacy al canónico)
-2. Commitea el `git mv`.
-3. Corre `/mefisto:onboard` para verificar.
+1. `mkdir -p .mefisto && git mv .claude/harness.config.json .mefisto/harness.config.json` — mueve el legacy al canónico; el directorio destino debe existir antes del `git mv`.
+2. Commitea el movimiento.
+3. Corre `/mefisto:onboard` para verificar; ahí también te avisa si falta `.mefisto/pipeline/` en tu `.gitignore`.
 
 No conserves ambos archivos: los lectores avisan de la coexistencia y usan igualmente el canónico.
 
