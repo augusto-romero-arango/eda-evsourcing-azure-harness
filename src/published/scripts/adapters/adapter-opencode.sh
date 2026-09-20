@@ -47,27 +47,30 @@ EOF
 }
 
 permission_json() {
-    local rel="$1" capabilities="$2" mode="$3" native_skills="$4" cap
+    local rel="$1" capabilities="$2" mode="$3" native_skills="$4" validation status payload
     [ -f "$MAPPING" ] || { error "$rel: capabilities: no existe el mapping de permisos OpenCode"; return 1; }
-    if ! jq -e '
-      . as $mapping |
-      ([.always_deny[], "question", .capability_scalar[][],
-        .capability_map[].keys[]] | unique) as $mapped |
-      (.supported_permissions | length) == 17 and
-      (.supported_permissions | unique | length) == 17 and
-      (.supported_permissions | all(. as $key | $mapped | index($key) != null)) and
-      ($mapped | all(. as $key | $mapping.supported_permissions | index($key) != null))
-    ' "$MAPPING" >/dev/null 2>&1; then
-        error "$rel: capabilities: mapping OpenCode incompleto o invalido"
-        return 1
-    fi
-    while IFS= read -r cap; do
-        [ -z "$cap" ] && continue
-        if ! jq -e --arg cap "$cap" '((.capability_scalar | keys) + (.capability_map | keys)) | index($cap) != null' "$MAPPING" >/dev/null 2>&1; then
-            error "$rel: capabilities: capacidad '$cap' sin mapping OpenCode"
-            return 1
-        fi
-    done < <(printf '%s' "$capabilities" | jq -r '.[]')
+    # Una sola pasada jq valida a la vez la completitud del mapping y que cada
+    # capacidad solicitada tenga contraparte OpenCode (evita un jq por capacidad).
+    validation="$(jq -r --argjson capabilities "$capabilities" '
+      . as $m |
+      ([$m.always_deny[], "question", $m.capability_scalar[][], $m.capability_map[].keys[]] | unique) as $mapped |
+      (($m.supported_permissions | length) == 17 and
+       ($m.supported_permissions | unique | length) == 17 and
+       ($m.supported_permissions | all(. as $key | $mapped | index($key) != null)) and
+       ($mapped | all(. as $key | $m.supported_permissions | index($key) != null))) as $mapping_ok |
+      (($m.capability_scalar | keys) + ($m.capability_map | keys)) as $known |
+      ($capabilities | map(select(. as $cap | ($known | index($cap)) == null)) | .[0]) as $unknown |
+      if ($mapping_ok | not) then "mapping\u001f"
+      elif ($unknown != null) then "capability\u001f\($unknown)"
+      else "ok\u001f" end
+    ' "$MAPPING" 2>/dev/null)" || { error "$rel: capabilities: mapping OpenCode incompleto o invalido"; return 1; }
+    IFS=$'\x1f' read -r status payload <<< "$validation"
+    case "$status" in
+        mapping) error "$rel: capabilities: mapping OpenCode incompleto o invalido"; return 1 ;;
+        capability) error "$rel: capabilities: capacidad '$payload' sin mapping OpenCode"; return 1 ;;
+        ok) ;;
+        *) error "$rel: capabilities: validacion OpenCode no representable"; return 1 ;;
+    esac
     jq -cn --slurpfile mapping "$MAPPING" --argjson capabilities "$capabilities" --argjson native_skills "$native_skills" --arg mode "$mode" '
       ($mapping[0]) as $m |
       (reduce ($m.always_deny[]) as $key ({}; . + {($key): "deny"})) +
@@ -88,30 +91,40 @@ permission_json() {
 
 # OpenCode controla las tools MCP por agente con el prefijo del servidor. La
 # fuente conserva ids logicos y el registro determina la politica cerrada.
+# La validacion global del registro (esquema, transporte, autenticacion) ya
+# corre una vez en las operaciones assets/render-asset antes de publicar; aqui
+# solo se reafirman en una unica pasada jq las invariantes locales que
+# permission_json/render necesitan por fuente: sin duplicados en el registro,
+# todo id de registro con mapping OpenCode, todo id solicitado presente y sin
+# duplicados en lo solicitado.
 mcp_tools_json() {
-    local rel="$1" requested="$2" registry id count pattern mapping
-    registry="$(jq -c '.' "$MCP_REGISTRY")" || { error "$rel: mcp: no se pudo leer el registro MCP"; return 1; }
+    local rel="$1" requested="$2" mapping result status payload
     mapping='{"microsoft-learn":"microsoft-learn_*","terraform":"terraform_*"}'
-    while IFS= read -r id; do
-        [ -n "$id" ] || continue
-        count="$(printf '%s' "$registry" | jq --arg id "$id" '[.servers[] | select(.id == $id)] | length')"
-        if [ "$count" -ne 1 ]; then error "$rel: mcp: id MCP '$id' duplicado en el registro"; return 1; fi
-        pattern="$(printf '%s' "$mapping" | jq -r --arg id "$id" '.[$id] // empty')"
-        [ -n "$pattern" ] || { error "$rel: mcp: id MCP '$id' sin mapping OpenCode"; return 1; }
-    done < <(printf '%s' "$registry" | jq -r '.servers[]?.id')
-    while IFS= read -r id; do
-        [ -n "$id" ] || continue
-        count="$(printf '%s' "$registry" | jq --arg id "$id" '[.servers[] | select(.id == $id)] | length')"
-        if [ "$count" -eq 0 ]; then error "$rel: mcp: id MCP '$id' ausente del registro"; return 1; fi
-    done < <(printf '%s' "$requested" | jq -r '.[]?')
-    if [ "$(printf '%s' "$requested" | jq 'length')" -ne "$(printf '%s' "$requested" | jq 'unique | length')" ]; then
-        error "$rel: mcp: referencia MCP duplicada"
-        return 1
-    fi
-    validate_published_mcp "$MCP_REGISTRY" || return 1
-    jq -cn --argjson registry "$registry" --argjson requested "$requested" --argjson mapping "$mapping" '
-      reduce $registry.servers[] as $server ({};
-        . + {($mapping[$server.id]): (($requested | index($server.id)) != null)})'
+    result="$(jq -nr --slurpfile registry "$MCP_REGISTRY" --argjson requested "$requested" --argjson mapping "$mapping" '
+      ($registry[0]) as $r |
+      ($r.servers | map(.id)) as $ids |
+      ($ids | map(. as $id |
+          if (($ids | map(select(. == $id)) | length) > 1) then {type: "dup_registry", id: $id}
+          elif ($mapping[$id] == null) then {type: "no_mapping", id: $id}
+          else null end)
+        | map(select(. != null)) | .[0]) as $problem |
+      ($requested | map(select(. as $req | ($ids | index($req)) == null)) | .[0]) as $absent |
+      (($requested | length) != ($requested | unique | length)) as $dup_requested |
+      if ($problem != null) then "\($problem.type)\u001f\($problem.id)"
+      elif ($absent != null) then "absent\u001f\($absent)"
+      elif $dup_requested then "dup_requested\u001f"
+      else "ok\u001f" + (reduce $r.servers[] as $server ({}; . + {($mapping[$server.id]): (($requested | index($server.id)) != null)}) | tojson)
+      end
+    ' 2>/dev/null)" || { error "$rel: mcp: no se pudo leer el registro MCP"; return 1; }
+    IFS=$'\x1f' read -r status payload <<< "$result"
+    case "$status" in
+        dup_registry) error "$rel: mcp: id MCP '$payload' duplicado en el registro"; return 1 ;;
+        no_mapping) error "$rel: mcp: id MCP '$payload' sin mapping OpenCode"; return 1 ;;
+        absent) error "$rel: mcp: id MCP '$payload' ausente del registro"; return 1 ;;
+        dup_requested) error "$rel: mcp: referencia MCP duplicada"; return 1 ;;
+        ok) printf '%s' "$payload" ;;
+        *) error "$rel: mcp: resultado OpenCode no representable"; return 1 ;;
+    esac
 }
 
 published_opencode_translate_body() {
@@ -197,27 +210,35 @@ launch_agent_id() {
 
 # OpenCode descubre Skills por directorio. La fuente permanece nativa para
 # Claude; este borde adapta a la vez el directorio y el campo name (ADR-0050).
-skill_frontmatter_value() {
-    local key="$1" source="$2"
-    awk -v key="$key" '
+# Una sola pasada awk extrae name+description (evita un awk por campo). Emite
+# ademas cuantas veces aparecio cada clave para que el llamador conserve el
+# diagnostico propio de cada una en vez de colapsarlas en un unico mensaje.
+skill_frontmatter_pair() {
+    local key1="$1" key2="$2" source="$3"
+    awk -v key1="$key1" -v key2="$key2" '
         NR == 1 { if ($0 != "---") exit 1; next }
         $0 == "---" { closed=1; exit }
-        $0 ~ "^" key ":[[:space:]]*" {
-            found++
-            value=$0
-            sub("^" key ":[[:space:]]*", "", value)
-            sub(/[[:space:]]+$/, "", value)
+        $0 ~ "^" key1 ":[[:space:]]*" {
+            found1++
+            value1=$0
+            sub("^" key1 ":[[:space:]]*", "", value1)
+            sub(/[[:space:]]+$/, "", value1)
+        }
+        $0 ~ "^" key2 ":[[:space:]]*" {
+            found2++
+            value2=$0
+            sub("^" key2 ":[[:space:]]*", "", value2)
+            sub(/[[:space:]]+$/, "", value2)
         }
         END {
-            if (!closed || found != 1) exit 1
-            print value
+            if (!closed) exit 1
+            printf "%d\x1f%d\x1f%s\x1f%s\n", found1 + 0, found2 + 0, value1, value2
         }
     ' "$source"
 }
 
-skill_frontmatter_string() {
-    local key="$1" source="$2" raw
-    raw="$(skill_frontmatter_value "$key" "$source")" || return 1
+skill_frontmatter_decode() {
+    local raw="$1"
     case "$raw" in
         \"*\") printf '%s' "$raw" | jq -Rer 'fromjson | strings' ;;
         \'*\') printf '%s' "$raw" | sed "s/^'//; s/'$//; s/''/'/g" ;;
@@ -226,35 +247,69 @@ skill_frontmatter_string() {
     esac
 }
 
-validate_skill_links() {
-    local skill_root="$1" source="$2" match target target_dir target_file physical_root physical_target
-    physical_root="$(cd "$skill_root" && pwd -P)" || return 1
-    while IFS= read -r match; do
-        target="${match#](}"
+# physical_root ya viene resuelto por skill (una sola vez desde validate_skills)
+# para no forzar un fork cd+pwd por archivo. dirname/basename se resuelven con
+# expansion de parametros, y el grep de enlaces corre una sola vez por Skill
+# (con -H para distinguir archivo) en vez de un fork de grep por archivo.
+validate_skill_links_batch() {
+    local skill_root="$1" physical_root="$2" files=() f line source target target_dir target_file physical_target_dir raw_dir
+    local last_source=$'\x01' last_raw_dir=$'\x01' last_physical_target_dir='' sep=':]('
+    while IFS= read -r f; do files+=("$f"); done < <(find "$skill_root" -type f | LC_ALL=C sort)
+    [ "${#files[@]}" -gt 0 ] || return 0
+    while IFS= read -r line; do
+        [ -n "$line" ] || continue
+        # grep -H imprime "<archivo>:](<destino>"; se corta por la primera
+        # ocurrencia de ":](" y no por el primer ':', que puede venir en la
+        # ruta absoluta del propio repo.
+        source="${line%%"$sep"*}"
+        target="${line#*"$sep"}"
         case "$target" in ''|*'://'*|mailto:*|/*|\#*) continue ;; esac
-        target_dir="$(dirname "$source")"
+        if [ "$source" != "$last_source" ]; then
+            target_dir="${source%/*}"
+            [ "$target_dir" != "$source" ] || target_dir="."
+            last_source="$source"
+        fi
         target_file="$target_dir/$target"
         [ -e "$target_file" ] && [ ! -L "$target_file" ] || { error "$source: links: enlace local no resoluble: $target"; return 1; }
-        physical_target="$(cd "$(dirname "$target_file")" && pwd -P)/$(basename "$target_file")" || return 1
-        case "$physical_target" in "$physical_root"/*) ;; *) error "$source: links: enlace local fuera del Skill: $target"; return 1 ;; esac
-    done < <(grep -hoE '\]\([^ )#]+' "$source" 2>/dev/null || true)
+        # Memoiza la resolucion fisica por directorio crudo: varios enlaces de
+        # un mismo archivo (o directorio) comparten el mismo fork cd+pwd -P.
+        raw_dir="${target_file%/*}"
+        if [ "$raw_dir" = "$last_raw_dir" ]; then
+            physical_target_dir="$last_physical_target_dir"
+        else
+            physical_target_dir="$(cd "$raw_dir" 2>/dev/null && pwd -P)" || return 1
+            last_raw_dir="$raw_dir"
+            last_physical_target_dir="$physical_target_dir"
+        fi
+        case "$physical_target_dir/${target_file##*/}" in "$physical_root"/*) ;; *) error "$source: links: enlace local fuera del Skill: $target"; return 1 ;; esac
+    done < <(grep -HoE '\]\([^ )#]+' "${files[@]}" 2>/dev/null || true)
 }
 
 validate_skills() {
-    local skill skill_id source_name description adapted link_source entry invalid_entry
+    local skill skill_id source_name description adapted entry invalid_entry physical_root pair
+    local name_found description_found name_raw description_raw
     [ -d "$SKILLS_ROOT" ] && [ ! -L "$SKILLS_ROOT" ] || { error 'skills: la raiz publicada no existe o es un symlink'; return 1; }
     while IFS= read -r skill; do
         [ ! -L "$skill" ] || { error "${skill#"$REPO_ROOT/"}: skill no puede ser symlink"; return 1; }
-        skill_id="$(basename "$skill")"
-        printf '%s\n' "$skill_id" | grep -Eq '^[a-z0-9]+(-[a-z0-9]+)*$' || { error "$skill_id: id de Skill invalido"; return 1; }
+        skill_id="${skill##*/}"
+        case "$skill_id" in *[!a-z0-9-]*|''|-*|*--*|*-) error "$skill_id: id de Skill invalido"; return 1 ;; esac
         [ -f "$skill/SKILL.md" ] && [ ! -L "$skill/SKILL.md" ] || { error "skills/$skill_id: falta SKILL.md regular"; return 1; }
-        source_name="$(skill_frontmatter_string name "$skill/SKILL.md")" || { error "skills/$skill_id/SKILL.md: frontmatter o name invalido"; return 1; }
+        # La asignacion previa al read captura el exit code real de awk: un
+        # read sobre "$(cmd)" en linea perderia el fallo de cmd (siempre 0).
+        pair="$(skill_frontmatter_pair name description "$skill/SKILL.md")" || { error "skills/$skill_id/SKILL.md: frontmatter o name invalido"; return 1; }
+        IFS=$'\x1f' read -r name_found description_found name_raw description_raw <<< "$pair"
+        [ "$name_found" = 1 ] || { error "skills/$skill_id/SKILL.md: frontmatter o name invalido"; return 1; }
+        source_name="$(skill_frontmatter_decode "$name_raw")" || { error "skills/$skill_id/SKILL.md: frontmatter o name invalido"; return 1; }
         [ "$source_name" = "$skill_id" ] || { error "skills/$skill_id/SKILL.md: name debe coincidir con el directorio"; return 1; }
         adapted="mefisto-$skill_id"
         [ "${#adapted}" -le 64 ] || { error "skills/$skill_id: nombre OpenCode supera 64 caracteres"; return 1; }
-        description="$(skill_frontmatter_string description "$skill/SKILL.md")" || { error "skills/$skill_id/SKILL.md: falta description valida"; return 1; }
+        [ "$description_found" = 1 ] || { error "skills/$skill_id/SKILL.md: falta description valida"; return 1; }
+        description="$(skill_frontmatter_decode "$description_raw")" || { error "skills/$skill_id/SKILL.md: falta description valida"; return 1; }
         [ "${#description}" -ge 1 ] && [ "${#description}" -le 1024 ] || { error "skills/$skill_id/SKILL.md: description debe tener entre 1 y 1024 caracteres"; return 1; }
-        while IFS= read -r link_source; do validate_skill_links "$skill" "$link_source" || return 1; done < <(find "$skill" -type f | LC_ALL=C sort)
+        # physical_root se resuelve una vez por Skill (no por archivo): evita
+        # repetir el fork cd+pwd -P por cada recurso al validar sus enlaces.
+        physical_root="$(cd "$skill" && pwd -P)" || { error "skills/$skill_id: no se pudo resolver la raiz fisica"; return 1; }
+        validate_skill_links_batch "$skill" "$physical_root" || return 1
     done < <(find "$SKILLS_ROOT" -mindepth 1 -maxdepth 1 -type d | LC_ALL=C sort)
     for entry in "$SKILLS_ROOT"/*; do
         [ -e "$entry" ] || continue
@@ -268,7 +323,7 @@ validate_skills() {
 # Las referencias siguen siendo ids neutrales en la fuente. La existencia se
 # comprueba contra el mismo arbol que el adaptador empaqueta como Skills nativos.
 native_skills() {
-    local rel="$1" instance="$2" skill adapted seen='|' output=''
+    local rel="$1" skills_json="$2" skill adapted seen='|' output=''
     validate_skills || return 1
     while IFS= read -r skill; do
         case "$skill" in
@@ -281,7 +336,7 @@ native_skills() {
         adapted="mefisto-$skill"
         [ -z "$output" ] || output="$output,"
         output="$output\"$adapted\""
-    done < <(printf '%s' "$instance" | jq -r '.skills[]?')
+    done < <(printf '%s' "$skills_json" | jq -r '.[]?')
     printf '[%s]' "$output"
 }
 
@@ -432,16 +487,29 @@ export default async function mefistoMcp({ client } = {}) {
 EOF
 }
 render() {
-    local source="$1" marker="$2" rel fm instance kind artifact_id raw_body translated preamble='' mode permissions tools agent native_skills='[]'
+    local source="$1" marker="$2" rel fm instance kind raw_body translated preamble='' mode permissions tools agent native_skills='[]'
+    local description_json capabilities_json mcp_json skills_json
     rel="${source#*/src/published/}"
     rel="src/published/$rel"
     fm="$(frontmatter "$source")" || { error "$rel: frontmatter: no se pudo extraer"; return 1; }
     instance="$(printf '%s\n' "$fm" | jq -c '.')" || { error "$rel: frontmatter: no es JSON valido"; return 1; }
-    kind="$(printf '%s' "$instance" | jq -r '.kind')"
-    artifact_id="$(printf '%s' "$instance" | jq -r '.id')"
+    # Una sola pasada jq deriva todos los campos escalares/array del
+    # frontmatter (evita releer "$instance" con un jq por campo).
+    IFS=$'\x1f' read -r kind description_json mode agent capabilities_json mcp_json skills_json <<< "$(
+        printf '%s' "$instance" | jq -r '
+          [ .kind,
+            (.description | @json),
+            (.mode // ""),
+            (.agent // ""),
+            (.capabilities // [] | tostring),
+            (.mcp // [] | tostring),
+            (.skills // [] | tostring)
+          ] | join("\u001f")
+        '
+    )"
     raw_body="$(body "$source")" || { error "$rel: body: no se pudo extraer"; return 1; }
-    native_skills="$(native_skills "$rel" "$instance")" || return 1
-    if [ "$(printf '%s' "$native_skills" | jq 'length')" -gt 0 ]; then
+    native_skills="$(native_skills "$rel" "$skills_json")" || return 1
+    if [ "$native_skills" != '[]' ]; then
         preamble="$(skill_preamble "$native_skills")"
     fi
     translated="$(published_opencode_translate_body "$rel" "$raw_body")" || return 1
@@ -457,18 +525,19 @@ render() {
         preamble="$preamble$(published_effective_contract_preamble "$needs_config" "$needs_instructions")"
     fi
     printf '%s\n' '---'
-    printf 'description: %s\n' "$(printf '%s' "$instance" | jq -r '.description | @json')"
+    printf 'description: %s\n' "$description_json"
     if [ "$kind" = agent ]; then
-        mode="$(printf '%s' "$instance" | jq -r '.mode')"
-        if [ "$(printf '%s' "$native_skills" | jq 'length')" -gt 0 ] && ! printf '%s' "$instance" | jq -e '(.capabilities // []) | index("skill") != null' >/dev/null; then
-            error "$rel: skills: requiere la capacidad 'skill' para un agente OpenCode"
-            return 1
-        fi
-        permissions="$(permission_json "$rel" "$(printf '%s' "$instance" | jq -c '.capabilities // []')" "$mode" "$native_skills")" || return 1
-        tools="$(mcp_tools_json "$rel" "$(printf '%s' "$instance" | jq -c '.mcp // []')")" || return 1
+        case "$native_skills" in
+            '[]') ;;
+            *) case "$capabilities_json" in
+                   *'"skill"'*) ;;
+                   *) error "$rel: skills: requiere la capacidad 'skill' para un agente OpenCode"; return 1 ;;
+               esac ;;
+        esac
+        permissions="$(permission_json "$rel" "$capabilities_json" "$mode" "$native_skills")" || return 1
+        tools="$(mcp_tools_json "$rel" "$mcp_json")" || return 1
         printf 'mode: %s\npermission: %s\ntools: %s\n' "$(printf '%s' "$mode" | jq -Rr '@json')" "$permissions" "$tools"
     else
-        agent="$(printf '%s' "$instance" | jq -r '.agent // empty')"
         [ -n "$agent" ] || agent="$(launch_agent_id "$raw_body")"
         [ -z "$agent" ] || printf 'agent: %s\nsubtask: true\n' "$(printf '%s' "$agent" | jq -Rr '@json')"
     fi

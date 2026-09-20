@@ -86,6 +86,12 @@ write_future_skill; awk 'NR == 3 { print "name: futuro" } { print }' "$SKILL_REP
 assert_skill_failure 'rechaza frontmatter ambiguo'
 write_future_skill; printf '%s\n' '---' 'name: futuro' 'description: ""' '---' > "$SKILL_REPO/skills/futuro/SKILL.md"
 assert_skill_failure 'rechaza description vacia aunque este entre comillas'
+write_future_skill; printf '%s\n' '---' 'name: futuro' '---' > "$SKILL_REPO/skills/futuro/SKILL.md"
+skill_out="$("$FIXTURE_ADAPTER" assets 2>&1)"; rc=$?
+[ "$rc" -ne 0 ] && assert_contains "$skill_out" 'falta description valida' 'Skill sin description culpa a la description, no al name' || fail 'Skill sin description debio fallar'
+write_future_skill; mkdir -p "$SKILL_REPO/skills/futuro/sub:dir"; printf '%s\n' '[detalle](../detalle.md)' > "$SKILL_REPO/skills/futuro/sub:dir/nota.md"
+"$FIXTURE_ADAPTER" assets >/dev/null 2>&1 && pass 'un recurso cuya ruta contiene ":" no falsea la validacion de enlaces' || fail 'un recurso con ":" en la ruta rompio la validacion de enlaces'
+rm -rf "$SKILL_REPO/skills/futuro/sub:dir"
 long_id="$(printf 'a%.0s' {1..57})"; rm -rf "$SKILL_REPO/skills/futuro"; mkdir "$SKILL_REPO/skills/$long_id"; printf '%s\n' '---' "name: $long_id" 'description: Valida.' '---' > "$SKILL_REPO/skills/$long_id/SKILL.md"
 assert_skill_failure 'rechaza nombre OpenCode mayor de 64 caracteres'
 permission_count="$(jq -r '.supported_permissions | length' "$MAPPING")"
@@ -382,6 +388,28 @@ make_agent directiva '[]'
 printf '%s\n' '{{mefisto:desconocida}}' >> "$WORK/directiva.md"
 out="$(render "$WORK/directiva.md" 2>&1)"; rc=$?
 [ "$rc" -ne 0 ] && assert_contains "$out" 'body: directiva sin mapping OpenCode' 'directiva sin mapping falla con campo' || fail 'directiva debio fallar'
+
+printf '%s\n' '[coste] limite de procesos jq por render OpenCode (issue #1519)'
+JQ_REAL="$(command -v jq)"
+JQ_WRAPPER_DIR="$WORK/jq-wrapper"
+mkdir -p "$JQ_WRAPPER_DIR"
+cat > "$JQ_WRAPPER_DIR/jq" <<EOF
+#!/usr/bin/env bash
+[ -z "\${JQ_CALL_COUNTER:-}" ] || printf 'x' >> "\$JQ_CALL_COUNTER"
+exec "$JQ_REAL" "\$@"
+EOF
+chmod +x "$JQ_WRAPPER_DIR/jq"
+assert_jq_budget() {
+    local fixture="$1" counter="$WORK/jq-calls-$fixture.count" rc calls
+    rm -f "$counter"
+    JQ_CALL_COUNTER="$counter" PATH="$JQ_WRAPPER_DIR:$PATH" "$ADAPTER" render "$FIXTURES/$fixture.md" '<!-- prueba coste -->' > "$WORK/jq-calls-$fixture.out" 2> "$WORK/jq-calls-$fixture.err"
+    rc=$?
+    calls="$(wc -c < "$counter" 2>/dev/null | tr -d '[:space:]')"
+    [ -n "$calls" ] || calls=0
+    [ "$rc" -eq 0 ] && [ "$calls" -le 12 ] && pass "$fixture: render usa <= 12 procesos jq ($calls)" || fail "$fixture: render uso $calls procesos jq (rc=$rc): $(cat "$WORK/jq-calls-$fixture.err")"
+}
+assert_jq_budget agent-completo
+assert_jq_budget agent-ambos-mcp
 
 printf 'RESULTADO: %s pasaron, %s fallaron\n' "$PASS" "$FAIL"
 exit "$FAIL"
