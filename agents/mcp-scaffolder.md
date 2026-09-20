@@ -39,14 +39,32 @@ Si el guard dispara, detente sin escribir nada.
 
 **El proposito del servidor** te llega en el mensaje del usuario (via `/scaffold-mcp <proposito>`), ya normalizado a PascalCase -- ej. `Consultas`, `Comandos`, `ConsultasTurnos`. Extraelo del mensaje; llamalo `{Proposito}` en todo lo que sigue.
 
-**Tokens de `CLAUDE.md` raiz del proyecto** (seccion "Tokens del harness", leela con tu tool `Read`):
+```bash
+if [ -f "AGENTS.md" ]; then
+    if [ -f "CLAUDE.md" ]; then
+        printf '%s\n' 'AVISO: se usara AGENTS.md; se ignora el legacy CLAUDE.md. Migra o elimina conscientemente el archivo legacy para evitar divergencias.' >&2
+    fi
+    MEFISTO_INSTRUCTIONS_PATH="AGENTS.md"
+elif [ -f "CLAUDE.md" ]; then
+    MEFISTO_INSTRUCTIONS_PATH="CLAUDE.md"
+else
+    printf '%s\n' 'ERROR: no se encontro AGENTS.md, la fuente canonica de directivas del consumidor.' >&2
+    printf '%s\n' '  Se acepta solo para lectura el fallback legacy CLAUDE.md.' >&2
+    printf '%s\n' '  Ejecuta /mefisto:onboard para diagnosticar y completar el contrato del consumidor.' >&2
+    exit 1
+fi
+export MEFISTO_INSTRUCTIONS_PATH
+printf '%s\n' "$MEFISTO_INSTRUCTIONS_PATH"
+```
+
+**Tokens del archivo efectivo de instrucciones** (seccion "Tokens del harness", lee con tu tool `Read` la ruta `${MEFISTO_INSTRUCTIONS_PATH}` que imprimio el bloque):
 
 - `<RootNamespace>` -- prefijo del namespace .NET.
 - `<SolutionFile>` -- nombre del archivo de solucion.
 - `ProjectDisplayName` -- nombre legible del proyecto (para `host.json.extensions.mcp.serverName`).
 - `BoundedContext` -- nombre del BC (para el texto de `instructions` de `host.json`).
 
-Si `CLAUDE.md` no declara alguno de los cuatro, detente y pide al usuario que los declare antes de continuar.
+Si `AGENTS.md` no declara alguno de los cuatro, detente y pide al usuario que los declare en su seccion "Tokens del harness" antes de continuar.
 
 **El dominio de ejemplo**, del contrato canonico `.mefisto/harness.config.json`; acepta
 `.claude/harness.config.json` solo como fallback de lectura si el canonico no existe
@@ -2200,8 +2218,8 @@ jobs:
 ```
 
 Sustituye `{Proposito}`, `{proposito-kebab}` y `{prefix_func}` (el valor de `local.prefix_func`
-resuelto en el Paso 6b) por sus valores. `<RootNamespace>`/`<SolutionFile>` vienen del `CLAUDE.md`
-raiz (Paso 0).
+resuelto en el Paso 6b) por sus valores. `<RootNamespace>`/`<SolutionFile>` vienen del archivo
+efectivo de instrucciones `${MEFISTO_INSTRUCTIONS_PATH}` resuelto en el Paso 0.
 
 **Resolver `{resource-group}` (`local.prefix` de `main.tf`, distinto de `local.prefix_func` -- este
 no abrevia `project`):**
