@@ -71,10 +71,30 @@ Si cualquiera de los dos falta, detente con el mensaje -- no continues con el re
 
 ### 2b. Detectar los servidores MCP del BC (CA-3 del issue #820)
 
-Resuelve primero `<RootNamespace>` leyendo el `CLAUDE.md` raiz del consumidor (seccion "Tokens del harness"), igual que el paso 9.1 -- este paso lo necesita antes que aquel. Si no esta declarado, **no te detengas aca**: reporta `SERVIDORES_MCP` como no determinable y segui (el paso 9.1 vuelve a intentarlo y ahi si es bloqueante).
+Resuelve primero `<RootNamespace>` desde el archivo efectivo de instrucciones (seccion "Tokens del harness"), igual que el paso 9.1 -- este paso lo necesita antes que aquel. Si no esta declarado en ese archivo, **no te detengas aca**: reporta `SERVIDORES_MCP` como no determinable y segui (el paso 9.1 vuelve a intentarlo y ahi si es bloqueante).
 
 ```bash
-ls -d src/<RootNamespace>.Mcp.*/ 2>/dev/null | sed -E 's#.*<RootNamespace>\.Mcp\.([^/]+)/#\1#'
+if [ -f "AGENTS.md" ]; then
+    if [ -f "CLAUDE.md" ]; then
+        printf '%s\n' 'AVISO: se usara AGENTS.md; se ignora el legacy CLAUDE.md. Migra o elimina conscientemente el archivo legacy para evitar divergencias.' >&2
+    fi
+    MEFISTO_INSTRUCTIONS_PATH="AGENTS.md"
+elif [ -f "CLAUDE.md" ]; then
+    MEFISTO_INSTRUCTIONS_PATH="CLAUDE.md"
+else
+    printf '%s\n' 'ERROR: no se encontro AGENTS.md, la fuente canonica de directivas del consumidor.' >&2
+    printf '%s\n' '  Se acepta solo para lectura el fallback legacy CLAUDE.md.' >&2
+    printf '%s\n' '  Ejecuta /mefisto:onboard para diagnosticar y completar el contrato del consumidor.' >&2
+    exit 1
+fi
+export MEFISTO_INSTRUCTIONS_PATH
+
+ROOT_NAMESPACE=$(awk '/^[[:space:]]*RootNamespace:[[:space:]]*/ { sub(/^[[:space:]]*RootNamespace:[[:space:]]*/, ""); print; exit }' "$MEFISTO_INSTRUCTIONS_PATH")
+if [ -z "$ROOT_NAMESPACE" ]; then
+    SERVIDORES_MCP="no determinable"
+else
+    SERVIDORES_MCP=$(ls -d "src/${ROOT_NAMESPACE}".Mcp.*/ 2>/dev/null | sed -E "s#.*${ROOT_NAMESPACE}\\.Mcp\\.([^/]+)/#\\1#")
+fi
 ```
 
 Cada nombre listado es un `{Proposito}` (PascalCase) ya scaffoldeado por `/scaffold-mcp`. Llama a esta lista `SERVIDORES_MCP` -- puede venir vacia, y **eso es un resultado normal, no un error** (CA-5): un BC sin servidores MCP sigue el resto del proceso exactamente igual que antes del issue #820, sin ningun paso adicional de MCP en ningun punto de este skill. No hay flag para elegir "cuales" servidores MCP exponer -- se exponen todos los detectados, igual que la migracion de tenancy del paso 9 aplica a todos los dominios.
@@ -190,7 +210,34 @@ El agente es aditivo/idempotente por su cuenta (sus Pasos 0.2/0.4/1/2/2b/3/3b/3c
 
 #### 9.1 Resolver `<RootNamespace>`
 
-Lee el `CLAUDE.md` raiz del proyecto consumidor (contrato, seccion "Tokens del harness") para resolver `<RootNamespace>` (si el paso 2b ya lo resolvio, reusa ese valor -- no lo releas). Si no esta declarado, detente y pide al usuario que lo declare -- mismo criterio que `domain-scaffolder`.
+Reusa `<RootNamespace>` resuelto en el paso 2b. Si este bloque corre en un shell nuevo y debe releerlo, usa el mismo archivo efectivo de instrucciones; nunca una ruta de instrucciones fija. Si no esta declarado, detente y pide al usuario que lo declare en `AGENTS.md` (seccion "Tokens del harness") -- mismo criterio que `domain-scaffolder`.
+
+```bash
+if [ -z "${ROOT_NAMESPACE:-}" ]; then
+    if [ -z "${MEFISTO_INSTRUCTIONS_PATH:-}" ]; then
+        if [ -f "AGENTS.md" ]; then
+            if [ -f "CLAUDE.md" ]; then
+                printf '%s\n' 'AVISO: se usara AGENTS.md; se ignora el legacy CLAUDE.md. Migra o elimina conscientemente el archivo legacy para evitar divergencias.' >&2
+            fi
+            MEFISTO_INSTRUCTIONS_PATH="AGENTS.md"
+        elif [ -f "CLAUDE.md" ]; then
+            MEFISTO_INSTRUCTIONS_PATH="CLAUDE.md"
+        else
+            printf '%s\n' 'ERROR: no se encontro AGENTS.md, la fuente canonica de directivas del consumidor.' >&2
+            printf '%s\n' '  Se acepta solo para lectura el fallback legacy CLAUDE.md.' >&2
+            printf '%s\n' '  Ejecuta /mefisto:onboard para diagnosticar y completar el contrato del consumidor.' >&2
+            exit 1
+        fi
+        export MEFISTO_INSTRUCTIONS_PATH
+    fi
+    ROOT_NAMESPACE=$(awk '/^[[:space:]]*RootNamespace:[[:space:]]*/ { sub(/^[[:space:]]*RootNamespace:[[:space:]]*/, ""); print; exit }' "$MEFISTO_INSTRUCTIONS_PATH")
+fi
+
+if [ -z "$ROOT_NAMESPACE" ]; then
+    echo "ERROR: falta declarar RootNamespace en AGENTS.md (seccion \"Tokens del harness\")."
+    exit 1
+fi
+```
 
 #### 9.2 Flip del token
 
