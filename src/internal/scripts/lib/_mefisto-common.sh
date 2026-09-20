@@ -1765,24 +1765,24 @@ caffeinate_prefix() {
 # la regla es su ultimo campo tras ": " (`${line##*: }`, Bash puro). Deduplica
 # por regla y emite en stdout UNA linea de remedio por regla presente, en
 # orden fijo R1, R2, R3, R4, adapters-check, published-adapters-check; una
-# regla no reconocida (typo, version futura del gate)
-# produce su propia linea generica, deduplicada por su propio texto, que
-# remite a la cabecera del gate. Entrada vacia no emite nada. Retorna siempre
-# 0 -- esto es composicion de texto para abort(), nunca una segunda pasada de
-# validacion.
+# regla no reconocida (typo, version futura del gate) produce su propia linea
+# generica, deduplicada por su propio texto, que remite a la cabecera del
+# gate. Entrada vacia no emite nada. Retorna siempre 0 -- esto es composicion
+# de texto para abort(), nunca una segunda pasada de validacion.
 #
 # Bash 3.2 (CA-1): sin `declare -A` ni `mapfile`, solo variables planas y un
 # array indexado para las reglas desconocidas.
 #
 # Este archivo vive bajo src/internal/scripts/lib/, sujeto a las mismas
 # reglas R1-R3 que describe: por eso el texto de cada remedio nombra la regla
-# solo por su codigo (R1/R2/.../adapters-check) y describe la categoria en
+# solo por su codigo (R1/R2/.../published-adapters-check) y describe la
+# categoria en
 # prosa neutral -- nunca un alias/id de modelo, una invocacion de CLI o una
 # ruta/variable de entorno de un runtime concreto (MEF-ADR-0050). El remedio
 # de R1/R2/R3 es siempre "reformula la mencion" primero -- registrar una
 # excepcion en la allowlist es el ultimo recurso, solo para contenido correcto
-# y permanente (MEF-ADR-0019 seccion E); el de R4 y de adapters-check es
-# estructural y no pasa por la allowlist.
+# y permanente (MEF-ADR-0019 seccion E); el de R4, el de adapters-check y el
+# de published-adapters-check son estructurales y no pasan por la allowlist.
 mefisto_neutrality_remedy() {
     local raw
     raw="$(cat)"

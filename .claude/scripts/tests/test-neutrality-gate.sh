@@ -33,8 +33,11 @@
 #                   escenario e2e negativo (CLI falso del writer con una fuga
 #                   real) vive en test-tooling-runtime-neutral.sh, escenario [F].
 #   [perf]          CA-3 con margen: una corrida completa contra el repo real
-#                   termina en menos de 20s (el limite de CA-3 es 10s),
-#                   exit 0 o 1 indistinto.
+#                   termina en menos de 20s. El limite de CA-3 (10s) es el de
+#                   las reglas de texto R1-R4; las dos verificaciones
+#                   estructurales lanzan un generador completo cada una y hoy
+#                   dominan el reloj, asi que este bloque mide el total.
+#                   Exit 0 o 1 indistinto.
 #
 # Los arboles de fixture son repos git minimos bajo un directorio temporal
 # propio (nunca el repo real, salvo en [perf] y en la allowlist real que usa
