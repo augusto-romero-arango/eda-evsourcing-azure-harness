@@ -55,7 +55,7 @@ Si el comando falla, indica al usuario que ejecute `az login` antes de continuar
 
 ### 3. Ejecutar el bootstrap del backend
 
-`bootstrap-backend.sh` crea de forma idempotente el Resource Group, la Storage Account y el container del tfstate, y escribe `infra/environments/<ambiente>/backend.tf` con el bloque `backend "azurerm"` resuelto. Si no pasas `--location`, lee el campo opcional `azureLocation` de `.claude/harness.config.json`.
+`bootstrap-backend.sh` crea de forma idempotente el Resource Group, la Storage Account y el container del tfstate, y escribe `infra/environments/<ambiente>/backend.tf` con el bloque `backend "azurerm"` resuelto. Si no pasas `--location`, lee el campo opcional `azureLocation` del contrato canónico `.mefisto/harness.config.json`; para consumidores existentes acepta `.claude/harness.config.json` solo como fallback de lectura.
 
 ```bash
 PLUGIN_ROOT=$(cat .claude/pipeline/.plugin-root 2>/dev/null)
