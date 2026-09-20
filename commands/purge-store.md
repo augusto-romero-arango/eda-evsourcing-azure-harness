@@ -35,16 +35,30 @@ Si falta `<dominio>`, responde con el uso exacto de arriba y detente sin ejecuta
 
 ### 1. Parsear `$ARGUMENTS` y resolver el dominio canonico
 
-Extrae `DOMINIO` y `ENV` (default `dev`). Resuelve **ya aqui** la forma canonica contra `domainLabels` -- lectura pura de `harness.config.json`, cero efectos: los pasos 3/4 buscan evidencia por nombre de dominio, y un dominio mal tecleado o no declarado produciria un "no hay evidencia" enganoso (que este skill trata como "no purgar") en vez del error real. Mismo criterio de comparacion que `scripts/purge-store.sh` (formas "aplanadas": minusculas sin guiones), y la forma que se usa de aqui en adelante es la declarada, nunca la que tecleo el operador:
+Extrae `DOMINIO` y `ENV` (default `dev`). Resuelve **ya aqui** la forma canonica contra `domainLabels` del contrato `.mefisto/harness.config.json`; `.claude/harness.config.json` se acepta solo como fallback de lectura si no existe el canonico, sin copiarlo ni migrarlo. Es lectura pura de `harness.config.json`, cero efectos: los pasos 3/4 buscan evidencia por nombre de dominio, y un dominio mal tecleado o no declarado produciria un "no hay evidencia" enganoso (que este skill trata como "no purgar") en vez del error real. Mismo criterio de comparacion que `scripts/purge-store.sh` (formas "aplanadas": minusculas sin guiones), y la forma que se usa de aqui en adelante es la declarada, nunca la que tecleo el operador:
 
 ```bash
+REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || { echo "ERROR: no estas en un repositorio git"; exit 1; }
+CONFIG="$REPO_ROOT/.mefisto/harness.config.json"
+if [ -f "$CONFIG" ]; then
+    if [ -f "$REPO_ROOT/.claude/harness.config.json" ]; then
+        echo "AVISO: se usara el config canonico $CONFIG; se ignora el legacy $REPO_ROOT/.claude/harness.config.json. Migra o elimina conscientemente el archivo legacy para evitar divergencias." >&2
+    fi
+elif [ -f "$REPO_ROOT/.claude/harness.config.json" ]; then
+    CONFIG="$REPO_ROOT/.claude/harness.config.json"
+else
+    echo "ERROR: no se encontro el config canonico requerido $REPO_ROOT/.mefisto/harness.config.json." >&2
+    echo "  Se acepta solo para lectura el fallback legacy $REPO_ROOT/.claude/harness.config.json." >&2
+    exit 1
+fi
+
 DOMINIO_FLAT=$(printf '%s' "$DOMINIO" | tr '[:upper:]' '[:lower:]' | tr -d '-')
 DOMINIO_KEBAB=$(jq -r --arg flat "$DOMINIO_FLAT" \
     '.domainLabels[]? | select((ascii_downcase | gsub("-";"")) == $flat)' \
-    .claude/harness.config.json 2>/dev/null | head -1)
+    "$CONFIG" 2>/dev/null | head -1)
 if [ -z "$DOMINIO_KEBAB" ]; then
-    echo "ERROR: el dominio '$DOMINIO' no esta declarado en domainLabels de .claude/harness.config.json"
-    echo "  Dominios declarados: $(jq -r '.domainLabels // [] | join(", ")' .claude/harness.config.json 2>/dev/null)"
+    echo "ERROR: el dominio '$DOMINIO' no esta declarado en domainLabels de .mefisto/harness.config.json"
+    echo "  Dominios declarados: $(jq -r '.domainLabels // [] | join(", ")' "$CONFIG" 2>/dev/null)"
 else
     echo "Dominio canonico: $DOMINIO_KEBAB"
 fi

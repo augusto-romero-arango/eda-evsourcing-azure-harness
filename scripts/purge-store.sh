@@ -20,8 +20,9 @@
 # Uso:
 #   scripts/purge-store.sh --domain <dominio> [--env dev] [--dry-run]
 #
-#   <dominio>    dominio a purgar; debe estar declarado en domainLabels de
-#                .claude/harness.config.json (acepta kebab o PascalCase)
+#   <dominio>    dominio a purgar; debe estar declarado en domainLabels del
+#                contrato canonico .mefisto/harness.config.json (con fallback
+#                legacy solo de lectura en .claude/harness.config.json; acepta kebab o PascalCase)
 #   --env        ambiente objetivo. Unico valor aceptado: 'dev' (default) --
 #                guarda anti-prod codificada (CA-1): cualquier otro valor
 #                aborta antes de tocar Azure.
@@ -132,7 +133,7 @@ for label in $HARNESS_DOMAIN_LABELS; do
 done
 
 if [ -z "$DOMAIN_KEBAB" ]; then
-    echo "ERROR: el dominio '$DOMAIN' no esta declarado en domainLabels de .claude/harness.config.json." >&2
+    echo "ERROR: el dominio '$DOMAIN' no esta declarado en domainLabels de $HARNESS_CONFIG_PATH." >&2
     echo "  Dominios declarados: $HARNESS_DOMAIN_LABELS" >&2
     exit 1
 fi
