@@ -853,7 +853,8 @@ validate_variant_label() {
 
 # extract_test_count <dotnet_test_output>
 #
-# Extrae el conteo de tests pasando del resumen de dotnet test. Soporta MTP
+# Extrae el conteo de tests pasando del resumen de dotnet test. Soporta
+# Microsoft.Testing.Platform ("Test summary: ... succeeded: N"), MTP localizado
 # ("correcto: N") y VSTest clasico ("Superado: N" / "Passed: N").
 #
 # Suma los N de TODAS las lineas de resumen del output combinado (una por cada
@@ -864,19 +865,71 @@ validate_variant_label() {
 # total (issue #80).
 #
 # Contratos preservados:
-#   - Sentinela "?": si no hubo ninguna linea parseable, awk imprime "?" en su
-#     bloque END (NR==0), no 0 — para que el gate lo trate como "no comparable"
-#     y no aborte por una suma vacia interpretada como 0.
+#   - Sentinela "?": si no hubo ningun marcador parseable, awk imprime "?" en
+#     su bloque END, no 0 — para que el gate lo trate como "no comparable" y no
+#     aborte por una suma vacia interpretada como 0.
 #   - Salida entera limpia: imprime un unico entero (la suma) para la comparacion
 #     `-lt` de bash del gate.
-#   - La asignacion lleva `|| true` porque, bajo `set -euo pipefail`, los grep sin
-#     match retornan != 0 y el pipefail abortaria el script antes de leer el "?".
+#   - La asignacion lleva `|| true` para degradar a "?" si awk no esta disponible
+#     o no puede procesar la salida, incluso bajo `set -euo pipefail`.
 extract_test_count() {
     local count
-    count=$(echo "$1" | grep -oiE '(correcto|correctas|passed|superado):[[:space:]]+[0-9]+' \
-        | grep -oE '[0-9]+' \
-        | awk '{ s += $1 } END { if (NR == 0) print "?"; else print s }') || true
+    count=$(printf '%s\n' "$1" | awk '
+        {
+            line = tolower($0)
+            summary = line
+            while (match(line, /(correcto|correctas|passed|superado):[[:space:]]*[0-9]+/)) {
+                value = substr(line, RSTART, RLENGTH)
+                sub(/.*:[[:space:]]*/, "", value)
+                total += value
+                found = 1
+                line = substr(line, RSTART + RLENGTH)
+            }
+            if (summary ~ /test summary:/ && match(summary, /succeeded:[[:space:]]*[0-9]+/)) {
+                value = substr(summary, RSTART, RLENGTH)
+                sub(/.*:[[:space:]]*/, "", value)
+                total += value
+                found = 1
+            }
+        }
+        END { if (found) print total; else print "?" }
+    ') || true
     echo "${count:-?}"
+}
+
+# tests_json_value <conteo>
+#
+# Convierte el sentinela "?" (o cualquier valor no numerico) en null antes de
+# cruzar la frontera JSON. extract_test_count conserva ese sentinela porque el
+# gate de refactor distingue un conteo desconocido de cero; la evidencia durable
+# en cambio solo admite un entero no negativo o null.
+tests_json_value() {
+    local tests="${1:-}"
+    if [[ "$tests" =~ ^[0-9]+$ ]]; then
+        printf '%s\n' "$tests"
+    else
+        printf '%s\n' 'null'
+    fi
+}
+
+# append_completed_history <history_file> <events_log> <comando-json...>
+#
+# Ejecuta el comando que produce una entrada JSONL y la agrega al historial. El
+# cierre ocurre despues de crear el PR: un fallo de serializacion o escritura es
+# bookkeeping no critico, por lo que deja advertencia visible y evidencia en el
+# events log, pero siempre retorna 0.
+append_completed_history() {
+    local history_file="$1" events_log="$2"
+    shift 2
+
+    if "$@" >> "$history_file"; then
+        return 0
+    fi
+
+    warn "No se pudo registrar el historial completado; el PR ya fue creado" || true
+    printf '[%s] WARN: no se pudo registrar el historial completado; el PR ya fue creado\n' \
+        "$(date +%H:%M:%S)" >> "$events_log" 2>/dev/null || true
+    return 0
 }
 
 # run_tests_projects <worktree_path> [flags-extra-de-dotnet-test...]

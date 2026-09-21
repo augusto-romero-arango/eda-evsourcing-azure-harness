@@ -14,6 +14,8 @@
 #   D) Contrato de exit code: 0 = todos pasan, 8 = ningun proyecto *.Tests/ (solo
 #      habia *.SmokeTests/), otro = codigo de fallo del primer proyecto que falla.
 #   E) pr-sync.sh ya no corre `dotnet test --solution` (que incluiria smoke tests).
+#   F) Microsoft.Testing.Platform y la frontera JSON del historial conservan el
+#      conteo de exitos o null, sin abortar el cierre posterior al PR.
 #
 # Uso: scripts/tests/test-run-tests-projects.sh
 # Exit code: 0 si todos los checks pasan, 1 si alguno falla.
@@ -206,6 +208,61 @@ STUB
         fail "D2: exit esperado 2, obtenido $rc"
     fi
 fi
+
+# -------- Bloque E/F: resumen MTP y frontera JSON del historial --------
+
+echo ""
+echo "[E/F] extract_test_count y la frontera JSON del historial"
+
+if [ "$(extract_test_count 'Test summary: total: 55, failed: 1, succeeded: 53, skipped: 1, duration: 1.2s')" = "53" ]; then
+    pass "E1: reconoce succeeded del resumen literal de Microsoft.Testing.Platform"
+else
+    fail "E1: el resumen de Microsoft.Testing.Platform no devolvio 53"
+fi
+
+if [ "$(extract_test_count 'Passed: 7')" = "7" ] \
+    && [ "$(extract_test_count 'Resumen de pruebas: correcto: 4')" = "4" ] \
+    && [ "$(extract_test_count 'sin resumen reconocible')" = "?" ]; then
+    pass "E2: conserva formatos previos y el sentinela para texto desconocido"
+else
+    fail "E2: los formatos previos o el sentinela cambiaron"
+fi
+
+PIPELINE_TESTS="?"
+TESTS_JSON="$(tests_json_value "$PIPELINE_TESTS")"
+HISTORY_LINE="$(jq -cn --argjson tests "$TESTS_JSON" '{tests:$tests}')"
+if echo "$HISTORY_LINE" | jq -e '.tests == null' >/dev/null 2>&1; then
+    pass "F1: PIPELINE_TESTS='?' se serializa como tests null en el historial"
+else
+    fail "F1: el sentinela no se saneo antes de --argjson: $HISTORY_LINE"
+fi
+
+BOOKKEEPING_TMP="$TMPDIR_BASE/bookkeeping"
+mkdir -p "$BOOKKEEPING_TMP"
+BOOKKEEPING_EVENTS="$BOOKKEEPING_TMP/events.log"
+BOOKKEEPING_WARN="$BOOKKEEPING_TMP/warn.log"
+warn() { printf '%s\n' "$1" >> "$BOOKKEEPING_WARN"; }
+rc=0
+append_completed_history "$BOOKKEEPING_TMP/history.jsonl" "$BOOKKEEPING_EVENTS" \
+    jq -cn --argjson tests "?" '{tests:$tests}' >/dev/null 2>&1 || rc=$?
+if [ "$rc" -eq 0 ] \
+    && [ ! -s "$BOOKKEEPING_TMP/history.jsonl" ] \
+    && grep -qF 'No se pudo registrar el historial completado' "$BOOKKEEPING_WARN" \
+    && grep -qF 'WARN: no se pudo registrar el historial completado' "$BOOKKEEPING_EVENTS"; then
+    pass "F2: un fallo de historial advierte, deja evento y retorna exit 0"
+else
+    fail "F2: el fallo de bookkeeping no cumplio el contrato (rc=$rc)"
+fi
+
+for pipeline in "$REPO_ROOT/scripts/tdd-pipeline.sh" "$REPO_ROOT/scripts/tooling-pipeline.sh"; do
+    if grep -qF 'tests_val="$(tests_json_value "${PIPELINE_TESTS:-}")"' "$pipeline" \
+        && grep -qF 'TESTS_JSON="$(tests_json_value "${PIPELINE_TESTS:-}")"' "$pipeline" \
+        && grep -qF 'append_completed_history "$HISTORY_FILE" "$EVENTS_LOG_ABS"' "$pipeline"; then
+        pass "F3: $(basename "$pipeline") sanea status/historial y tolera fallos de bookkeeping"
+    else
+        fail "F3: $(basename "$pipeline") no protege el historial completado"
+    fi
+done
 
 # -------- Resumen --------
 

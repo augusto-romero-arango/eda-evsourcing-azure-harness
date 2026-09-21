@@ -192,8 +192,8 @@ update_status() {
     local wr_dur="null" rv_dur="null"
     [ -n "$AGENT_WR_DUR" ] && wr_dur="$AGENT_WR_DUR"
     [ -n "$AGENT_RV_DUR" ] && rv_dur="$AGENT_RV_DUR"
-    local tests_val="null" pr_val="null" error_val="null"
-    [ -n "$PIPELINE_TESTS" ] && tests_val="$PIPELINE_TESTS"
+    local tests_val pr_val="null" error_val="null"
+    tests_val="$(tests_json_value "${PIPELINE_TESTS:-}")"
     [ -n "$PIPELINE_PR" ]    && pr_val="\"$PIPELINE_PR\""
     [ -n "$PIPELINE_ERROR" ] && error_val="\"$PIPELINE_ERROR\""
     cat > "$(mefisto_state_path "$STATUS_FILENAME")" <<EOJSON
@@ -988,13 +988,14 @@ update_status "done" "completed"
 # Historial
 PR_JSON="null"
 [ -n "$PR_URL" ] && PR_JSON="\"$PR_URL\""
-jq -cn --arg issue "$ISSUE_NUM" --arg title "$ISSUE_TITLE" --argjson variant "${VARIANT_LABEL_JSON:-null}" \
+TESTS_JSON="$(tests_json_value "${PIPELINE_TESTS:-}")"
+append_completed_history "$HISTORY_FILE" "$EVENTS_LOG_ABS" \
+    jq -cn --arg issue "$ISSUE_NUM" --arg title "$ISSUE_TITLE" --argjson variant "${VARIANT_LABEL_JSON:-null}" \
     --argjson identity "$HARNESS_IDENTITY_JSON" --arg runtime "$MEFISTO_RUNTIME_RESUELTO" --arg started "$TIMESTAMP" --arg finished "$(date +%Y-%m-%dT%H:%M:%S)" \
     --argjson writer_duration "${AGENT_WR_DUR:-null}" --argjson reviewer_duration "${AGENT_RV_DUR:-null}" \
     --argjson writer_metrics "$AGENT_WR_METRICS" --argjson reviewer_metrics "$AGENT_RV_METRICS" \
-    --argjson tests "${PIPELINE_TESTS:-null}" --argjson pr "$PR_JSON" \
-    '{issue:$issue,title:$title,pipeline:"tooling",variant:$variant,identity:$identity,runtime:$runtime,started:$started,finished:$finished,state:"completed",agents:{writer:{duration:$writer_duration,metrics:$writer_metrics},reviewer:{duration:$reviewer_duration,metrics:$reviewer_metrics}},tests:$tests,pr:$pr}' \
-    >> "$HISTORY_FILE"
+    --argjson tests "$TESTS_JSON" --argjson pr "$PR_JSON" \
+    '{issue:$issue,title:$title,pipeline:"tooling",variant:$variant,identity:$identity,runtime:$runtime,started:$started,finished:$finished,state:"completed",agents:{writer:{duration:$writer_duration,metrics:$writer_metrics},reviewer:{duration:$reviewer_duration,metrics:$reviewer_metrics}},tests:$tests,pr:$pr}'
 
 # Eliminar archivo de estado individual (ya esta en el historial)
 rm -f "$(mefisto_state_path "$STATUS_FILENAME")"
