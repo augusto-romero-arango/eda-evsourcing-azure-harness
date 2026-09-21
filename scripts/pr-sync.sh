@@ -296,17 +296,30 @@ merge_pr_with_retry() {
     log "Método de merge permitido por el repo: ${merge_flag#--}"
 
     for attempt in $(seq 1 "$max_retries"); do
-        # Consultar estado de mergeabilidad en GitHub
-        local status
-        status=$(gh pr view "$pr_num" --json mergeStateStatus -q '.mergeStateStatus' 2>/dev/null || echo "UNKNOWN")
+        # Un PR cerrado informa UNKNOWN como mergeStateStatus. Consultar ambos
+        # campos evita confundir ese estado con un merge pendiente.
+        local pr_view pr_state status merge_failure
+        pr_view=$(gh pr view "$pr_num" --json state,mergeStateStatus 2>/dev/null || echo '{"state":"UNKNOWN","mergeStateStatus":"UNKNOWN"}')
+        pr_state=$(printf '%s' "$pr_view" | jq -r '.state // "UNKNOWN"' 2>/dev/null || echo "UNKNOWN")
+        status=$(printf '%s' "$pr_view" | jq -r '.mergeStateStatus // "UNKNOWN"' 2>/dev/null || echo "UNKNOWN")
+        merge_failure=""
+
+        if [ "$pr_state" = "MERGED" ]; then
+            return 0
+        fi
 
         if [ "$status" = "CLEAN" ] || [ "$status" = "UNSTABLE" ] || [ "$status" = "HAS_HOOKS" ]; then
-            local merge_out
+            local merge_out merged_state
             if merge_out=$(gh pr merge "$pr_num" "$merge_flag" --delete-branch 2>&1); then
                 printf '%s\n' "$merge_out" >>"$LOG_FILE_ABS"
                 return 0
             fi
             printf '%s\n' "$merge_out" >>"$LOG_FILE_ABS"
+            merged_state=$(gh pr view "$pr_num" --json state -q '.state' 2>/dev/null || echo "UNKNOWN")
+            if [ "$merged_state" = "MERGED" ]; then
+                warn "PR #$pr_num: el merge se completó, pero gh pr merge falló después: $merge_out"
+                return 0
+            fi
             # Rechazos que NO se resuelven reintentando (método no permitido,
             # checks/reviews requeridos, conflictos): abortar con la causa real
             # en lugar de reportar falsamente "aún no mergeable".
@@ -314,10 +327,15 @@ merge_pr_with_retry() {
                 warn "PR #$pr_num: GitHub rechazó el merge y no es reintentable → $merge_out"
                 return 1
             fi
+            merge_failure=$(printf '%s\n' "$merge_out" | awk 'NF { print; exit }')
         fi
 
         if [ "$attempt" -lt "$max_retries" ]; then
-            log "GitHub aún no reporta PR #$pr_num como mergeable (estado: $status). Reintentando en ${wait_seconds}s... ($attempt/$max_retries)"
+            if [ -n "$merge_failure" ]; then
+                log "gh pr merge falló: $merge_failure. Reintentando en ${wait_seconds}s... ($attempt/$max_retries)"
+            else
+                log "GitHub aún no reporta PR #$pr_num como mergeable (estado: $status). Reintentando en ${wait_seconds}s... ($attempt/$max_retries)"
+            fi
             sleep "$wait_seconds"
             wait_seconds=$((wait_seconds * 2))
         fi
