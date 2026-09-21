@@ -42,6 +42,8 @@ case "$1 $2" in
             rejected:*,mergeStateStatus*) printf '%s' '{"state":"OPEN","mergeStateStatus":"CLEAN"}' ;;
             rejected:*) printf '%s' 'OPEN' ;;
             blocked:*) printf '%s' '{"state":"OPEN","mergeStateStatus":"BLOCKED"}' ;;
+            already-merged:*) printf '%s' '{"state":"MERGED","mergeStateStatus":"UNKNOWN"}' ;;
+            retryable:*) printf '%s' '{"state":"OPEN","mergeStateStatus":"CLEAN"}' ;;
         esac
         ;;
     "pr merge")
@@ -49,6 +51,7 @@ case "$1 $2" in
         case "$GH_SCENARIO" in
             post-merge) printf '%s\n' 'failed to delete remote branch'; exit 1 ;;
             rejected) printf '%s\n' 'not mergeable'; exit 1 ;;
+            retryable) printf '%s\n' 'temporary failure' 'diagnostic detail'; exit 1 ;;
         esac
         ;;
 esac
@@ -130,6 +133,33 @@ if [ "$SLEEP_COUNT" -eq 4 ] && [ ! -s "$TMP_DIR/merge-calls.txt" ]; then
     pass "M-3: conserva cuatro esperas y no intenta mergear un PR BLOCKED"
 else
     fail "M-3: se esperaban 4 sleeps y cero merges; sleeps=$SLEEP_COUNT merges=$(cat "$TMP_DIR/merge-calls.txt")"
+fi
+
+echo "[M-4] PR ya mergeado al inicio de la iteración"
+run_case already-merged
+if [ "$RC" -eq 0 ] && echo "$OUTPUT" | grep -q 'RESULT=0'; then
+    pass "M-4: retorna 0 para un PR cuyo state ya es MERGED"
+else
+    fail "M-4: se esperaba RESULT=0. Salida: $OUTPUT"
+fi
+if [ ! -s "$TMP_DIR/sleep-calls.txt" ] && [ ! -s "$TMP_DIR/merge-calls.txt" ]; then
+    pass "M-4: no duerme ni intenta mergear nuevamente un PR ya mergeado"
+else
+    fail "M-4: no debía dormir ni invocar gh pr merge"
+fi
+
+echo "[M-5] fallo reintentable de gh pr merge"
+run_case retryable
+RETRY_LOG_COUNT=$(grep -c 'gh pr merge falló: temporary failure\.' "$TMP_DIR/log.txt" || true)
+if [ "$RC" -eq 0 ] && echo "$OUTPUT" | grep -q 'RESULT=1' && [ "$RETRY_LOG_COUNT" -eq 4 ]; then
+    pass "M-5: cada reintento informa la primera línea del fallo de gh pr merge"
+else
+    fail "M-5: se esperaban cuatro mensajes de reintento con la primera línea; encontrados=$RETRY_LOG_COUNT"
+fi
+if ! grep -q 'aún no reporta.*estado: CLEAN' "$TMP_DIR/log.txt"; then
+    pass "M-5: no describe CLEAN como falta de mergeabilidad tras intentar el merge"
+else
+    fail "M-5: emitió el mensaje reservado para iteraciones sin intento de merge"
 fi
 
 echo ""

@@ -298,10 +298,11 @@ merge_pr_with_retry() {
     for attempt in $(seq 1 "$max_retries"); do
         # Un PR cerrado informa UNKNOWN como mergeStateStatus. Consultar ambos
         # campos evita confundir ese estado con un merge pendiente.
-        local pr_view pr_state status merge_failure
+        local pr_view pr_state status merge_attempted merge_failure
         pr_view=$(gh pr view "$pr_num" --json state,mergeStateStatus 2>/dev/null || echo '{"state":"UNKNOWN","mergeStateStatus":"UNKNOWN"}')
         pr_state=$(printf '%s' "$pr_view" | jq -r '.state // "UNKNOWN"' 2>/dev/null || echo "UNKNOWN")
         status=$(printf '%s' "$pr_view" | jq -r '.mergeStateStatus // "UNKNOWN"' 2>/dev/null || echo "UNKNOWN")
+        merge_attempted=false
         merge_failure=""
 
         if [ "$pr_state" = "MERGED" ]; then
@@ -310,6 +311,7 @@ merge_pr_with_retry() {
 
         if [ "$status" = "CLEAN" ] || [ "$status" = "UNSTABLE" ] || [ "$status" = "HAS_HOOKS" ]; then
             local merge_out merged_state
+            merge_attempted=true
             if merge_out=$(gh pr merge "$pr_num" "$merge_flag" --delete-branch 2>&1); then
                 printf '%s\n' "$merge_out" >>"$LOG_FILE_ABS"
                 return 0
@@ -328,10 +330,11 @@ merge_pr_with_retry() {
                 return 1
             fi
             merge_failure=$(printf '%s\n' "$merge_out" | awk 'NF { print; exit }')
+            [ -n "$merge_failure" ] || merge_failure="(sin salida)"
         fi
 
         if [ "$attempt" -lt "$max_retries" ]; then
-            if [ -n "$merge_failure" ]; then
+            if [ "$merge_attempted" = true ]; then
                 log "gh pr merge falló: $merge_failure. Reintentando en ${wait_seconds}s... ($attempt/$max_retries)"
             else
                 log "GitHub aún no reporta PR #$pr_num como mergeable (estado: $status). Reintentando en ${wait_seconds}s... ($attempt/$max_retries)"
@@ -341,7 +344,11 @@ merge_pr_with_retry() {
         fi
     done
 
-    warn "PR #$pr_num no fue mergeable después de $max_retries intentos (último estado: $status)"
+    if [ "$merge_attempted" = true ]; then
+        warn "PR #$pr_num: gh pr merge falló tras $max_retries intentos: $merge_failure"
+    else
+        warn "PR #$pr_num no fue mergeable después de $max_retries intentos (último estado: $status)"
+    fi
     return 1
 }
 
