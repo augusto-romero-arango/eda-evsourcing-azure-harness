@@ -1466,7 +1466,8 @@ if [ "$IS_REFACTOR" != true ] && [ "$FROM_STAGE" -le 4 ]; then
 
     # --- 4d: Instrumentar y recoger cobertura ---
     measure_coverage() {
-        # Retorna 0 si exito, 1 si fallo. Deja coverage.cobertura.xml en el worktree.
+        # Retorna 0 si exito, 1 si falla la instrumentacion y 3 si fallan tests.
+        # Deja coverage.cobertura.xml y coverage-collect.rc en el worktree.
         log "Compilando proyecto para instrumentacion..."
         if ! dotnet build "$WORKTREE_PATH" >>"${LOG_FILE_ABS:-$LOG_FILE}" 2>&1; then
             warn "Build fallo antes de instrumentacion"
@@ -1512,18 +1513,36 @@ if [ "$IS_REFACTOR" != true ] && [ "$FROM_STAGE" -le 4 ]; then
 
         log "Recolectando cobertura..."
         local cov_output="$WORKTREE_PATH/coverage.cobertura.xml"
-        if ! dotnet-coverage collect \
+        local collect_rc=0
+        rm -f "$cov_output" "$WORKTREE_PATH/coverage-collect.rc"
+        dotnet-coverage collect \
             --output "$cov_output" \
             -f cobertura \
-            "dotnet test --solution $WORKTREE_PATH/${HARNESS_SOLUTION_FILE} --no-build" \
-            >>"${LOG_FILE_ABS:-$LOG_FILE}" 2>&1; then
-            warn "dotnet-coverage collect fallo"
-            return 1
+            -- bash -c '
+                # Mantener alineado con _pipeline-common.sh:902: solo *.Tests/.
+                for proj in "$1"/tests/'"$HARNESS_NAMESPACE_PREFIX"'.*.Tests/; do
+                    [ -d "$proj" ] || continue
+                    dotnet test --project "$proj" --no-build
+                    test_rc=$?
+                    if [ "$test_rc" -ne 0 ] && [ "$test_rc" -ne 8 ]; then
+                        exit "$test_rc"
+                    fi
+                done
+            ' _ "$WORKTREE_PATH" \
+            >>"${LOG_FILE_ABS:-$LOG_FILE}" 2>&1 || collect_rc=$?
+        printf '%s\n' "$collect_rc" > "$WORKTREE_PATH/coverage-collect.rc"
+
+        if [ "$collect_rc" -ne 0 ]; then
+            warn "dotnet-coverage collect termino con exit code $collect_rc"
         fi
 
         if [ ! -f "$cov_output" ]; then
             warn "No se genero archivo de cobertura"
             return 1
+        fi
+
+        if [ "$collect_rc" -ne 0 ]; then
+            return 3
         fi
 
         log "Cobertura recolectada: $cov_output"
@@ -1570,6 +1589,7 @@ for bn, fullpath in logic_basenames.items():
 
     # --- 4d: Medir cobertura ---
     CG_MEASUREMENT_OK=false
+    CG_MEASURE_COLLECT_RC=""
     CG_TIMEOUT_MEASURE=600  # 10 minutos para medicion
 
     (
@@ -1585,13 +1605,23 @@ for bn, fullpath in logic_basenames.items():
     kill $CG_MEASURE_WATCHDOG 2>/dev/null || true
     wait $CG_MEASURE_WATCHDOG 2>/dev/null || true
 
+    if [ -f "$WORKTREE_PATH/coverage-collect.rc" ]; then
+        CG_MEASURE_COLLECT_RC=$(<"$WORKTREE_PATH/coverage-collect.rc")
+    fi
+
     if [ "$CG_MEASURE_EXIT" -eq 0 ] && [ -f "$WORKTREE_PATH/coverage.cobertura.xml" ]; then
         CG_MEASUREMENT_OK=true
     fi
 
     if [ "$CG_MEASUREMENT_OK" = false ]; then
-        warn "La instrumentacion/medicion de cobertura fallo — continuando sin coverage gate"
-        echo "[$(date +%H:%M:%S)] SKIP coverage-gate: instrumentacion fallo" >> "$EVENTS_LOG_ABS"
+        if [ "$CG_MEASURE_EXIT" -eq 3 ] && [ -f "$WORKTREE_PATH/coverage.cobertura.xml" ] \
+            && [ -n "$CG_MEASURE_COLLECT_RC" ]; then
+            warn "SKIP coverage-gate: tests fallaron bajo cobertura (exit code $CG_MEASURE_COLLECT_RC)"
+            echo "[$(date +%H:%M:%S)] SKIP coverage-gate: tests fallaron bajo cobertura (exit code $CG_MEASURE_COLLECT_RC)" >> "$EVENTS_LOG_ABS"
+        else
+            warn "La instrumentacion/medicion de cobertura fallo — continuando sin coverage gate"
+            echo "[$(date +%H:%M:%S)] SKIP coverage-gate: instrumentacion fallo" >> "$EVENTS_LOG_ABS"
+        fi
         AGENT_CG_RES="skipped"
         AGENT_CG_DUR=$(( $(date +%s) - CG_START ))
         update_status "4-coverage-gate" "skipped"
