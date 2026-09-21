@@ -853,7 +853,8 @@ validate_variant_label() {
 
 # extract_test_count <dotnet_test_output>
 #
-# Extrae el conteo de tests pasando del resumen de dotnet test. Soporta MTP
+# Extrae el conteo de tests pasando del resumen de dotnet test. Soporta
+# Microsoft.Testing.Platform ("Test summary: ... succeeded: N"), MTP localizado
 # ("correcto: N") y VSTest clasico ("Superado: N" / "Passed: N").
 #
 # Suma los N de TODAS las lineas de resumen del output combinado (una por cada
@@ -873,10 +874,42 @@ validate_variant_label() {
 #     match retornan != 0 y el pipefail abortaria el script antes de leer el "?".
 extract_test_count() {
     local count
-    count=$(echo "$1" | grep -oiE '(correcto|correctas|passed|superado):[[:space:]]+[0-9]+' \
-        | grep -oE '[0-9]+' \
-        | awk '{ s += $1 } END { if (NR == 0) print "?"; else print s }') || true
+    count=$(printf '%s\n' "$1" | awk '
+        {
+            line = tolower($0)
+            summary = line
+            while (match(line, /(correcto|correctas|passed|superado):[[:space:]]*[0-9]+/)) {
+                value = substr(line, RSTART, RLENGTH)
+                sub(/.*:[[:space:]]*/, "", value)
+                total += value
+                found = 1
+                line = substr(line, RSTART + RLENGTH)
+            }
+            if (summary ~ /test summary:/ && match(summary, /succeeded:[[:space:]]*[0-9]+/)) {
+                value = substr(summary, RSTART, RLENGTH)
+                sub(/.*:[[:space:]]*/, "", value)
+                total += value
+                found = 1
+            }
+        }
+        END { if (found) print total; else print "?" }
+    ') || true
     echo "${count:-?}"
+}
+
+# tests_json_value <conteo>
+#
+# Convierte el sentinela "?" (o cualquier valor no numerico) en null antes de
+# cruzar la frontera JSON. extract_test_count conserva ese sentinela porque el
+# gate de refactor distingue un conteo desconocido de cero; la evidencia durable
+# en cambio solo admite un entero no negativo o null.
+tests_json_value() {
+    local tests="${1:-}"
+    if [[ "$tests" =~ ^[0-9]+$ ]]; then
+        printf '%s\n' "$tests"
+    else
+        printf '%s\n' 'null'
+    fi
 }
 
 # run_tests_projects <worktree_path> [flags-extra-de-dotnet-test...]
