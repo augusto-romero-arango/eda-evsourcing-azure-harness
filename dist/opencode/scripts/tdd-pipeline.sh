@@ -2228,14 +2228,11 @@ PR_JSON="null"
 TESTS_JSON="$(tests_json_value "${PIPELINE_TESTS:-}")"
 # Identidad y runtime via jq -cn (CA-1, issue #1363, MEF-ADR-0053 S6.5) --
 # mismo patron que tooling-pipeline.sh (l.975-983).
-if ! jq -cn --arg issue "${ISSUE_NUM:-}" --arg title "${ISSUE_TITLE:-}" --argjson variant "${VARIANT_LABEL_JSON:-null}" \
+append_completed_history "$HISTORY_FILE" "$EVENTS_LOG_ABS" \
+    jq -cn --arg issue "${ISSUE_NUM:-}" --arg title "${ISSUE_TITLE:-}" --argjson variant "${VARIANT_LABEL_JSON:-null}" \
     --argjson identity "$HARNESS_IDENTITY_JSON" --arg runtime "$MEFISTO_RUNTIME_RESUELTO" --arg started "$TIMESTAMP" --arg finished "$(date +%Y-%m-%dT%H:%M:%S)" \
     --argjson agents "$AGENTS_JSON" --argjson tests "$TESTS_JSON" --argjson pr "$PR_JSON" \
-    '{issue:$issue,title:$title,pipeline:"tdd",variant:$variant,identity:$identity,runtime:$runtime,started:$started,finished:$finished,state:"completed",agents:$agents,tests:$tests,pr:$pr}' \
-    >> "$HISTORY_FILE"; then
-    warn "No se pudo registrar el historial completado; el PR ya fue creado"
-    echo "[$(date +%H:%M:%S)] WARN: no se pudo registrar el historial completado; el PR ya fue creado" >> "$EVENTS_LOG_ABS" || true
-fi
+    '{issue:$issue,title:$title,pipeline:"tdd",variant:$variant,identity:$identity,runtime:$runtime,started:$started,finished:$finished,state:"completed",agents:$agents,tests:$tests,pr:$pr}'
 
 # Eliminar archivo de estado individual (ya esta en el historial)
 rm -f "$(mefisto_state_path "$STATUS_FILENAME")"

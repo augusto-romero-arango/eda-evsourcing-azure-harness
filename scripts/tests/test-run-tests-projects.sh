@@ -237,15 +237,30 @@ else
     fail "F1: el sentinela no se saneo antes de --argjson: $HISTORY_LINE"
 fi
 
+BOOKKEEPING_TMP="$TMPDIR_BASE/bookkeeping"
+mkdir -p "$BOOKKEEPING_TMP"
+BOOKKEEPING_EVENTS="$BOOKKEEPING_TMP/events.log"
+BOOKKEEPING_WARN="$BOOKKEEPING_TMP/warn.log"
+warn() { printf '%s\n' "$1" >> "$BOOKKEEPING_WARN"; }
+rc=0
+append_completed_history "$BOOKKEEPING_TMP/history.jsonl" "$BOOKKEEPING_EVENTS" \
+    jq -cn --argjson tests "?" '{tests:$tests}' >/dev/null 2>&1 || rc=$?
+if [ "$rc" -eq 0 ] \
+    && [ ! -s "$BOOKKEEPING_TMP/history.jsonl" ] \
+    && grep -qF 'No se pudo registrar el historial completado' "$BOOKKEEPING_WARN" \
+    && grep -qF 'WARN: no se pudo registrar el historial completado' "$BOOKKEEPING_EVENTS"; then
+    pass "F2: un fallo de historial advierte, deja evento y retorna exit 0"
+else
+    fail "F2: el fallo de bookkeeping no cumplio el contrato (rc=$rc)"
+fi
+
 for pipeline in "$REPO_ROOT/scripts/tdd-pipeline.sh" "$REPO_ROOT/scripts/tooling-pipeline.sh"; do
     if grep -qF 'tests_val="$(tests_json_value "${PIPELINE_TESTS:-}")"' "$pipeline" \
         && grep -qF 'TESTS_JSON="$(tests_json_value "${PIPELINE_TESTS:-}")"' "$pipeline" \
-        && grep -qF 'if ! jq -cn' "$pipeline" \
-        && grep -qF 'warn "No se pudo registrar el historial completado; el PR ya fue creado"' "$pipeline" \
-        && grep -qF 'WARN: no se pudo registrar el historial completado; el PR ya fue creado' "$pipeline"; then
-        pass "F2: $(basename "$pipeline") sanea status/historial y tolera fallos de bookkeeping"
+        && grep -qF 'append_completed_history "$HISTORY_FILE" "$EVENTS_LOG_ABS"' "$pipeline"; then
+        pass "F3: $(basename "$pipeline") sanea status/historial y tolera fallos de bookkeeping"
     else
-        fail "F2: $(basename "$pipeline") no protege el historial completado"
+        fail "F3: $(basename "$pipeline") no protege el historial completado"
     fi
 done
 

@@ -865,13 +865,13 @@ validate_variant_label() {
 # total (issue #80).
 #
 # Contratos preservados:
-#   - Sentinela "?": si no hubo ninguna linea parseable, awk imprime "?" en su
-#     bloque END (NR==0), no 0 — para que el gate lo trate como "no comparable"
-#     y no aborte por una suma vacia interpretada como 0.
+#   - Sentinela "?": si no hubo ningun marcador parseable, awk imprime "?" en
+#     su bloque END, no 0 — para que el gate lo trate como "no comparable" y no
+#     aborte por una suma vacia interpretada como 0.
 #   - Salida entera limpia: imprime un unico entero (la suma) para la comparacion
 #     `-lt` de bash del gate.
-#   - La asignacion lleva `|| true` porque, bajo `set -euo pipefail`, los grep sin
-#     match retornan != 0 y el pipefail abortaria el script antes de leer el "?".
+#   - La asignacion lleva `|| true` para degradar a "?" si awk no esta disponible
+#     o no puede procesar la salida, incluso bajo `set -euo pipefail`.
 extract_test_count() {
     local count
     count=$(printf '%s\n' "$1" | awk '
@@ -910,6 +910,26 @@ tests_json_value() {
     else
         printf '%s\n' 'null'
     fi
+}
+
+# append_completed_history <history_file> <events_log> <comando-json...>
+#
+# Ejecuta el comando que produce una entrada JSONL y la agrega al historial. El
+# cierre ocurre despues de crear el PR: un fallo de serializacion o escritura es
+# bookkeeping no critico, por lo que deja advertencia visible y evidencia en el
+# events log, pero siempre retorna 0.
+append_completed_history() {
+    local history_file="$1" events_log="$2"
+    shift 2
+
+    if "$@" >> "$history_file"; then
+        return 0
+    fi
+
+    warn "No se pudo registrar el historial completado; el PR ya fue creado" || true
+    printf '[%s] WARN: no se pudo registrar el historial completado; el PR ya fue creado\n' \
+        "$(date +%H:%M:%S)" >> "$events_log" 2>/dev/null || true
+    return 0
 }
 
 # run_tests_projects <worktree_path> [flags-extra-de-dotnet-test...]

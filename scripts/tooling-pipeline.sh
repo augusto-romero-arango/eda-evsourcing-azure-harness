@@ -989,16 +989,13 @@ update_status "done" "completed"
 PR_JSON="null"
 [ -n "$PR_URL" ] && PR_JSON="\"$PR_URL\""
 TESTS_JSON="$(tests_json_value "${PIPELINE_TESTS:-}")"
-if ! jq -cn --arg issue "$ISSUE_NUM" --arg title "$ISSUE_TITLE" --argjson variant "${VARIANT_LABEL_JSON:-null}" \
+append_completed_history "$HISTORY_FILE" "$EVENTS_LOG_ABS" \
+    jq -cn --arg issue "$ISSUE_NUM" --arg title "$ISSUE_TITLE" --argjson variant "${VARIANT_LABEL_JSON:-null}" \
     --argjson identity "$HARNESS_IDENTITY_JSON" --arg runtime "$MEFISTO_RUNTIME_RESUELTO" --arg started "$TIMESTAMP" --arg finished "$(date +%Y-%m-%dT%H:%M:%S)" \
     --argjson writer_duration "${AGENT_WR_DUR:-null}" --argjson reviewer_duration "${AGENT_RV_DUR:-null}" \
     --argjson writer_metrics "$AGENT_WR_METRICS" --argjson reviewer_metrics "$AGENT_RV_METRICS" \
     --argjson tests "$TESTS_JSON" --argjson pr "$PR_JSON" \
-    '{issue:$issue,title:$title,pipeline:"tooling",variant:$variant,identity:$identity,runtime:$runtime,started:$started,finished:$finished,state:"completed",agents:{writer:{duration:$writer_duration,metrics:$writer_metrics},reviewer:{duration:$reviewer_duration,metrics:$reviewer_metrics}},tests:$tests,pr:$pr}' \
-    >> "$HISTORY_FILE"; then
-    warn "No se pudo registrar el historial completado; el PR ya fue creado"
-    echo "[$(date +%H:%M:%S)] WARN: no se pudo registrar el historial completado; el PR ya fue creado" >> "$EVENTS_LOG_ABS" || true
-fi
+    '{issue:$issue,title:$title,pipeline:"tooling",variant:$variant,identity:$identity,runtime:$runtime,started:$started,finished:$finished,state:"completed",agents:{writer:{duration:$writer_duration,metrics:$writer_metrics},reviewer:{duration:$reviewer_duration,metrics:$reviewer_metrics}},tests:$tests,pr:$pr}'
 
 # Eliminar archivo de estado individual (ya esta en el historial)
 rm -f "$(mefisto_state_path "$STATUS_FILENAME")"
