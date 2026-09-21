@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # test-coverage-gate-collect.sh — Contrato de recoleccion del coverage gate (#1550).
 #
-# Valida con stubs que el comando que usa dotnet-coverage ejecuta solamente
-# proyectos *.Tests/, conserva el exit code de tests fallidos y genera el XML.
+# Extrae y ejercita las funciones reales del pipeline con stubs: valida que
+# dotnet-coverage ejecute solo *.Tests/, conserve el exit code de tests fallidos
+# y distinga esa causa de un fallo de instrumentacion.
 
 set -uo pipefail
 
@@ -20,8 +21,29 @@ trap 'rm -rf "$TMPDIR_BASE"' EXIT
 STUB_BIN="$TMPDIR_BASE/bin"
 mkdir -p "$STUB_BIN"
 
+extract_stage4_function() {
+    local name="$1"
+    awk -v fn="$name" '
+        $0 ~ "^    " fn "\\(\\) \\{" { printing=1 }
+        printing {
+            is_end = ($0 == "    }")
+            sub(/^    /, "")
+            print
+            if (is_end) exit
+        }
+    ' "$PIPELINE"
+}
+
+MEASURE_BODY=$(extract_stage4_function measure_coverage)
+SKIP_REASON_BODY=$(extract_stage4_function coverage_measurement_skip_reason)
+eval "$MEASURE_BODY"
+eval "$SKIP_REASON_BODY"
+
 cat > "$STUB_BIN/dotnet" <<'STUB'
 #!/usr/bin/env bash
+if [ "$1" = "build" ]; then
+    exit 0
+fi
 if [ "$1" = "test" ]; then
     shift
     while [ "$#" -gt 0 ]; do
@@ -41,6 +63,10 @@ STUB
 
 cat > "$STUB_BIN/dotnet-coverage" <<'STUB'
 #!/usr/bin/env bash
+if [ "$1" = "instrument" ]; then
+    exit 0
+fi
+[ "$1" = "collect" ] && shift
 output=""
 while [ "$#" -gt 0 ]; do
     case "$1" in
@@ -57,19 +83,20 @@ STUB
 chmod +x "$STUB_BIN/dotnet" "$STUB_BIN/dotnet-coverage"
 export PATH="$STUB_BIN:$PATH"
 
-run_collect() {
+log() { :; }
+warn() { :; }
+HARNESS_NAMESPACE_PREFIX="Cosmos.ControlPlane"
+LOG_FILE="$TMPDIR_BASE/coverage.log"
+LOG_FILE_ABS="$LOG_FILE"
+
+prepare_worktree() {
     local worktree="$1"
-    dotnet-coverage collect --output "$worktree/coverage.cobertura.xml" -f cobertura -- \
-        bash -c '
-            for proj in "$1"/tests/Cosmos.ControlPlane.*.Tests/; do
-                [ -d "$proj" ] || continue
-                dotnet test --project "$proj" --no-build
-                test_rc=$?
-                if [ "$test_rc" -ne 0 ] && [ "$test_rc" -ne 8 ]; then
-                    exit "$test_rc"
-                fi
-            done
-        ' _ "$worktree"
+    shift
+    local project
+    for project in "$@"; do
+        mkdir -p "$worktree/tests/$project/bin/Debug/net10.0"
+        : > "$worktree/tests/$project/bin/Debug/net10.0/Cosmos.ControlPlane.Domain.dll"
+    done
 }
 
 echo "[A] El pipeline conserva el contrato de recoleccion"
@@ -78,32 +105,52 @@ if grep -q 'dotnet test --solution' "$PIPELINE"; then
 else
     pass "el coverage gate no usa dotnet test --solution"
 fi
-if grep -q 'coverage-collect.rc' "$PIPELINE" \
-    && grep -q 'tests fallaron bajo cobertura (exit code' "$PIPELINE" \
-    && grep -q 'SKIP coverage-gate: instrumentacion fallo' "$PIPELINE"; then
-    pass "el pipeline distingue tests fallidos de instrumentacion fallida"
+if declare -F measure_coverage >/dev/null \
+    && declare -F coverage_measurement_skip_reason >/dev/null; then
+    pass "las funciones reales del Stage 4 se pudieron cargar"
 else
-    fail "faltan el RC persistido o los mensajes de SKIP esperados"
+    fail "no se pudieron cargar las funciones reales del Stage 4"
 fi
 
 echo "[B] Recoleccion con stubs"
 WT="$TMPDIR_BASE/worktree"
-mkdir -p "$WT/tests/Cosmos.ControlPlane.Unit.Tests" \
-    "$WT/tests/Cosmos.ControlPlane.Failing.Tests" \
-    "$WT/tests/Cosmos.ControlPlane.Api.SmokeTests"
+prepare_worktree "$WT" \
+    "Cosmos.ControlPlane.Unit.Tests" \
+    "Cosmos.ControlPlane.Failing.Tests" \
+    "Cosmos.ControlPlane.Api.SmokeTests"
 export DOTNET_STUB_LOG="$TMPDIR_BASE/dotnet.log"
 : > "$DOTNET_STUB_LOG"
+WORKTREE_PATH="$WT"
 rc=0
-run_collect "$WT" >/dev/null 2>&1 || rc=$?
-if [ "$rc" -eq 2 ] && [ -f "$WT/coverage.cobertura.xml" ]; then
-    pass "un test fallido conserva su exit code y deja XML"
+measure_coverage >/dev/null 2>&1 || rc=$?
+collect_rc=$(<"$WT/coverage-collect.rc")
+if [ "$rc" -eq 3 ] && [ "$collect_rc" -eq 2 ] \
+    && [ -f "$WT/coverage.cobertura.xml" ]; then
+    pass "measure_coverage conserva el exit 2 del test, retorna 3 y deja XML"
 else
-    fail "se esperaba exit 2 con XML, se obtuvo rc=$rc"
+    fail "se esperaba measure=3, collect=2 y XML; se obtuvo measure=$rc collect=$collect_rc"
 fi
 if grep -q 'SmokeTests' "$DOTNET_STUB_LOG"; then
     fail "la recoleccion invoco un proyecto SmokeTests"
 else
     pass "ningun --project recibido termina en SmokeTests"
+fi
+
+echo "[C] Causa del SKIP"
+reason=$(coverage_measurement_skip_reason \
+    "$rc" "$WT/coverage.cobertura.xml" "$collect_rc")
+if [ "$reason" = "SKIP coverage-gate: tests fallaron bajo cobertura (exit code 2)" ]; then
+    pass "XML con tests fallidos reporta el exit code real"
+else
+    fail "causa inesperada para tests fallidos: $reason"
+fi
+
+rm -f "$WT/coverage.cobertura.xml"
+reason=$(coverage_measurement_skip_reason 1 "$WT/coverage.cobertura.xml" "")
+if [ "$reason" = "SKIP coverage-gate: instrumentacion fallo" ]; then
+    pass "sin XML se reporta fallo de instrumentacion"
+else
+    fail "causa inesperada sin XML: $reason"
 fi
 
 echo ""

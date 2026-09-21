@@ -1549,6 +1549,19 @@ if [ "$IS_REFACTOR" != true ] && [ "$FROM_STAGE" -le 4 ]; then
         return 0
     }
 
+    coverage_measurement_skip_reason() {
+        local measure_exit="$1"
+        local cov_output="$2"
+        local collect_rc="$3"
+
+        if [ "$measure_exit" -eq 3 ] && [ -f "$cov_output" ] \
+            && [[ "$collect_rc" =~ ^[0-9]+$ ]]; then
+            printf 'SKIP coverage-gate: tests fallaron bajo cobertura (exit code %s)\n' "$collect_rc"
+        else
+            printf 'SKIP coverage-gate: instrumentacion fallo\n'
+        fi
+    }
+
     # Extraer cobertura por archivo del XML cobertura.
     # Usa python3 para parsear XML de forma confiable.
     # Recibe: archivo cobertura XML, lista de archivos de logica (newline-separated)
@@ -1614,14 +1627,12 @@ for bn, fullpath in logic_basenames.items():
     fi
 
     if [ "$CG_MEASUREMENT_OK" = false ]; then
-        if [ "$CG_MEASURE_EXIT" -eq 3 ] && [ -f "$WORKTREE_PATH/coverage.cobertura.xml" ] \
-            && [ -n "$CG_MEASURE_COLLECT_RC" ]; then
-            warn "SKIP coverage-gate: tests fallaron bajo cobertura (exit code $CG_MEASURE_COLLECT_RC)"
-            echo "[$(date +%H:%M:%S)] SKIP coverage-gate: tests fallaron bajo cobertura (exit code $CG_MEASURE_COLLECT_RC)" >> "$EVENTS_LOG_ABS"
-        else
-            warn "La instrumentacion/medicion de cobertura fallo — continuando sin coverage gate"
-            echo "[$(date +%H:%M:%S)] SKIP coverage-gate: instrumentacion fallo" >> "$EVENTS_LOG_ABS"
-        fi
+        CG_SKIP_REASON=$(coverage_measurement_skip_reason \
+            "$CG_MEASURE_EXIT" \
+            "$WORKTREE_PATH/coverage.cobertura.xml" \
+            "$CG_MEASURE_COLLECT_RC")
+        warn "$CG_SKIP_REASON"
+        echo "[$(date +%H:%M:%S)] $CG_SKIP_REASON" >> "$EVENTS_LOG_ABS"
         AGENT_CG_RES="skipped"
         AGENT_CG_DUR=$(( $(date +%s) - CG_START ))
         update_status "4-coverage-gate" "skipped"
