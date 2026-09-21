@@ -4,6 +4,18 @@ Todo cambio notable a este proyecto se documenta aquí. Sigue [Keep a Changelog]
 
 ## [Unreleased]
 
+## [0.38.2] - 2026-09-21
+
+### Changed
+
+- Se recorta el coste de `adapter-opencode.sh render` sin cambiar contrato ni bytes publicados: `permission_json` y `mcp_tools_json` consolidan validacion y construccion en una unica pasada `jq` cada una (antes recorrian cada capacidad, cada servidor del registro y cada id solicitado con un proceso `jq` por iteracion, y `mcp_tools_json` repetia en cada render la validacion global del registro MCP, que ya corre una vez en `assets`/`render-asset` antes de publicar); el frontmatter del artefacto se deriva con un solo `jq` en vez de uno por campo. `validate_skills` resuelve la raiz fisica una vez por Skill, agrupa el escaneo de enlaces por Skill en lugar de por archivo y memoiza la resolucion fisica de directorios repetidos, sin alterar ningun diagnostico. `test-adapter-opencode.sh` fija el presupuesto con un wrapper de `jq` en `PATH` que delega al binario real y cuenta procesos: `agent-completo` usa 9 y `agent-ambos-mcp` 8, con techo de 12. Medicion end-to-end de `generate-published-adapters.sh --check` sobre el repo real, en la misma maquina de la linea base (~15 s): 11,36 s / 9,90 s / 9,84 s, mediana 9,90 s.
+
+### Fixed
+
+- Se excluyen los smoke tests del coverage gate TDD y se informa cuando los tests fallan durante la recoleccion de cobertura.
+- Se evita reportar como fallido un merge ya completado cuando falla el borrado posterior de la rama en `pr-sync.sh`.
+- Se corrige el registro de historial TDD y tooling para reconocer resúmenes de Microsoft.Testing.Platform y serializar conteos de tests desconocidos como `null` sin fallar después de crear el PR.
+
 ## [0.38.1] - 2026-09-20
 
 ### Added
@@ -2768,7 +2780,8 @@ Y reemplazar referencias en `CLAUDE.md` del proyecto: `/eda-evsourcing-azure-har
 - Los agentes `reviewer` e `implementer` mantienen el placeholder literal `ADR-XXXX` en sus plantillas de reporte (no es un bug; el agente lo sustituye en tiempo de ejecución por el número real del ADR aplicable).
 - Los ejemplos de código en `test-writer.md`, `implementer.md` y `smoke-test-writer.md` conservan nombres concretos de un proyecto consumidor (`Programacion`, `ControlHoras`) anotados en el "Contrato con el consumidor" de cada agente como ejemplos pedagógicos.
 
-[Unreleased]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.38.1...HEAD
+[Unreleased]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.38.2...HEAD
+[0.38.2]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.38.1...v0.38.2
 [0.38.1]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.38.0...v0.38.1
 [0.38.0]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.37.16...v0.38.0
 [0.37.16]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.37.15...v0.37.16
