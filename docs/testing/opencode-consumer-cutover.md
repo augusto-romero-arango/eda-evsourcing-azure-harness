@@ -10,10 +10,14 @@ Este documento certifica exclusivamente `/mefisto:tooling`. La superficie de
 condicional, coverage gate) tiene su propio protocolo, que reutiliza el
 consumidor y la mecanica de instalacion de este documento como prerrequisito:
 ver [`tdd-consumer-certification.md`](./tdd-consumer-certification.md). Su
-[veredicto final](./tdd-consumer-certification.md#veredicto-final-del-corte-tdd-multi-runtime-1411)
-(#1411) cerro `NO PASA`: las cuatro corridas write-side/read-side x
-Claude/OpenCode exigidas por #1435/#1436 nunca se ejecutaron en vivo, asi que
-`/mefisto:implement` sigue sin certificar bajo ningun runtime.
+[veredicto final](./tdd-consumer-certification.md#veredicto-final-del-corte-tdd-multi-runtime-1487)
+(#1487) cerro `PASA` (2026-09-22, release `v0.38.2`), auditando las cuatro
+corridas write-side/read-side x Claude/OpenCode ejecutadas en vivo el
+2026-09-21 sobre esa release (#1435/#1436): `/mefisto:implement` (rutas
+write-side y `tipo:projection`) queda certificado bajo ambos runtimes. El
+veredicto anterior (#1411, `NO PASA` el 2026-09-17) queda como antecedente:
+esas cuatro corridas nunca se habian ejecutado en vivo hasta la sesion humana
+que #1487 audita.
 
 No se ejecuta durante la redaccion de este documento. Requiere que exista una
 release candidata y el repositorio fixture descrito abajo. La primera candidata
