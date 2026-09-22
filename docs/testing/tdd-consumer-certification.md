@@ -717,8 +717,158 @@ el issue de veredicto que audita esa evidencia; #1464 sigue abierto hasta que
 #1487 se resuelva. El PR que registra esta evidencia usa `Refs #1464`, nunca
 `Closes`.
 
+## Veredicto final del corte TDD multi-runtime (#1487)
+
+Esta seccion audita, sin repetir ejecuciones, la sesion operada por un humano
+el 2026-09-21 sobre la release `v0.38.2` ("Sesion humana ejecutada
+(2026-09-21)" de la seccion anterior) contra las tablas ya rellenas de
+"Resultado write-side (#1435)" y "Resultado read-side (#1436)" arriba. No
+redefine el protocolo de #1434 ni sus templates; emite el veredicto documental
+fail-closed conforme a la seccion "Fail-closed y limpieza (CA-6)" del protocolo,
+que "Bloqueo estructural de la ejecucion automatizada (#1464)" dejo pendiente
+en su paso 4.
+
+### Identidad comun de release (CA-1 de #1487)
+
+Las cuatro celdas comparten los mismos cinco valores de identidad, tomados sin
+variacion de las tablas "Campo | Valor verificado" de #1435 y #1436:
+
+| Parametro | write-side Claude (#34) | write-side OpenCode (#35) | read-side Claude (#36) | read-side OpenCode (#37) |
+|---|---|---|---|---|
+| `<tag-certificable>` | `v0.38.2` | `v0.38.2` | `v0.38.2` | `v0.38.2` |
+| `<version>` | `0.38.2` | `0.38.2` | `0.38.2` | `0.38.2` |
+| `<commit-fuente>` | `6c2319c5a91aef844d5f71468ecb43d6f72a1cfe` | idem | idem | idem |
+| `<checksum-opencode>` (digest OpenCode) | `78eee7c04875c534d2c7c0bed4eddf77f6c8b227346bf78d5cd6bd81fdd83459` | idem | idem | idem |
+| Identidad (`diagnose-installation-identity.sh`) | `aligned` | `aligned` | `aligned` | `aligned` |
+
+`v0.38.2` es posterior a `v0.37.16` (la release que certifico `/mefisto:tooling`
+en #1181), conforme exige "Invariantes y prerrequisitos (CA-1)" del protocolo.
+Las cuatro corridas comparten ademas `<sha-baseline-inicial>` =
+`9f49d6a59fa96f7e5a49b0139fa27ae9c2353d35`, identico entre el par write-side y
+el par read-side. No hay identidad divergente que juzgar.
+
+### Matriz 2x2 auditada (CA-2 de #1487)
+
+| Dimension | write-side Claude | write-side OpenCode | read-side Claude | read-side OpenCode |
+|---|---|---|---|---|
+| Issue fixture | [#34](https://github.com/augusto-romero-arango/mefisto-consumer-certification/issues/34) | [#35](https://github.com/augusto-romero-arango/mefisto-consumer-certification/issues/35) | [#36](https://github.com/augusto-romero-arango/mefisto-consumer-certification/issues/36) | [#37](https://github.com/augusto-romero-arango/mefisto-consumer-certification/issues/37) |
+| PR (`Closes`) | [#38](https://github.com/augusto-romero-arango/mefisto-consumer-certification/pull/38) (`Closes #34`) | [#39](https://github.com/augusto-romero-arango/mefisto-consumer-certification/pull/39) (`Closes #35`) | [#40](https://github.com/augusto-romero-arango/mefisto-consumer-certification/pull/40) (`Closes #36`) | [#41](https://github.com/augusto-romero-arango/mefisto-consumer-certification/pull/41) (`Closes #37`) |
+| Session id | `20260921-075322` | `20260921-080923` | `20260921-082706` | `20260921-084136` |
+| Stage 1 (fase roja) | rojo funcional, 46 tests/1 fallido | rojo funcional, misma cifra | rojo real sobre `Create`, 17/2 fallidos | rojo real, mismos 2 fallidos |
+| Stage 2 (fase verde) | verde, 46/46 + 16/16 | verde, misma cifra | verde, 45/45 + 17/17 | verde, misma cifra |
+| Stage 2b (smoke tests) | ejecutado | ejecutado | ejecutado | ejecutado |
+| Stage 3 (reviewer) | `success` | `success` | `success` | `success` |
+| Stage 4 (coverage gate) | `passed`, gaps=0 | `passed`, gaps=0 | `passed`, gaps=0 | `passed`, gaps=0 |
+| Checks | `NO_APLICAN` | `NO_APLICAN` | `NO_APLICAN` | `NO_APLICAN` |
+| Stage 0 (scaffold) | no ejecutado | no ejecutado | no ejecutado | no ejecutado |
+
+Ninguna celda permanece en `PENDIENTE DE EJECUCION`: las cuatro tienen issue de
+fixture, PR con `Closes`, session id y resultado de Stage 1/2/2b/3/4
+verificables en las tablas de #1435 y #1436. Stage 2b nunca aparece `skipped`
+en ninguna de las cuatro filas de esas tablas. Stage 0 esta explicitamente
+marcado "no ejecutado" en ambas, conforme a la eleccion de
+`<dominio-certificable>` con Function App y proyecto SmokeTests ya existentes
+("Eleccion del dominio certificable" del protocolo). El `NO_APLICAN` de checks
+trae el mismo motivo explicito en las cuatro celdas: el unico workflow
+`pull_request` del consumidor (`infra-cd.yml`) filtra a `infra/**` y ninguno de
+los cuatro PRs toca esa carpeta; `statusCheckRollup` vacio en los cuatro.
+
+### Observabilidad y limpieza (CA-3 de #1487)
+
+El expediente sanitizado (`.mefisto/pipeline/certification/tdd-v0.38.2/` en el
+consumidor, ignorado por Git: `coordination.md`, `write-claude.md`,
+`write-opencode.md`, `read-claude.md`, `read-opencode.md`, `sentinels.md`,
+`final-handoff.md`) correlaciona cada una de las cuatro celdas por
+issue/PR/stage/session (hash), conforme registran las filas "Discovery" y
+"Diferencias de adaptador" de #1435/#1436. El barrido de centinelas
+(`sentinels.md`, cubriendo tambien `intento-1/`) dio **0 coincidencias** en los
+cuatro patrones (salida cruda/interaccion, cabeceras de auth, almacenes de
+auth/credenciales, tokens de portador/prefijo corto). `<sha-baseline-inicial>`
+= `<sha-baseline-final>` = `9f49d6a59fa96f7e5a49b0139fa27ae9c2353d35` tanto en
+el par write-side como en el par read-side, con el arbol limpio antes y
+despues de cada corrida; la limpieza (PRs cerrados sin merge, ramas remotas
+eliminadas, issues fixture `not planned`, cero worktrees) se ejecuto el
+2026-09-21T08:58:07-05:00 en ambos pares. El paso 5 de esa limpieza
+(restaurar la instalacion previa `0.38.1` / `a48e6870`) no se aplico por
+decision humana declarada en la fila "Limpieza" de #1435: `0.38.2` se conservo
+por ser la release vigente, con la instalacion previa registrada para el
+rollback. No afecta el veredicto: la identidad de las cuatro corridas se
+verifico antes de cada celda y no cambio durante la sesion.
+
+### Desviacion de fixture: justificada, no evidencia de paridad (CA-4 de #1487)
+
+El intento 2 (run-id `20260921-073646-v0.38.2`, fixtures #34-#37, unica
+evidencia que este veredicto juzga) agrega a los cuatro fixtures una seccion
+`## ADRs aplicables`, ausente en los templates literales de "Fixtures
+write-side/read-side (CA-2)" del protocolo. Esa adicion **no es una desviacion
+que invalide la evidencia**: corrige un defecto de los templates frente a la
+doctrina que ya rige la escritura real. `agents/implementer.md`, paso "1b. Leer
+los ADRs aplicables del issue", exige que todo issue declare esa seccion antes
+de escribir codigo y, si esta ausente o vacia, ordena al implementer detenerse
+y reportar el gap en `blockage-report.md` en vez de continuar;
+`agents/planner.md` (paso 7 de "Crear issues") exige igualmente que el planner
+la enumere en cualquier issue que redacte. Los templates de este protocolo no la
+incluyen: el defecto es del template (hallazgo no
+bloqueante capturado en #1560), no de `tdd-pipeline.sh` ni de los agentes que
+lo ejecutan.
+
+Esto es exactamente lo que expuso el intento 1 (run-id
+`20260921-062538-v0.38.2`, fixtures #28-#31, PRs #32/#33): sobre el template
+literal sin `## ADRs aplicables`, el implementer de OpenCode aplico su
+doctrina correctamente (se detuvo y reporto el gap) mientras el de Claude se
+aparto de ella, produciendo una asimetria `NO PASA` en la celda write
+OpenCode. Esa asimetria es indicio de un defecto de *fixture* -- el template no
+cumplia la propia doctrina de Mefisto --, no de una diferencia entre runtimes:
+por eso el intento 1 queda citado aqui unicamente como **antecedente
+historico** de por que la seccion se agrego, y **nunca** como evidencia de
+paridad ni de disparidad entre Claude y OpenCode. La unica evidencia que este
+veredicto juzga para CA-1 a CA-6 del protocolo es el intento 2, sobre fixtures
+que corrigen ese defecto y por eso produjeron las cuatro celdas `PASA` sin
+bifurcacion de comportamiento entre agentes.
+
+### Veredicto (CA-5 de #1487)
+
+**PASA (2026-09-22), release `v0.38.2`.** Causa: las cuatro celdas de la matriz
+write-side/read-side x Claude/OpenCode exigidas por #1435/#1436 tienen ahora
+evidencia real y correlacionable -- fixture, PR con `Closes`, session id y
+resultado de Stage 1/2/2b/3/4 -- con identidad de release identica y `aligned`
+en las cuatro, observabilidad correlacionada por expediente, centinelas en
+cero y baseline restaurado exactamente al mismo SHA en los dos pares
+(write-side y read-side). La unica desviacion frente a los templates del protocolo (la seccion
+`## ADRs aplicables` agregada en el intento 2) se juzga arriba como
+**desviacion justificada**, atribuible a un defecto de los templates y no del
+pipeline certificado.
+
+Conforme al CA-4 de #1411 y al CA-5 de #1464, este `PASA`:
+
+- Otorga a `/mefisto:implement` (rutas write-side y `tipo:projection`) soporte
+  certificado bajo Claude Code y bajo OpenCode, en el mismo alcance acotado que
+  fijo "Alcance de lo que este veredicto juzga" en la seccion de #1411:
+  unicamente esas dos rutas normales; `--scaffold-domain`, `--from-stage`,
+  `--variant` y la remediacion de coverage no ejercida permanecen fuera de este
+  veredicto y requieren un protocolo propio para certificarse.
+- No abre ningun bug nuevo: no hay causa de `NO PASA` que reportar. Los
+  hallazgos no bloqueantes del mismo expediente ya quedaron capturados como
+  drafts independientes -- #1560, #1561, #1562, #1563 -- fuera del alcance de
+  este veredicto.
+- Cierra la dependencia que "Bloqueo estructural de la ejecucion automatizada
+  (#1464)" declaraba sobre este issue de veredicto (su paso 4); #1464 se cierra
+  a mano tras el merge del PR de este issue, con un comentario que enlace esta
+  seccion, conforme al CA-5 de #1464 y a la advertencia de esa misma seccion
+  sobre no cerrarlo por el `Closes` automatico de un PR de tooling.
+
+**Alcance de lo que este veredicto juzga.** Igual que #1411, cubre unicamente
+las rutas write-side y `tipo:projection` normales de `/mefisto:implement` sobre
+la release `v0.38.2`. No certifica `--scaffold-domain`, `--from-stage`,
+`--variant` ni la remediacion de coverage no ejercida; tampoco recertifica
+`/mefisto:tooling`, ya `PASA` desde #1066.
+
 ## Referencias
 
+- [#1487](https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/issues/1487):
+  issue de veredicto que audita la sesion humana de #1464 y emite `PASA` sobre
+  las cuatro corridas reales de #1435/#1436; cierra #1464 al mergearse (a mano,
+  no por `Closes` automatico).
 - `docs/testing/opencode-consumer-cutover.md`: protocolo, consumidor y
   veredicto `PASA` (#1066) del corte `/mefisto:tooling` que este documento
   reutiliza como prerrequisito de instalacion, identidad y redaccion.
