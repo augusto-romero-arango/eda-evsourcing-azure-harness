@@ -724,9 +724,9 @@ el 2026-09-21 sobre la release `v0.38.2` ("Sesion humana ejecutada
 (2026-09-21)" de la seccion anterior) contra las tablas ya rellenas de
 "Resultado write-side (#1435)" y "Resultado read-side (#1436)" arriba. No
 redefine el protocolo de #1434 ni sus templates; emite el veredicto documental
-fail-closed que exige el CA-4 de "Fail-closed y limpieza (CA-6)" del protocolo
-y que "Bloqueo estructural de la ejecucion automatizada (#1464)" dejo
-pendiente en su paso 4.
+fail-closed conforme a la seccion "Fail-closed y limpieza (CA-6)" del protocolo,
+que "Bloqueo estructural de la ejecucion automatizada (#1464)" dejo pendiente
+en su paso 4.
 
 ### Identidad comun de release (CA-1 de #1487)
 
@@ -788,7 +788,12 @@ auth/credenciales, tokens de portador/prefijo corto). `<sha-baseline-inicial>`
 el par write-side como en el par read-side, con el arbol limpio antes y
 despues de cada corrida; la limpieza (PRs cerrados sin merge, ramas remotas
 eliminadas, issues fixture `not planned`, cero worktrees) se ejecuto el
-2026-09-21T08:58:07-05:00 en ambos pares.
+2026-09-21T08:58:07-05:00 en ambos pares. El paso 5 de esa limpieza
+(restaurar la instalacion previa `0.38.1` / `a48e6870`) no se aplico por
+decision humana declarada en la fila "Limpieza" de #1435: `0.38.2` se conservo
+por ser la release vigente, con la instalacion previa registrada para el
+rollback. No afecta el veredicto: la identidad de las cuatro corridas se
+verifico antes de cada celda y no cambio durante la sesion.
 
 ### Desviacion de fixture: justificada, no evidencia de paridad (CA-4 de #1487)
 
@@ -802,9 +807,8 @@ los ADRs aplicables del issue", exige que todo issue declare esa seccion antes
 de escribir codigo y, si esta ausente o vacia, ordena al implementer detenerse
 y reportar el gap en `blockage-report.md` en vez de continuar;
 `agents/planner.md` (paso 7 de "Crear issues") exige igualmente que el planner
-la enumere en cualquier issue que redacte. Los templates de este protocolo --
-redactados antes de que esa exigencia se verificara contra una escritura real
--- simplemente no la incluyen: el defecto es del template (hallazgo no
+la enumere en cualquier issue que redacte. Los templates de este protocolo no la
+incluyen: el defecto es del template (hallazgo no
 bloqueante capturado en #1560), no de `tdd-pipeline.sh` ni de los agentes que
 lo ejecutan.
 
@@ -829,8 +833,8 @@ write-side/read-side x Claude/OpenCode exigidas por #1435/#1436 tienen ahora
 evidencia real y correlacionable -- fixture, PR con `Closes`, session id y
 resultado de Stage 1/2/2b/3/4 -- con identidad de release identica y `aligned`
 en las cuatro, observabilidad correlacionada por expediente, centinelas en
-cero y baseline restaurado exactamente al mismo SHA en las dos corridas
-gemelas. La unica desviacion frente a los templates del protocolo (la seccion
+cero y baseline restaurado exactamente al mismo SHA en los dos pares
+(write-side y read-side). La unica desviacion frente a los templates del protocolo (la seccion
 `## ADRs aplicables` agregada en el intento 2) se juzga arriba como
 **desviacion justificada**, atribuible a un defecto de los templates y no del
 pipeline certificado.
