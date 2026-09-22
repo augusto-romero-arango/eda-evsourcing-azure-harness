@@ -411,49 +411,50 @@ instalacion y discovery (#1180)" y "Matriz de corridas e issues fixture
 
 ### Estado de la corrida
 
-**PENDIENTE DE EJECUCION.** El par write-side todavia no se ha lanzado. Las
-dos corridas exigen una sesion operada en vivo sobre el consumidor privado:
-los dos issues fixture creados desde su planner **publicado** (nunca con
-`gh -R` cross-repo desde Mefisto, MEF-ADR-0019), los panes Herdr de cada
-runtime y la espera de los checks de CI sobre su Azure dedicado. Esa evidencia
-solo existe cuando esa sesion corre de verdad; consignar aqui un resultado sin
-ejecutarla seria evidencia simulada, justo lo que MEF-ADR-0031 prohibe.
+**EJECUTADA (2026-09-21, America/Bogota UTC-05:00) -- par write-side `PASA`.**
+Sesion operada en vivo sobre el consumidor privado
+`augusto-romero-arango/mefisto-consumer-certification`, run-id
+`20260921-073646-v0.38.2` (intento 2). El intento 1 (run-id
+`20260921-062538-v0.38.2`, fixtures #28-#31, PRs #32/#33) queda **descartado**
+como evidencia de paridad: su celda write OpenCode dio `NO PASA` porque los
+fixtures se crearon con el template literal de "Templates de fixture", que no
+incluye `## ADRs aplicables`, seccion que `agents/implementer.md` (1b) exige y
+ante cuya ausencia escribe `blockage-report.md`. El implementer OpenCode actuo
+conforme a su doctrina; el de Claude se aparto de ella. Por decision humana el
+intento 2 repitio las cuatro celdas sobre la misma release y el mismo baseline
+con fixtures creados por el planner publicado con su doctrina completa
+(incluida `## ADRs aplicables`), conservando la regla semver de
+`EtiquetaRelease`, el campo derivado `IdentificadorCertificacion` y bodies
+byte-identicos por par espejo. Esa es la unica desviacion frente a los
+templates de este protocolo y se declara aqui para la auditoria del veredicto.
 
-"Pendiente de ejecucion" no es el veredicto `BLOQUEADO` de "Fail-closed y
-limpieza (CA-6)": aquel describe una corrida ya lanzada cuyo recurso resulto
-inaccesible y obliga a abrir un `tipo:bug` dependiente de #1411. Mientras no
-haya corrida no hay defecto que reportar, y #1411 sigue bloqueado por ausencia
-de evidencia, no por un fallo observado. El veredicto de #1411 requiere ademas
-que esta seccion y "Resultado read-side (#1436)" esten completas y
-reconciliadas entre si, igual que #1066 reconcilio #1180 y #1181.
-
-Quien ejecute el par completa esta seccion rellenando las dos tablas
-siguientes y enlazando el comentario de cierre sanitizado de cada issue
-fixture. Las tablas conservan solo indices, URLs y veredictos; los streams,
-prompts y logs crudos quedan fuera, conforme a "Manifiesto de evidencia
-sanitizado (CA-5)".
+El expediente sanitizado completo vive en el consumidor, ignorado por Git, en
+`.mefisto/pipeline/certification/tdd-v0.38.2/` (`coordination.md`,
+`write-claude.md`, `write-opencode.md`, `sentinels.md`, `final-handoff.md`;
+intento 1 en `intento-1/`). Estas tablas solo conservan indices, URLs y
+veredictos, conforme a "Manifiesto de evidencia sanitizado (CA-5)".
 
 | Campo | Valor verificado |
 |---|---|
-| Release e identidad | `<tag-certificable>`, `<version>`, commit fuente `<commit-fuente>`, `<checksum-opencode>` verificado; `diagnose-installation-identity.sh` en `aligned` para ambos runtimes. |
-| Baseline | `<sha-baseline-inicial>` y `<sha-baseline-final>` coincidentes, con arbol limpio antes y despues de cada corrida. |
-| Fixtures | issues write-side Claude y write-side OpenCode, creados desde el planner publicado del consumidor con `tipo:feature`, `dom:certificacion` y `estado:listo`. |
-| Discovery | `/mefisto:implement`, `test-writer`, `implementer`, `smoke-test-writer`, `reviewer`, la clausura del ciclo TDD y los permisos requeridos, observados en ambos runtimes antes de lanzar. |
-| PRs | un PR real por corrida, con `Closes #<issue>`, alcance limitado al fixture y comentario de cierre del pipeline. |
-| Stages | Stage 1/2/2b/3/4 de cada corrida con su resultado y un unico terminal; Stage 2b nunca `skipped`; Stage 0 no ejecutado. |
-| Checks | conclusiones de los checks requeridos de cada PR, o `NO_APLICAN` con su motivo. |
-| Diferencias de adaptador | cada divergencia Claude/OpenCode explicada, sin reducir stages, gates ni alcance. |
-| Centinelas | barrido sobre la evidencia persistente sin prompts, raw, `stderr`, tool inputs, cabeceras de auth ni tokens. |
-| Limpieza | PRs cerrados sin merge, ramas eliminadas, issues fixture cerrados desde el consumidor, cero worktrees. |
+| Release e identidad | `v0.38.2` (publicada 2026-09-21T11:15:57Z), version `0.38.2`, commit fuente `6c2319c5a91aef844d5f71468ecb43d6f72a1cfe`, digest OpenCode `78eee7c04875c534d2c7c0bed4eddf77f6c8b227346bf78d5cd6bd81fdd83459` verificado por el launcher contra el `.sha256` publicado; `diagnose-installation-identity.sh` en `aligned` en ambos runtimes antes de cada celda; `pipeline-history.jsonl` registra identity `0.38.2/6c2319c5` en ambas corridas. Instalacion previa (rollback): `0.38.1` / `a48e6870` en ambos runtimes. |
+| Baseline | `<sha-baseline-inicial>` = `<sha-baseline-final>` = `9f49d6a59fa96f7e5a49b0139fa27ae9c2353d35`; `main` limpio, 0/0 frente a `origin/main`, un solo worktree antes y despues de cada corrida. |
+| Fixtures | [#34](https://github.com/augusto-romero-arango/mefisto-consumer-certification/issues/34) (Claude) y [#35](https://github.com/augusto-romero-arango/mefisto-consumer-certification/issues/35) (OpenCode), `tipo:feature`, `dom:certificacion`, `estado:listo`, creados por el planner publicado 0.38.2; bodies byte-identicos (sha256/12 `00cc3913a679`, 26170 bytes). |
+| Discovery | Claude (tras `/reload-plugins`, cache 0.38.2) y OpenCode (release 0.38.2 proyectada; hook de arranque registra `harness=0.38.2 commit=6c2319c` en `sessions.jsonl`): `/mefisto:implement`, `test-writer`, `implementer`, `smoke-test-writer`, `reviewer` y `scripts/tdd-pipeline.sh` presentes antes de lanzar. |
+| PRs | [#38](https://github.com/augusto-romero-arango/mefisto-consumer-certification/pull/38) (`Closes #34`, +51/-5, 4 archivos) y [#39](https://github.com/augusto-romero-arango/mefisto-consumer-certification/pull/39) (`Closes #35`, +52/-5, 4 archivos): mismos cuatro archivos (validator, test del validator y dos SmokeTests), dentro del alcance del fixture; summaries de cada stage en el cuerpo y comentario de cierre. |
+| Stages | Ambas: Stage 0 no ejecutado; Stage 1 rojo funcional (46 tests / 1 fallido, "Fase roja confirmada (exit 2)"); Stage 2 verde tocando solo `RegistrarSolicitudCertificacionValidator.cs` (46/46 + 16/16); Stage 2b ejecutado (smoke `400` nuevo + migracion de fixtures); Stage 3 `success`; Stage 4 `passed`, gaps=0. Un unico terminal por stage. |
+| Checks | `NO_APLICAN` en #38 y #39: el unico workflow del consumidor sobre `pull_request` es `infra-cd.yml`, filtrado a `infra/**`, y los fixtures no tocan `infra/`; `deploy-certificacion.yml`/`deploy-projections.yml` solo corren sobre `push` a `main` y `smoke-tests.yml` es programado/manual. `statusCheckRollup` vacio en ambos PRs. |
+| Diferencias de adaptador | Modelos resueltos automaticamente, sin `--models` ni `--variant`: Claude `claude-sonnet-5` (1/2/2b, `balanced`) y `claude-opus-5` (3, `deep`); OpenCode `openai/gpt-5.6-terra` (1/2/2b) y `openai/gpt-5.6-sol` (3). Stage 3: Claude sin cambios, OpenCode refactor de anclaje estricto del patron (1+1 lineas). Duracion 10 vs 16 min. Incidente operativo no atribuible al pipeline TDD: el primer despacho OpenCode no arranco ningun stage porque `herdr-pipeline.sh` reutilizo un pane cuyo shell rechazo el comando (`zsh: bad pattern: [200~cd`); el relanzamiento fue limpio y conserva el terminal unico. |
+| Centinelas | 0 coincidencias en los cuatro patrones (salida cruda/interaccion, cabeceras de auth, auth store/credenciales, tokens de portador/prefijo corto) sobre todo el expediente, incluido `intento-1/` (`sentinels.md`, 2026-09-21T08:56:30-05:00). |
+| Limpieza | PRs #38/#39 (y #32/#33 del intento 1) cerrados sin merge con ramas remotas eliminadas; issues #34/#35 (y #28-#31) cerrados `not planned` con comentario que enlaza el expediente; cero worktrees de fixtures. Por decision humana se conserva 0.38.2 instalada (paso a ser la release vigente) en lugar de restaurar 0.38.1. |
 
 | CA de #1435 | Resultado | Sintesis |
 |---|---|---|
-| CA-1 preflight y fixtures | | |
-| CA-2 discovery en Herdr | | |
-| CA-3 corrida Claude | | |
-| CA-4 corrida OpenCode | | |
-| CA-5 expediente correlacionado | | |
-| CA-6 centinelas y limpieza | | |
+| CA-1 preflight y fixtures | PASA | `/mefisto:onboard` `LISTO` (17 OK / 0 FALTA), Azure dedicado operativo, identidad `aligned` 0.38.2/6c2319c5, baseline `9f49d6a` fijado; fixtures #34/#35 byte-identicos. |
+| CA-2 discovery en Herdr | PASA | Workspace Herdr con filas `planner`/`ejecucion` por runtime y pools separados; discovery viva de ambos adaptadores antes de lanzar. |
+| CA-3 corrida Claude | PASA | `/mefisto:implement 34`, sesion `20260921-075322`, 07:53:22-08:03:25; PR #38; stages 1/2/2b/3 `success`, Stage 4 `passed` gaps=0. |
+| CA-4 corrida OpenCode | PASA | `/mefisto:implement 35`, sesion `20260921-080923`, 08:09:23-08:25:44; PR #39; stages 1/2/2b/3 `success`, Stage 4 `passed` gaps=0. |
+| CA-5 expediente correlacionado | PASA | `write-claude.md`/`write-opencode.md` correlacionan issue/PR/stage/session (hash) con artefactos neutrales (`events.log`, logs por stage, metrics, `pipeline-history.jsonl`) identificados por sha256/12. |
+| CA-6 centinelas y limpieza | PASA | Centinelas 0; limpieza ejecutada 2026-09-21T08:58:07-05:00 y baseline restaurado; intento 1 descartado y declarado arriba. |
 
 ## Resultado read-side (#1436)
 
@@ -473,51 +474,36 @@ issues fixture (#1181)" en `opencode-consumer-cutover.md`.
 
 ### Estado de la corrida
 
-**PENDIENTE DE EJECUCION.** El par read-side todavia no se ha lanzado. Las dos
-corridas exigen una sesion operada en vivo sobre el consumidor privado: los
-dos issues fixture `tipo:projection` creados desde su planner **publicado**
-(nunca con `gh -R` cross-repo desde Mefisto, MEF-ADR-0019), los panes Herdr de
-cada runtime -- lanzados uno tras otro para no compartir el worker de
-proyecciones -- y la espera de los checks de CI sobre su Azure dedicado. Esa
-evidencia solo existe cuando esa sesion corre de verdad; consignar aqui un
-resultado sin ejecutarla seria evidencia simulada, justo lo que MEF-ADR-0031
-prohibe.
-
-"Pendiente de ejecucion" no es el veredicto `BLOQUEADO` de "Fail-closed y
-limpieza (CA-6)": aquel describe una corrida ya lanzada cuyo recurso resulto
-inaccesible y obliga a abrir un `tipo:bug` dependiente de #1411. Mientras no
-haya corrida no hay defecto que reportar, y #1411 sigue bloqueado por ausencia
-de evidencia, no por un fallo observado. El veredicto de #1411 requiere ademas
-que esta seccion y "Resultado write-side (#1435)" esten completas y
-reconciliadas entre si, igual que #1066 reconcilio #1180 y #1181.
-
-Quien ejecute el par completa esta seccion rellenando las dos tablas
-siguientes y enlazando el comentario de cierre sanitizado de cada issue
-fixture. Las tablas conservan solo indices, URLs y veredictos; los streams,
-prompts y logs crudos quedan fuera, conforme a "Manifiesto de evidencia
-sanitizado (CA-5)".
+**EJECUTADA (2026-09-21, America/Bogota UTC-05:00) -- par read-side `PASA`.**
+Mismo run-id (`20260921-073646-v0.38.2`, intento 2), release, identidad y
+baseline que el par write-side; las dos corridas read-side se lanzaron
+secuencialmente, despues del par write-side y sin solaparse entre si. En el
+intento 1 no llegaron a ejecutarse (fail-closed tras la celda write OpenCode,
+ver "Resultado write-side (#1435)"). Expediente sanitizado en el consumidor:
+`.mefisto/pipeline/certification/tdd-v0.38.2/read-claude.md` y
+`read-opencode.md`.
 
 | Campo | Valor verificado |
 |---|---|
-| Release e identidad | `<tag-certificable>`, `<version>`, commit fuente `<commit-fuente>`, `<checksum-opencode>` verificado; `diagnose-installation-identity.sh` en `aligned` para ambos runtimes, mismo baseline/release que el par write-side. |
-| Baseline | `<sha-baseline-inicial>` y `<sha-baseline-final>` coincidentes, con arbol limpio antes y despues de cada corrida; parte del baseline y nunca del PR write-side descartado. |
-| Fixtures | issues read-side Claude y read-side OpenCode `tipo:projection`, creados desde el planner publicado del consumidor con `dom:certificacion` y `estado:listo`, sobre `<evento-certificable>`/`<vista-certificable>` ya materializados en el baseline; lanzados secuencialmente para no compartir el worker de proyecciones. |
-| Discovery | `/mefisto:implement`, `projection-test-writer`, `projection-implementer`, `smoke-test-writer`, `reviewer`, el Skill `projections` con sus recursos Nivel 3, la clausura del ciclo TDD y los permisos requeridos, observados en ambos runtimes antes de lanzar. |
-| PRs | un PR real por corrida, con `Closes #<issue>`, alcance limitado al fixture y comentario de cierre del pipeline. |
-| Stages | Stage 1 (fase roja esperada; una señal `no-red` solo con la justificacion acotada que fija "Rutas de agentes forzadas y alcance del pipeline (CA-3)")/2/2b/3/4 de cada corrida con su resultado y un unico terminal; Stage 2b sobre la Function GET, nunca `skipped`; Stage 0 no ejecutado. |
-| Checks | conclusiones de los checks requeridos de cada PR, o `NO_APLICAN` con su motivo. |
-| Diferencias de adaptador | cada divergencia Claude/OpenCode explicada -- incluida la disponibilidad de ADRs y recursos del Skill `projections` adaptados por runtime --, sin reducir stages, gates ni alcance. |
-| Centinelas | barrido sobre la evidencia persistente sin prompts, raw, `stderr`, tool inputs, cabeceras de auth ni tokens. |
-| Limpieza | PRs cerrados sin merge, ramas eliminadas, issues fixture cerrados desde el consumidor, cero worktrees, baseline restaurado. |
+| Release e identidad | `v0.38.2`, `0.38.2`, commit fuente `6c2319c5a91aef844d5f71468ecb43d6f72a1cfe`, digest OpenCode `78eee7c04875c534d2c7c0bed4eddf77f6c8b227346bf78d5cd6bd81fdd83459`; `aligned` en ambos runtimes antes de cada celda, identica a la del par write-side. |
+| Baseline | `9f49d6a59fa96f7e5a49b0139fa27ae9c2353d35` al inicio y al cierre, arbol limpio; ningun PR fixture se fusiono, asi que las corridas read-side parten del baseline y no del PR write-side. |
+| Fixtures | [#36](https://github.com/augusto-romero-arango/mefisto-consumer-certification/issues/36) (Claude) y [#37](https://github.com/augusto-romero-arango/mefisto-consumer-certification/issues/37) (OpenCode), `tipo:projection`, `dom:certificacion`, `estado:listo`; bodies byte-identicos (sha256/12 `bbad87d1d822`, 30486 bytes); `<evento-certificable>` `SolicitudCertificacionRegistrada` y `<vista-certificable>` `DetalleSolicitudCertificacion` (`SingleStreamProjection` Async) ya materializados en el baseline; campo derivado `IdentificadorCertificacion` = `EtiquetaRelease@Runtime`. |
+| Discovery | `/mefisto:implement`, `projection-test-writer`, `projection-implementer`, `smoke-test-writer`, `reviewer` y el Skill `projections` con `SKILL.md`, `modelos-marten.md`, `read-apis.md`, `naming.md` y `config-test.md` presentes en ambos runtimes (en OpenCode como `mefisto-projections`). |
+| PRs | [#40](https://github.com/augusto-romero-arango/mefisto-consumer-certification/pull/40) (`Closes #36`, +70/-10, 5 archivos) y [#41](https://github.com/augusto-romero-arango/mefisto-consumer-certification/pull/41) (`Closes #37`, +68/-15, 5 archivos): mismos cinco archivos (proyeccion, read model, `ObtenerDetalleSolicitudCertificacion/FunctionEndpoint.cs`, test de proyeccion y smoke del GET). |
+| Stages | Ambas: Stage 0 no ejecutado; Stage 1 rojo real sobre `Create` (Projections.Tests 17 / 2 fallidos, los mismos dos en ambas), sin señal `no-red`; Stage 2 verde tocando proyeccion y Function GET sin tocar tests (45/45 + 17/17); Stage 2b ejecutado sobre la Function GET; Stage 3 `success`; Stage 4 `passed`, gaps=0. Un unico terminal por stage. |
+| Checks | `NO_APLICAN` en #40 y #41, mismo motivo que el par write-side. |
+| Diferencias de adaptador | Mismos modelos automaticos por runtime que el par write-side. Stage 3: ambos reviewers solo compactaron comentarios (MEF-ADR-0044), en archivos distintos (Claude: endpoint, read model y test; OpenCode: proyeccion y smoke). Duracion 13 vs 14 min. Recursos del Skill `projections` visibles en ambos runtimes; sin reduccion de stages, gates ni alcance. |
+| Centinelas | Cubiertas por el mismo barrido del expediente (`sentinels.md`): 0 coincidencias. |
+| Limpieza | PRs #40/#41 cerrados sin merge con ramas remotas eliminadas; issues #36/#37 (y #30/#31) cerrados `not planned` desde el consumidor; cero worktrees; baseline restaurado. |
 
 | CA de #1436 | Resultado | Sintesis |
 |---|---|---|
-| CA-1 preflight y fixtures secuenciales | | |
-| CA-2 discovery read-side en Herdr | | |
-| CA-3 corrida Claude | | |
-| CA-4 corrida OpenCode | | |
-| CA-5 expediente correlacionado | | |
-| CA-6 centinelas y limpieza | | |
+| CA-1 preflight y fixtures secuenciales | PASA | Mismo preflight que el par write-side; fixtures #36/#37 byte-identicos, lanzados uno tras otro. |
+| CA-2 discovery read-side en Herdr | PASA | Agentes de proyeccion y Skill `projections` con sus recursos de Nivel 3 visibles en ambos runtimes. |
+| CA-3 corrida Claude | PASA | `/mefisto:implement 36`, sesion `20260921-082706`, 08:27:06-08:39:43; PR #40; stages 1/2/2b/3 `success`, Stage 4 `passed` gaps=0. |
+| CA-4 corrida OpenCode | PASA | `/mefisto:implement 37`, sesion `20260921-084136`, 08:41:36-08:55:17; PR #41; stages 1/2/2b/3 `success`, Stage 4 `passed` gaps=0. |
+| CA-5 expediente correlacionado | PASA | `read-claude.md`/`read-opencode.md` correlacionan issue/PR/stage/session (hash) con los artefactos neutrales por sha256/12. |
+| CA-6 centinelas y limpieza | PASA | Centinelas 0; limpieza ejecutada 2026-09-21T08:58:07-05:00; baseline `9f49d6a` restaurado. |
 
 ## Veredicto final del corte TDD multi-runtime (#1411)
 
@@ -719,6 +705,17 @@ seccion aunque la evidencia siga ausente. Quien mergee debe **reabrir #1464**
 inmediatamente despues; el unico cierre valido de este bug es el issue de
 veredicto del paso 4, conforme a su CA-5. Cerrarlo por el `Closes` automatico
 repetiria literalmente el defecto que #1411 audito en #1435/#1436.
+
+### Sesion humana ejecutada (2026-09-21)
+
+La sesion operada en vivo que exige esta seccion ocurrio el 2026-09-21 sobre
+la release `v0.38.2`: pasos 1 a 3 cumplidos y consignados en "Resultado
+write-side (#1435)" y "Resultado read-side (#1436)" (matriz 2x2 del intento 2,
+PRs #38-#41 del consumidor, cuatro `PASA` individuales). El paso 4 es
+[#1487](https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/issues/1487),
+el issue de veredicto que audita esa evidencia; #1464 sigue abierto hasta que
+#1487 se resuelva. El PR que registra esta evidencia usa `Refs #1464`, nunca
+`Closes`.
 
 ## Referencias
 
