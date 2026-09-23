@@ -21,13 +21,20 @@ metadata="$(awk 'NR == 1 { next } $0 == "---" { exit } { print }' "$SOURCE")"
 if printf '%s' "$metadata" | jq -e '.kind == "command" and .id == "parallel" and .profile == "fast" and .arguments == "<issue1> <issue2> ... [--pipeline tdd|tooling]" and (keys | sort) == ["arguments", "description", "id", "kind", "profile"]' >/dev/null; then pass 'metadata sin agent ni capabilities'; else fail 'metadata neutral invalida'; fi
 body="$(awk 'NR == 1 { next } $0 == "---" && !seen { seen=1; next } seen { print }' "$SOURCE")"
 contains "$body" '{{mefisto:assert-consumer-repo}}' 'guard consumidor presente'
+guard_line="$(grep -nF '{{mefisto:assert-consumer-repo}}' "$SOURCE" | cut -d: -f1)"
+operation_line="$(awk '/gh issue view/ { print NR; exit }' "$SOURCE")"
+[ -n "$guard_line" ] && [ -n "$operation_line" ] && [ "$guard_line" -lt "$operation_line" ] && pass 'guard precede cualquier operacion' || fail 'guard no precede las operaciones'
 contains "$body" '{{mefisto:run tmux-pipeline.sh --parallel $ARGUMENTS}}' 'despacho neutral exacto'
+[ "$(grep -cF '{{mefisto:run tmux-pipeline.sh --parallel $ARGUMENTS}}' "$SOURCE")" -eq 1 ] && pass 'existe un unico despacho' || fail 'el despacho no es unico'
 contains "$body" 'gh issue view' 'valida issues antes de lanzar'
 contains "$body" 'esta cerrado, informalo y excluyelo' 'excluye issues inexistentes o cerrados'
 contains "$body" 'Si no queda ningun issue valido, detente' 'se detiene sin issues validos'
 contains "$body" 'pasando `--pipeline` si el usuario lo proporciono' 'pasa --pipeline al wrapper'
 contains "$body" 'arranques escalonados de 30s' 'documenta arranque escalonado en Herdr'
 contains "$body" 'tmux -CC attach -t parallel-<timestamp>' 'documenta conexion tmux'
+contains "$body" '{{mefisto:state-path logs}}' 'documenta logs por issue'
+contains "$body" '{{mefisto:state-path events.log}}' 'documenta events.log'
+absent "$body" 'propio tab' 'describe correctamente panes, no tabs'
 for command in work-status merge batch-stop sequential; do contains "$body" "{{mefisto:command $command}}" "referencia $command via directiva command"; done
 contains "$body" '{{mefisto:package-root}}/scripts/parallel-pipeline.sh' 'scheduler directo usa package-root'
 contains "$body" '--max-parallel' 'documenta limite de concurrencia'
@@ -42,7 +49,9 @@ for file in "$CLAUDE" "$OPENCODE"; do [ -f "$file" ] && pass "existe ${file#"$RE
 claude_body="$(< "$CLAUDE")"
 opencode_body="$(< "$OPENCODE")"
 contains "$claude_body" 'MEFISTO_RUNTIME=claude "${MEFISTO_PACKAGE_ROOT}/scripts/tmux-pipeline.sh" --parallel $ARGUMENTS' 'Claude invoca tmux-pipeline.sh --parallel y fija su runtime'
+absent "$claude_body" 'MEFISTO_RUNTIME=opencode' 'Claude no fija el runtime OpenCode'
 contains "$opencode_body" 'MEFISTO_RUNTIME=opencode "${MEFISTO_PACKAGE_ROOT}/scripts/tmux-pipeline.sh" --parallel $ARGUMENTS' 'OpenCode invoca tmux-pipeline.sh --parallel y fija su runtime'
+absent "$opencode_body" 'MEFISTO_RUNTIME=claude' 'OpenCode no fija el runtime Claude'
 contains "$claude_body" 'model: "haiku"' 'Claude materializa el perfil fast'
 absent "$opencode_body" 'model:' 'OpenCode no emite model'
 for command in work-status merge batch-stop; do
@@ -62,8 +71,8 @@ contains "$(< "$MIRROR")" '<!-- GENERADO por src/published/scripts/generate-publ
 for runtime in claude opencode; do
     asset="$REPO_ROOT/dist/$runtime/scripts/parallel-pipeline.sh"
     [ -x "$asset" ] && pass "parallel-pipeline.sh empaquetado en dist/$runtime/scripts" || fail "falta dist/$runtime/scripts/parallel-pipeline.sh"
+    if cmp -s "$REPO_ROOT/scripts/parallel-pipeline.sh" "$asset"; then pass "parallel-pipeline.sh identico en dist/$runtime/scripts"; else fail "dist/$runtime/scripts/parallel-pipeline.sh diverge de la fuente"; fi
 done
-if cmp -s "$REPO_ROOT/scripts/parallel-pipeline.sh" "$REPO_ROOT/dist/opencode/scripts/parallel-pipeline.sh"; then pass 'parallel-pipeline.sh identico en dist/opencode/scripts'; else fail 'dist/opencode/scripts/parallel-pipeline.sh diverge de la fuente'; fi
 if "$GENERATOR" --check >/dev/null; then pass 'generate-published-adapters --check esta al dia'; else fail 'generate-published-adapters --check detecto divergencias'; fi
 
 printf 'RESULTADO: %s pasaron, %s fallaron\n' "$PASS" "$FAIL"

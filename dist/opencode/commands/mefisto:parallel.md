@@ -1,5 +1,5 @@
 ---
-description: "Lanza pipelines en paralelo para multiples issues, cada uno en su propio pane o tab."
+description: "Lanza pipelines en paralelo para multiples issues, cada uno en su propio pane."
 ---
 <!-- GENERADO por src/published/scripts/generate-published-adapters.sh desde src/published/commands/parallel.md. No editar a mano. -->
 ```bash
@@ -27,7 +27,7 @@ export MEFISTO_PACKAGE_ROOT
 
 Antes de continuar, aborta si existe `src/internal/scripts/generate-internal-adapters.sh`: ese directorio es el repositorio de Mefisto, no un consumidor.
 
-Lanza pipelines en paralelo para multiples issues. Dentro de Herdr cada issue corre en su propio pane apilado en el workspace actual; fuera de Herdr, en una sesion tmux con un tab por issue. Los PRs se crean pero NO se mergean automaticamente. Comunicate en **espanol**.
+Lanza pipelines en paralelo para multiples issues. Dentro de Herdr cada issue corre en su propio pane apilado en el workspace actual; fuera de Herdr, en un pane de una sesion tmux. Los PRs se crean pero NO se mergean automaticamente. Comunicate en **espanol**.
 
 **Grupos homogeneos**: todos los issues del grupo deben pertenecer al repo activo. El script subyacente (`parallel-pipeline.sh`) consulta cada issue con `gh issue view N` sin `-R`, asi que issues de otros repos se descartan automaticamente como UNKNOWN. No uses flags `-R` con este comando.
 
@@ -54,7 +54,7 @@ Si algun issue no existe o esta cerrado, informalo y excluyelo de la lista. Si n
 Muestra la lista de issues que se procesaran:
 
 ```
-Paralelo — 3 issues (cada uno en su propio pane/tab):
+Paralelo — 3 issues (cada uno en su propio pane):
   #42: Implementar calculo de horas extras nocturnas
   #43: Agregar validacion de jornada maxima
   #44: Calcular recargos dominicales
@@ -67,6 +67,8 @@ Luego lanza, pasando `--pipeline` si el usuario lo proporciono:
 ```bash
 MEFISTO_RUNTIME=opencode "${MEFISTO_PACKAGE_ROOT}/scripts/tmux-pipeline.sh" --parallel $ARGUMENTS
 ```
+
+Cada pipeline conserva sus logs por issue en `.mefisto/pipeline/logs`; el visor en vivo consume `.mefisto/pipeline/events.log`.
 
 ### 3. Instrucciones de conexion
 
@@ -84,7 +86,7 @@ Fuera de Herdr responde con:
 Pipeline paralelo lanzado en tmux. Para monitorear:
   tmux -CC attach -t parallel-<timestamp>
 
-Cada issue tiene su propio tab. Los PRs NO se mergean automaticamente.
+Cada issue tiene su propio pane. Los PRs NO se mergean automaticamente.
 Usa /mefisto:work-status para ver el progreso sin salir de aqui.
 ```
 
