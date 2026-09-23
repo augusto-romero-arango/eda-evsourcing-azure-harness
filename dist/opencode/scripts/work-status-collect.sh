@@ -166,11 +166,8 @@ collect_status_root() {
         [ -f "$f" ] && files+=("$f")
     done
     if [ ${#files[@]} -eq 0 ]; then
-        local pattern
-        for pattern in "$dir"/status*.json "$dir"/tooling-status*.json "$dir"/infra-status.json; do
-            for f in $pattern; do
-                [ -f "$f" ] && files+=("$f")
-            done
+        for f in "$dir"/status*.json "$dir"/tooling-status*.json "$dir"/infra-status.json; do
+            [ -f "$f" ] && files+=("$f")
         done
     fi
 
@@ -276,16 +273,18 @@ HISTORY_ARR=$(jq -s '.' "$HISTORY_TMP" 2>/dev/null) || HISTORY_ARR='[]'
 # Clave de historial: (pipeline, issue, variant, started); started ausente
 # tambien se normaliza a "" solo para la clave (nunca en el valor de salida).
 # En ambos casos gana el origen canonico ante empate.
+# "issue" se compara como texto: los status modernos lo escriben como string y
+# los formatos antiguos pueden traerlo numerico.
 
 DEDUPED_STATUS=$(jq -c '
-    def keyof(x): [x.pipeline, x.issue, (x.variant // "")];
+    def keyof(x): [x.pipeline, (x.issue | tostring), (x.variant // "")];
     group_by(keyof(.))
     | map(sort_by(if .origin == "canonical" then 0 else 1 end) | .[0])
 ' <<< "$STATUS_ARR" 2>/dev/null) || DEDUPED_STATUS='[]'
 [ -n "$DEDUPED_STATUS" ] || DEDUPED_STATUS='[]'
 
 DEDUPED_HISTORY=$(jq -c '
-    def keyof(x): [x.pipeline, x.issue, (x.variant // ""), (x.started // "")];
+    def keyof(x): [x.pipeline, (x.issue | tostring), (x.variant // ""), (x.started // "")];
     group_by(keyof(.))
     | map(sort_by(if .origin == "canonical" then 0 else 1 end) | .[0])
 ' <<< "$HISTORY_ARR" 2>/dev/null) || DEDUPED_HISTORY='[]'
@@ -496,7 +495,7 @@ while IFS= read -r row_json; do
             elif ($row.environment // null) != null then
                 ("env:" + $row.environment)
             elif ($row.pr // null) != null and $row.pr != "" then
-                ("PR #" + (($row.pr) | split("/") | last))
+                ("PR #" + ($row.pr | tostring | split("/") | last))
             else
                 null
             end

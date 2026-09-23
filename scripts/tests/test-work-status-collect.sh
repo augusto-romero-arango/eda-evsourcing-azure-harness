@@ -28,6 +28,8 @@
 #   [11] CA-4: reconstruccion de log legacy cuando el status no declara uno.
 #   [12] CA-2: es de solo lectura -- ningun archivo de los roots cambia
 #        (checksum antes/despues).
+#   [13] CA-2: issue string vs numerico es la misma clave de dedup; pr
+#        numerico en el historial produce detail "PR #N".
 #
 # Uso: scripts/tests/test-work-status-collect.sh
 # Exit code: 0 si todos los checks pasan, 1 si alguno falla.
@@ -343,6 +345,25 @@ if [ ! -d "$TMP/no-existe-old" ] && [ ! -d "$TMP/no-existe-stale-legacy" ]; then
     pass "no se crearon roots ausentes durante ninguna corrida"
 else
     fail "el script creo un root que no existia"
+fi
+
+echo ""
+echo "[13] CA-2: issue string (canonico) vs numerico (legacy) es la misma clave; pr numerico en detail"
+CANON13="$TMP/issue-type/canonical"; LEGACY13="$TMP/issue-type/legacy"
+mkdir -p "$CANON13" "$LEGACY13"
+echo '{"issue":"7","pipeline":"tooling","state":"running","stage":"1-writer"}' > "$CANON13/pipeline-status-tooling-7.json"
+echo '{"issue":7,"pipeline":"tooling","state":"running","stage":"1-writer"}' > "$LEGACY13/pipeline-status-tooling-7.json"
+echo '{"issue":7,"pipeline":"tooling","state":"completed","started":"20260101-100000","finished":"2026-01-01T10:05:00","pr":42}' > "$CANON13/pipeline-history.jsonl"
+OUT=$(run_collect "$CANON13" "$LEGACY13")
+if [ "$(jq '.rows | length' <<< "$OUT")" = "1" ] && [ "$(jq -r '.rows[0].origin' <<< "$OUT")" = "canonical" ]; then
+    pass "issue \"7\" y 7 deduplican a una sola fila canonica"
+else
+    fail "dedup por tipo de issue incorrecto: $(jq -c '.rows' <<< "$OUT")"
+fi
+if [ "$(jq -r '.history[0].detail' <<< "$OUT")" = "PR #42" ]; then
+    pass "pr numerico produce detail 'PR #42'"
+else
+    fail "detail con pr numerico incorrecto: $(jq -c '.history' <<< "$OUT")"
 fi
 
 echo ""
