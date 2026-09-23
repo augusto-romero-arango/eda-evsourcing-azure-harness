@@ -101,6 +101,18 @@ HERDR_RUNTIME=""
 # sleep del modo tmux). La espera corre DENTRO de cada pane (--delay del
 # runner), asi el despacho devuelve el control de inmediato.
 PARALLEL_STAGGER=30
+# Confirmacion de arranque tras teclear el comando en un pane (issue #1563):
+# `herdr pane run` devuelve 0 en cuanto el texto se tecleo, no cuando el shell
+# lo ejecuto -- un pane reutilizado puede haber quedado en un modo de terminal
+# invalido (bracketed paste sin cerrar del ocupante anterior, visto en la
+# certificacion v0.38.2: la linea entera se interpreto como "bad pattern" y
+# --_pane-runner jamas arranco). cmd_pane_runner escribe un marcador de
+# arranque ANTES de lanzar el sub-pipeline; quien despacha lo espera hasta
+# este timeout (configurable) antes de anunciar exito.
+HERDR_DISPATCH_CONFIRM_TIMEOUT="${HERDR_DISPATCH_CONFIRM_TIMEOUT:-15}"
+# Contador de despachos de ESTA corrida: junto al timestamp y el PID arma un
+# token unico por marcador (dos despachos en el mismo segundo no colisionan).
+DISPATCH_TOKEN_SEQ=0
 
 # Los mensajes de progreso van a stderr: varios helpers de este script
 # devuelven su resultado por stdout (acquire_report_pane) y un log colado ahi
@@ -231,33 +243,80 @@ prune_report_panes() {
     printf '%s\n%s\n' "$chosen" "$closed"
 }
 
+# split_new_report_pane
+#
+# Crea un pane de ejecucion NUEVO (split a la derecha del pane que despacha,
+# sin robar el foco) y lo registra en PANES_STATE. Compartido por
+# acquire_report_pane (cuando no hay ninguno libre) y por dispatch_to_pane
+# cuando el reintento de arranque (CA-3, issue #1563) exige un pane que NUNCA
+# se tecleo antes -- nunca el pane sospechoso de un arranque no confirmado.
+split_new_report_pane() {
+    local resp chosen
+    resp=$(herdr pane split --pane "$HERDR_PANE_ID" --direction right --cwd "$PROJECT_ROOT" --no-focus 2>&1) \
+        || abort "No se pudo crear el pane de ejecucion (herdr pane split): $resp"
+    chosen=$(echo "$resp" | jq -r '.result.pane.pane_id // empty' 2>/dev/null)
+    [ -n "$chosen" ] || abort "herdr pane split no devolvio pane_id. Respuesta: $resp"
+    echo "$chosen $HERDR_RUNTIME" >> "$PANES_STATE"
+    echo "$chosen"
+}
+
 # acquire_report_pane
 #
 # Imprime por stdout el pane_id donde correr el proximo pipeline: el primer
 # pane registrado que siga vivo, pertenezca a ESTE workspace y este libre (via
 # prune_report_panes, que de paso cierra los libres sobrantes); o uno nuevo
-# (split a la derecha del pane que despacha, sin robar el foco). El layout
-# colapsa naturalmente de vuelta a UN solo pane de seguimiento, y despachar un
-# issue nuevo "reemplaza" al pane del que termino en vez de acumular ventanas
-# (el reporte de cada corrida pasada sigue en su .report.log).
+# (split_new_report_pane). El layout colapsa naturalmente de vuelta a UN solo
+# pane de seguimiento, y despachar un issue nuevo "reemplaza" al pane del que
+# termino en vez de acumular ventanas (el reporte de cada corrida pasada sigue
+# en su .report.log).
 acquire_report_pane() {
     local result chosen
     result=$(prune_report_panes)
     chosen=$(printf '%s' "$result" | sed -n '1p')
 
     if [ -z "$chosen" ]; then
-        local resp
-        resp=$(herdr pane split --pane "$HERDR_PANE_ID" --direction right --cwd "$PROJECT_ROOT" --no-focus 2>&1) \
-            || abort "No se pudo crear el pane de ejecucion (herdr pane split): $resp"
-        chosen=$(echo "$resp" | jq -r '.result.pane.pane_id // empty' 2>/dev/null)
-        [ -n "$chosen" ] || abort "herdr pane split no devolvio pane_id. Respuesta: $resp"
-        echo "$chosen $HERDR_RUNTIME" >> "$PANES_STATE"
+        chosen=$(split_new_report_pane)
         log "Pane de ejecucion nuevo: $chosen"
     else
         log "Reusando el pane de ejecucion libre: $chosen"
     fi
 
     echo "$chosen"
+}
+
+# next_dispatch_token
+#
+# Token unico por despacho (timestamp + PID de este proceso + contador
+# incremental de la corrida): dos despachos en el mismo segundo no producen el
+# mismo nombre de marcador, y un marcador de una corrida vieja jamas confirma
+# un arranque nuevo (issue #1563).
+next_dispatch_token() {
+    DISPATCH_TOKEN_SEQ=$((DISPATCH_TOKEN_SEQ + 1))
+    printf '%s-%s-%s\n' "$(date +%s)" "$$" "$DISPATCH_TOKEN_SEQ"
+}
+
+# dispatch_marker_path <token>
+#
+# Ruta del marcador de arranque bajo el estado canonico del pipeline (issue
+# #1563, CA-1): cmd_pane_runner lo escribe ANTES de lanzar el sub-pipeline;
+# quien despacha solo lo lee, nunca lo crea.
+dispatch_marker_path() {
+    mefisto_state_path "herdr-dispatch-$1.started"
+}
+
+# wait_for_dispatch_marker <marker> <timeout_s>
+#
+# 0 si <marker> aparece antes de agotar <timeout_s> segundos (CA-2); 1 si se
+# agota el plazo. Sondeo de 1s: el marcador es un archivo vacio, no hace falta
+# mas resolucion que la de notar a tiempo un pane atascado.
+wait_for_dispatch_marker() {
+    local marker="$1" timeout="$2" waited=0
+    while [ ! -f "$marker" ]; do
+        [ "$waited" -lt "$timeout" ] || return 1
+        sleep 1
+        waited=$((waited + 1))
+    done
+    return 0
 }
 
 # stack_split_ratio <total> <k>
@@ -276,14 +335,17 @@ stack_split_ratio() {
     awk -v t="$total" -v k="$k" 'BEGIN { printf "%.4f", 1 / (t - k + 1) }'
 }
 
-# build_pane_runner_cmdline <titulo> <issues_csv> <delay_s> <cmd> [args...]
+# build_pane_runner_cmdline <titulo> <issues_csv> <delay_s> <started_marker> <cmd> [args...]
 #
 # Imprime por stdout la linea que un pane debe ejecutar para correr el runner
 # interno (--_pane-runner) con <cmd args...>. Todo argumento va quoteado con
 # printf %q: el pane run literalmente escribe la linea en el shell del pane.
+# <started_marker> vacio omite el flag --started-marker; cuando se pasa, es la
+# ruta que cmd_pane_runner escribe antes de lanzar el sub-pipeline (issue
+# #1563, CA-1).
 build_pane_runner_cmdline() {
-    local title="$1" issues_csv="$2" delay="$3"
-    shift 3
+    local title="$1" issues_csv="$2" delay="$3" started_marker="$4"
+    shift 4
 
     local cmdline
     cmdline="cd $(printf '%q' "$PROJECT_ROOT") && MEFISTO_RUNTIME=$(printf '%q' "$HERDR_RUNTIME") $(printf '%q' "$SCRIPT_DIR/herdr-pipeline.sh") --_pane-runner --title $(printf '%q' "$title")"
@@ -292,6 +354,9 @@ build_pane_runner_cmdline() {
     fi
     if [ "$delay" -gt 0 ]; then
         cmdline="$cmdline --delay $delay"
+    fi
+    if [ -n "$started_marker" ]; then
+        cmdline="$cmdline --started-marker $(printf '%q' "$started_marker")"
     fi
     cmdline="$cmdline --"
     local a
@@ -306,28 +371,67 @@ build_pane_runner_cmdline() {
 # Consigue un pane libre y le teclea (herdr pane run) la invocacion del
 # runner interno (--_pane-runner), que corre <cmd args...> en background con
 # su reporte a un log y muestra el visor en primer plano.
+#
+# Confirmacion de arranque (issue #1563, CA-2/CA-3/CA-4): `herdr pane run`
+# devolviendo 0 solo confirma que el texto se tecleo, nunca que el shell del
+# pane lo ejecuto. Se espera el marcador de cmd_pane_runner hasta
+# HERDR_DISPATCH_CONFIRM_TIMEOUT; si no aparece, se reintenta UNA vez en un
+# pane nuevo (split, jamas el sospechoso) y si tampoco confirma se falla
+# visible nombrando ambos panes -- ninguno de los dos se cierra solo (podrian
+# tener salida util para diagnostico).
 dispatch_to_pane() {
     local title="$1" issues_csv="$2"
     shift 2
 
-    local pane
+    local pane token marker cmdline
     pane=$(acquire_report_pane)
-
-    local cmdline
-    cmdline=$(build_pane_runner_cmdline "$title" "$issues_csv" 0 "$@")
+    token=$(next_dispatch_token)
+    marker=$(dispatch_marker_path "$token")
+    rm -f "$marker"
+    cmdline=$(build_pane_runner_cmdline "$title" "$issues_csv" 0 "$marker" "$@")
 
     herdr pane run "$pane" "$cmdline" >/dev/null 2>&1 \
         || abort "No se pudo lanzar el pipeline en el pane $pane (herdr pane run fallo)."
 
-    success "Pipeline '$title' corriendo en el pane $pane de este workspace."
-    log "El pane muestra el visor en vivo del agente; el reporte completo queda en $LOG_DIR_ABS/."
-    log "No hay sesion que adjuntar: el pane ya esta visible en el workspace (barra lateral de herdr)."
+    if wait_for_dispatch_marker "$marker" "$HERDR_DISPATCH_CONFIRM_TIMEOUT"; then
+        success "Pipeline '$title' corriendo en el pane $pane de este workspace."
+        log "El pane muestra el visor en vivo del agente; el reporte completo queda en $LOG_DIR_ABS/."
+        log "No hay sesion que adjuntar: el pane ya esta visible en el workspace (barra lateral de herdr)."
+        return 0
+    fi
+
+    warn "El pane $pane no confirmo el arranque en ${HERDR_DISPATCH_CONFIRM_TIMEOUT}s (marcador ausente): puede tener el shell en un estado invalido. Reintentando en un pane nuevo, sin volver a escribir en $pane."
+
+    local retry_pane retry_token retry_marker retry_cmdline
+    retry_pane=$(split_new_report_pane)
+    retry_token=$(next_dispatch_token)
+    retry_marker=$(dispatch_marker_path "$retry_token")
+    rm -f "$retry_marker"
+    retry_cmdline=$(build_pane_runner_cmdline "$title" "$issues_csv" 0 "$retry_marker" "$@")
+
+    herdr pane run "$retry_pane" "$retry_cmdline" >/dev/null 2>&1 \
+        || abort "No se pudo lanzar el pipeline en el pane de reintento $retry_pane (herdr pane run fallo). Pane sospechoso original: $pane."
+
+    if wait_for_dispatch_marker "$retry_marker" "$HERDR_DISPATCH_CONFIRM_TIMEOUT"; then
+        success "Pipeline '$title' corriendo en el pane $retry_pane de este workspace (reintento tras un arranque no confirmado en $pane)."
+        log "El pane muestra el visor en vivo del agente; el reporte completo queda en $LOG_DIR_ABS/."
+        log "No hay sesion que adjuntar: el pane ya esta visible en el workspace (barra lateral de herdr)."
+        return 0
+    fi
+
+    abort "Ni el pane $pane ni el reintento $retry_pane confirmaron el arranque de '$title' en ${HERDR_DISPATCH_CONFIRM_TIMEOUT}s. Cierra ambos paneles (alguno de los dos shells puede seguir en un estado invalido) y relanza el pipeline a mano."
 }
 
 # --- Runner interno (corre DENTRO del pane de ejecucion) ---
 #
-# herdr-pipeline.sh --_pane-runner --title <t> [--issues <csv>] [--delay <s>] -- <cmd> [args...]
+# herdr-pipeline.sh --_pane-runner --title <t> [--issues <csv>] [--delay <s>]
+#                    [--started-marker <path>] -- <cmd> [args...]
 #
+# 0. Si recibio --started-marker, lo escribe de inmediato -- ANTES de
+#    cualquier otro paso, incluido el --delay del escalonado -- para que
+#    confirme que el shell del pane ejecuto esta linea (issue #1563, CA-1);
+#    quien despacha lo espera con un timeout corto e independiente del
+#    escalonado de lotes --parallel.
 # 1. Renombra el pane con el titulo de la corrida (visible en el borde/sidebar).
 #    Con --delay (lotes --parallel) espera esos segundos, visible en el pane,
 #    antes de lanzar: el escalonado no bloquea a quien despacha.
@@ -340,7 +444,7 @@ dispatch_to_pane() {
 # 5. Renombra el pane a "[ok] ..."/"[fallo] ..." y devuelve el exit code del
 #    pipeline; el shell del pane queda en su prompt, listo para reutilizarse.
 cmd_pane_runner() {
-    local title="" issues_csv="" delay=0
+    local title="" issues_csv="" delay=0 started_marker=""
     while [ $# -gt 0 ]; do
         case "$1" in
             --title)
@@ -353,6 +457,9 @@ cmd_pane_runner() {
                 [ $# -lt 2 ] && abort "Falta el valor de --delay"
                 [[ "$2" =~ ^[0-9]+$ ]] || abort "--delay debe ser un entero de segundos (recibido: '$2')"
                 delay="$2"; shift 2 ;;
+            --started-marker)
+                [ $# -lt 2 ] && abort "Falta el valor de --started-marker"
+                started_marker="$2"; shift 2 ;;
             --)
                 shift; break ;;
             *)
@@ -361,6 +468,12 @@ cmd_pane_runner() {
     done
     [ -n "$title" ] || abort "--_pane-runner requiere --title"
     [ $# -gt 0 ] || abort "--_pane-runner requiere un comando tras --"
+
+    # Paso 0: confirmar el arranque antes que nada mas (issue #1563, CA-1).
+    if [ -n "$started_marker" ]; then
+        mkdir -p "$(dirname "$started_marker")" 2>/dev/null || true
+        : > "$started_marker"
+    fi
 
     mkdir -p "$LOG_DIR_ABS"
     local ts report_log
@@ -716,23 +829,44 @@ cmd_parallel() {
         prev="$pane"
     done
 
-    local i pipeline_name title delay cmdline
+    # Confirmacion de arranque por pane apilado (issue #1563, CA-5): los
+    # panes ya son todos nuevos (recien creados arriba), asi que un arranque
+    # no confirmado no tiene a donde reintentar -- se acumula y se falla
+    # visible al final, nombrando cada issue con su pane.
+    local i pipeline_name title delay cmdline token marker
+    local failed_confirm=()
     for i in "${!resolved_issues[@]}"; do
         issue="${resolved_issues[$i]}"
         pipeline_name=$(basename "${resolved_pipelines[$i]}" .sh)
         title="${pipeline_name%-pipeline} #$issue"
         delay=$((i * PARALLEL_STAGGER))
 
-        cmdline=$(build_pane_runner_cmdline "$title" "$issue" "$delay" "${resolved_pipelines[$i]}" "$issue")
+        token=$(next_dispatch_token)
+        marker=$(dispatch_marker_path "$token")
+        rm -f "$marker"
+        cmdline=$(build_pane_runner_cmdline "$title" "$issue" "$delay" "$marker" "${resolved_pipelines[$i]}" "$issue")
         herdr pane run "${panes[$i]}" "$cmdline" >/dev/null 2>&1 \
             || abort "No se pudo lanzar el issue #$issue en el pane ${panes[$i]} (herdr pane run fallo)."
 
-        if [ "$delay" -gt 0 ]; then
-            log "Issue #$issue -> pane ${panes[$i]} ($title, arranca en ${delay}s)"
+        if wait_for_dispatch_marker "$marker" "$HERDR_DISPATCH_CONFIRM_TIMEOUT"; then
+            if [ "$delay" -gt 0 ]; then
+                log "Issue #$issue -> pane ${panes[$i]} ($title, arranca en ${delay}s)"
+            else
+                log "Issue #$issue -> pane ${panes[$i]} ($title)"
+            fi
         else
-            log "Issue #$issue -> pane ${panes[$i]} ($title)"
+            warn "Issue #$issue: el pane ${panes[$i]} no confirmo el arranque en ${HERDR_DISPATCH_CONFIRM_TIMEOUT}s (marcador ausente). Sin reintento (ya es un pane nuevo del lote): revisa/cierra ${panes[$i]} y relanza el issue #$issue a mano."
+            failed_confirm+=("#$issue en el pane ${panes[$i]}")
         fi
     done
+
+    if [ ${#failed_confirm[@]} -gt 0 ]; then
+        local IFS_saved="$IFS" joined
+        IFS=', '
+        joined="${failed_confirm[*]}"
+        IFS="$IFS_saved"
+        abort "No se confirmo el arranque de ${#failed_confirm[@]} issue(s) del lote: $joined. Cierra esos paneles y relanzalos a mano."
+    fi
 
     success "Pipeline paralelo corriendo: $total pane(s) apilados en este workspace, uno por issue."
     log "Cada pane muestra el visor en vivo de su issue; los reportes quedan en $LOG_DIR_ABS/."

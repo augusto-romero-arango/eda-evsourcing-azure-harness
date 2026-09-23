@@ -111,7 +111,11 @@ export HERDR_STUB_COUNTER="$TMP_DIR/herdr-pane-counter"
 #   pane split      -> pane_id incremental w1:pN (contador en archivo)
 #   pane get        -> ok (el pane "existe")
 #   pane process-info -> pane libre (foreground == shell)
-#   pane run/rename/close -> ok
+#   pane run        -> ok, y ademas toca el --started-marker de la cmdline
+#                      recibida (issue #1563): simula que el shell del pane
+#                      ejecuto la linea de inmediato, asi dispatch_to_pane y
+#                      cmd_parallel confirman sin esperar el timeout real.
+#   pane rename/close -> ok
 cat > "$FAKE_BIN/herdr" <<'STUB'
 #!/usr/bin/env bash
 set -u
@@ -135,6 +139,15 @@ case "${1:-} ${2:-}" in
             fi
         done
         echo '{"result":{"process_info":{"shell_pid":100,"foreground_process_group_id":100}}}'
+        ;;
+    "pane run")
+        cmdline="${4:-}"
+        marker=$(printf '%s\n' "$cmdline" | grep -oE -- '--started-marker [^[:space:]]+' | awk '{print $2}')
+        if [ -n "$marker" ]; then
+            mkdir -p "$(dirname "$marker")" 2>/dev/null
+            : > "$marker"
+        fi
+        echo '{"result":{"type":"ok"}}'
         ;;
     *)
         echo '{"result":{"type":"ok"}}'
