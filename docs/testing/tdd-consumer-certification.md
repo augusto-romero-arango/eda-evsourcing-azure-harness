@@ -88,7 +88,7 @@ de MEF-ADR-0011 (esa tabla no la nombra), sino el requisito que
 `agents/implementer.md` paso 1b y `agents/reviewer.md` paso 1b exigen de todo
 issue antes de escribir o revisar codigo -- si falta o esta vacia, el
 implementer bloquea (`.mefisto/pipeline/blockage-report.md`) y el reviewer la
-trata como hallazgo bloqueante.
+trata como hallazgo bloqueante (regla 10 de `agents/reviewer.md`).
 
 ### Eleccion del dominio certificable
 
@@ -165,8 +165,8 @@ una seccion del body.
 
 ## ADRs aplicables
 
-<ADRs que enumera el planner publicado -- ver paso 7 de "Crear issues" en
-`agents/planner.md`>
+<ADRs que enumera el planner publicado -- ver paso 7 del modo `refinar` y
+los templates de "Crear issues" en `agents/planner.md`>
 
 ## Criterios de aceptacion
 
@@ -233,8 +233,8 @@ colision de nombres porque no se crea ninguna Function.
 
 ## ADRs aplicables
 
-<ADRs que enumera el planner publicado -- ver paso 7 de "Crear issues" en
-`agents/planner.md`>
+<ADRs que enumera el planner publicado -- ver paso 7 del modo `refinar` y
+los templates de "Crear issues" en `agents/planner.md`>
 
 ## Criterios de aceptacion
 
