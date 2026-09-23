@@ -319,19 +319,12 @@ else
     fail "G-6: jq dejo ruido por stderr: $(cat "$TMP/g-raro.stderr")"
 fi
 
-# --- [H] Los pipelines legacy capturan; TDD/tooling consumen JSONL neutral ---
+# --- [H] tdd/tooling/iac consumen el JSONL neutral (issue #1624: iac se sumo,
+# ultimo de los tres en migrar; scaffold-pipeline.sh sigue fuera de este
+# issue) ---
 echo ""
 echo "[H] derivacion de logs por frontera de ejecucion"
-for p in iac-pipeline.sh; do
-    if grep -q -- "--output-format stream-json --verbose" "$REPO_ROOT/scripts/$p" \
-        && grep -q "derive_stage_log_from_stream" "$REPO_ROOT/scripts/$p" \
-        && grep -q "PIPELINE_CAPTURE_STREAM=true" "$REPO_ROOT/scripts/$p"; then
-        pass "H: $p captura stream-json y deriva el .log (con gate de jq)"
-    else
-        fail "H: $p perdio la captura stream-json o la derivacion del .log"
-    fi
-done
-for p in tdd-pipeline.sh tooling-pipeline.sh; do
+for p in tdd-pipeline.sh tooling-pipeline.sh iac-pipeline.sh; do
     if grep -q 'mefisto-run-agent.sh' "$REPO_ROOT/scripts/$p" \
         && grep -q 'derive_stage_log_from_stream "$events_file"' "$REPO_ROOT/scripts/$p" \
         && ! grep -q -- '--output-format' "$REPO_ROOT/scripts/$p"; then

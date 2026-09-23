@@ -42,9 +42,13 @@
 #                            resolve_tdd_model bajo runtime-fake (CA-5), mas un
 #                            cruce estatico contra el `.profile` de
 #                            src/published/agents/*.md (CA-6).
-#   iac-pipeline.sh         - anuncia una sola vez por stage el modelo declarado
-#                            por infra-writer/infra-reviewer (o <heredado>) y lo
-#                            persiste sin agregar overrides al argv.
+#   iac-pipeline.sh         - resuelve el modelo neutral por perfil de cada
+#                            stage (issue #1624, alineado con tdd/tooling):
+#                            infra-writer con perfil balanced, infra-reviewer
+#                            con perfil deep, via mefisto_resolve_model (sin
+#                            --models: el pipeline IaC nunca lo soporto), con
+#                            --model condicional en el argv y una sola linea
+#                            de anuncio por stage.
 #   scaffold-pipeline.sh     - anuncia y persiste una vez el modelo declarado de
 #                            domain-scaffolder (o <heredado>) sin alterar sus
 #                            invocaciones iniciales ni las sondas de hold.
@@ -480,27 +484,20 @@ assert_iac_order() {
 }
 
 echo ""
-echo "[10d] iac: anuncia el modelo heredado de ambos stages sin alterar el argv (CA-1 a CA-5)"
-assert_iac_contains "run_agent consulta el helper compartido" 'AGENT_MODEL_VISIBLE="$(resolve_declared_agent_model "$agent")"'
-assert_iac_contains "run_agent representa metadata ausente como heredado" 'AGENT_MODEL_VISIBLE="<heredado>"'
-assert_iac_contains "run_agent etiqueta frontmatter" 'AGENT_MODEL_ORIGIN="frontmatter"'
-assert_iac_contains "run_agent etiqueta heredado" 'AGENT_MODEL_ORIGIN="heredado"'
-assert_iac_contains "run_agent muestra el modelo antes del CLI" 'log "Invocando $agent (modelo: $AGENT_MODEL_VISIBLE)..."'
-assert_iac_contains "run_agent persiste evidencia con el formato canonico" 'MODELS: stage $stage/$agent -> $AGENT_MODEL_VISIBLE ($AGENT_MODEL_ORIGIN)'
+echo "[10d] iac: resuelve el modelo neutral por perfil de cada stage (issue #1624)"
+assert_iac_contains "infra-writer resuelve con perfil balanced" 'resolve_infra_model infra-writer balanced'
+assert_iac_contains "infra-reviewer resuelve con perfil deep" 'resolve_infra_model infra-reviewer deep'
+assert_iac_contains "resolve_infra_model usa el helper neutral compartido" 'mefisto_resolve_model "$MEFISTO_RUNTIME_RESUELTO" "$agent_id" "$profile" "" "$CONSUMER_MODELS_FILE"'
+assert_iac_contains "resolve_infra_model aborta si la resolucion del adaptador falla" 'abort "No se pudo resolver el modelo de $agent_id (perfil $profile): ${MEFISTO_MODELS_ERROR:-motivo desconocido}"'
+assert_iac_contains "run_agent anuncia el modelo resuelto o heredado" 'log "Invocando $agent (modelo: ${model:-<heredado>})..."'
+assert_iac_contains "run_agent conserva el argv condicional --model" '[ -n "$model" ] && args+=(--model "$model")'
+assert_iac_contains "run_agent conserva el argv neutral con agente y cwd" '--agent "$agent" --cwd "$WORKTREE_PATH"'
 assert_iac_contains "Stage 1 conserva infra-writer" 'run_agent "1" "infra-writer" "$STAGE1_PROMPT"'
 assert_iac_contains "Stage 2 conserva infra-reviewer" 'run_agent "2" "infra-reviewer" "$STAGE2_PROMPT"'
-assert_iac_order "run_agent resuelve el modelo antes de anunciarlo" 'AGENT_MODEL_VISIBLE="$(resolve_declared_agent_model "$agent")"' 'log "Invocando $agent (modelo: $AGENT_MODEL_VISIBLE)..."'
-assert_iac_order "run_agent anuncia antes del primer argv de claude" 'log "Invocando $agent (modelo: $AGENT_MODEL_VISIBLE)..."' 'claude -p "$prompt"'
-assert_iac_count "run_agent resuelve el frontmatter una sola vez por stage" 1 'AGENT_MODEL_VISIBLE="$(resolve_declared_agent_model "$agent")"'
-assert_iac_count "run_agent emite una sola linea visible por stage" 1 'log "Invocando $agent (modelo: $AGENT_MODEL_VISIBLE)..."'
-assert_iac_count "run_agent emite una sola evidencia durable por stage" 1 'MODELS: stage $stage/$agent -> $AGENT_MODEL_VISIBLE ($AGENT_MODEL_ORIGIN)'
-assert_iac_count "los cuatro argv inicial/hold conservan --agent sin override" 4 '--agent "$agent"'
-IAC_MODEL_ARG_COUNT=$(grep -cF -- '--model' "$IAC_PIPELINE" || true)
-if [ "$IAC_MODEL_ARG_COUNT" -eq 0 ]; then
-    pass "IaC no agrega --model al argv inicial ni a las sondas de hold"
-else
-    fail "IaC no deberia agregar --model (obtenidos $IAC_MODEL_ARG_COUNT)"
-fi
+assert_iac_order "resuelve ambos modelos antes de descargar el issue" 'resolve_infra_model infra-reviewer deep' 'log "Descargando issue #$ISSUE_NUM...'
+assert_iac_order "run_agent resuelve el modelo del agente antes de anunciarlo" 'model="$MODEL_REVIEWER"' 'log "Invocando $agent (modelo: ${model:-<heredado>})..."'
+assert_iac_count "run_agent anuncia el modelo una sola vez por stage" 1 'log "Invocando $agent (modelo: ${model:-<heredado>})..."'
+assert_iac_count "un solo punto de armado de argv (initial y sondas de hold comparten el mismo bucle)" 1 '--agent "$agent" --cwd "$WORKTREE_PATH"'
 
 # --- scaffold-pipeline.sh: modelo declarado sin override -----------------------
 SCAFFOLD_PIPELINE="$REPO_ROOT/scripts/scaffold-pipeline.sh"
