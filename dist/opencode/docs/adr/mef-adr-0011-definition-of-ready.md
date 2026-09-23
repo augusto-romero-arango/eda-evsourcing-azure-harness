@@ -123,6 +123,7 @@ Si falla cualquier criterio, muestra todos los que fallan y sugiere `planner ref
 - Issues sin modelo de eventos que causan naming incorrecto en el codigo
 - Issues sin criterios de aceptacion donde el reviewer no puede validar cobertura
 - Issues sin label `dom:X` que impiden la deteccion automatica de scaffold de dominio nuevo
+- Issues `feature`/`refactor`/`projection` sin `## ADRs aplicables`, que pasaban el gate de `/implement` y solo se detenian dentro de Stage 2 (paso 1b de `implementer`/`reviewer`), con Stage 1 ya gastado
 - Issues `projection` sin via de consulta, vista o receta declaradas, que dejan a `projection-test-writer`/`projection-implementer` adivinando el read model o la correlacion de streams
 
 ## Control de cambios
