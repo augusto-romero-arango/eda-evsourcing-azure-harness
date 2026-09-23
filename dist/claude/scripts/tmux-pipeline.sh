@@ -23,6 +23,20 @@ set -euo pipefail
 # --- Funciones compartidas ---
 source "$(dirname "${BASH_SOURCE[0]}")/_pipeline-common.sh"
 
+# La clausura publicada distribuye los adaptadores de runtime junto al pipeline
+# (mismo bloque que herdr-pipeline.sh, issue #1593). SCRIPT_DIR se fija aqui
+# porque RUNTIME_LIB_DIR lo necesita; el resto del script lo reusa sin
+# redefinirlo. Este bloque solo CARGA el adaptador -- la resolucion real
+# (mefisto_resolve_runtime) ocurre mas abajo, dentro de main(), despues del
+# punto de delegacion a Herdr y solo en los modos que lanzan un sub-pipeline.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+RUNTIME_LIB_DIR="${MEFISTO_RUNTIME_LIB_DIR:-$(cd "$SCRIPT_DIR/../src/runtime/lib" 2>/dev/null && pwd -P)}"
+[ -d "$RUNTIME_LIB_DIR" ] \
+    || { echo "ERROR: no se encontro src/runtime/lib junto al paquete publicado" >&2; exit 1; }
+[ -f "$RUNTIME_LIB_DIR/mefisto-runtime.sh" ] \
+    || { echo "ERROR: no se encontro mefisto-runtime.sh en la clausura publicada" >&2; exit 1; }
+source "$RUNTIME_LIB_DIR/mefisto-runtime.sh"
+
 # Guard defensivo: este pipeline es del lado publicado y solo aplica al consumidor.
 # Si detectamos .claude-plugin/plugin.json en la raiz, estamos en el repo de Mefisto.
 _REPO_TOP=$(git rev-parse --show-toplevel 2>/dev/null) || {
@@ -52,9 +66,14 @@ NC='\033[0m'
 # la sesion este viva o muerta si no lo hay (ver handle_session_conflict).
 SESSION_IF_EXISTS=""
 
-# SCRIPT_DIR: ubicacion de ESTE script (el plugin). Sirve para invocar otros
-# sub-scripts del plugin (tdd/tooling/batch/parallel/iac/scaffold-pipeline.sh).
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# RESOLVED_RUNTIME: runtime activo resuelto una vez en main() (issue #1593),
+# despues del punto de delegacion a Herdr y solo en los modos que lanzan un
+# sub-pipeline. Los cuatro send-keys que lo propagan (CA-3) lo leen de aqui.
+RESOLVED_RUNTIME=""
+
+# SCRIPT_DIR: ubicacion de ESTE script (el plugin), ya fijado arriba (junto a
+# RUNTIME_LIB_DIR) para invocar otros sub-scripts del plugin
+# (tdd/tooling/batch/parallel/iac/scaffold-pipeline.sh).
 # PROJECT_ROOT: repo objetivo del consumidor (git toplevel del cwd del usuario),
 # donde se crean las sesiones tmux, los logs y events.log. NO se deriva de
 # SCRIPT_DIR porque el plugin ya no vive dentro del repo del consumidor.
@@ -334,7 +353,7 @@ cmd_single() {
     # por si el plugin esta instalado bajo una ruta con espacios (mismo criterio
     # que '$EVENTS_LOG').
     pipe_pane=$(tmux split-window -h -t "$tail_pane" -c "$PROJECT_ROOT" -P -F '#{pane_id}')
-    tmux send-keys -t "$pipe_pane" "$CAFF '$resolved' $issue $extra_args" Enter
+    tmux send-keys -t "$pipe_pane" "MEFISTO_RUNTIME=$(printf '%q' "$RESOLVED_RUNTIME") $CAFF '$resolved' $issue $extra_args" Enter
 
     tmux select-layout -t "$session:main" even-horizontal
 
@@ -389,7 +408,7 @@ cmd_batch() {
 
     # Pane derecho: batch pipeline
     pipe_pane=$(tmux split-window -h -t "$tail_pane" -c "$PROJECT_ROOT" -P -F '#{pane_id}')
-    tmux send-keys -t "$pipe_pane" "$CAFF '$SCRIPT_DIR/batch-pipeline.sh' $pipeline_flag $issues_str" Enter
+    tmux send-keys -t "$pipe_pane" "MEFISTO_RUNTIME=$(printf '%q' "$RESOLVED_RUNTIME") $CAFF '$SCRIPT_DIR/batch-pipeline.sh' $pipeline_flag $issues_str" Enter
 
     tmux select-layout -t "$session:main" even-horizontal
 
@@ -501,7 +520,7 @@ cmd_parallel() {
     local pipe_pane
     for i in "${!resolved_issues[@]}"; do
         pipe_pane=$(tmux split-window -h -t "$session:main" -c "$PROJECT_ROOT" -P -F '#{pane_id}')
-        tmux send-keys -t "$pipe_pane" "$CAFF '${resolved_pipelines[$i]}' ${resolved_issues[$i]}" Enter
+        tmux send-keys -t "$pipe_pane" "MEFISTO_RUNTIME=$(printf '%q' "$RESOLVED_RUNTIME") $CAFF '${resolved_pipelines[$i]}' ${resolved_issues[$i]}" Enter
         # Escalonar lanzamientos: 30s entre cada uno para evitar que multiples
         # invocaciones de claude -p compitan por recursos de API simultaneamente
         if [ "$i" -lt "$(( ${#resolved_issues[@]} - 1 ))" ]; then
@@ -559,7 +578,7 @@ cmd_tooling() {
     tmux send-keys -t "$tail_pane" "tail -F '$EVENTS_LOG' '$EVENTS_LOG_LEGACY'" Enter
 
     pipe_pane=$(tmux split-window -h -t "$tail_pane" -c "$PROJECT_ROOT" -P -F '#{pane_id}')
-    tmux send-keys -t "$pipe_pane" "$CAFF '$SCRIPT_DIR/tooling-pipeline.sh' $issue $extra_args" Enter
+    tmux send-keys -t "$pipe_pane" "MEFISTO_RUNTIME=$(printf '%q' "$RESOLVED_RUNTIME") $CAFF '$SCRIPT_DIR/tooling-pipeline.sh' $issue $extra_args" Enter
 
     tmux select-layout -t "$session:main" even-horizontal
 
@@ -878,6 +897,22 @@ main() {
     else
         abort "Faltan argumentos posicionales (numero de issue o modo). Corre '$0 --help' para ver el uso."
     fi
+
+    # Resolver el runtime activo (MEF-ADR-0049/0050) una vez, antes de
+    # despachar a un modo que lance un sub-pipeline en un pane tmux (issue
+    # #1593): un servidor tmux ya vivo no propaga MEFISTO_RUNTIME a una sesion
+    # nueva (ver Contexto del issue), asi que sin esto el pane autodetectaria
+    # por su cuenta -- y podria abortar (con varios CLIs instalados) o correr
+    # en un runtime distinto del que lanzo este comando. --attach y --help no
+    # lanzan ningun sub-pipeline: no lo exigen.
+    case "$1" in
+        --help|-h|--attach) ;;
+        *)
+            mefisto_resolve_runtime >/dev/null \
+                || abort "No se pudo resolver el runtime activo: ${MEFISTO_RUNTIME_ERROR:-motivo desconocido}"
+            RESOLVED_RUNTIME="$MEFISTO_RESOLVED_RUNTIME"
+            ;;
+    esac
 
     case "$1" in
         --help|-h)
