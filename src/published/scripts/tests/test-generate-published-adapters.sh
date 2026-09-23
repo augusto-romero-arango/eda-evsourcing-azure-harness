@@ -15,6 +15,34 @@ fail() { printf '  FAIL: %s\n' "$1"; FAIL=$((FAIL + 1)); }
 assert_rc() { [ "$1" -eq "$2" ] && pass "$3" || fail "$3 (exit $1)"; }
 file_mode() { stat -f '%Lp' "$1" 2>/dev/null || stat -c '%a' "$1"; }
 
+# Extrae la declaracion canonica en vez de reconstruir su contenido en este
+# fixture. Asi una ampliacion de la clausura prueba automaticamente la fuente
+# nueva con el modo que declaro el generador.
+CLOSURE_EXTRACTOR="$WORK/extract-tooling-closure.py"
+cat > "$CLOSURE_EXTRACTOR" <<'PY'
+import pathlib
+import re
+import sys
+
+generator = pathlib.Path(sys.argv[1]).read_text()
+array = re.search(r'^TOOLING_CLOSURE_ASSETS=\(\n(.*?)^\)', generator, re.M | re.S)
+if not array:
+    print('no se pudo leer TOOLING_CLOSURE_ASSETS del generador', file=sys.stderr)
+    raise SystemExit(2)
+for match in re.finditer(r"^\s*'([^'|]+)\|(0644|0755)'\s*$", array.group(1), re.M):
+    print(f'{match.group(1)}|{match.group(2)}')
+PY
+CLOSURE_SOURCES=()
+CLOSURE_MODES=()
+while IFS='|' read -r closure_source closure_mode; do
+    [ -n "$closure_source" ] || continue
+    CLOSURE_SOURCES+=("$closure_source")
+    CLOSURE_MODES+=("$closure_mode")
+done < <(python3 "$CLOSURE_EXTRACTOR" "$SOURCE_GENERATOR")
+CLOSURE_COUNT="${#CLOSURE_SOURCES[@]}"
+FIXTURE_KNOWLEDGE_COUNT=3
+FIXTURE_RENDERED_MARKDOWN_COUNT=1
+
 setup_repo() {
     local name="$1"
     TEST_REPO="$WORK/$name"
@@ -36,20 +64,15 @@ EOF
 ---
 fixture
 EOF
-    for source in \
-        scripts/_pipeline-common.sh scripts/tmux-pipeline.sh scripts/herdr-pipeline.sh scripts/stream-watch.sh scripts/tooling-pipeline.sh scripts/tdd-pipeline.sh scripts/pr-sync.sh scripts/batch-pipeline.sh \
-        src/runtime/mefisto-run-agent.sh src/runtime/lib/mefisto-runtime.sh src/runtime/lib/mefisto-process.sh \
-        src/runtime/lib/runtime-claude.sh src/runtime/lib/runtime-opencode.sh; do
+    for i in "${!CLOSURE_SOURCES[@]}"; do
+        source="${CLOSURE_SOURCES[$i]}"
+        mode="${CLOSURE_MODES[$i]}"
         mkdir -p "$TEST_REPO/$(dirname "$source")"
-        printf '#!/usr/bin/env bash\n' > "$TEST_REPO/$source"
-        chmod 0755 "$TEST_REPO/$source"
-    done
-    for source in \
-        src/runtime/lib/mefisto-models.sh src/runtime/lib/runtime-claude.jq src/runtime/lib/runtime-opencode.jq \
-        src/runtime/contract/models.validate.jq; do
-        mkdir -p "$TEST_REPO/$(dirname "$source")"
-        printf 'fixture\n' > "$TEST_REPO/$source"
-        chmod 0644 "$TEST_REPO/$source"
+        case "$mode" in
+            0755) printf '#!/usr/bin/env bash\n' > "$TEST_REPO/$source" ;;
+            0644) printf 'fixture\n' > "$TEST_REPO/$source" ;;
+        esac
+        chmod "$mode" "$TEST_REPO/$source"
     done
     mkdir -p "$TEST_REPO/docs/adr" "$TEST_REPO/docs/testing"
     printf 'ADR uno\n' > "$TEST_REPO/docs/adr/mef-adr-0011.md"
@@ -76,7 +99,8 @@ OUT="$WORK/salida con espacios"
 "$GEN" --out "$OUT" "$TEST_REPO/src/published/agents/valida con espacios.md"; rc=$?
 assert_rc "$rc" 0 'dos adaptadores procesan fuente y paths con espacios'
 [ -f "$OUT/dist/alpha/artefactos/valida con espacios.md" ] && [ -f "$OUT/dist/beta/artefactos/valida con espacios.md" ] && pass 'salidas de ambos adaptadores' || fail 'faltan salidas'
-jq -e '.assets | length == 21 and any(.[]; .adapter == "adapter-alpha.sh" and .source == "src/published/agents/valida con espacios.md" and .destination == "artefactos/valida con espacios.md" and .mode == "0644" and (.sha256 | length == 64)) and any(.[]; .adapter == "tooling-closure" and .source == "scripts/tdd-pipeline.sh" and .destination == "scripts/tdd-pipeline.sh" and .mode == "0755" and (.sha256 | length == 64)) and ([.[] | select(.adapter == "tooling-knowledge") | .source] == ["docs/adr/mef-adr-0011.md", "docs/adr/mef-adr-0053.md", "docs/testing/harness-cheatsheet.md"])' "$OUT/dist/alpha/.mefisto-generated-assets.json" >/dev/null && pass 'inventario atribuye Markdown, pipeline y conocimiento TDD con checksum' || fail 'inventario de la distribucion invalido'
+expected_inventory_count=$((CLOSURE_COUNT + FIXTURE_KNOWLEDGE_COUNT + FIXTURE_RENDERED_MARKDOWN_COUNT))
+jq -e --argjson expected_inventory_count "$expected_inventory_count" '.assets | length == $expected_inventory_count and any(.[]; .adapter == "adapter-alpha.sh" and .source == "src/published/agents/valida con espacios.md" and .destination == "artefactos/valida con espacios.md" and .mode == "0644" and (.sha256 | length == 64)) and any(.[]; .adapter == "tooling-closure" and .source == "scripts/tdd-pipeline.sh" and .destination == "scripts/tdd-pipeline.sh" and .mode == "0755" and (.sha256 | length == 64)) and ([.[] | select(.adapter == "tooling-knowledge") | .source] == ["docs/adr/mef-adr-0011.md", "docs/adr/mef-adr-0053.md", "docs/testing/harness-cheatsheet.md"])' "$OUT/dist/alpha/.mefisto-generated-assets.json" >/dev/null && pass "inventario atribuye Markdown, pipeline y conocimiento TDD con checksum ($expected_inventory_count assets derivados)" || fail 'inventario de la distribucion invalido'
 if cmp -s "$TEST_REPO/docs/adr/mef-adr-0011.md" "$OUT/dist/alpha/docs/adr/mef-adr-0011.md" \
     && cmp -s "$TEST_REPO/docs/adr/mef-adr-0011.md" "$OUT/dist/beta/docs/adr/mef-adr-0011.md" \
     && cmp -s "$TEST_REPO/docs/testing/harness-cheatsheet.md" "$OUT/dist/alpha/docs/testing/harness-cheatsheet.md" \
@@ -162,7 +186,8 @@ assert_rc "$rc" 0 'assets suplementarios se generan junto con Markdown'
 [ "$(cat "$OUT/dist/assets/runtime/config.json")" = 'renderizado:configuracion fuente' ] && pass 'asset se renderiza desde su fuente' || fail 'asset no se renderizo desde fuente'
 [ "$(file_mode "$OUT/dist/assets/bin/launcher")" = 755 ] && pass 'asset ejecutable conserva modo 0755' || fail 'asset ejecutable no conserva modo'
 inventory="$OUT/dist/assets/.mefisto-generated-assets.json"
-jq -e '.schemaVersion == 1 and (.assets | length) == 23 and .assets[0].source == "src/published/assets/config.txt" and .assets[1].mode == "0755" and any(.assets[]; .source == "src/published/agents/valida con espacios.md" and .destination == "artefactos/valida con espacios.md") and (.assets[] | .sha256 | length == 64)' "$inventory" >/dev/null && pass 'inventario determinista atribuye Markdown y assets' || fail 'inventario de distribucion invalido'
+expected_inventory_count=$((CLOSURE_COUNT + FIXTURE_KNOWLEDGE_COUNT + FIXTURE_RENDERED_MARKDOWN_COUNT + 2))
+jq -e --argjson expected_inventory_count "$expected_inventory_count" '.schemaVersion == 1 and (.assets | length) == $expected_inventory_count and .assets[0].source == "src/published/assets/config.txt" and .assets[1].mode == "0755" and any(.assets[]; .source == "src/published/agents/valida con espacios.md" and .destination == "artefactos/valida con espacios.md") and (.assets[] | .sha256 | length == 64)' "$inventory" >/dev/null && pass "inventario determinista atribuye Markdown y assets ($expected_inventory_count assets derivados)" || fail 'inventario de distribucion invalido'
 check_out="$("$GEN" --check --out "$OUT" "$TEST_REPO/src/published/agents/valida con espacios.md")"; rc=$?
 [ "$rc" -eq 0 ] && pass '--check acepta assets e inventario al dia' || fail "--check acepta assets e inventario al dia (exit $rc: $check_out)"
 printf 'alterado\n' > "$OUT/dist/assets/runtime/config.json"
