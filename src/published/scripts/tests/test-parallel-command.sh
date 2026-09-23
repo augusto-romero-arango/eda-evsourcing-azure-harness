@@ -1,0 +1,70 @@
+#!/usr/bin/env bash
+# Contrato del comando parallel neutral y sus dos proyecciones publicadas.
+set -uo pipefail
+export LC_ALL=C
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+REPO_ROOT="$(cd "$HERE/../../../.." && pwd -P)"
+SOURCE="$REPO_ROOT/src/published/commands/parallel.md"
+CLAUDE="$REPO_ROOT/dist/claude/commands/parallel.md"
+OPENCODE="$REPO_ROOT/dist/opencode/commands/mefisto:parallel.md"
+MIRROR="$REPO_ROOT/commands/parallel.md"
+GENERATOR="$REPO_ROOT/src/published/scripts/generate-published-adapters.sh"
+PASS=0; FAIL=0
+pass() { printf '  PASS: %s\n' "$1"; PASS=$((PASS + 1)); }
+fail() { printf '  FAIL: %s\n' "$1"; FAIL=$((FAIL + 1)); }
+contains() { case "$1" in *"$2"*) pass "$3" ;; *) fail "$3" ;; esac; }
+absent() { case "$1" in *"$2"*) fail "$3" ;; *) pass "$3" ;; esac; }
+
+echo '[fuente] contrato neutral'
+if bash "$REPO_ROOT/src/published/scripts/validate-published-artifacts.sh" "$SOURCE" >/dev/null; then pass 'la fuente valida'; else fail 'la fuente no valida'; fi
+metadata="$(awk 'NR == 1 { next } $0 == "---" { exit } { print }' "$SOURCE")"
+if printf '%s' "$metadata" | jq -e '.kind == "command" and .id == "parallel" and .profile == "fast" and .arguments == "<issue1> <issue2> ... [--pipeline tdd|tooling]" and (keys | sort) == ["arguments", "description", "id", "kind", "profile"]' >/dev/null; then pass 'metadata sin agent ni capabilities'; else fail 'metadata neutral invalida'; fi
+body="$(awk 'NR == 1 { next } $0 == "---" && !seen { seen=1; next } seen { print }' "$SOURCE")"
+contains "$body" '{{mefisto:assert-consumer-repo}}' 'guard consumidor presente'
+contains "$body" '{{mefisto:run tmux-pipeline.sh --parallel $ARGUMENTS}}' 'despacho neutral exacto'
+contains "$body" 'gh issue view' 'valida issues antes de lanzar'
+contains "$body" 'esta cerrado, informalo y excluyelo' 'excluye issues inexistentes o cerrados'
+contains "$body" 'Si no queda ningun issue valido, detente' 'se detiene sin issues validos'
+contains "$body" 'pasando `--pipeline` si el usuario lo proporciono' 'pasa --pipeline al wrapper'
+contains "$body" 'arranques escalonados de 30s' 'documenta arranque escalonado en Herdr'
+contains "$body" 'tmux -CC attach -t parallel-<timestamp>' 'documenta conexion tmux'
+for command in work-status merge batch-stop sequential; do contains "$body" "{{mefisto:command $command}}" "referencia $command via directiva command"; done
+contains "$body" '{{mefisto:package-root}}/scripts/parallel-pipeline.sh' 'scheduler directo usa package-root'
+contains "$body" '--max-parallel' 'documenta limite de concurrencia'
+contains "$body" 'tipo:projection' 'conserva serializacion de projections'
+contains "$body" 'No esperes a que termine' 'regla: no esperar'
+contains "$body" 'No implementes nada tu mismo' 'regla: no implementar'
+contains "$body" 'NO se mergean' 'regla: PRs sin merge automatico'
+for forbidden in '.claude/' 'CLAUDE_' '.plugin-root' 'plugins/cache' 'model:' 'tools:' 'allowed-tools:' 'permission:'; do absent "$body" "$forbidden" "fuente no publica token prohibido: $forbidden"; done
+
+echo '[salidas] adaptadores y mirror'
+for file in "$CLAUDE" "$OPENCODE"; do [ -f "$file" ] && pass "existe ${file#"$REPO_ROOT/"}" || fail "falta ${file#"$REPO_ROOT/"}"; done
+claude_body="$(< "$CLAUDE")"
+opencode_body="$(< "$OPENCODE")"
+contains "$claude_body" 'MEFISTO_RUNTIME=claude "${MEFISTO_PACKAGE_ROOT}/scripts/tmux-pipeline.sh" --parallel $ARGUMENTS' 'Claude invoca tmux-pipeline.sh --parallel y fija su runtime'
+contains "$opencode_body" 'MEFISTO_RUNTIME=opencode "${MEFISTO_PACKAGE_ROOT}/scripts/tmux-pipeline.sh" --parallel $ARGUMENTS' 'OpenCode invoca tmux-pipeline.sh --parallel y fija su runtime'
+contains "$claude_body" 'model: "haiku"' 'Claude materializa el perfil fast'
+absent "$opencode_body" 'model:' 'OpenCode no emite model'
+for command in work-status merge batch-stop; do
+    contains "$claude_body" "/mefisto:$command" "Claude resuelve $command"
+    contains "$opencode_body" "/mefisto:$command" "OpenCode resuelve $command"
+done
+claude_invocation="$(printf '%s\n' "$claude_body" | grep -F 'scripts/tmux-pipeline.sh" --parallel')"
+opencode_invocation="$(printf '%s\n' "$opencode_body" | grep -F 'scripts/tmux-pipeline.sh" --parallel')"
+for forbidden_path in '.claude/pipeline/.plugin-root' 'plugins/cache'; do
+    absent "$claude_invocation" "$forbidden_path" "invocacion Claude no reimplementa lookup legacy ($forbidden_path)"
+    absent "$opencode_invocation" "$forbidden_path" "invocacion OpenCode no reimplementa lookup legacy ($forbidden_path)"
+done
+absent "$opencode_body" '.claude/pipeline/.plugin-root' 'salida OpenCode completa sin marcador legacy'
+absent "$opencode_body" 'plugins/cache' 'salida OpenCode completa sin cache de plugins'
+if cmp -s "$MIRROR" "$CLAUDE"; then pass 'mirror Claude coincide byte a byte'; else fail 'mirror Claude diverge'; fi
+contains "$(< "$MIRROR")" '<!-- GENERADO por src/published/scripts/generate-published-adapters.sh desde src/published/commands/parallel.md. No editar a mano. -->' 'mirror conserva marcador generado'
+for runtime in claude opencode; do
+    asset="$REPO_ROOT/dist/$runtime/scripts/parallel-pipeline.sh"
+    [ -x "$asset" ] && pass "parallel-pipeline.sh empaquetado en dist/$runtime/scripts" || fail "falta dist/$runtime/scripts/parallel-pipeline.sh"
+done
+if cmp -s "$REPO_ROOT/scripts/parallel-pipeline.sh" "$REPO_ROOT/dist/opencode/scripts/parallel-pipeline.sh"; then pass 'parallel-pipeline.sh identico en dist/opencode/scripts'; else fail 'dist/opencode/scripts/parallel-pipeline.sh diverge de la fuente'; fi
+if "$GENERATOR" --check >/dev/null; then pass 'generate-published-adapters --check esta al dia'; else fail 'generate-published-adapters --check detecto divergencias'; fi
+
+printf 'RESULTADO: %s pasaron, %s fallaron\n' "$PASS" "$FAIL"
+exit "$FAIL"
