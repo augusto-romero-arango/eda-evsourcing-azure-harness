@@ -42,6 +42,16 @@
 # scheduler que los serialice (usa /sequential o parallel-pipeline.sh, cuyo
 # scheduler si serializa).
 #
+# Confirmacion de arranque (issue #1563): tras teclear el runner en un pane,
+# quien despacha espera el marcador herdr-dispatch-<token>.started (bajo el
+# estado del pipeline) hasta HERDR_DISPATCH_CONFIRM_TIMEOUT segundos (default
+# 15). Sin confirmacion, el despacho de un issue reintenta UNA vez en un pane
+# nuevo y, si tampoco confirma, falla nombrando ambos panes; --parallel falla
+# nombrando el issue y su pane, sin reintento. Al agotar el plazo el
+# despachador reclama el marcador (creacion exclusiva): un runner que arranque
+# tarde en el pane sospechoso lo encuentra ya reclamado y aborta sin lanzar
+# nada, asi el reintento nunca duplica una corrida (MEF-ADR-0017).
+#
 # Este script requiere correr dentro de un pane herdr (HERDR_ENV=1): la
 # autodeteccion vive en tmux-pipeline.sh, que delega aqui cuando aplica y
 # sigue con tmux cuando no. Fuera de herdr, usa tmux-pipeline.sh directo.
@@ -319,6 +329,18 @@ wait_for_dispatch_marker() {
     return 0
 }
 
+# claim_dispatch_marker <marker>
+#
+# Reclama <marker> con creacion exclusiva (noclobber, O_EXCL) una vez agotado
+# el plazo. 0 si el despachador lo creo: el runner de ese pane, si llegara a
+# arrancar tarde, lo encontrara ya ocupado y abortara sin lanzar nada. 1 si el
+# archivo ya existia: el runner SI arranco (justo en el borde del plazo) y se
+# trata como confirmado -- nunca se reintenta sobre un runner vivo, para no
+# duplicar la corrida del mismo issue (MEF-ADR-0017).
+claim_dispatch_marker() {
+    ( set -C; printf 'abandonado\n' > "$1" ) 2>/dev/null
+}
+
 # stack_split_ratio <total> <k>
 #
 # Ratio del k-esimo split (1-indexado) al apilar <total> panes de alturas
@@ -393,7 +415,8 @@ dispatch_to_pane() {
     herdr pane run "$pane" "$cmdline" >/dev/null 2>&1 \
         || abort "No se pudo lanzar el pipeline en el pane $pane (herdr pane run fallo)."
 
-    if wait_for_dispatch_marker "$marker" "$HERDR_DISPATCH_CONFIRM_TIMEOUT"; then
+    if wait_for_dispatch_marker "$marker" "$HERDR_DISPATCH_CONFIRM_TIMEOUT" \
+        || ! claim_dispatch_marker "$marker"; then
         success "Pipeline '$title' corriendo en el pane $pane de este workspace."
         log "El pane muestra el visor en vivo del agente; el reporte completo queda en $LOG_DIR_ABS/."
         log "No hay sesion que adjuntar: el pane ya esta visible en el workspace (barra lateral de herdr)."
@@ -412,7 +435,8 @@ dispatch_to_pane() {
     herdr pane run "$retry_pane" "$retry_cmdline" >/dev/null 2>&1 \
         || abort "No se pudo lanzar el pipeline en el pane de reintento $retry_pane (herdr pane run fallo). Pane sospechoso original: $pane."
 
-    if wait_for_dispatch_marker "$retry_marker" "$HERDR_DISPATCH_CONFIRM_TIMEOUT"; then
+    if wait_for_dispatch_marker "$retry_marker" "$HERDR_DISPATCH_CONFIRM_TIMEOUT" \
+        || ! claim_dispatch_marker "$retry_marker"; then
         success "Pipeline '$title' corriendo en el pane $retry_pane de este workspace (reintento tras un arranque no confirmado en $pane)."
         log "El pane muestra el visor en vivo del agente; el reporte completo queda en $LOG_DIR_ABS/."
         log "No hay sesion que adjuntar: el pane ya esta visible en el workspace (barra lateral de herdr)."
@@ -427,7 +451,7 @@ dispatch_to_pane() {
 # herdr-pipeline.sh --_pane-runner --title <t> [--issues <csv>] [--delay <s>]
 #                    [--started-marker <path>] -- <cmd> [args...]
 #
-# 0. Si recibio --started-marker, lo escribe de inmediato -- ANTES de
+# 0. Si recibio --started-marker, lo crea en exclusiva de inmediato -- ANTES de
 #    cualquier otro paso, incluido el --delay del escalonado -- para que
 #    confirme que el shell del pane ejecuto esta linea (issue #1563, CA-1);
 #    quien despacha lo espera con un timeout corto e independiente del
@@ -470,9 +494,14 @@ cmd_pane_runner() {
     [ $# -gt 0 ] || abort "--_pane-runner requiere un comando tras --"
 
     # Paso 0: confirmar el arranque antes que nada mas (issue #1563, CA-1).
+    # Creacion exclusiva: si el archivo ya existe, el despachador lo reclamo
+    # al agotar el plazo y ya reintento en otro pane -- arrancar aqui
+    # duplicaria la corrida (MEF-ADR-0017).
     if [ -n "$started_marker" ]; then
         mkdir -p "$(dirname "$started_marker")" 2>/dev/null || true
-        : > "$started_marker"
+        if ! ( set -C; : > "$started_marker" ) 2>/dev/null; then
+            abort "Este pane arranco despues del plazo de confirmacion ($started_marker ya reclamado por el despachador): no se lanza nada para no duplicar la corrida. Cierra este pane."
+        fi
     fi
 
     mkdir -p "$LOG_DIR_ABS"
@@ -848,7 +877,8 @@ cmd_parallel() {
         herdr pane run "${panes[$i]}" "$cmdline" >/dev/null 2>&1 \
             || abort "No se pudo lanzar el issue #$issue en el pane ${panes[$i]} (herdr pane run fallo)."
 
-        if wait_for_dispatch_marker "$marker" "$HERDR_DISPATCH_CONFIRM_TIMEOUT"; then
+        if wait_for_dispatch_marker "$marker" "$HERDR_DISPATCH_CONFIRM_TIMEOUT" \
+            || ! claim_dispatch_marker "$marker"; then
             if [ "$delay" -gt 0 ]; then
                 log "Issue #$issue -> pane ${panes[$i]} ($title, arranca en ${delay}s)"
             else

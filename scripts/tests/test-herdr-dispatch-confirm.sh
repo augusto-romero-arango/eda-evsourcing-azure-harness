@@ -21,6 +21,8 @@
 #       vuelve a escribir, el reintento crea un pane nuevo y confirma ahi.
 #   [C] Fallo doble: ni el pane original ni el de reintento confirman -- exit
 #       distinto de 0, mensaje nombra ambos paneles y sugiere cerrarlos.
+#   [D] Runner tardio: un marcador ya reclamado por el despachador hace que
+#       cmd_pane_runner aborte sin lanzar el sub-pipeline (sin duplicados).
 #
 # Uso: scripts/tests/test-herdr-dispatch-confirm.sh
 # Exit code: 0 si todos los chequeos pasan, 1 si alguno falla.
@@ -215,6 +217,27 @@ assert_contains "el mensaje final nombra el pane original" "$OUT" "$SUSPECT_C"
 assert_contains "el mensaje final nombra el pane de reintento" "$OUT" "$RETRY_C"
 assert_contains "el mensaje sugiere cerrar los paneles" "$OUT" "Cierra ambos paneles"
 assert_not_contains "no imprime el mensaje de exito" "$OUT" "corriendo en el pane"
+
+# --- [D] Runner tardio sobre un marcador ya reclamado ---
+# Tras [C] el despachador reclamo (creacion exclusiva) el marcador del pane
+# sospechoso. Si ese shell ejecutara la linea tarde, cmd_pane_runner debe
+# abortar sin lanzar nada: el reintento ya corre en otro pane (MEF-ADR-0017).
+echo "[D] Runner que arranca despues del plazo: aborta sin duplicar la corrida"
+
+LATE_MARKER="$TMP_DIR/late/herdr-dispatch-late.started"
+LATE_SENTINEL="$TMP_DIR/late/sub-pipeline-ran"
+mkdir -p "$TMP_DIR/late"
+printf 'abandonado\n' > "$LATE_MARKER"
+OUT=$(run_dispatch --_pane-runner --title "late #42" --started-marker "$LATE_MARKER" -- touch "$LATE_SENTINEL")
+RC=$?
+
+assert_eq "exit code distinto de 0" "1" "$RC"
+assert_contains "el mensaje explica el marcador reclamado" "$OUT" "ya reclamado por el despachador"
+if [ -e "$LATE_SENTINEL" ]; then
+    fail "el sub-pipeline no debe lanzarse sobre un marcador reclamado"
+else
+    pass "el sub-pipeline no se lanzo"
+fi
 
 # --- Resumen ---
 echo ""

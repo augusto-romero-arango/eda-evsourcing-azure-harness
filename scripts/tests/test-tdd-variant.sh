@@ -269,6 +269,17 @@ case "${1:-} ${2:-}" in
     "pane process-info")
         echo '{"result":{"process_info":{"shell_pid":100,"foreground_process_group_id":100}}}'
         ;;
+    "pane run")
+        # Simula que el shell del pane ejecuto la linea: toca el
+        # --started-marker para que el despacho confirme sin esperar el
+        # timeout real (issue #1563).
+        marker=$(printf '%s\n' "${4:-}" | grep -oE -- '--started-marker [^[:space:]]+' | awk '{print $2}')
+        if [ -n "$marker" ]; then
+            mkdir -p "$(dirname "$marker")" 2>/dev/null
+            : > "$marker"
+        fi
+        echo '{"result":{"type":"ok"}}'
+        ;;
     *)
         echo '{"result":{"type":"ok"}}'
         ;;
