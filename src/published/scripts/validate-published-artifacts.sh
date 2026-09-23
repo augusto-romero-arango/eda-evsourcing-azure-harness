@@ -70,6 +70,7 @@ EOF
             if (id == "projection-test-writer" && (value == "$PLUGIN_ROOT" || value == "$HOME" || value == "$2")) return 1
             if (id == "reviewer" && (value == "$PLUGIN_ROOT" || value == "$HOME")) return 1
             if (id == "runtimes" && (value == "$MEFISTO_LIFECYCLE_LAUNCHER" || value == "$MEFISTO_LIFECYCLE_CONFIG_ROOT")) return 1
+            if (id == "batch-stop" && value == "$REPO_ROOT") return 1
             return 0
         }
         function valid_directive(value) {
