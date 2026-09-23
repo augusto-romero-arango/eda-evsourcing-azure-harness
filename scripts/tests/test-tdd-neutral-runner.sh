@@ -311,7 +311,7 @@ fi
 # bloque hold estructurado del status -- (a) durante la espera, state=hold con
 # cause/next_probe no nulos; (b) al completar, cause/next_probe vuelven a null
 # y accumulated_seconds conserva el total esperado (agent_hold_wait stub
-# duerme 1s, ver linea 227).
+# duerme 1s, ver el stub en case.sh).
 HOLD_STATUS_LINE="$(jq -c 'select(.state == "hold")' "$TMP/status-calls.jsonl" 2>/dev/null | tail -1)"
 if [ -n "$HOLD_STATUS_LINE" ] \
     && printf '%s' "$HOLD_STATUS_LINE" | jq -e '.hold.cause == "RATE_LIMIT"' >/dev/null 2>&1 \

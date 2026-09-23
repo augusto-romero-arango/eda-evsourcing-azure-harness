@@ -136,8 +136,9 @@ LAST_AGENT_DURATION=0
 CURRENT_STAGE="setup"
 # Hold estructurado en el status (issue #1600, molde tooling-pipeline.sh l.96):
 # run_agent fija estas variables antes de cada espera (agent_hold_wait) y las
-# limpia al terminar el agente, exito o fallo recuperado. Fuera de una espera
-# los tres primeros van en null; accumulated_seconds conserva el total esperado.
+# limpia al salir del bucle de reintentos, antes de publicar exito o fallo.
+# Fuera de una espera los tres primeros van en null; accumulated_seconds
+# conserva el total esperado.
 HOLD_CAUSE_JSON="null" HOLD_NEXT_PROBE_JSON="null" HOLD_CEILING_JSON="null" HOLD_TOTAL=0
 IS_REFACTOR=false
 REFACTOR_JUSTIFICATION=""
@@ -846,6 +847,7 @@ Al cerrar este stage, deja tu resumen en: $summary_path"
             fi
         fi
     done
+    HOLD_CAUSE_JSON="null"; HOLD_NEXT_PROBE_JSON="null"; HOLD_CEILING_JSON="null"; HOLD_TOTAL="$hold_total"
     if [ -n "$failure_type" ]; then
         local recoverable_work=false
         case "$failure_type" in TIMEOUT|KILLED|STREAM_CUT|PROTOCOL_INVALID) ;; *)
@@ -866,7 +868,6 @@ Al cerrar este stage, deja tu resumen en: $summary_path"
         fi
     fi
     case "$stage" in 1) AGENT_TW_METRICS_JSON="$metrics_json" ;; 2) AGENT_IM_METRICS_JSON="$metrics_json" ;; 2b) AGENT_ST_METRICS_JSON="$metrics_json" ;; 3) AGENT_RV_METRICS_JSON="$metrics_json" ;; esac
-    HOLD_CAUSE_JSON="null"; HOLD_NEXT_PROBE_JSON="null"; HOLD_CEILING_JSON="null"; HOLD_TOTAL="$hold_total"
     LAST_AGENT_DURATION=$((elapsed - hold_total)); LAST_AGENT_METRICS_JSON="$metrics_json"
     log "$agent completado en ${LAST_AGENT_DURATION}s"
 }
