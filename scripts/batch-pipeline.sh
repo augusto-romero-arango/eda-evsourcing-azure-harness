@@ -299,8 +299,8 @@ if ! runtime_cli_available "$BATCH_RUNTIME"; then
 fi
 
 # CA-4: cada eslabon (tdd-pipeline.sh/tooling-pipeline.sh) y pr-sync.sh
-# heredan este mismo runtime ya resuelto -- sin herencia implicita, cada uno
-# lo recibiria a partir de su propia variable de entorno.
+# heredan este mismo runtime ya resuelto; sin el export, cada uno volveria a
+# auto-detectar por su cuenta y podria divergir del batch.
 export MEFISTO_RUNTIME="$BATCH_RUNTIME"
 
 # ─── Cabecera ─────────────────────────────────────────────────────────────────

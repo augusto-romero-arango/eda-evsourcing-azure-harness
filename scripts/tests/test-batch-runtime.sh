@@ -5,8 +5,9 @@
 # antes del primer eslabon, verifica su CLI y lo exporta para que cada eslabon
 # y pr-sync.sh corran en el mismo runtime.
 #
-# Cubre (CA-5), con PATH controlado y stubs de gh/git/dotnet y del pipeline
-# hijo (el propio batch-pipeline.sh real, sin reimplementar su logica):
+# Cubre (CA-5), con PATH controlado y stubs de gh/dotnet, del pipeline hijo
+# (tooling-pipeline.sh) y de pr-sync.sh; git es el real del sistema contra un
+# origin bare local, y batch-pipeline.sh es el real bajo prueba:
 #   (a) Sin 'claude' en PATH, con MEFISTO_RUNTIME=opencode y un stub
 #       'opencode': el batch pasa el chequeo de dependencias y el pipeline
 #       hijo recibe MEFISTO_RUNTIME=opencode (CA-4).
@@ -214,7 +215,7 @@ done
 
 (
     cd "$WORK_B" || exit 99
-    env -u MEFISTO_RUNTIME PATH="$FAKE_BIN_B:$SAFE_SYSTEM_PATH" ./scripts/batch-pipeline.sh 502
+    env -u MEFISTO_RUNTIME -u MEFISTO_FAKE_AVAILABLE PATH="$FAKE_BIN_B:$SAFE_SYSTEM_PATH" ./scripts/batch-pipeline.sh 502
 ) </dev/null >"$TMP/stdout-b" 2>"$TMP/stderr-b"
 RC_B=$?
 OUT_B=$(cat "$TMP/stdout-b")
