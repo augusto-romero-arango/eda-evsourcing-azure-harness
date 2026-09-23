@@ -51,11 +51,11 @@ unset _REPO_TOP
 
 load_harness_config || exit 1
 
-# Version del plugin que corre este pipeline (issue #660), calculada UNA vez
-# aqui -- no en el trap de aborto, que solo interpola la variable ya resuelta.
-HARNESS_VERSION="$(get_harness_version)"
-HARNESS_VERSION_JSON="null"
-[ -n "$HARNESS_VERSION" ] && HARNESS_VERSION_JSON="\"$HARNESS_VERSION\""
+# Identidad de distribucion (issue #1626, mismo patron que tooling-pipeline.sh):
+# se revalida contra el runtime resuelto mas abajo, antes de crear evidencia
+# durable. Este primer calculo es el valor de arranque, por si el pipeline
+# muere antes de resolver el runtime.
+HARNESS_IDENTITY_JSON="$(get_harness_identity_json)"
 
 # --- Colores ---
 RED='\033[0;31m'
@@ -67,10 +67,20 @@ BOLD='\033[1m'
 NC='\033[0m'
 
 # --- Logging ---
-PIPELINE_DIR=".claude/pipeline"
-LOG_DIR="$PIPELINE_DIR/logs"
+# Estado operativo publicado (MEF-ADR-0053 seccion 4): este pipeline escribe
+# exclusivamente bajo el root canonico que resuelve mefisto_state_path(); el
+# fallback legacy de solo lectura, para work-status-collect.sh, vive en
+# _pipeline-common.sh (issue #1626, mismo patron que tooling-pipeline.sh).
+PIPELINE_DIR="$(dirname "$(mefisto_state_path '.state')")"
+LOG_DIR="$(dirname "$(mefisto_state_path 'logs/.state')")"
 TIMESTAMP=$(date +%Y%m%d-%H%M%S)
 LOG_FILE="$LOG_DIR/iac-pipeline-$TIMESTAMP.log"
+
+# --- Exclusion de escritura propia del pipeline (issue #1626, mismo patron ---
+# que tooling-pipeline.sh) ----------------------------------------------------
+# .mefisto/pipeline/ es evidencia operacional canonica; nunca se versiona ni
+# debe colarse en los commits/diff de infra/ que arma este pipeline.
+PIPELINE_OWN_WRITES=(':!.mefisto/pipeline')
 
 # --- Tracking de estado ---
 AGENT_WR_DUR="" AGENT_WR_RES="pending"
@@ -78,6 +88,7 @@ AGENT_RV_DUR="" AGENT_RV_RES="pending"
 PIPELINE_ERROR=""
 LAST_AGENT_DURATION=0
 CURRENT_STAGE="setup"
+HOLD_CAUSE_JSON="null" HOLD_NEXT_PROBE_JSON="null" HOLD_CEILING_JSON="null" HOLD_TOTAL=0
 
 _strip_ansi() { sed 's/\x1b\[[0-9;]*m//g'; }
 _log_file()   { echo -e "$1" | _strip_ansi >> "${LOG_FILE_ABS:-$LOG_FILE}"; }
@@ -96,8 +107,8 @@ abort() {
     fi
     if [ -n "${PIPELINE_DIR_ABS:-}" ]; then
         update_status "$CURRENT_STAGE" "failed"
-        echo "{\"issue\":\"${ISSUE_NUM:-}\",\"title\":\"$(echo "${ISSUE_TITLE:-}" | sed 's/"/\\"/g')\",\"pipeline\":\"infra\",\"harness_version\":${HARNESS_VERSION_JSON:-null},\"environment\":\"${ENVIRONMENT:-}\",\"started\":\"${TIMESTAMP:-}\",\"finished\":\"$(date +%Y-%m-%dT%H:%M:%S)\",\"state\":\"failed\",\"stage\":\"$CURRENT_STAGE\",\"error\":\"$PIPELINE_ERROR\"}" \
-            >> "$PIPELINE_DIR_ABS/pipeline-history.jsonl" 2>/dev/null || true
+        echo "{\"issue\":\"${ISSUE_NUM:-}\",\"title\":\"$(echo "${ISSUE_TITLE:-}" | sed 's/"/\\"/g')\",\"pipeline\":\"infra\",\"identity\":${HARNESS_IDENTITY_JSON:-null},\"runtime\":${MEFISTO_RUNTIME_JSON:-null},\"environment\":\"${ENVIRONMENT:-}\",\"started\":\"${TIMESTAMP:-}\",\"finished\":\"$(date +%Y-%m-%dT%H:%M:%S)\",\"state\":\"failed\",\"stage\":\"$CURRENT_STAGE\",\"error\":\"$PIPELINE_ERROR\"}" \
+            >> "${HISTORY_FILE:-$PIPELINE_DIR_ABS/pipeline-history.jsonl}" 2>/dev/null || true
     fi
     exit 1
 }
@@ -110,12 +121,14 @@ update_status() {
     [ -n "$AGENT_RV_DUR" ] && rv_dur="$AGENT_RV_DUR"
     local error_val="null"
     [ -n "$PIPELINE_ERROR" ] && error_val="\"$PIPELINE_ERROR\""
-    cat > "$PIPELINE_DIR_ABS/$STATUS_FILENAME" <<EOJSON
+    cat > "$(mefisto_state_path "$STATUS_FILENAME")" <<EOJSON
 {
   "issue": "${ISSUE_NUM:-null}",
   "title": "$(echo "${ISSUE_TITLE:-}" | sed 's/"/\\"/g')",
   "environment": "${ENVIRONMENT:-?}",
   "pipeline": "infra",
+  "identity": $HARNESS_IDENTITY_JSON,
+  "runtime": ${MEFISTO_RUNTIME_JSON:-null},
   "started": "$TIMESTAMP",
   "stage": "$stage",
   "state": "$state",
@@ -127,6 +140,7 @@ update_status() {
     "infra-reviewer": {"duration": $rv_dur, "result": "$AGENT_RV_RES"}
   },
   "last_error": $error_val
+  ,"hold": {"cause": $HOLD_CAUSE_JSON, "next_probe": $HOLD_NEXT_PROBE_JSON, "ceiling_seconds": $HOLD_CEILING_JSON, "accumulated_seconds": $HOLD_TOTAL}
 }
 EOJSON
 }
@@ -203,6 +217,8 @@ if ! mefisto_resolve_runtime >/dev/null; then
     abort "No se pudo resolver el runtime activo: ${MEFISTO_RUNTIME_ERROR:-motivo desconocido}"
 fi
 MEFISTO_RUNTIME_RESUELTO="$MEFISTO_RESOLVED_RUNTIME"
+MEFISTO_RUNTIME_JSON="\"$MEFISTO_RUNTIME_RESUELTO\""
+HARNESS_IDENTITY_JSON="$(get_harness_identity_json "$MEFISTO_RUNTIME_RESUELTO")"
 if ! runtime_cli_available "$MEFISTO_RUNTIME_RESUELTO"; then
     abort "Falta el CLI del runtime resuelto ('$MEFISTO_RUNTIME_RESUELTO')"
 fi
@@ -211,10 +227,12 @@ fi
 mkdir -p "$LOG_DIR"
 echo "Pipeline IaC iniciado: $TIMESTAMP" > "$LOG_FILE"
 
-PIPELINE_DIR_ABS="$(realpath "$PIPELINE_DIR")"
-LOG_DIR_ABS="$(realpath "$LOG_DIR")"
-LOG_FILE_ABS="$(realpath "$LOG_FILE")"
-EVENTS_LOG_ABS="$PIPELINE_DIR_ABS/events.log"
+PIPELINE_DIR_ABS="$(dirname "$(mefisto_state_path '.state')")"
+LOG_DIR_ABS="$(dirname "$(mefisto_state_path 'logs/.state')")"
+LOG_FILE_ABS="$(mefisto_state_path "logs/$(basename "$LOG_FILE")")"
+LOG_FILE="$LOG_FILE_ABS"
+EVENTS_LOG_ABS="$(mefisto_state_path 'events.log')"
+HISTORY_FILE="$(mefisto_state_path 'pipeline-history.jsonl')"
 PIPELINE_TMP_DIR="$(mktemp -d -t mefisto-iac)" || abort "No se pudo crear el directorio temporal del pipeline"
 [ -d "$PIPELINE_TMP_DIR" ] || abort "No se pudo crear el directorio temporal del pipeline"
 
@@ -321,7 +339,7 @@ Resuelve estas dependencias antes de lanzar el pipeline."
     success "Dependencias resueltas: se quito el label 'bloqueado' del issue #$ISSUE_NUM"
 fi
 
-echo "$ISSUE_CONTEXT" > "$PIPELINE_DIR/infra-input.md"
+echo "$ISSUE_CONTEXT" > "$PIPELINE_TMP_DIR/infra-input.md"
 
 # --- Preparar worktree ---
 header "Preparando worktree"
@@ -369,7 +387,7 @@ else
 
     success "Worktree creado: $WORKTREE_PATH"
 
-    mkdir -p "$WORKTREE_PATH/.claude/pipeline/summaries"
+    mefisto_state_path 'summaries/.state' "$WORKTREE_PATH" >/dev/null
 
     # --- Copiar y commitear backend.tf del working tree al worktree (issue #86) ---
     # bootstrap-backend.sh escribe infra/environments/<env>/backend.tf en el working
@@ -410,7 +428,8 @@ fi
 # --- Funcion auxiliar: recolectar resumen de agente ---
 collect_summary() {
     local stage="$1" agent="$2"
-    local f="$WORKTREE_PATH/.claude/pipeline/summaries/stage-${stage}-${agent}.md"
+    local f
+    f="$(mefisto_state_path "summaries/stage-${stage}-${agent}.md" "$WORKTREE_PATH")"
     if [ -f "$f" ]; then cat "$f"; else echo "_(El agente no genero resumen)_"; fi
 }
 
@@ -450,7 +469,8 @@ run_agent() {
     local AGENT_TIMEOUT_SECONDS=1800
     local start_ts run_exit=0 elapsed=0 failure_type="" hold_started="" hold_total=0
     local resume_session="" resume_degraded=false attempt=0
-    local summary_file="$WORKTREE_PATH/.claude/pipeline/summaries/stage-${stage}-${agent}.md"
+    local summary_file
+    summary_file="$(mefisto_state_path "summaries/stage-${stage}-${agent}.md" "$WORKTREE_PATH")"
     start_ts=$(date +%s)
     while :; do
         attempt=$((attempt + 1))
@@ -459,7 +479,7 @@ run_agent() {
         if [ -n "$resume_session" ]; then
             attempt_resume=true
             attempt_prompt="$PIPELINE_TMP_DIR/${stage}-${agent}-resume-${attempt}.prompt.md"
-            agent_resume_prompt "$stage" "$agent" > "$attempt_prompt"
+            printf '%s\n' "Continue the same stage and complete its summary." > "$attempt_prompt"
         fi
         local args=(--runtime "$MEFISTO_RUNTIME_RESUELTO" --agent "$agent" --cwd "$WORKTREE_PATH" --prompt-file "$attempt_prompt" --system-file "$system_file" --event-log "$events_file" --events-log "$EVENTS_LOG_ABS" --redact-observability --timeout "$AGENT_TIMEOUT_SECONDS")
         [ -n "$model" ] && args+=(--model "$model")
@@ -480,6 +500,15 @@ run_agent() {
         if ! agent_failure_is_holdable "$failure_type"; then break; fi
 
         [ -z "$hold_started" ] && hold_started=$(date +%s)
+        HOLD_CAUSE_JSON="\"$failure_type\""
+        HOLD_CEILING_JSON="${MEFISTO_HOLD_MAX_SECONDS:-21600}"
+        local next_probe_epoch next_probe
+        next_probe_epoch=$(( $(date +%s) + ${MEFISTO_HOLD_PROBE_SECONDS:-300} ))
+        next_probe="$(date -u -r "$next_probe_epoch" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d "@$next_probe_epoch" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || true)"
+        [ -n "$next_probe" ] && HOLD_NEXT_PROBE_JSON="\"$next_probe\"" || HOLD_NEXT_PROBE_JSON="null"
+        HOLD_TOTAL="$hold_total"
+        update_status "$stage-$agent" "hold"
+
         local resets slept
         resets="$(agent_events_resets_at "$events_file")"
         if ! slept=$(agent_hold_wait "$EVENTS_LOG_ABS" "$failure_type" "$hold_started" "$resets"); then
@@ -487,6 +516,7 @@ run_agent() {
             break
         fi
         hold_total=$((hold_total + slept))
+        HOLD_TOTAL="$hold_total"
 
         # Reanudacion de sesion (MEF-ADR-0051): mientras resume_degraded siga
         # en false, la siguiente sonda continua la sesion truncada via el
@@ -510,6 +540,8 @@ run_agent() {
             fi
         fi
     done
+
+    HOLD_CAUSE_JSON="null"; HOLD_NEXT_PROBE_JSON="null"; HOLD_CEILING_JSON="null"; HOLD_TOTAL="$hold_total"
 
     if [ -n "$failure_type" ]; then
         case "$agent" in
@@ -557,7 +589,7 @@ PROHIBIDO hacer 'git push' o 'gh pr create' (ni ninguna operacion de publicacion
     success "Gate 1: HCL valido"
 
     # Auto-commit si hay cambios
-    if [ -n "$(git -C "$WORKTREE_PATH" status --porcelain -- infra/)" ]; then
+    if [ -n "$(git -C "$WORKTREE_PATH" status --porcelain -- infra/ "${PIPELINE_OWN_WRITES[@]}")" ]; then
         log "Commiteando cambios de HCL..."
         git -C "$WORKTREE_PATH" add infra/
         git -C "$WORKTREE_PATH" commit -m "infra($ENVIRONMENT): escritura HCL issue #${ISSUE_NUM}"
@@ -601,7 +633,7 @@ log "Gate: verificando terraform validate tras la revision..."
 success "Gate 2: HCL revisado y valido"
 
 # Commit de correcciones del reviewer si las hubo
-if [ -n "$(git -C "$WORKTREE_PATH" status --porcelain -- infra/)" ]; then
+if [ -n "$(git -C "$WORKTREE_PATH" status --porcelain -- infra/ "${PIPELINE_OWN_WRITES[@]}")" ]; then
     log "Commiteando correcciones del reviewer..."
     git -C "$WORKTREE_PATH" add infra/
     git -C "$WORKTREE_PATH" commit -m "infra($ENVIRONMENT): correcciones de revision issue #${ISSUE_NUM}"
@@ -719,13 +751,13 @@ gh issue comment "$ISSUE_NUM" \
     >>"$LOG_FILE" 2>&1 || warn "No se pudo comentar en el issue #$ISSUE_NUM"
 
 # --- Historial ---
-echo "{\"issue\":\"$ISSUE_NUM\",\"title\":\"$(echo "$ISSUE_TITLE" | sed 's/"/\\"/g')\",\"pipeline\":\"infra\",\"harness_version\":${HARNESS_VERSION_JSON:-null},\"environment\":\"$ENVIRONMENT\",\"started\":\"$TIMESTAMP\",\"finished\":\"$(date +%Y-%m-%dT%H:%M:%S)\",\"state\":\"completed\",\"agents\":{\"infra-writer\":{\"duration\":${AGENT_WR_DUR:-null},\"result\":\"$AGENT_WR_RES\"},\"infra-reviewer\":{\"duration\":${AGENT_RV_DUR:-null},\"result\":\"$AGENT_RV_RES\"}},\"pr\":\"${PR_URL:-}\"}" \
-    >> "$PIPELINE_DIR_ABS/pipeline-history.jsonl"
+echo "{\"issue\":\"$ISSUE_NUM\",\"title\":\"$(echo "$ISSUE_TITLE" | sed 's/"/\\"/g')\",\"pipeline\":\"infra\",\"identity\":${HARNESS_IDENTITY_JSON:-null},\"runtime\":${MEFISTO_RUNTIME_JSON:-null},\"environment\":\"$ENVIRONMENT\",\"started\":\"$TIMESTAMP\",\"finished\":\"$(date +%Y-%m-%dT%H:%M:%S)\",\"state\":\"completed\",\"agents\":{\"infra-writer\":{\"duration\":${AGENT_WR_DUR:-null},\"result\":\"$AGENT_WR_RES\"},\"infra-reviewer\":{\"duration\":${AGENT_RV_DUR:-null},\"result\":\"$AGENT_RV_RES\"}},\"pr\":\"${PR_URL:-}\"}" \
+    >> "$HISTORY_FILE"
 
 update_status "completed" "completed"
 
 # Eliminar archivo de estado individual (ya esta en el historial)
-rm -f "$PIPELINE_DIR_ABS/$STATUS_FILENAME"
+rm -f "$(mefisto_state_path "$STATUS_FILENAME")"
 
 # --- Cleanup ---
 header "Cleanup"

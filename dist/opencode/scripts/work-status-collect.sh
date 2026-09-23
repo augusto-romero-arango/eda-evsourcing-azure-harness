@@ -120,7 +120,7 @@ _parse_epoch() {
 # Reconstruye el nombre legacy de log por stage (Paso 3): TDD
 # stage-{N}-{agent}-{TIMESTAMP}-issue-{N}.log, Tooling
 # tooling-stage-{N}-{agent}-{TIMESTAMP}.log, Infra
-# iac-stage-{N}-{agent}-{TIMESTAMP}.log. Prueba primero bajo logs/ canonico y
+# iac-stage-{N}-{agent}-{TIMESTAMP}[-issue-{N}].log. Prueba primero bajo logs/ canonico y
 # despues bajo logs/ legacy. Imprime la ruta si existe; retorna 1 si no.
 reconstruct_log() {
     local pipeline="$1" stage="$2" started="$3" issue="$4" variant="$5"
@@ -144,12 +144,20 @@ reconstruct_log() {
             return 1 ;;
     esac
 
-    local dir
+    # Infra: desde #1624 el log por stage lleva sufijo -issue-{N} (mismo
+    # log_base que sus -attempt-<k>.events.jsonl); se prueba primero ese
+    # nombre y despues el legacy sin sufijo (issue #1626, CA-4).
+    local names=("$fname")
+    [ "$pipeline" = "infra" ] && names=("iac-stage-${stage_num}-${agent}-${started}-issue-${issue_tag}.log" "$fname")
+
+    local dir name
     for dir in "$CANONICAL_DIR/logs" "$LEGACY_DIR/logs"; do
-        if [ -f "$dir/$fname" ]; then
-            printf '%s\n' "$dir/$fname"
-            return 0
-        fi
+        for name in "${names[@]}"; do
+            if [ -f "$dir/$name" ]; then
+                printf '%s\n' "$dir/$name"
+                return 0
+            fi
+        done
     done
     return 1
 }

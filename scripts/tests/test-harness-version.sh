@@ -12,15 +12,12 @@
 #     _pc_script_dir) y no al cwd del pipeline. Con jq, lee '.version'; sin
 #     jq, degrada a extraccion con sed; si nada funciona o el archivo no
 #     existe, imprime cadena vacia. Nunca aborta, siempre retorna 0.
-#   - IaC conserva HARNESS_VERSION/HARNESS_VERSION_JSON calculados UNA vez en
-#     el prologo e interpolados como "harness_version":<string o null> en sus
-#     escrituras feliz y de aborto de pipeline-history.jsonl.
-#   - TDD y tooling inicializan HARNESS_IDENTITY_JSON desde el paquete y lo
-#     revalidan una unica vez contra el runtime activo antes de producir
+#   - TDD, tooling e IaC inicializan HARNESS_IDENTITY_JSON desde el paquete y
+#     lo revalidan una unica vez contra el runtime activo antes de producir
 #     evidencia durable (issue #1363 neutraliza a TDD sobre el mismo patron de
-#     tooling, #1198). Sus escrituras feliz y de aborto incluyen el objeto
-#     identity (version, commit y estado) y el runtime, sin el campo plano
-#     harness_version.
+#     tooling, #1198; issue #1626 suma a IaC al mismo contrato). Sus
+#     escrituras feliz y de aborto incluyen el objeto identity (version,
+#     commit y estado) y el runtime, sin el campo plano harness_version.
 #
 # Las pruebas de get_harness_version usan un fixture propio (copia de
 # _pipeline-common.sh + un .claude-plugin/plugin.json de prueba en un dir
@@ -36,13 +33,12 @@
 #   [C] sin jq en PATH: fallback con sed extrae la misma version (CA-1).
 #   [D] plugin.json ausente: cadena vacia, exit 0, nunca aborta (CA-1).
 #   [E] smoke test contra el plugin.json REAL del repo (con y sin jq).
-#   [F] cableado: IaC calcula HARNESS_VERSION una sola vez en el prologo; TDD y
-#       tooling revalidan HARNESS_IDENTITY_JSON una unica vez contra el
-#       runtime activo, antes de producir evidencia durable (issue #1363
-#       CA-1; CA-2 del #1198).
-#   [G] cableado: IaC conserva harness_version plano; TDD y tooling persisten
-#       el objeto identity en los historiales feliz y de aborto, sin el campo
-#       plano retirado (issue #1363 CA-1; CA-3 del #1198).
+#   [F] cableado: TDD, tooling e IaC revalidan HARNESS_IDENTITY_JSON una unica
+#       vez contra el runtime activo, antes de producir evidencia durable
+#       (issue #1363 CA-1; CA-2 del #1198; issue #1626 CA-3 suma a IaC).
+#   [G] cableado: TDD, tooling e IaC persisten el objeto identity en los
+#       historiales feliz y de aborto, sin el campo plano harness_version
+#       (issue #1363 CA-1; CA-3 del #1198; issue #1626 CA-3 suma a IaC).
 #   [H] un caller con 'set -euo pipefail' (como los tres pipelines) sobrevive
 #       a plugin.json ausente: HARNESS_VERSION queda vacia y el script sigue
 #       corriendo, en vez de morir en el prologo (CA-1).
@@ -213,35 +209,15 @@ fi
 # -------- Bloque F: contratos de inicializacion de identidad/version --------
 
 echo ""
-echo "[F] IaC conserva version plana; TDD y tooling revalidan identidad neutral (issue #1363 CA-1; CA-2 del #1198)"
+echo "[F] TDD, tooling e IaC revalidan identidad neutral (issue #1363 CA-1; CA-2 del #1198; issue #1626 CA-3)"
 
-for pipe in iac-pipeline.sh; do
-    PIPE_PATH="$REPO_ROOT/scripts/$pipe"
-    occurrences=$(grep -c 'HARNESS_VERSION="\$(get_harness_version)"' "$PIPE_PATH")
-    if [ "$occurrences" = "1" ]; then
-        pass "F-1 ($pipe): HARNESS_VERSION se asigna exactamente una vez"
-    else
-        fail "F-1 ($pipe): se esperaba 1 asignacion, se encontraron $occurrences"
-    fi
-
-    # La asignacion debe quedar ANTES de la definicion de abort() -- si cayera
-    # dentro del cuerpo de abort() se recalcularia (y potencialmente fallaria)
-    # en cada aborto en vez de una sola vez en el prologo.
-    assign_line=$(grep -n 'HARNESS_VERSION="\$(get_harness_version)"' "$PIPE_PATH" | head -n1 | cut -d: -f1)
-    abort_line=$(grep -n '^abort() {' "$PIPE_PATH" | head -n1 | cut -d: -f1)
-    if [ -n "$assign_line" ] && [ -n "$abort_line" ] && [ "$assign_line" -lt "$abort_line" ]; then
-        pass "F-2 ($pipe): la asignacion vive antes de la definicion de abort()"
-    else
-        fail "F-2 ($pipe): la asignacion (linea $assign_line) no antecede a abort() (linea $abort_line)"
-    fi
-done
-
-# TDD sale del bucle version-plana de arriba (issue #1363): igual que tooling
-# (#1198), revalida su identidad exactamente una vez contra el runtime ya
-# resuelto -- ninguno de los dos recalcula HARNESS_VERSION.
+# TDD y tooling revalidan su identidad exactamente una vez contra el runtime
+# ya resuelto (issue #1363/#1198); IaC se suma al mismo contrato (issue
+# #1626 CA-3) -- ninguno de los tres recalcula HARNESS_VERSION.
 TOOLING_PATH="$REPO_ROOT/scripts/tooling-pipeline.sh"
 TDD_PATH="$REPO_ROOT/scripts/tdd-pipeline.sh"
-for revalidated in "$TOOLING_PATH" "$TDD_PATH"; do
+IAC_PATH="$REPO_ROOT/scripts/iac-pipeline.sh"
+for revalidated in "$TOOLING_PATH" "$TDD_PATH" "$IAC_PATH"; do
     identity_occurrences=$(grep -c 'HARNESS_IDENTITY_JSON="\$(get_harness_identity_json "\$MEFISTO_RUNTIME_RESUELTO")"' "$revalidated")
     if [ "$identity_occurrences" = "1" ]; then
         pass "F-3 ($(basename "$revalidated")): HARNESS_IDENTITY_JSON se revalida exactamente una vez contra el runtime activo"
@@ -258,20 +234,18 @@ else
     fail "F-4 (tooling-pipeline.sh): la identidad (linea $identity_line) no antecede a la primera evidencia durable (linea $evidence_line)"
 fi
 
+iac_identity_line=$(grep -n 'HARNESS_IDENTITY_JSON="\$(get_harness_identity_json "\$MEFISTO_RUNTIME_RESUELTO")"' "$IAC_PATH" | head -n1 | cut -d: -f1)
+iac_evidence_line=$(grep -n 'echo "Pipeline IaC iniciado: \$TIMESTAMP" > "\$LOG_FILE"' "$IAC_PATH" | head -n1 | cut -d: -f1)
+if [ -n "$iac_identity_line" ] && [ -n "$iac_evidence_line" ] && [ "$iac_identity_line" -lt "$iac_evidence_line" ]; then
+    pass "F-5 (iac-pipeline.sh): la identidad validada antecede a la evidencia durable"
+else
+    fail "F-5 (iac-pipeline.sh): la identidad (linea $iac_identity_line) no antecede a la primera evidencia durable (linea $iac_evidence_line)"
+fi
+
 # -------- Bloque G: contratos de history por pipeline --------
 
 echo ""
-echo "[G] IaC escribe harness_version; TDD y tooling escriben identity completo (issue #1363 CA-1; CA-3 del #1198)"
-
-for pipe in iac-pipeline.sh; do
-    PIPE_PATH="$REPO_ROOT/scripts/$pipe"
-    field_count=$(grep -c '\\"harness_version\\"' "$PIPE_PATH")
-    if [ "$field_count" = "2" ]; then
-        pass "G-1 ($pipe): harness_version aparece en las 2 escrituras (feliz + aborto)"
-    else
-        fail "G-1 ($pipe): se esperaban 2 apariciones de harness_version, se encontraron $field_count"
-    fi
-done
+echo "[G] TDD, tooling e IaC escriben identity completo, sin harness_version plano (issue #1363 CA-1; CA-3 del #1198; issue #1626 CA-3)"
 
 tooling_identity_args=$(grep -c -- '--argjson identity "\$HARNESS_IDENTITY_JSON"' "$TOOLING_PATH")
 tooling_identity_fields=$(grep -c 'identity:\$identity' "$TOOLING_PATH")
@@ -312,6 +286,23 @@ if grep -Fq 'PIPELINE_ERROR="$(printf '\''%s'\'' "$1" | tr '\''\n'\'' '\'' '\'')
     pass "G-6 (tdd-pipeline.sh): el error queda crudo hasta su serializacion con jq"
 else
     fail "G-6 (tdd-pipeline.sh): el error se preescapa o no se serializa con jq"
+fi
+
+# IaC (issue #1626 CA-3): a diferencia de TDD/tooling, sus dos escrituras de
+# historial siguen siendo un 'echo' con interpolacion cruda (no jq -cn), asi
+# que el chequeo busca el literal '"identity":$HARNESS_IDENTITY_JSON' (con su
+# default a null) en vez del patron '--argjson identity' especifico de jq.
+iac_identity_history_fields=$(grep -c '\\"identity\\":\${HARNESS_IDENTITY_JSON:-null}' "$IAC_PATH")
+iac_flat_fields=$(grep -Ec '\\"harness_version\\"|(^|[,{[:space:]])harness_version[[:space:]]*:' "$IAC_PATH")
+if [ "$iac_identity_history_fields" = "2" ]; then
+    pass "G-7 (iac-pipeline.sh): los historiales feliz y de aborto incluyen identity"
+else
+    fail "G-7 (iac-pipeline.sh): se esperaban 2 apariciones de identity en el historial, se encontraron $iac_identity_history_fields"
+fi
+if [ "$iac_flat_fields" = "0" ]; then
+    pass "G-8 (iac-pipeline.sh): no reintroduce harness_version plano"
+else
+    fail "G-8 (iac-pipeline.sh): se esperaban 0 campos harness_version planos, se encontraron $iac_flat_fields"
 fi
 
 # -------- Bloque H: un caller con 'set -euo pipefail' no muere (CA-1) --------
