@@ -18,6 +18,11 @@
 #        invocacion y sin linea "[hold]" en events.log.
 #   H-d: runtime sin capacidad de reanudacion -> la segunda invocacion NO
 #        lleva --resume-session aunque el terminal trajo session_id.
+#   H-e: mismo escenario de H-a, pero con el contexto de PR fijado
+#        (CURRENT_PR_STATUS/CURRENT_PR_STAGE, issue #1601) -> durante la
+#        espera, pipeline-status-pr-sync-<pr>.json queda en state:"hold" con
+#        hold.cause/next_probe poblados; al volver de run_agent, hold.cause
+#        es null y accumulated_seconds >= 1.
 #
 # Uso: scripts/tests/test-pr-sync-hold.sh
 # Exit code: 0 si todos los chequeos pasan, 1 si alguno falla.
@@ -53,6 +58,20 @@ if [ -z "$FUNC_SRC" ]; then
     exit 1
 fi
 pass "se extrajo run_agent() de pr-sync.sh"
+
+# write_pr_status_file()/fail_pr() (issue #1601): run_agent() las llama para
+# el status estructurado durante un ciclo de hold (H-e). Mismo patron de
+# extraccion por awk, un bloque contiguo antes de "Parsear argumentos".
+STATUS_FUNC_SRC=$(awk '
+    /^write_pr_status_file\(\) \{/ { flag=1 }
+    flag && /^# ─── Parsear argumentos/ { exit }
+    flag { print }
+' "$PR_SYNC")
+if [ -z "$STATUS_FUNC_SRC" ]; then
+    fail "no se pudo extraer write_pr_status_file()/fail_pr() de pr-sync.sh"
+else
+    pass "se extrajo write_pr_status_file()/fail_pr() de pr-sync.sh"
+fi
 
 if grep -q 'classify_neutral_agent_failure' <<< "$FUNC_SRC" \
     && grep -q 'agent_failure_is_holdable' <<< "$FUNC_SRC" \
@@ -187,6 +206,85 @@ else
     fail "H-a: no se encontro la linea [hold] en events.log"
 fi
 unset STUB_RUNTIME STUB_RUNTIME_LIB_DIR
+
+echo ""
+echo "[H-e] hold escribe pipeline-status-pr-sync-<pr>.json (issue #1601, CA-3)"
+HE_BIN_DIR="$TMP_DIR/he-bin"
+HE_STATE_DIR="$TMP_DIR/he-state"
+HE_WORKTREE="$TMP_DIR/he-worktree"
+HE_BEHAVIORS="$TMP_DIR/he-behaviors.txt"
+mkdir -p "$HE_WORKTREE" "$HE_STATE_DIR"
+printf '%s\n' "1 rate_limit" "0 success" > "$HE_BEHAVIORS"
+export CASE_NAME="he"
+make_stub_runner "$HE_BIN_DIR" "$HE_BEHAVIORS"
+# El stub de sleep captura el status EN EL INSTANTE de la espera (antes de que
+# run_agent() lo devuelva a "running"), sin dormir de verdad -- el test mide
+# el contenido del archivo, no el reloj.
+cat > "$HE_BIN_DIR/sleep" <<SLEEPSTUB
+#!/usr/bin/env bash
+cp "$HE_STATE_DIR/pipeline-status-pr-sync-777.json" "$TMP_DIR/he-hold-snapshot.json" 2>/dev/null || true
+exit 0
+SLEEPSTUB
+chmod +x "$HE_BIN_DIR/sleep"
+rm -f "$TMP_DIR/he-hold-snapshot.json"
+: > "$TMP_DIR/log.txt"
+: > "$TMP_DIR/warn.txt"
+: > "$TMP_DIR/events.log"
+{
+    printf '%s\n' 'set -uo pipefail'
+    printf '%s\n' "source \"$COMMON_LIB\""
+    printf '%s\n' "$STATUS_FUNC_SRC"
+    printf '%s\n' "$FUNC_SRC"
+    cat <<HARNESS
+LOG_DIR_ABS="$TMP_DIR"
+TIMESTAMP="ts"
+RUN_AGENT_BIN="$HE_BIN_DIR/mefisto-run-agent-stub.sh"
+MEFISTO_RUNTIME_RESUELTO="resumable-rt"
+MEFISTO_RUNTIME_LIB_DIR="$TMP_DIR/runtime-lib"
+MEFISTO_HOLD_PROBE_SECONDS=1
+MEFISTO_HOLD_MAX_SECONDS=21600
+IMPLEMENTER_MODEL=""
+LOG_FILE_ABS="$TMP_DIR/log.txt"
+EVENTS_LOG_ABS="$TMP_DIR/events.log"
+MEFISTO_STATE_DIR="$HE_STATE_DIR"
+CURRENT_PR_STATUS="777"
+CURRENT_PR_STAGE="merge-pr777"
+CURRENT_PR_TITLE="Titulo de prueba"
+RED='' NC=''
+log() { printf '%s\n' "\$1" >> "$TMP_DIR/log.txt"; }
+warn() { printf '%s\n' "\$1" >> "$TMP_DIR/warn.txt"; }
+set +e
+run_agent "he" "implementer" "prompt de prueba" "$HE_WORKTREE"
+rc=\$?
+set -e
+printf 'RESULT=%s\n' "\$rc"
+HARNESS
+} > "$TMP_DIR/he.sh"
+HE_OUTPUT=$(PATH="$HE_BIN_DIR:$PATH" /bin/bash "$TMP_DIR/he.sh" 2>&1)
+HE_RC=$?
+
+if [ "$HE_RC" -eq 0 ] && echo "$HE_OUTPUT" | grep -q 'RESULT=0'; then
+    pass "H-e: run_agent retorna 0 tras el hold (con contexto de PR fijado)"
+else
+    fail "H-e: se esperaba RESULT=0. Salida: $HE_OUTPUT"
+fi
+if [ -f "$TMP_DIR/he-hold-snapshot.json" ] \
+    && [ "$(jq -r '.state' "$TMP_DIR/he-hold-snapshot.json" 2>/dev/null)" = "hold" ] \
+    && jq -e '.hold.cause | startswith("RATE_LIMIT")' "$TMP_DIR/he-hold-snapshot.json" >/dev/null 2>&1 \
+    && [ "$(jq -r '.hold.next_probe' "$TMP_DIR/he-hold-snapshot.json" 2>/dev/null)" != "null" ]; then
+    pass "H-e: durante la espera, el status queda en hold con cause RATE_LIMIT... y next_probe no nulo"
+else
+    fail "H-e: snapshot de hold invalido o ausente: $(cat "$TMP_DIR/he-hold-snapshot.json" 2>/dev/null || echo '<no existe>')"
+fi
+HE_FINAL="$HE_STATE_DIR/pipeline-status-pr-sync-777.json"
+if [ -f "$HE_FINAL" ] \
+    && [ "$(jq -r '.hold.cause' "$HE_FINAL" 2>/dev/null)" = "null" ] \
+    && [ "$(jq -r '.hold.accumulated_seconds' "$HE_FINAL" 2>/dev/null)" -ge 1 ] 2>/dev/null; then
+    pass "H-e: al volver de run_agent, hold.cause es null y accumulated_seconds >= 1"
+else
+    fail "H-e: status final invalido: $(cat "$HE_FINAL" 2>/dev/null || echo '<no existe>')"
+fi
+unset CASE_NAME
 
 echo ""
 echo "[H-b] rate_limit persistente con techo minimo: se agota la espera"

@@ -111,10 +111,84 @@ get_branch() {
 CURRENT_WORKTREE=""
 HAVE_ERRORS=false
 
+# ─── Status estructurado por PR (visibilidad en vivo, issue #1601) ──────────
+#
+# CURRENT_PR_STATUS/CURRENT_PR_STAGE/CURRENT_PR_TITLE son variables de
+# contexto que el loop principal fija por cada PR en curso: run_agent() no
+# recibe el numero de PR como argumento (su firma no cambia, la reutilizan
+# los tests con awk), asi que necesita este contexto para saber a que archivo
+# de status escribir durante un ciclo de hold.
+CURRENT_PR_STATUS=""
+CURRENT_PR_STAGE=""
+CURRENT_PR_TITLE=""
+HOLD_CAUSE_JSON="null"
+HOLD_NEXT_PROBE_JSON="null"
+HOLD_CEILING_JSON="null"
+HOLD_TOTAL=0
+
+# write_pr_status_file <pr> <stage> <state> [last_error]
+#
+# Escribe pipeline-status-pr-sync-<pr>.json bajo el root canonico
+# .mefisto/pipeline (MEF-ADR-0053 seccion 4), con el mismo esquema y nombres
+# de campo que update_status() de tooling-pipeline.sh. "issue" lleva el
+# numero de PR (string): junto con pipeline:"pr-sync" forma la clave de
+# deduplicacion (pipeline, issue, variant) de #1597; "pr" repite el mismo
+# valor para que un consumidor de esa clave no tenga que adivinar la
+# semantica de "issue" en este pipeline. DISTINTA de set_status: ese tracker
+# en memoria (arriba) solo alimenta la tabla del resumen final y no se toca
+# aqui. Sin entrada en pipeline-history.jsonl -- el alcance es visibilidad en
+# vivo (issue #1586, CA-4 corregido).
+write_pr_status_file() {
+    local pr="$1" stage="$2" state="$3" last_error="${4:-}"
+    local status_path
+    status_path="$(mefisto_state_path "pipeline-status-pr-sync-${pr}.json")"
+
+    # "started" se preserva del primer estado escrito para este PR (running,
+    # stage sync): las transiciones posteriores leen el archivo existente en
+    # vez de recalcularlo.
+    local started=""
+    if [ -f "$status_path" ]; then
+        started="$(jq -r '.started // empty' "$status_path" 2>/dev/null || true)"
+    fi
+    [ -n "$started" ] || started="$(date +%Y-%m-%dT%H:%M:%S)"
+
+    jq -n \
+        --arg issue "$pr" \
+        --arg pr "$pr" \
+        --arg title "${CURRENT_PR_TITLE:-}" \
+        --arg runtime "${MEFISTO_RUNTIME_RESUELTO:-}" \
+        --arg started "$started" \
+        --arg stage "$stage" \
+        --arg state "$state" \
+        --arg updated "$(date +%Y-%m-%dT%H:%M:%S)" \
+        --arg log "${LOG_FILE_ABS:-}" \
+        --arg last_error "$last_error" \
+        --argjson hold_cause "${HOLD_CAUSE_JSON:-null}" \
+        --argjson hold_next_probe "${HOLD_NEXT_PROBE_JSON:-null}" \
+        --argjson hold_ceiling "${HOLD_CEILING_JSON:-null}" \
+        --argjson hold_accumulated "${HOLD_TOTAL:-0}" \
+        '{
+            issue: $issue,
+            pr: $pr,
+            title: $title,
+            pipeline: "pr-sync",
+            variant: null,
+            runtime: (if $runtime == "" then null else $runtime end),
+            started: $started,
+            stage: $stage,
+            state: $state,
+            updated: $updated,
+            log: $log,
+            last_error: (if $last_error == "" then null else $last_error end),
+            hold: {cause: $hold_cause, next_probe: $hold_next_probe, ceiling_seconds: $hold_ceiling, accumulated_seconds: $hold_accumulated}
+        }' > "$status_path"
+}
+
 fail_pr() {
     local pr="$1" msg="$2"
     echo -e "\n${RED}${BOLD}✗ PR #$pr: $msg${NC}" | tee -a "$LOG_FILE_ABS"
     set_status "$pr" "ERROR: $msg"
+    write_pr_status_file "$pr" "${CURRENT_PR_STAGE:-sync}" "failed" "$msg"
     HAVE_ERRORS=true
 
     # Limpiar worktree si existe
@@ -179,6 +253,31 @@ touch "$LOG_FILE_ABS"
 # batch-pipeline.sh queda fuera de alcance (issue #1586): pr-sync solo conoce
 # el PR, no el issue que lo origino.
 EVENTS_LOG_ABS="$(mefisto_state_path 'events.log')"
+
+# ─── Trap de cierre: marca failed si el PR en curso queda running/hold ──────
+# Cubre interrupciones (Ctrl-C, kill, timeout externo) que nunca pasan por
+# fail_pr(): sin este trap, /work-status seguiria mostrando ese PR "en
+# progreso" o "en espera" para siempre (issue #1601, CA-4). Solo toca el PR
+# EN CURSO (CURRENT_PR_STATUS) -- los PRs ya cerrados (completed/failed) o
+# nunca alcanzados no se tocan.
+pr_sync_exit_trap() {
+    local rc=$?
+    if [ -n "${CURRENT_PR_STATUS:-}" ]; then
+        local status_path
+        status_path="$(mefisto_state_path "pipeline-status-pr-sync-${CURRENT_PR_STATUS}.json" 2>/dev/null || true)"
+        if [ -n "$status_path" ] && [ -f "$status_path" ] \
+            && jq -e '.state == "running" or .state == "hold"' "$status_path" >/dev/null 2>&1; then
+            write_pr_status_file "$CURRENT_PR_STATUS" "${CURRENT_PR_STAGE:-sync}" "failed" "pr-sync interrumpido"
+        fi
+    fi
+    exit "$rc"
+}
+# INT/TERM salen con su codigo convencional (130/143) y delegan en el trap de
+# EXIT: dentro de un trap de senal, $? es el del ultimo comando, no la senal,
+# y un Ctrl-C podria terminar con exit 0.
+trap pr_sync_exit_trap EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 header "pr-sync — Sincronización de PRs con main"
 log "Log: $LOG_FILE_ABS"
@@ -270,7 +369,12 @@ run_agent() {
     local worktree="$4"
     local log_base="$LOG_DIR_ABS/pr-sync-${label}-${TIMESTAMP}"
     local prompt_file system_file start_ts run_exit elapsed
-    local failure_type="" hold_started="" resume_session="" attempt=0
+    local failure_type="" hold_started="" resume_session="" attempt=0 hold_total=0
+
+    # Estado de hold limpio para esta invocacion (issue #1601, CA-3): un
+    # run_agent previo para el mismo PR (p.ej. merge-pr seguido de fix-pr) no
+    # debe dejar cause/next_probe/ceiling filtrandose a este.
+    HOLD_CAUSE_JSON="null"; HOLD_NEXT_PROBE_JSON="null"; HOLD_CEILING_JSON="null"; HOLD_TOTAL=0
 
     prompt_file="$(mktemp)"
     system_file="$(mktemp)"
@@ -302,6 +406,7 @@ run_agent() {
 
         if [ "$run_exit" -eq 0 ] && agent_events_completed_successfully "$events_file"; then
             log "$agent completado en ${elapsed}s"
+            HOLD_CAUSE_JSON="null"; HOLD_NEXT_PROBE_JSON="null"; HOLD_CEILING_JSON="null"; HOLD_TOTAL="$hold_total"
             rm -f "$prompt_file" "$system_file"
             return 0
         fi
@@ -311,22 +416,43 @@ run_agent() {
             warn "$agent falló después de ${elapsed}s"
             echo -e "\n${RED}── Últimas líneas del log de $agent:${NC}"
             tail -20 "$log_file"
+            HOLD_CAUSE_JSON="null"; HOLD_NEXT_PROBE_JSON="null"; HOLD_CEILING_JSON="null"; HOLD_TOTAL="$hold_total"
             rm -f "$prompt_file" "$system_file"
             return 1
         fi
 
         [ -z "$hold_started" ] && hold_started=$(date +%s)
         warn "$agent: $failure_type. Esperando (hold) antes de reintentar (MEF-ADR-0051)..."
+
+        # Status estructurado del hold (issue #1601, CA-3): mismo molde que
+        # tooling-pipeline.sh (~578-595) -- next_probe es un estimado de
+        # cadencia fija, no el resets_at exacto que agent_hold_wait honra
+        # internamente. Solo escribe si el loop dejo el contexto del PR
+        # (CURRENT_PR_STATUS): los tests H-a..d de run_agent aislado no lo
+        # fijan y no deben crear ningun archivo de status.
+        HOLD_CAUSE_JSON="\"$failure_type\""
+        HOLD_CEILING_JSON="${MEFISTO_HOLD_MAX_SECONDS:-21600}"
+        local next_probe_epoch next_probe
+        next_probe_epoch=$(( $(date +%s) + ${MEFISTO_HOLD_PROBE_SECONDS:-300} ))
+        next_probe="$(date -u -r "$next_probe_epoch" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d "@$next_probe_epoch" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || true)"
+        [ -n "$next_probe" ] && HOLD_NEXT_PROBE_JSON="\"$next_probe\"" || HOLD_NEXT_PROBE_JSON="null"
+        HOLD_TOTAL="$hold_total"
+        [ -n "${CURRENT_PR_STATUS:-}" ] && write_pr_status_file "$CURRENT_PR_STATUS" "${CURRENT_PR_STAGE:-$label}" "hold"
+
         local slept resets
         resets="$(agent_events_resets_at "$events_file")"
         if ! slept=$(agent_hold_wait "$EVENTS_LOG_ABS" "$failure_type" "$hold_started" "$resets"); then
             warn "$agent: se agotó el techo de espera (MEFISTO_HOLD_MAX_SECONDS) tras ${elapsed}s en el último intento"
             echo -e "\n${RED}── Últimas líneas del log de $agent:${NC}"
             tail -20 "$log_file"
+            HOLD_CAUSE_JSON="null"; HOLD_NEXT_PROBE_JSON="null"; HOLD_CEILING_JSON="null"; HOLD_TOTAL="$hold_total"
             rm -f "$prompt_file" "$system_file"
             return 1
         fi
+        hold_total=$((hold_total + slept))
+        HOLD_CAUSE_JSON="null"; HOLD_NEXT_PROBE_JSON="null"; HOLD_CEILING_JSON="null"; HOLD_TOTAL="$hold_total"
         log "$agent: espera de ${slept}s cumplida, reintentando..."
+        [ -n "${CURRENT_PR_STATUS:-}" ] && write_pr_status_file "$CURRENT_PR_STATUS" "${CURRENT_PR_STAGE:-$label}" "running"
 
         resume_session="$(agent_events_session_id "$events_file")"
         if [ -z "$resume_session" ]; then
@@ -590,15 +716,25 @@ desbloquear_issues_dependientes() {
 for PR_NUM in "${PR_NUMS[@]}"; do
     header "PR #$PR_NUM"
     CURRENT_WORKTREE=""
+    CURRENT_PR_TITLE=""
 
-    # Verificar que el PR sigue abierto
-    PR_STATE=$(gh pr view "$PR_NUM" --json state -q '.state' 2>/dev/null || echo "NOT_FOUND")
+    # Verificar que el PR sigue abierto (la misma consulta trae el titulo
+    # para el status estructurado, CA-1: evita una segunda llamada a gh)
+    PR_VIEW_JSON=$(gh pr view "$PR_NUM" --json state,title 2>/dev/null || echo '{}')
+    PR_STATE=$(printf '%s' "$PR_VIEW_JSON" | jq -r '.state // "NOT_FOUND"' 2>/dev/null || echo "NOT_FOUND")
+    CURRENT_PR_TITLE=$(printf '%s' "$PR_VIEW_JSON" | jq -r '.title // ""' 2>/dev/null || echo "")
     if [ "$PR_STATE" != "OPEN" ]; then
         warn "PR #$PR_NUM no está abierto (estado: $PR_STATE). Saltando."
         set_status "$PR_NUM" "omitido ($PR_STATE)"
         set_branch "$PR_NUM" "(n/a)"
         continue
     fi
+
+    # Status estructurado en vivo (issue #1601, CA-2): los PRs omitidos arriba
+    # nunca llegan aqui y no crean archivo.
+    CURRENT_PR_STATUS="$PR_NUM"
+    CURRENT_PR_STAGE="sync"
+    write_pr_status_file "$PR_NUM" "sync" "running"
 
     # Obtener rama del PR
     BRANCH_NAME=$(gh pr view "$PR_NUM" --json headRefName -q '.headRefName')
@@ -625,14 +761,19 @@ for PR_NUM in "${PR_NUMS[@]}"; do
 
         if [ "$DO_MERGE" = true ]; then
             log "Mergeando PR #$PR_NUM a main..."
+            CURRENT_PR_STAGE="merge"
+            write_pr_status_file "$PR_NUM" "merge" "running"
             if merge_pr_with_retry "$PR_NUM"; then
                 success "PR #$PR_NUM mergeado a main"
                 set_status "$PR_NUM" "mergeado"
+                write_pr_status_file "$PR_NUM" "merge" "completed"
                 desbloquear_issues_dependientes "$PR_NUM" || warn "Post-merge: fallo al desbloquear issues dependientes del PR #$PR_NUM (el merge sí se completó; revisar labels 'bloqueado' manualmente)"
                 git fetch origin main >>"$LOG_FILE_ABS" 2>&1 || true
             else
                 fail_pr "$PR_NUM" "No se pudo mergear después de reintentos"
             fi
+        else
+            write_pr_status_file "$PR_NUM" "sync" "completed"
         fi
         continue
     fi
@@ -676,6 +817,8 @@ Después de resolver cada archivo, haz git add del archivo.
 Cuando todos estén resueltos, haz git commit para completar el merge.
 NO elimines código de ninguna de las dos ramas — integra ambos cambios."
 
+        CURRENT_PR_STAGE="merge-pr${PR_NUM}"
+        write_pr_status_file "$PR_NUM" "$CURRENT_PR_STAGE" "running"
         if ! run_agent "merge-pr${PR_NUM}" "implementer" "$MERGE_PROMPT" "$TEMP_WORKTREE"; then
             fail_pr "$PR_NUM" "El agente implementer falló al resolver conflictos"
             continue
@@ -714,6 +857,8 @@ Arregla el código en src/ para que todos los tests pasen.
 NO modifiques los tests.
 Cuando termines, haz commit de los cambios."
 
+        CURRENT_PR_STAGE="fix-pr${PR_NUM}"
+        write_pr_status_file "$PR_NUM" "$CURRENT_PR_STAGE" "running"
         if ! run_agent "fix-pr${PR_NUM}" "implementer" "$FIX_PROMPT" "$TEMP_WORKTREE"; then
             fail_pr "$PR_NUM" "El agente implementer falló al arreglar tests"
             continue
@@ -749,14 +894,19 @@ Cuando termines, haz commit de los cambios."
     # Merge a main (si se pidió) — con retry (P2)
     if [ "$DO_MERGE" = true ]; then
         log "Mergeando PR #$PR_NUM a main..."
+        CURRENT_PR_STAGE="merge"
+        write_pr_status_file "$PR_NUM" "merge" "running"
         if merge_pr_with_retry "$PR_NUM"; then
             success "PR #$PR_NUM mergeado a main"
             set_status "$PR_NUM" "mergeado"
+            write_pr_status_file "$PR_NUM" "merge" "completed"
             desbloquear_issues_dependientes "$PR_NUM" || warn "Post-merge: fallo al desbloquear issues dependientes del PR #$PR_NUM (el merge sí se completó; revisar labels 'bloqueado' manualmente)"
             git fetch origin main >>"$LOG_FILE_ABS" 2>&1 || true
         else
             fail_pr "$PR_NUM" "No se pudo mergear después de reintentos"
         fi
+    else
+        write_pr_status_file "$PR_NUM" "sync" "completed"
     fi
 done
 
