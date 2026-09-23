@@ -83,6 +83,13 @@ Dependencias` declarando `Ninguna`. La validacion programatica de
 `/mefisto:implement` (seccion "Validacion en `/implement`" del mismo ADR) es la
 misma que corre en produccion; este protocolo no la relaja ni la duplica.
 
+Los cuatro fixtures llevan ademas `## ADRs aplicables`: no es una fila del DoR
+de MEF-ADR-0011 (esa tabla no la nombra), sino el requisito que
+`agents/implementer.md` paso 1b y `agents/reviewer.md` paso 1b exigen de todo
+issue antes de escribir o revisar codigo -- si falta o esta vacia, el
+implementer bloquea (`.mefisto/pipeline/blockage-report.md`) y el reviewer la
+trata como hallazgo bloqueante.
+
 ### Eleccion del dominio certificable
 
 Antes de redactar los cuatro fixtures se registra `<dominio-certificable>`:
@@ -121,6 +128,14 @@ formato `YYYYMMDD-HHMMSS-<tag-certificable>` del corte anterior) y para el
 runtime de la fila. Las cuatro corridas usan la misma forma,
 solo el `tipo:`, el runtime y el contenido determinista cambian.
 
+Los templates son el esqueleto fijo del body: cada uno de los cuatro fixtures
+se redacta desde el planner **publicado** del consumidor (nunca a mano ni
+desde el planner interno, MEF-ADR-0019), que sustituye tanto estos
+placeholders como el de `## ADRs aplicables` con los ADRs reales que el
+cambio concreto toca. Un fixture cuya seccion `## ADRs aplicables` quede
+vacia o conserve el placeholder sin sustituir **no es lanzable**: el operador
+no ejecuta `/mefisto:implement` sobre el.
+
 #### Template: write-side (Claude u OpenCode)
 
 ````markdown
@@ -147,6 +162,11 @@ asi que la fila "Contrato HTTP del comando" del DoR queda *No aplica*. Esta
 constancia va aqui, dentro de `## Modelo de eventos`, y no bajo un encabezado
 propio: MEF-ADR-0011 fija que esa fila es la unica de la tabla que no nombra
 una seccion del body.
+
+## ADRs aplicables
+
+<ADRs que enumera el planner publicado -- ver paso 7 de "Crear issues" en
+`agents/planner.md`>
 
 ## Criterios de aceptacion
 
@@ -210,6 +230,11 @@ colision de nombres porque no se crea ninguna Function.
   nuevos).
 - Test de composicion de la Function GET que verifica el campo nuevo en la
   respuesta.
+
+## ADRs aplicables
+
+<ADRs que enumera el planner publicado -- ver paso 7 de "Crear issues" en
+`agents/planner.md`>
 
 ## Criterios de aceptacion
 
