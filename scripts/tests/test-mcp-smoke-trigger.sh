@@ -23,8 +23,9 @@
 #      modificadas", no la de "Proyecto SmokeTests no existe".
 #   CA-3) Un match de src/ cuya forma no es src/<ns>.<Dominio>/... (el sed no
 #      transforma la ruta) se detecta como anomalia (SMOKE_DOMAIN == la ruta
-#      original), la señal que dispara warn + evento SMOKE_ANOMALY + nota en
-#      el PR mientras AGENT_ST_RES se mantiene en "skipped".
+#      original, o el resultado contiene '/'), la señal que dispara warn +
+#      evento SMOKE_ANOMALY + nota en el PR mientras AGENT_ST_RES se mantiene
+#      en "skipped".
 #   CA-4) Un dominio bien formado (el sed SI transforma la ruta) nunca se marca
 #      como anomalia, aunque el proyecto SmokeTests no exista -- conserva el
 #      skip normal.
@@ -99,7 +100,7 @@ is_smoke_anomaly() {
     local first_file domain
     first_file=$(echo "$smoke_files" | head -1)
     domain=$(resolve_smoke_domain "$first_file" "$ns")
-    [ "$domain" = "$first_file" ] && echo true || echo false
+    if [ "$domain" = "$first_file" ] || [[ "$domain" == */* ]]; then echo true; else echo false; fi
 }
 
 # ─── Escenario A: *Tool.cs bajo src/{NS}.Mcp.{Proposito}/ dispara Stage 2b ──
@@ -169,6 +170,11 @@ assert_eq "CA3-1: el match SI entra a SMOKE_FILES (esta bajo src/)" "true" \
 assert_eq "CA3-2: is_smoke_anomaly detecta que el sed no transformo la ruta" "true" \
     "$(is_smoke_anomaly "$SMOKE_CA3" "$NS")"
 
+DIFF_ANIDADO="src/Legacy/src/${NS}.Turnos/CrearTurnoFunction/FunctionEndpoint.cs"
+SMOKE_CA3B=$(detect_smoke_files false "$DIFF_ANIDADO" "$NS")
+assert_eq "CA3-3: is_smoke_anomaly detecta un SMOKE_DOMAIN derivado que contiene '/'" "true" \
+    "$(is_smoke_anomaly "$SMOKE_CA3B" "$NS")"
+
 # ─── Escenario CA-4: dominio bien formado nunca es anomalia (conserva el skip normal) ─
 echo "Escenario CA-4: dominio valido sin proyecto SmokeTests conserva el skip normal (sin SMOKE_ANOMALY)"
 DIFF_DOMINIO_VALIDO="src/${NS}.Turnos/CrearTurnoFunction/FunctionEndpoint.cs"
@@ -205,7 +211,7 @@ assert_script_contains "D4: deteccion de IS_MCP_SMOKE sobre el primer match (FIR
 assert_script_contains "D5: el prompt del caso MCP remite a MEF-ADR-0048 y no a Functions HTTP" \
     'MEF-ADR-0048), no la de Functions HTTP.'
 assert_script_contains "D6: validacion de anomalia comparando SMOKE_DOMAIN con la ruta original" \
-    'if [ "$SMOKE_DOMAIN" = "$FIRST_SMOKE_FILE" ]; then'
+    'if [ "$SMOKE_DOMAIN" = "$FIRST_SMOKE_FILE" ] || [[ "$SMOKE_DOMAIN" == */* ]]; then'
 assert_script_contains "D7: evento SMOKE_ANOMALY escrito en events.log" \
     'echo "[$(date +%H:%M:%S)] SMOKE_ANOMALY: $FIRST_SMOKE_FILE" >> "$EVENTS_LOG_ABS"'
 assert_script_contains "D8: la nota de anomalia en el PR nombra la ruta" \

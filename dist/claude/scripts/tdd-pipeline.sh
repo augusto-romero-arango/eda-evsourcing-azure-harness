@@ -1125,10 +1125,10 @@ if [ "$IS_REFACTOR" != true ] && [ "$FROM_STAGE" -le 2 ]; then
         IS_MCP_SMOKE=false
         echo "$FIRST_SMOKE_FILE" | grep -qE "$MCP_TOOL_PATTERN" && IS_MCP_SMOKE=true
 
-        if [ "$SMOKE_DOMAIN" = "$FIRST_SMOKE_FILE" ]; then
-            # El sed no transformo la ruta: el match de src/ no tiene la forma
-            # src/<ns>.<Dominio>/... que la derivacion de dominio entiende (issue
-            # #1562, decision A). Senal visible en vez de un skip indistinguible
+        if [ "$SMOKE_DOMAIN" = "$FIRST_SMOKE_FILE" ] || [[ "$SMOKE_DOMAIN" == */* ]]; then
+            # El sed no transformo la ruta (o dejo un resultado con '/', p. ej. un
+            # src/ anidado): el match de src/ no tiene la forma src/<ns>.<Dominio>/...
+            # que la derivacion de dominio entiende (issue #1562, decision A). Senal visible en vez de un skip indistinguible
             # del legitimo: warn + evento SMOKE_ANOMALY + nota en el PR.
             # AGENT_ST_RES se mantiene en "skipped" para no alterar el formato
             # de metricas/historial (se descarto un resultado nuevo "anomaly").
