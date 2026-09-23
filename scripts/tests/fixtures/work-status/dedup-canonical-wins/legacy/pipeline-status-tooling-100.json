@@ -1,0 +1,15 @@
+{
+  "issue": "100",
+  "title": "legacy loses",
+  "pipeline": "tooling",
+  "variant": null,
+  "runtime": "opencode",
+  "stage": "2-reviewer",
+  "state": "failed",
+  "started": "20251201-100000",
+  "updated": "20251201-100005",
+  "log": "/no/existe/legacy-100.log",
+  "pr": null,
+  "last_error": "no deberia verse",
+  "agents": {"writer": {"duration": 10, "result": "passed"}, "reviewer": {"duration": 20, "result": "failed"}}
+}
