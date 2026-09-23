@@ -50,6 +50,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 BATCH_SCRIPT="$REPO_ROOT/scripts/batch-pipeline.sh"
 PARALLEL_SCRIPT="$REPO_ROOT/scripts/parallel-pipeline.sh"
 COMMON_LIB="$REPO_ROOT/scripts/_pipeline-common.sh"
+RUNTIME_DIR_SRC="$REPO_ROOT/src/runtime"
 
 PASS=0
 FAIL=0
@@ -256,6 +257,11 @@ setup_work_repo() {
     cp "$BATCH_SCRIPT" "$dir/scripts/batch-pipeline.sh"
     cp "$PARALLEL_SCRIPT" "$dir/scripts/parallel-pipeline.sh"
     chmod +x "$dir/scripts/batch-pipeline.sh" "$dir/scripts/parallel-pipeline.sh"
+    # batch-pipeline.sh (issue #1591) resuelve el runtime activo contra
+    # src/runtime junto al paquete publicado -- el fixture necesita el
+    # arbol real, no solo el script.
+    mkdir -p "$dir/src"
+    cp -R "$RUNTIME_DIR_SRC" "$dir/src/runtime"
 }
 
 # fake_tooling_pipeline <dir> <call_log> [<signal_after_issue> <signal_path>]
@@ -333,12 +339,17 @@ new_origin() {
 }
 
 # run_batch <dir> <args...>
+#
+# MEFISTO_RUNTIME=claude fijo (issue #1591, CA-6): estos escenarios E-G
+# prueban la senal de parada, no la resolucion de runtime (eso lo cubre
+# test-batch-runtime.sh) -- sin este fijo dependerian de que CLIs de runtime
+# haya instalados de verdad en la maquina que corre el test.
 run_batch() {
     local dir="$1"; shift
     local out="$TMP/stdout" err="$TMP/stderr"
     (
         cd "$dir" || exit 99
-        PATH="$FAKE_BIN:$SAFE_SYSTEM_PATH" ./scripts/batch-pipeline.sh "$@"
+        PATH="$FAKE_BIN:$SAFE_SYSTEM_PATH" MEFISTO_RUNTIME=claude ./scripts/batch-pipeline.sh "$@"
     ) </dev/null >"$out" 2>"$err"
     LAST_RC=$?
     LAST_STDOUT=$(cat "$out")
