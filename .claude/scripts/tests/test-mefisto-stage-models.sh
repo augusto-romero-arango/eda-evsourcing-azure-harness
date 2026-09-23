@@ -381,6 +381,19 @@ case "${1:-} ${2:-}" in
     "pane process-info")
         echo '{"result":{"process_info":{"shell_pid":100,"foreground_process_group_id":100}}}'
         ;;
+    "pane run")
+        # Confirmacion de arranque (issue #1563, porte #1571): toca el
+        # --started-marker de la cmdline de inmediato -- este stub no ejercita
+        # el mecanismo de reintento, solo evita que dispatch_to_pane espere el
+        # timeout completo por cada bloque.
+        cmdline="${4:-}"
+        marker=$(printf '%s\n' "$cmdline" | grep -oE -- '--started-marker [^[:space:]]+' | awk '{print $2}')
+        if [ -n "$marker" ]; then
+            mkdir -p "$(dirname "$marker")" 2>/dev/null
+            : > "$marker"
+        fi
+        echo '{"result":{"type":"ok"}}'
+        ;;
     *)
         echo '{"result":{"type":"ok"}}'
         ;;

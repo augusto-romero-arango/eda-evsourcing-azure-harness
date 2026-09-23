@@ -72,6 +72,17 @@
 #         reporte vivo tras la corrida (CA-3). No pasa por acquire_report_pane
 #         (el runner interno no resuelve runtime, issue #928 nota tecnica), asi
 #         que no depende del stub de claude/opencode en PATH.
+#   [30-33] Confirmacion de arranque del runner (issue #1563, porte #1571):
+#         mismo mecanismo que scripts/tests/test-herdr-dispatch-confirm.sh del
+#         lado publicado. [30] arranque confirmado al primer intento: un solo
+#         "pane split"/"pane run", sin aviso de reintento. [31] fallo del
+#         primer arranque (pane en HERDR_STUB_NEVER_CONFIRM): reintenta UNA
+#         vez en un pane nuevo, nunca vuelve a escribir en el sospechoso, y el
+#         exito final nombra ambos panes. [32] fallo doble (ni el original ni
+#         el reintento confirman): exit distinto de 0, mensaje nombra ambos
+#         panes y sugiere cerrarlos, sin mensaje de exito. [33] invoca
+#         --_pane-runner directo con un --started-marker ya reclamado: aborta
+#         sin lanzar el sub-pipeline (MEF-ADR-0017).
 #
 # Uso: .claude/scripts/tests/test-mefisto-herdr-pipeline.sh
 # Exit code: 0 si todos los chequeos pasan, 1 si alguno falla.
@@ -179,6 +190,26 @@ case "${1:-} ${2:-}" in
         else
             echo '{"result":{"process_info":{"shell_pid":100,"foreground_process_group_id":200}}}'
         fi
+        ;;
+    "pane run")
+        # Confirmacion de arranque (issue #1563, porte #1571): toca el
+        # --started-marker de la cmdline, salvo que el pane destino este
+        # listado en HERDR_STUB_NEVER_CONFIRM -- simula el shell atascado que
+        # nunca ejecuto --_pane-runner (certificacion v0.38.2 del publicado).
+        pane_id="${3:-}"
+        cmdline="${4:-}"
+        confirm=1
+        for bad in ${HERDR_STUB_NEVER_CONFIRM:-}; do
+            [ "$bad" = "$pane_id" ] && confirm=0
+        done
+        if [ "$confirm" -eq 1 ]; then
+            marker=$(printf '%s\n' "$cmdline" | grep -oE -- '--started-marker [^[:space:]]+' | awk '{print $2}')
+            if [ -n "$marker" ]; then
+                mkdir -p "$(dirname "$marker")" 2>/dev/null
+                : > "$marker"
+            fi
+        fi
+        echo '{"result":{"type":"ok"}}'
         ;;
     *)
         echo '{"result":{"type":"ok"}}'
@@ -912,6 +943,91 @@ run_pane_runner_live 7
 echo ""
 echo "----------------------------------------"
 echo "  tail -f en vivo del reporte: $PASS pass, $FAIL fail (hasta aqui)"
+echo "----------------------------------------"
+
+# --- [30-33] Confirmacion de arranque del runner (issue #1563, porte #1571) -
+#
+# Mismo mecanismo que scripts/tests/test-herdr-dispatch-confirm.sh (lado
+# publicado): el stub de "pane run" toca el --started-marker de la cmdline
+# salvo que el pane destino este en HERDR_STUB_NEVER_CONFIRM (simula el shell
+# atascado que nunca ejecuto --_pane-runner, certificacion v0.38.2).
+# HERDR_DISPATCH_CONFIRM_TIMEOUT se fija en 1s para no alargar la suite. Cada
+# bloque limpia el pool antes de correr, para que acquire_report_pane siempre
+# arranque en w1:p1 dentro de ESA corrida (run_herdr reinicia el contador del
+# stub a 0 en cada llamada).
+
+echo ""
+echo "[30] arranque confirmado al primer intento: un solo pane split/run, sin aviso de reintento"
+rm -f "$FAKE_MEFISTO/.mefisto/pipeline/herdr-report-panes.txt"
+export MEFISTO_RUNTIME=claude
+export HERDR_DISPATCH_CONFIRM_TIMEOUT=1
+unset HERDR_STUB_NEVER_CONFIRM
+run_herdr --tooling 872
+unset MEFISTO_RUNTIME HERDR_DISPATCH_CONFIRM_TIMEOUT
+if [ "$LAST_RC" -eq 0 ]; then pass "exit code 0"; else fail "no deberia abortar (rc=$LAST_RC, stderr: $LAST_STDERR)"; fi
+if [ "$(grep -c '^herdr pane split' "$HERDR_STUB_LOG")" -eq 1 ]; then pass "un solo pane split (el pane de ejecucion)"; else fail "cantidad de pane split inesperada -- log: $(cat "$HERDR_STUB_LOG")"; fi
+if [ "$(grep -c '^herdr pane run' "$HERDR_STUB_LOG")" -eq 1 ]; then pass "un solo pane run (sin reintento)"; else fail "cantidad de pane run inesperada -- log: $(cat "$HERDR_STUB_LOG")"; fi
+if printf '%s' "$LAST_STDERR" | grep -qF "corriendo en el pane w1:p1"; then pass "mensaje de exito nombra el pane"; else fail "mensaje inesperado: $LAST_STDERR"; fi
+if printf '%s' "$LAST_STDERR" | grep -q "Reintentando"; then fail "no deberia avisar reintento"; else pass "sin aviso de reintento"; fi
+
+echo ""
+echo "[31] fallo del primer arranque, reintento exitoso en un pane nuevo"
+rm -f "$FAKE_MEFISTO/.mefisto/pipeline/herdr-report-panes.txt"
+export MEFISTO_RUNTIME=claude
+export HERDR_DISPATCH_CONFIRM_TIMEOUT=1
+export HERDR_STUB_NEVER_CONFIRM="w1:p1"
+run_herdr --tooling 872
+unset MEFISTO_RUNTIME HERDR_DISPATCH_CONFIRM_TIMEOUT HERDR_STUB_NEVER_CONFIRM
+if [ "$LAST_RC" -eq 0 ]; then pass "exit code 0 (el reintento confirma)"; else fail "no deberia abortar (rc=$LAST_RC, stderr: $LAST_STDERR)"; fi
+if [ "$(grep -c '^herdr pane split' "$HERDR_STUB_LOG")" -eq 2 ]; then pass "dos pane split: pane sospechoso + reintento nuevo"; else fail "cantidad de pane split inesperada -- log: $(cat "$HERDR_STUB_LOG")"; fi
+if [ "$(grep -c '^herdr pane run' "$HERDR_STUB_LOG")" -eq 2 ]; then pass "dos pane run: original + reintento"; else fail "cantidad de pane run inesperada -- log: $(cat "$HERDR_STUB_LOG")"; fi
+if [ "$(grep -c 'pane run w1:p1' "$HERDR_STUB_LOG")" -eq 1 ]; then pass "el pane sospechoso solo recibe un pane run"; else fail "el pane sospechoso recibio mas de un pane run -- log: $(cat "$HERDR_STUB_LOG")"; fi
+if grep -qF "pane run w1:p2" "$HERDR_STUB_LOG"; then pass "el reintento escribe en un pane nuevo (w1:p2)"; else fail "el reintento no escribio en w1:p2 -- log: $(cat "$HERDR_STUB_LOG")"; fi
+if printf '%s' "$LAST_STDERR" | grep -q "El pane w1:p1 no confirmo el arranque"; then pass "el aviso nombra el pane sospechoso"; else fail "mensaje inesperado: $LAST_STDERR"; fi
+if printf '%s' "$LAST_STDERR" | grep -qF "corriendo en el pane w1:p2"; then pass "el exito final nombra el pane de reintento"; else fail "mensaje inesperado: $LAST_STDERR"; fi
+if printf '%s' "$LAST_STDERR" | grep -qF "reintento tras un arranque no confirmado en w1:p1"; then pass "el exito final documenta el reintento"; else fail "mensaje inesperado: $LAST_STDERR"; fi
+if grep -qx "w1:p2 claude" "$FAKE_MEFISTO/.mefisto/pipeline/herdr-report-panes.txt"; then pass "el pane de reintento queda en el pool con el runtime de la corrida"; else fail "pool inesperado: $(cat "$FAKE_MEFISTO/.mefisto/pipeline/herdr-report-panes.txt")"; fi
+
+echo ""
+echo "[32] fallo doble: ni el pane original ni el de reintento confirman"
+rm -f "$FAKE_MEFISTO/.mefisto/pipeline/herdr-report-panes.txt"
+export MEFISTO_RUNTIME=claude
+export HERDR_DISPATCH_CONFIRM_TIMEOUT=1
+export HERDR_STUB_NEVER_CONFIRM="w1:p1 w1:p2"
+run_herdr --tooling 872
+unset MEFISTO_RUNTIME HERDR_DISPATCH_CONFIRM_TIMEOUT HERDR_STUB_NEVER_CONFIRM
+if [ "$LAST_RC" -ne 0 ]; then pass "exit code distinto de 0"; else fail "deberia abortar (rc=$LAST_RC)"; fi
+if [ "$(grep -c '^herdr pane split' "$HERDR_STUB_LOG")" -eq 2 ]; then pass "dos pane split (sin un tercer intento)"; else fail "cantidad de pane split inesperada -- log: $(cat "$HERDR_STUB_LOG")"; fi
+if [ "$(grep -c '^herdr pane run' "$HERDR_STUB_LOG")" -eq 2 ]; then pass "dos pane run (sin un tercer intento)"; else fail "cantidad de pane run inesperada -- log: $(cat "$HERDR_STUB_LOG")"; fi
+if printf '%s' "$LAST_STDERR" | grep -qF "w1:p1"; then pass "el mensaje final nombra el pane original"; else fail "mensaje inesperado: $LAST_STDERR"; fi
+if printf '%s' "$LAST_STDERR" | grep -qF "w1:p2"; then pass "el mensaje final nombra el pane de reintento"; else fail "mensaje inesperado: $LAST_STDERR"; fi
+if printf '%s' "$LAST_STDERR" | grep -q "Cierra ambos paneles"; then pass "el mensaje sugiere cerrar los paneles"; else fail "mensaje inesperado: $LAST_STDERR"; fi
+if printf '%s' "$LAST_STDERR" | grep -q "corriendo en el pane"; then fail "no deberia imprimir el mensaje de exito"; else pass "no imprime el mensaje de exito"; fi
+
+echo ""
+echo "[33] runner tardio: un --started-marker ya reclamado hace que cmd_pane_runner aborte sin lanzar el sub-pipeline"
+LATE_MARKER="$TMP_DIR/late/herdr-dispatch-late.started"
+LATE_SENTINEL="$TMP_DIR/late/sub-pipeline-ran"
+mkdir -p "$TMP_DIR/late"
+printf 'abandonado\n' > "$LATE_MARKER"
+(
+    cd "$FAKE_MEFISTO" || exit 99
+    env -u MEFISTO_UI -u HERDR_ENV -u HERDR_PANE_ID -u HERDR_WORKSPACE_ID \
+        -u MEFISTO_STATE_DIR -u MEFISTO_LEGACY_STATE_DIR \
+        -u MEFISTO_REPO_ROOT -u MEFISTO_PROJECT_NAME -u MEFISTO_REPO_SLUG \
+        PATH="$FAKE_BIN:$PATH" \
+        "$FAKE_MEFISTO/src/internal/scripts/mefisto-herdr-pipeline.sh" \
+        --_pane-runner --title "late #872" --started-marker "$LATE_MARKER" -- touch "$LATE_SENTINEL"
+) </dev/null >"$TMP_DIR/stdout" 2>"$TMP_DIR/stderr"
+LAST_RC=$?
+LAST_STDERR=$(cat "$TMP_DIR/stderr")
+if [ "$LAST_RC" -ne 0 ]; then pass "exit code distinto de 0"; else fail "deberia abortar (rc=$LAST_RC)"; fi
+if printf '%s' "$LAST_STDERR" | grep -q "ya reclamado por el despachador"; then pass "el mensaje explica el marcador reclamado"; else fail "mensaje inesperado: $LAST_STDERR"; fi
+if [ -e "$LATE_SENTINEL" ]; then fail "el sub-pipeline no debe lanzarse sobre un marcador reclamado"; else pass "el sub-pipeline no se lanzo"; fi
+
+echo ""
+echo "----------------------------------------"
+echo "  Confirmacion de arranque del runner: $PASS pass, $FAIL fail (hasta aqui)"
 echo "----------------------------------------"
 
 echo ""
