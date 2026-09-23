@@ -12,6 +12,22 @@
 set -euo pipefail
 
 source "$(dirname "${BASH_SOURCE[0]}")/_pipeline-common.sh"
+
+# La clausura publicada conserva src/runtime junto a este script. Solo estas
+# dos librerias son contrato del pipeline; el runner carga su adaptador aparte
+# (mismo patron que tooling-pipeline.sh y tdd-pipeline.sh).
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+RUNTIME_DIR="$(cd "$SCRIPT_DIR/../src/runtime" 2>/dev/null && pwd -P)" \
+    || { echo "ERROR: no se encontro src/runtime junto al paquete publicado" >&2; exit 1; }
+RUNTIME_LIB_DIR="$RUNTIME_DIR/lib"
+RUN_AGENT_BIN_DEFAULT="$RUNTIME_DIR/mefisto-run-agent.sh"
+[ -f "$RUNTIME_LIB_DIR/mefisto-runtime.sh" ] \
+    || { echo "ERROR: no se encontro mefisto-runtime.sh en la clausura publicada" >&2; exit 1; }
+[ -f "$RUNTIME_LIB_DIR/mefisto-models.sh" ] \
+    || { echo "ERROR: no se encontro mefisto-models.sh en la clausura publicada" >&2; exit 1; }
+source "$RUNTIME_LIB_DIR/mefisto-runtime.sh"
+source "$RUNTIME_LIB_DIR/mefisto-models.sh"
+
 load_harness_config || exit 1
 
 # ─── Colores ────────────────────────────────────────────────────────────────
@@ -159,7 +175,7 @@ log "Log: $LOG_FILE_ABS"
 
 # ─── Verificar dependencias ───────────────────────────────────────────────────
 MISSING_DEPS=""
-for dep in claude gh git dotnet; do
+for dep in gh git dotnet; do
     if ! command -v "$dep" >/dev/null 2>&1; then
         MISSING_DEPS="$MISSING_DEPS $dep"
     fi
@@ -168,6 +184,33 @@ if [ -n "$MISSING_DEPS" ]; then
     echo -e "${RED}${BOLD}✗ Dependencias faltantes:${MISSING_DEPS}${NC}"
     exit 1
 fi
+
+# El runner neutral reemplaza la exigencia de un CLI concreto (MEF-ADR-0049/0050):
+# la frontera es src/runtime/mefisto-run-agent.sh, resuelto igual que en
+# tooling-pipeline.sh/tdd-pipeline.sh, y el runtime activo detras de el.
+RUN_AGENT_BIN="${MEFISTO_RUN_AGENT_BIN:-$RUN_AGENT_BIN_DEFAULT}"
+if [ ! -x "$RUN_AGENT_BIN" ]; then
+    echo -e "${RED}${BOLD}✗ No es ejecutable el runner neutral: $RUN_AGENT_BIN${NC}"
+    exit 1
+fi
+if ! mefisto_resolve_runtime >/dev/null; then
+    echo -e "${RED}${BOLD}✗ No se pudo resolver el runtime activo: ${MEFISTO_RUNTIME_ERROR:-motivo desconocido}${NC}"
+    exit 1
+fi
+MEFISTO_RUNTIME_RESUELTO="$MEFISTO_RESOLVED_RUNTIME"
+
+# Modelo neutral del implementer (perfil 'balanced', declarado por
+# src/published/agents/implementer.md): el mapping opcional del consumidor gana
+# sobre el default del adaptador; vacio = heredar (sin --model, mismo criterio
+# que resolve_tooling_model en tooling-pipeline.sh).
+CONSUMER_MODELS_FILE="$REPO_ROOT/.mefisto/models.json"
+IMPLEMENTER_MODEL_FILE="$(mktemp)"
+if ! mefisto_resolve_model "$MEFISTO_RUNTIME_RESUELTO" "implementer" "balanced" "" "$CONSUMER_MODELS_FILE" > "$IMPLEMENTER_MODEL_FILE"; then
+    rm -f "$IMPLEMENTER_MODEL_FILE"
+    echo -e "${RED}${BOLD}✗ No se pudo resolver el modelo de implementer (perfil balanced): ${MEFISTO_MODELS_ERROR:-motivo desconocido}${NC}"
+    exit 1
+fi
+IMPLEMENTER_MODEL="$(cat "$IMPLEMENTER_MODEL_FILE")"; rm -f "$IMPLEMENTER_MODEL_FILE"
 
 # ─── Resolver lista de PRs (compatible bash 3.2, sin mapfile) ─────────────────
 if [ "$DO_ALL" = true ]; then
@@ -202,25 +245,33 @@ run_agent() {
     local prompt="$3"
     local worktree="$4"
     local log_file="$LOG_DIR_ABS/pr-sync-${label}-${TIMESTAMP}.log"
-    local start_ts
+    local events_file="$LOG_DIR_ABS/pr-sync-${label}-${TIMESTAMP}.events.jsonl"
+    local prompt_file system_file start_ts run_exit=0 elapsed
     start_ts=$(date +%s)
 
-    log "Invocando $agent ($label)..."
+    log "Invocando $agent (modelo: ${IMPLEMENTER_MODEL:-<heredado>})..."
 
-    (cd "$worktree" && claude -p "$prompt" \
-        --agent "$agent" \
-        --permission-mode bypassPermissions \
-        --output-format text \
-        >"$log_file" 2>&1) || {
-        local elapsed=$(( $(date +%s) - start_ts ))
-        warn "$agent falló después de ${elapsed}s"
-        echo -e "\n${RED}── Últimas líneas del log de $agent:${NC}"
-        tail -20 "$log_file"
-        return 1
-    }
+    prompt_file="$(mktemp)"
+    system_file="$(mktemp)"
+    printf '%s' "$prompt" > "$prompt_file"
+    printf '%s\n' 'You are running in non-interactive print mode. There is no human to approve anything. Use editing tools directly; never ask for permission. Do not push or create pull requests.' > "$system_file"
 
-    local elapsed=$(( $(date +%s) - start_ts ))
-    log "$agent completado en ${elapsed}s"
+    local args=(--runtime "$MEFISTO_RUNTIME_RESUELTO" --agent "$agent" --cwd "$worktree" --prompt-file "$prompt_file" --system-file "$system_file" --event-log "$events_file")
+    [ -n "$IMPLEMENTER_MODEL" ] && args+=(--model "$IMPLEMENTER_MODEL")
+
+    "$RUN_AGENT_BIN" "${args[@]}" >"$log_file" 2>&1 || run_exit=$?
+    rm -f "$prompt_file" "$system_file"
+    elapsed=$(( $(date +%s) - start_ts ))
+
+    if [ "$run_exit" -eq 0 ] && agent_events_completed_successfully "$events_file"; then
+        log "$agent completado en ${elapsed}s"
+        return 0
+    fi
+
+    warn "$agent falló después de ${elapsed}s"
+    echo -e "\n${RED}── Últimas líneas del log de $agent:${NC}"
+    tail -20 "$log_file"
+    return 1
 }
 
 # ─── Función: validar tests post-merge ────────────────────────────────────────
@@ -539,13 +590,6 @@ for PR_NUM in "${PR_NUMS[@]}"; do
     if ! git -C "$TEMP_WORKTREE" checkout -B "$BRANCH_NAME" "origin/$BRANCH_NAME" >>"$LOG_FILE_ABS" 2>&1; then
         fail_pr "$PR_NUM" "No se pudo hacer checkout de la rama $BRANCH_NAME"
         continue
-    fi
-
-    # Copiar settings.json con rutas absolutas (igual que tdd-pipeline.sh)
-    if [ -f "$REPO_ROOT/.claude/settings.json" ]; then
-        mkdir -p "$TEMP_WORKTREE/.claude"
-        sed "s|\.claude/pipeline/events\.log|$REPO_ROOT/.claude/pipeline/events.log|g" \
-            "$REPO_ROOT/.claude/settings.json" > "$TEMP_WORKTREE/.claude/settings.json"
     fi
 
     # Merge de main
