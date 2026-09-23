@@ -42,6 +42,17 @@ absent "$(< "$CLAUDE")" 'MEFISTO_RUNTIME=opencode' 'Claude no fija el runtime Op
 contains "$(< "$OPENCODE")" 'MEFISTO_RUNTIME=opencode "${MEFISTO_PACKAGE_ROOT}/scripts/work-status-collect.sh" --json' 'OpenCode invoca el colector bajo el package root'
 absent "$(< "$OPENCODE")" $'\nmodel:' 'OpenCode no emite model'
 absent "$(< "$OPENCODE")" 'MEFISTO_RUNTIME=claude' 'OpenCode no fija el runtime Claude'
+# CA-6 (b): ninguna salida lee el estado legacy ni nombra tools de un runtime.
+# El preambulo compartido de resolucion de MEFISTO_PACKAGE_ROOT de Claude cita
+# el marcador .plugin-root como fallback de lectura y queda fuera del chequeo.
+claude_no_preamble="$(grep -vF '.plugin-root' "$CLAUDE")"
+absent "$claude_no_preamble" '.claude/pipeline' 'Claude no lee .claude/pipeline fuera del preambulo'
+absent "$(< "$OPENCODE")" '.claude/pipeline' 'OpenCode no lee .claude/pipeline'
+for file in "$CLAUDE" "$OPENCODE"; do
+    content="$(< "$file")"
+    absent "$content" 'Glob' "${file#"$REPO_ROOT/"} no nombra Glob"
+    absent "$content" 'Read ' "${file#"$REPO_ROOT/"} no nombra Read como tool"
+done
 if cmp -s "$MIRROR" "$CLAUDE"; then pass 'mirror Claude coincide byte a byte'; else fail 'mirror Claude diverge'; fi
 contains "$(< "$MIRROR")" '<!-- GENERADO por src/published/scripts/generate-published-adapters.sh desde src/published/commands/work-status.md. No editar a mano. -->' 'mirror conserva marcador generado'
 if "$GENERATOR" --check >/dev/null; then pass 'generate-published-adapters --check esta al dia'; else fail 'generate-published-adapters --check detecto divergencias'; fi

@@ -41,7 +41,7 @@ Ancho maximo 78 columnas y unicamente ASCII (`-`, `|`, `+`). Encabezado:
 Work Status - <DATA.now>
 ```
 
-Si `DATA.empty.status` es verdadero, muestra `(sin pipelines registrados)` y detente: sin filas activas ni historial no hay nada mas que renderizar. En otro caso, por cada fila de `DATA.rows` muestra `pipeline`, `issue` (sufija `/<variant>` cuando exista), titulo truncado, `runtime` (si es `null` muestra `-`; nunca lo infieras desde otro campo) y tiempo transcurrido entre `started`/`updated` y `DATA.now`. Ejemplo:
+Si `DATA.empty.status` y `DATA.empty.history` son ambos verdaderos, muestra `(sin pipelines registrados)` y detente: no hay nada mas que renderizar. En otro caso, por cada fila de `DATA.rows` muestra `pipeline`, `issue` (sufija `/<variant>` cuando exista), titulo truncado, `runtime` (si es `null` muestra `-`; nunca lo infieras desde otro campo) y tiempo transcurrido entre `started`/`updated` y `DATA.now`. Ejemplo:
 
 ```
 +----------------------------------------------------------------------------+
@@ -60,7 +60,7 @@ Para la columna de estado de cada fila, usa `activity.kind`:
 
 Si exactamente una fila de `DATA.rows` esta `running` y su `activity.kind` es `stage` (ni en espera ni sin novedades), agrega debajo una barra de progreso con el `progress_pct` de esa fila. Con cero o mas de una fila activa, o con esa unica fila en espera o sin novedades, omite la barra.
 
-Incluye tambien las filas con `state` igual a `failed`. Si `DATA.rows` no trae ninguna fila `running` ni `failed`, muestra la entrada mas reciente de `DATA.history`. Muestra ademas hasta cinco entradas de `DATA.history`, con `pipeline`, `issue`/`variant`, `runtime`, `result`, `duration` y `detail`. Si `DATA.empty.history` es verdadero, muestra `  (sin pipelines completados aun)`.
+Incluye tambien las filas con `state` igual a `failed`. Si `DATA.rows` no trae ninguna fila `running` ni `failed`, muestra la entrada mas reciente de `DATA.history`. Muestra ademas hasta cinco entradas de `DATA.history`, con `pipeline`, `issue`/`variant`, `runtime`, `result`, `duration` y `detail`. Si `DATA.empty.history` es verdadero (pero hay filas en `DATA.rows`), muestra `  (sin pipelines completados aun)`.
 
 ## Paso 3: Responder preguntas (drill-down)
 
@@ -69,5 +69,7 @@ Si el usuario no especifica issue ni variante en `$ARGUMENTS`, usa la unica fila
 Localiza la fila o entrada elegida y usa exactamente el campo `log` que trae, tal cual: nunca lo reconstruyas ni deduzcas una ruta alternativa. Si `log` es `null`, informalo asi, sin inventar ninguna ruta.
 
 Para una fila con `last_error`, muestra primero ese campo y despues lee el final del archivo `log` indicado. Para una corrida en vuelo cuyo `log` indicado todavia no sea legible, lee en su lugar el archivo hermano con la misma base y extension `.events.jsonl`, tratando su contenido como eventos normalizados; no intentes interpretar un archivo `.stream.jsonl`, salida de error estandar ni salida cruda de ningun otro origen.
+
+Para duracion por agente y PR usa los campos `agents` y `pr` de la fila o entrada elegida.
 
 Responde en espanol, conciso, con listas o tablas cuando aplique.
