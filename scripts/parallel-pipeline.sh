@@ -8,6 +8,7 @@
 #   ./scripts/parallel-pipeline.sh --pipeline tooling --max-parallel 2 60 62 63
 #   ./scripts/parallel-pipeline.sh 42 43 44 --max-parallel 2            # limitar concurrencia
 #   ./scripts/parallel-pipeline.sh 42 43 44 --keep-status               # no borrar status files al terminar
+#   MEFISTO_RUNTIME=<id> ./scripts/parallel-pipeline.sh 42 43 44         # fijar runtime si la autodeteccion es ambigua
 #
 # Enrutamiento automatico: sin --pipeline, cada issue se enruta segun su label tipo:*
 #   tipo:feature|refactor|projection -> tdd-pipeline.sh
@@ -30,6 +31,17 @@ set -euo pipefail
 
 # ─── Funciones compartidas ───────────────────────────────────────────────────
 source "$(dirname "${BASH_SOURCE[0]}")/_pipeline-common.sh"
+
+# ─── Runtime activo (MEF-ADR-0049/0050, issue #1620) ─────────────────────────
+# La clausura publicada conserva src/runtime junto a este script. El scheduler
+# solo descubre el runtime: no resuelve modelos y por eso no carga
+# mefisto-models.sh.
+RUNTIME_DIR="$(cd "$(_pc_script_dir)/../src/runtime" 2>/dev/null && pwd -P)" \
+    || { echo "ERROR: no se encontro src/runtime junto al paquete publicado" >&2; exit 1; }
+RUNTIME_LIB_DIR="$RUNTIME_DIR/lib"
+[ -f "$RUNTIME_LIB_DIR/mefisto-runtime.sh" ] \
+    || { echo "ERROR: no se encontro mefisto-runtime.sh en la clausura publicada" >&2; exit 1; }
+source "$RUNTIME_LIB_DIR/mefisto-runtime.sh"
 
 # ─── Colores ────────────────────────────────────────────────────────────────
 RED='\033[0;31m'
@@ -171,7 +183,7 @@ fi
 
 # ─── Verificar dependencias ───────────────────────────────────────────────────
 MISSING_DEPS=""
-for dep in claude gh git dotnet; do
+for dep in gh git dotnet; do
     if ! command -v "$dep" >/dev/null 2>&1; then
         MISSING_DEPS="$MISSING_DEPS $dep"
     fi
@@ -181,8 +193,26 @@ if [ -n "$MISSING_DEPS" ]; then
     exit 1
 fi
 
+# ─── Resolver runtime activo (CA-2/CA-3, issue #1620) ────────────────────────
+# Se resuelve antes de la pre-validacion para no consultar ni lanzar issues si
+# el entorno no puede desambiguar el runtime activo.
+if ! mefisto_resolve_runtime >/dev/null; then
+    echo -e "${RED}${BOLD}✗ No se pudo resolver el runtime activo: ${MEFISTO_RUNTIME_ERROR:-motivo desconocido}${NC}"
+    exit 1
+fi
+PARALLEL_RUNTIME="$MEFISTO_RESOLVED_RUNTIME"
+
+if ! runtime_cli_available "$PARALLEL_RUNTIME"; then
+    echo -e "${RED}${BOLD}✗ Dependencias faltantes: CLI del runtime '$PARALLEL_RUNTIME'${NC}"
+    exit 1
+fi
+
+# Cada pipeline hijo hereda la misma resolucion para que el lote no diverja.
+export MEFISTO_RUNTIME="$PARALLEL_RUNTIME"
+
 # ─── Cabecera ─────────────────────────────────────────────────────────────────
 header "parallel-pipeline --- Procesamiento paralelo de issues"
+log "Runtime: $MEFISTO_RUNTIME"
 log "Pipeline: $([ -n "$PIPELINE_OVERRIDE" ] && echo "$PIPELINE_OVERRIDE (override)" || echo 'automatico por label')"
 log "Issues a procesar: ${ISSUE_NUMS[*]}"
 log "Paralelismo maximo: $([ "$MAX_PARALLEL" -gt 0 ] && echo "$MAX_PARALLEL" || echo 'sin limite')"

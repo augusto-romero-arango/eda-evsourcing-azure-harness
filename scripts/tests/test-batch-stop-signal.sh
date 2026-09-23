@@ -362,7 +362,7 @@ run_parallel() {
     local out="$TMP/stdout" err="$TMP/stderr"
     (
         cd "$dir" || exit 99
-        PATH="$FAKE_BIN:$SAFE_SYSTEM_PATH" ./scripts/parallel-pipeline.sh "$@"
+        PATH="$FAKE_BIN:$SAFE_SYSTEM_PATH" MEFISTO_RUNTIME=claude ./scripts/parallel-pipeline.sh "$@"
     ) </dev/null >"$out" 2>"$err"
     LAST_RC=$?
     LAST_STDOUT=$(cat "$out")
