@@ -1,0 +1,14 @@
+{
+  "issue": "500",
+  "title": "log a reconstruir",
+  "pipeline": "tooling",
+  "variant": null,
+  "runtime": "claude",
+  "stage": "2-reviewer",
+  "state": "failed",
+  "started": "20260101-120000",
+  "updated": "20260101-120500",
+  "pr": null,
+  "last_error": "reviewer fallo",
+  "agents": {"writer": {"duration": 30, "result": "passed"}, "reviewer": {"duration": 60, "result": "failed"}}
+}

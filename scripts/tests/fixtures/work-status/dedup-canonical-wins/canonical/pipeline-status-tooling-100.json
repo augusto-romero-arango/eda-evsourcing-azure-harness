@@ -1,0 +1,15 @@
+{
+  "issue": "100",
+  "title": "canonical wins",
+  "pipeline": "tooling",
+  "variant": null,
+  "runtime": "claude",
+  "stage": "1-writer",
+  "state": "running",
+  "started": "20260101-100000",
+  "updated": "20260101-100005",
+  "log": "/no/existe/canonical-100.log",
+  "pr": null,
+  "last_error": null,
+  "agents": {"writer": {"duration": null, "result": "running"}, "reviewer": {"duration": null, "result": "pending"}}
+}

@@ -1,0 +1,15 @@
+{
+  "issue": "103",
+  "title": "solo legacy",
+  "pipeline": "tooling",
+  "variant": null,
+  "runtime": null,
+  "stage": "1-writer",
+  "state": "running",
+  "started": "20251201-110000",
+  "updated": "20251201-110005",
+  "log": "/no/existe/103.log",
+  "pr": null,
+  "last_error": null,
+  "agents": {"writer": {"duration": null, "result": "running"}, "reviewer": {"duration": null, "result": "pending"}}
+}

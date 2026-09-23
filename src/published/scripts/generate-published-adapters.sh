@@ -58,6 +58,7 @@ TOOLING_CLOSURE_ASSETS=(
     'scripts/tooling-pipeline.sh|0755'
     'scripts/tdd-pipeline.sh|0755'
     'scripts/pr-sync.sh|0755'
+    'scripts/work-status-collect.sh|0755'
     'scripts/batch-pipeline.sh|0755'
     'src/runtime/mefisto-run-agent.sh|0755'
     'src/runtime/lib/mefisto-runtime.sh|0755'
