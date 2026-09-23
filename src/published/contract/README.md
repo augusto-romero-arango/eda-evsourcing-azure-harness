@@ -159,7 +159,7 @@ o mal formada se rechaza.
 |---|---|---|
 | `{{mefisto:assert-consumer-repo}}` | guard generado que aborta en el repo de Mefisto | el mismo guard de consumidor, sin importar políticas internas |
 | `{{mefisto:launch-agent <id>}}` | delegación al agente generado del plugin | delegación al agente global generado |
-| `{{mefisto:run <script> <args>}}` | script bajo `MEFISTO_PACKAGE_ROOT` + argumentos | script bajo `MEFISTO_PACKAGE_ROOT` + argumentos |
+| `{{mefisto:run <script> <args>}}` | `MEFISTO_RUNTIME=claude` + script bajo `MEFISTO_PACKAGE_ROOT` + argumentos | `MEFISTO_RUNTIME=opencode` + script bajo `MEFISTO_PACKAGE_ROOT` + argumentos |
 | `{{mefisto:package-root}}` | `MEFISTO_PACKAGE_ROOT` | `MEFISTO_PACKAGE_ROOT` |
 | `{{mefisto:skill-root <id>}}` | raíz de `skills/<id>/` bajo `MEFISTO_PACKAGE_ROOT` | raíz de `skills/mefisto-<id>/` bajo `MEFISTO_PACKAGE_ROOT` |
 | `{{mefisto:config-path}}` | `MEFISTO_CONFIG_PATH` (ruta efectiva de lectura) | `MEFISTO_CONFIG_PATH` (ruta efectiva de lectura) |
@@ -181,6 +181,14 @@ que valida y exporta una única raíz física sin barra final:
 de runtime o los markers canónico/legacy del consumidor; OpenCode consulta el
 launcher de la release activa. Esta mecánica es exclusiva de cada salida: la
 fuente neutral y sus callers no conocen variables ni layouts de runtime.
+
+Cada invocación traducida de `{{mefisto:run <script> <args>}}` fija además,
+como asignación en línea inmediatamente antes del script, `MEFISTO_RUNTIME=<id
+del adaptador>` (`claude` o `opencode`). El adaptador impone su propio runtime
+sobre cualquier valor que ya traiga el entorno: es la misma garantía de
+`mefisto_resolve_runtime` (MEF-ADR-0050) que evita que un pipeline lanzado
+desde un runtime corra sus scripts bajo el identificador de otro cuando la
+máquina tiene ambos instalados y el entorno no fija la variable.
 
 `config-path` e `instructions-path` no traducen a una ruta canónica literal:
 resuelven la ruta efectiva de lectura del contrato consumidor descrita en

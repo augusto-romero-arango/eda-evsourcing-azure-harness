@@ -64,7 +64,7 @@ Solo cuando todas las dependencias canonicas declaradas cerraron (`CLOSED`) o se
 Muestra la informacion validada del issue y ejecuta exactamente:
 
 ```bash
-"${MEFISTO_PACKAGE_ROOT}/scripts/tmux-pipeline.sh" --tooling $ARGUMENTS
+MEFISTO_RUNTIME=opencode "${MEFISTO_PACKAGE_ROOT}/scripts/tmux-pipeline.sh" --tooling $ARGUMENTS
 ```
 
 Dentro de Herdr, informa que el pipeline queda corriendo en un pane de este workspace con el visor en vivo. Fuera de Herdr, informa que fue lanzado en una sesion tmux y que el nombre usa `tooling-ISSUE_NUM`, con el sufijo de variante cuando aplique.

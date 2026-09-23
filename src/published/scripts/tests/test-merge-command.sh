@@ -43,10 +43,12 @@ echo '[salidas] adaptadores y mirror'
 for file in "$CLAUDE" "$OPENCODE"; do [ -f "$file" ] && pass "existe ${file#"$REPO_ROOT/"}" || fail "falta ${file#"$REPO_ROOT/"}"; done
 claude_body="$(< "$CLAUDE")"
 opencode_body="$(< "$OPENCODE")"
-contains "$claude_body" '"${MEFISTO_PACKAGE_ROOT}/scripts/pr-sync.sh" <PRs> --merge' 'Claude invoca pr-sync.sh con lista de PRs'
-contains "$claude_body" '"${MEFISTO_PACKAGE_ROOT}/scripts/pr-sync.sh" --all --merge' 'Claude invoca pr-sync.sh con --all'
-contains "$opencode_body" '"${MEFISTO_PACKAGE_ROOT}/scripts/pr-sync.sh" <PRs> --merge' 'OpenCode invoca pr-sync.sh con lista de PRs'
-contains "$opencode_body" '"${MEFISTO_PACKAGE_ROOT}/scripts/pr-sync.sh" --all --merge' 'OpenCode invoca pr-sync.sh con --all'
+contains "$claude_body" 'MEFISTO_RUNTIME=claude "${MEFISTO_PACKAGE_ROOT}/scripts/pr-sync.sh" <PRs> --merge' 'Claude invoca pr-sync.sh con lista de PRs y fija su runtime'
+contains "$claude_body" 'MEFISTO_RUNTIME=claude "${MEFISTO_PACKAGE_ROOT}/scripts/pr-sync.sh" --all --merge' 'Claude invoca pr-sync.sh con --all y fija su runtime'
+absent "$claude_body" 'MEFISTO_RUNTIME=opencode' 'Claude no fija el runtime OpenCode'
+contains "$opencode_body" 'MEFISTO_RUNTIME=opencode "${MEFISTO_PACKAGE_ROOT}/scripts/pr-sync.sh" <PRs> --merge' 'OpenCode invoca pr-sync.sh con lista de PRs y fija su runtime'
+contains "$opencode_body" 'MEFISTO_RUNTIME=opencode "${MEFISTO_PACKAGE_ROOT}/scripts/pr-sync.sh" --all --merge' 'OpenCode invoca pr-sync.sh con --all y fija su runtime'
+absent "$opencode_body" 'MEFISTO_RUNTIME=claude' 'OpenCode no fija el runtime Claude'
 contains "$claude_body" 'model: "haiku"' 'Claude materializa el perfil fast'
 absent "$opencode_body" 'model:' 'OpenCode no emite model'
 # La invocacion propia del comando (las lineas que llaman a pr-sync.sh /

@@ -166,13 +166,13 @@ Si mas de un dominio recibe opcion 1, no lances el pipeline: informa que solo se
 Muestra la informacion validada del issue. Sin scaffold confirmado ejecuta exactamente:
 
 ```bash
-"${MEFISTO_PACKAGE_ROOT}/scripts/tmux-pipeline.sh" $ARGUMENTS
+MEFISTO_RUNTIME=claude "${MEFISTO_PACKAGE_ROOT}/scripts/tmux-pipeline.sh" $ARGUMENTS
 ```
 
 Con un unico scaffold confirmado, ejecuta la forma equivalente agregando el dominio kebab-case confirmado:
 
 ```bash
-"${MEFISTO_PACKAGE_ROOT}/scripts/tmux-pipeline.sh" $ARGUMENTS --scaffold-domain <dominio-kebab-confirmado>
+MEFISTO_RUNTIME=claude "${MEFISTO_PACKAGE_ROOT}/scripts/tmux-pipeline.sh" $ARGUMENTS --scaffold-domain <dominio-kebab-confirmado>
 ```
 
 En ambas rutas reenvia los argumentos intactos y deja al wrapper la validacion definitiva. Dentro de Herdr, informa que el pipeline queda corriendo en un pane de este workspace con el visor en vivo. Fuera de Herdr, informa que fue lanzado en una sesion tmux; el wrapper informa la sesion o pane creado.
