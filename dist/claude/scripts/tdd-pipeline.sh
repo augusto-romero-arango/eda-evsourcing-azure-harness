@@ -176,6 +176,13 @@ success() { local m="${GREEN}${BOLD}✓${NC} $1"; echo -e "$m"; _log_file "$m"; 
 warn()    { local m="${YELLOW}⚠${NC} $1"; echo -e "$m"; _log_file "$m"; }
 header()  { local m="\n${CYAN}${BOLD}── $1 ──${NC}"; echo -e "$m"; _log_file "$m"; }
 abort() {
+    # $2 (opcional): estado final a registrar en status/historial -- default
+    # "failed". CA-2/CA-3 (issue #1561): un issue incompleto detectado en
+    # Gate 2 detiene el pipeline igual que un fallo real, pero debe quedar
+    # "blocked" -- distinguible de "failed" en el status y en el historial
+    # de metricas (nota tecnica del issue: "no usar abort a secas si marca
+    # el stage como failed").
+    local abort_state="${2:-failed}"
     # El tail se captura ANTES de que este mismo abort escriba su linea de ERROR
     # al log: si se leyera despues, las dos ultimas lineas del tail serian un eco
     # del mensaje que se acaba de imprimir -- ruido que ademas se come dos lineas
@@ -191,7 +198,7 @@ abort() {
         echo -e "${YELLOW}Para inspeccionar: cd $WORKTREE_PATH${NC}"
     fi
     if [ -n "${PIPELINE_DIR_ABS:-}" ]; then
-        update_status "$CURRENT_STAGE" "failed"
+        update_status "$CURRENT_STAGE" "$abort_state"
         # CA-3 (issue #646): agents.<clave>.metrics de los stages que ya
         # cerraron en esta corrida -- un fallo a mitad de pipeline es el caso
         # mas caro de diagnosticar, y hasta este issue la linea de fallo no
@@ -216,7 +223,8 @@ abort() {
             --argjson identity "$HARNESS_IDENTITY_JSON" --arg runtime "${MEFISTO_RUNTIME_RESUELTO:-}" \
             --arg started "${TIMESTAMP:-}" --arg finished "$(date +%Y-%m-%dT%H:%M:%S)" \
             --arg stage "$CURRENT_STAGE" --arg error "$PIPELINE_ERROR" --argjson agents "$abort_agents_json" \
-            '{issue:$issue,title:$title,pipeline:"tdd",variant:$variant,identity:$identity,runtime:(if $runtime == "" then null else $runtime end),started:$started,finished:$finished,state:"failed",stage:$stage,agents:$agents,error:$error}' \
+            --arg state "$abort_state" \
+            '{issue:$issue,title:$title,pipeline:"tdd",variant:$variant,identity:$identity,runtime:(if $runtime == "" then null else $runtime end),started:$started,finished:$finished,state:$state,stage:$stage,agents:$agents,error:$error}' \
             >> "$HISTORY_FILE" 2>/dev/null || true
     fi
     exit 1
@@ -1030,7 +1038,17 @@ PROHIBIDO hacer 'git push' o 'gh pr create' (ni ninguna operacion de publicacion
     echo "$TEST_OUTPUT_G2" | tee -a "${LOG_FILE_ABS:-$LOG_FILE}" >/dev/null
     if [ "$g2_rc" -ne 0 ]; then
         BLOCKAGE_REPORT="$(mefisto_state_read_first 'blockage-report.md' "$WORKTREE_PATH" 2>/dev/null || true)"
-        if [ -f "$BLOCKAGE_REPORT" ]; then
+        # CA-1/CA-2/CA-4 (issue #1561): el implementer escribe blockage-report.md
+        # por dos motivos con doctrina opuesta (implementer.md 1b vs "Cuando
+        # reportar bloqueo"). Se distinguen por un encabezado canonico exacto
+        # ("## Issue incompleto", linea completa) en vez de texto libre -- un
+        # grep sobre prosa seria fragil. Si aparecen los dos motivos a la vez,
+        # gana "issue incompleto": el implementer no deberia haber escrito
+        # codigo (nota tecnica del issue).
+        if [ -f "$BLOCKAGE_REPORT" ] && grep -qx '## Issue incompleto' "$BLOCKAGE_REPORT"; then
+            AGENT_IM_RES="blocked"
+            abort "Stage 2 detenido: el $STAGE2_AGENT reporto issue incompleto en $BLOCKAGE_REPORT_CANONICAL. Refina el issue con el planner (completa la seccion '## ADRs aplicables') y reanuda con --from-stage 2." "blocked"
+        elif [ -f "$BLOCKAGE_REPORT" ]; then
             warn "Stage 2: hay tests rojos pero el $STAGE2_AGENT reporto bloqueo — continuando al reviewer"
             echo "[$(date +%H:%M:%S)] BLOCKAGE: $STAGE2_AGENT reporto tests bloqueados, continuando" >> "$EVENTS_LOG_ABS"
             HAS_BLOCKAGE=true
