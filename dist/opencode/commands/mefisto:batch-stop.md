@@ -30,7 +30,7 @@ pgrep -f "[s]cripts/batch-pipeline\.sh" >/dev/null 2>&1 || pgrep -f "[s]cripts/p
 Tres detalles del patron, los tres deliberados:
 
 - `[s]cripts` en vez de `scripts`: el patron viaja en la linea de comandos del propio shell que corre este `pgrep`, y `pgrep -f` la mira igual que cualquier otra. Con la clase de un solo caracter, el texto literal del patron ya no encaja con la expresion, asi que la deteccion no puede auto-cumplirse: sin orquestador corriendo, el exit es 1.
-- Ancla en `scripts/` (no `batch-pipeline.sh` a secas) para no confundirse con un motor interno de otro repo/checkout que reutilice ese mismo nombre de archivo bajo un prefijo distinto: si ese proceso corre en la misma maquina, `batch-pipeline.sh` SI aparece como substring de ese otro nombre, pero `scripts/batch-pipeline.sh` no.
+- Ancla en `scripts/` (no `batch-pipeline.sh` a secas) para no confundirse con el motor interno de Mefisto (`mefisto-batch-pipeline.sh`, que vive en `src/internal/scripts/` de OTRO repo/checkout): si ese proceso corre en la misma maquina, `batch-pipeline.sh` SI aparece como substring de `mefisto-batch-pipeline.sh`, pero `scripts/batch-pipeline.sh` no.
 - El criterio es **por maquina**, no por checkout: si el orquestador corre sobre otro clon del consumidor, aqui tambien da positivo y la senal se escribe en ESTE repo, donde nadie la va a consumir hasta la proxima corrida local (que se detendra de entrada, con todos sus issues `aplazado`, y la consumira). Es el precio de no inventar estado nuevo; invoca este comando desde el checkout donde lanzaste el batch.
 
 - Si **no** hay ningun proceso: responde y detente sin escribir nada:
