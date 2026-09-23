@@ -169,7 +169,7 @@ GUARD_EOF
 # write_pr_store_gh <fakebin> <call_log> <store_file>
 #
 # Escribe en <fakebin>/gh un stub de 'gh' con un almacen de PRs PERSISTENTE
-# (<store_file>, TSV: number|url|state|mergedAt|head|base) que 'pr list',
+# (<store_file>, TSV: number|url|state|mergedAt|head|base|createdAt) que 'pr list',
 # 'pr create' y 'pr reopen' leen y mutan como lo haria GitHub de verdad --
 # necesario para que un PR creado por una invocacion aparezca como existente
 # en la siguiente (bloques D/E/F/G, que ejercitan los 3 estados de un PR de
@@ -213,14 +213,16 @@ fi
 if [ "\$1" = "pr" ] && [ "\$2" = "list" ]; then
     head=\$(get_opt --head "\$@")
     base=\$(get_opt --base "\$@")
-    row=\$(awk -F'\t' -v h="\$head" -v b="\$base" '\$5 == h && \$6 == b { row = \$0 } END { print row }' "$store" 2>/dev/null)
-    if [ -z "\$row" ]; then
-        echo "[]"
-        exit 0
-    fi
-    IFS=\$'\t' read -r num url state mergedat rhead rbase <<< "\$row"
-    if [ "\$mergedat" = "-" ]; then mergedat_json="null"; else mergedat_json="\"\$mergedat\""; fi
-    printf '[{"number":%s,"url":"%s","state":"%s","mergedAt":%s}]\n' "\$num" "\$url" "\$state" "\$mergedat_json"
+    awk -F'\t' -v h="\$head" -v b="\$base" '
+        BEGIN { printf "["; first = 1 }
+        \$5 == h && \$6 == b {
+            if (!first) printf ","
+            merged = (\$4 == "-" ? "null" : "\"" \$4 "\"")
+            printf "{\"number\":%s,\"url\":\"%s\",\"state\":\"%s\",\"mergedAt\":%s,\"createdAt\":\"%s\"}", \$1, \$2, \$3, merged, \$7
+            first = 0
+        }
+        END { print "]" }
+    ' "$store"
     exit 0
 fi
 
@@ -229,7 +231,7 @@ if [ "\$1" = "pr" ] && [ "\$2" = "create" ]; then
     base=\$(get_opt --base "\$@")
     num=\$(( \$(wc -l < "$store" 2>/dev/null || echo 0) + 1 ))
     url="https://github.com/$REPO_SLUG/pull/\$num"
-    printf '%s\t%s\t%s\t%s\t%s\t%s\n' "\$num" "\$url" "OPEN" "-" "\$head" "\$base" >> "$store"
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "\$num" "\$url" "OPEN" "-" "\$head" "\$base" "9999-12-31T23:59:59Z" >> "$store"
     echo "Creating pull request for \$head into \$base in $REPO_SLUG" >&2
     echo "\$url"
     exit 0
@@ -257,7 +259,7 @@ EOF
 # probar). <merged_at> "-" representa NULL (sin merge).
 seed_pr_store_row() {
     local store="$1" num="$2" url="$3" state="$4" merged_at="$5" head="$6" base="$7"
-    printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$num" "$url" "$state" "$merged_at" "$head" "$base" >> "$store"
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$num" "$url" "$state" "$merged_at" "$head" "$base" "2000-01-01T00:00:00Z" >> "$store"
 }
 
 # -------- Bloque pre: presencia, sintaxis, shim conforme, gate real --------
