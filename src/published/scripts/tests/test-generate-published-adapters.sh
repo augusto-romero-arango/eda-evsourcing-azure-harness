@@ -40,6 +40,7 @@ while IFS='|' read -r closure_source closure_mode; do
     CLOSURE_MODES+=("$closure_mode")
 done < <(python3 "$CLOSURE_EXTRACTOR" "$SOURCE_GENERATOR")
 CLOSURE_COUNT="${#CLOSURE_SOURCES[@]}"
+CLOSURE_FAILURE_SOURCE="${CLOSURE_SOURCES[0]}"
 FIXTURE_KNOWLEDGE_COUNT=3
 FIXTURE_RENDERED_MARKDOWN_COUNT=1
 
@@ -238,19 +239,19 @@ GEN="$TEST_REPO/src/published/scripts/generate-published-adapters.sh"; OUT="$WOR
 
 setup_repo clausura-ausente
 GEN="$TEST_REPO/src/published/scripts/generate-published-adapters.sh"; OUT="$WORK/clausura-ausente-out"
-rm "$TEST_REPO/src/runtime/lib/runtime-opencode.jq"
+rm "$TEST_REPO/$CLOSURE_FAILURE_SOURCE"
 diagnostic="$("$GEN" --out "$OUT" "$TEST_REPO/src/published/agents/valida con espacios.md" 2>&1)"; rc=$?
 assert_rc "$rc" 1 'clausura rechaza una fuente ausente antes de publicar'
-case "$diagnostic" in *'src/runtime/lib/runtime-opencode.jq'*) pass 'fuente ausente identifica la ruta exacta';; *) fail 'fuente ausente no identifica la ruta exacta';; esac
+case "$diagnostic" in *"$CLOSURE_FAILURE_SOURCE"*) pass 'fuente ausente identifica la ruta exacta';; *) fail 'fuente ausente no identifica la ruta exacta';; esac
 [ ! -e "$OUT" ] && pass 'fuente de clausura ausente no deja salida parcial' || fail 'fuente de clausura ausente creo salida'
 
 setup_repo clausura-no-regular
 GEN="$TEST_REPO/src/published/scripts/generate-published-adapters.sh"; OUT="$WORK/clausura-no-regular-out"
-rm "$TEST_REPO/src/runtime/lib/runtime-opencode.jq"
-mkdir "$TEST_REPO/src/runtime/lib/runtime-opencode.jq"
+rm "$TEST_REPO/$CLOSURE_FAILURE_SOURCE"
+mkdir "$TEST_REPO/$CLOSURE_FAILURE_SOURCE"
 diagnostic="$("$GEN" --out "$OUT" "$TEST_REPO/src/published/agents/valida con espacios.md" 2>&1)"; rc=$?
 assert_rc "$rc" 1 'clausura rechaza una fuente no regular antes de publicar'
-case "$diagnostic" in *'src/runtime/lib/runtime-opencode.jq'*) pass 'fuente no regular identifica la ruta exacta';; *) fail 'fuente no regular no identifica la ruta exacta';; esac
+case "$diagnostic" in *"$CLOSURE_FAILURE_SOURCE"*) pass 'fuente no regular identifica la ruta exacta';; *) fail 'fuente no regular no identifica la ruta exacta';; esac
 [ ! -e "$OUT" ] && pass 'fuente de clausura no regular no deja salida parcial' || fail 'fuente de clausura no regular creo salida'
 
 setup_repo conocimiento-ausente
