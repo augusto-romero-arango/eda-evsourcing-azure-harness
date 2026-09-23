@@ -656,7 +656,7 @@ if [ -n "$B_REVIEWER_CALL" ]; then
     if _argv_has_flag_value "$B_REVIEWER_CALL" -m openai/gpt-6-sol; then
         pass "E-1: opencode -- reviewer deep usa '-m openai/gpt-6-sol'"
     else
-        fail "E-1: opencode -- reviewer deep no uso el default Sol: $(cat "$B_REVIEWER_CALL")"
+        fail "E-1: opencode -- reviewer deep no uso el default GPT-6 Sol: $(cat "$B_REVIEWER_CALL")"
     fi
 else
     fail "E-1: no se pudo localizar la invocacion del reviewer de la corrida (b)"
@@ -666,7 +666,7 @@ if [ -n "$B_WRITER_CALL" ]; then
     if _argv_has_flag_value "$B_WRITER_CALL" -m openai/gpt-6-sol; then
         pass "E-2: opencode -- writer balanced usa '-m openai/gpt-6-sol'"
     else
-        fail "E-2: opencode -- writer balanced no uso el default Terra: $(cat "$B_WRITER_CALL")"
+        fail "E-2: opencode -- writer balanced no uso el default GPT-6 Sol: $(cat "$B_WRITER_CALL")"
     fi
 else
     fail "E-2: no se pudo localizar la invocacion del writer de la corrida (b)"
