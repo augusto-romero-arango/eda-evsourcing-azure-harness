@@ -6,6 +6,7 @@
 #   ./scripts/batch-pipeline.sh --pipeline tooling 60 62 63       # forzar pipeline tooling
 #   ./scripts/batch-pipeline.sh --pipeline tdd 42 43              # forzar pipeline tdd
 #   ./scripts/batch-pipeline.sh 42 43 --stop-on-error             # abortar en primer fallo
+#   MEFISTO_RUNTIME=<id> ./scripts/batch-pipeline.sh 42            # fija el runtime activo cuando hay mas de un CLI instalado (MEF-ADR-0049/0050); sin esta variable, se resuelve por auto-deteccion antes del primer eslabon y se hereda en cada uno
 #
 # Enrutamiento automatico: sin --pipeline, cada issue se enruta segun su label tipo:*
 #   tipo:feature|refactor|projection -> tdd-pipeline.sh
@@ -21,6 +22,18 @@ set -euo pipefail
 
 # ─── Funciones compartidas ───────────────────────────────────────────────────
 source "$(dirname "${BASH_SOURCE[0]}")/_pipeline-common.sh"
+
+# ─── Runtime activo (MEF-ADR-0049/0050, issue #1591) ─────────────────────────
+# La clausura publicada conserva src/runtime junto a este script -- mismo
+# bloque que tooling-pipeline.sh (~20-33). El batch solo necesita el
+# discovery (mefisto-runtime.sh): no resuelve modelos, asi que no carga
+# mefisto-models.sh como si hace el eslabon.
+RUNTIME_DIR="$(cd "$(_pc_script_dir)/../src/runtime" 2>/dev/null && pwd -P)" \
+    || { echo "ERROR: no se encontro src/runtime junto al paquete publicado" >&2; exit 1; }
+RUNTIME_LIB_DIR="$RUNTIME_DIR/lib"
+[ -f "$RUNTIME_LIB_DIR/mefisto-runtime.sh" ] \
+    || { echo "ERROR: no se encontro mefisto-runtime.sh en la clausura publicada" >&2; exit 1; }
+source "$RUNTIME_LIB_DIR/mefisto-runtime.sh"
 
 # ─── Colores ────────────────────────────────────────────────────────────────
 RED='\033[0;31m'
@@ -254,7 +267,7 @@ done
 
 # ─── Verificar dependencias ───────────────────────────────────────────────────
 MISSING_DEPS=""
-for dep in claude gh git dotnet; do
+for dep in gh git dotnet; do
     if ! command -v "$dep" >/dev/null 2>&1; then
         MISSING_DEPS="$MISSING_DEPS $dep"
     fi
@@ -264,8 +277,35 @@ if [ -n "$MISSING_DEPS" ]; then
     exit 1
 fi
 
+# ─── Resolver runtime activo (CA-2/CA-3, issue #1591) ────────────────────────
+# Mismo criterio que los pipelines hijos (tooling-pipeline.sh ~324-333): sin
+# herencia implicita. Si falla (ningun CLI detectado, o varios sin
+# MEFISTO_RUNTIME para desambiguar) el batch aborta ANTES de tocar ningun
+# issue -- no recien dentro del primer eslabon, que es donde fallaria hoy.
+if ! mefisto_resolve_runtime >/dev/null; then
+    echo -e "${RED}${BOLD}✗ No se pudo resolver el runtime activo: ${MEFISTO_RUNTIME_ERROR:-motivo desconocido}${NC}"
+    exit 1
+fi
+BATCH_RUNTIME="$MEFISTO_RESOLVED_RUNTIME"
+
+# CA-3: cuando MEFISTO_RUNTIME llega explicito (env o ya resuelto arriba),
+# mefisto_resolve_runtime no comprueba que el CLI exista -- solo que haya
+# adaptador. Se verifica aqui para fallar temprano, como ya hacia el chequeo
+# de dependencias de arriba, en vez de descubrirlo recien dentro del primer
+# eslabon.
+if ! runtime_cli_available "$BATCH_RUNTIME"; then
+    echo -e "${RED}${BOLD}✗ Dependencias faltantes: CLI del runtime '$BATCH_RUNTIME'${NC}"
+    exit 1
+fi
+
+# CA-4: cada eslabon (tdd-pipeline.sh/tooling-pipeline.sh) y pr-sync.sh
+# heredan este mismo runtime ya resuelto -- sin herencia implicita, cada uno
+# lo recibiria a partir de su propia variable de entorno.
+export MEFISTO_RUNTIME="$BATCH_RUNTIME"
+
 # ─── Cabecera ─────────────────────────────────────────────────────────────────
 header "batch-pipeline --- Procesamiento secuencial de issues"
+log "Runtime: $MEFISTO_RUNTIME"
 log "Pipeline: $([ -n "$PIPELINE_OVERRIDE" ] && echo "$PIPELINE_OVERRIDE (override)" || echo 'automatico por label')"
 log "Issues a procesar: ${ISSUE_NUMS[*]}"
 log "Modo en error: $([ "$STOP_ON_ERROR" = true ] && echo 'detener' || echo 'continuar')"
