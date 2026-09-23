@@ -138,3 +138,5 @@ no necesita estar residente en cada sesión, solo cuando se busca en qué ADR vi
 | Enmienda a MEF-ADR-0031: presupuesto de 420 s del gate por SHA para cubrir un reintento de App Service Linux, distinto del gate `/api/ready` de 120 s | MEF-ADR-0031 |
 | Default del perfil `deep` en la tabla del adaptador Claude (`opus`, enmienda) | MEF-ADR-0049 |
 | Estimacion reproducible del costo de agentes | MEF-ADR-0054 |
+| Fila `## ADRs aplicables` (Critico en feature/refactor/projection) en el Definition of Ready y su validacion programatica en `/implement` | MEF-ADR-0011 |
+| Resiliencia del pipeline ante limite de uso y caida del proveedor: postcondiciones objetivas del caller (sin resumen de stage) como evidencia alternativa para aceptar una sesion reanudada, caso `pr-sync.sh` | MEF-ADR-0051 |

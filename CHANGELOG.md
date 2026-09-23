@@ -4,6 +4,90 @@ Todo cambio notable a este proyecto se documenta aquí. Sigue [Keep a Changelog]
 
 ## [Unreleased]
 
+## [0.39.0] - 2026-09-23
+
+### Added
+
+- Se agrega la seccion "Veredicto final del corte TDD multi-runtime (#1487)"
+  en `docs/testing/tdd-consumer-certification.md`, que audita la sesion humana
+  del 2026-09-21 sobre `v0.38.2` y emite `PASA`: las cuatro corridas
+  write-side/read-side x Claude/OpenCode de #1435/#1436 quedan certificadas,
+  con la seccion `## ADRs aplicables` agregada a los fixtures del intento 2
+  juzgada como desviacion justificada frente al template (#1560). Se actualizan
+  las menciones de `docs/testing/opencode-consumer-cutover.md` y de la seccion
+  "Soporte OpenCode: alcance certificado" de `README.md` que declaraban
+  `/mefisto:implement` sin certificar, para reflejar el nuevo veredicto.
+- Se anade `scripts/work-status-collect.sh`: consolida en un unico JSON el estado
+  de los pipelines del consumidor (root canonico + fallback legacy de solo
+  lectura, MEF-ADR-0053 seccion 4), con deduplicacion deterministica de status
+  e historial, resolucion de hold/actividad (estructurado y fallback textual
+  legacy), porcentaje de avance por stage y reconstruccion de rutas de log
+  legacy -- reemplaza los Pasos 1, 1b y 3 de `commands/work-status.md` con un
+  script empaquetado, paso previo a migrar el comando a la fuente neutral.
+
+### Changed
+
+- Se registra en `docs/testing/tdd-consumer-certification.md` la evidencia real
+  de las cuatro corridas de certificacion TDD multi-runtime sobre `v0.38.2`
+  (write-side/read-side x Claude/OpenCode, PRs #38-#41 del consumidor, intento 2)
+  y el descarte razonado del intento 1, dejando lista la auditoria del
+  veredicto #1487.
+- MEF-ADR-0011 (Definition of Ready) gana la fila `## ADRs aplicables` en su tabla DoR: **Critico** en `feature`/`refactor`/`projection` (input directo del paso 1b de `implementer` y `reviewer`), Recomendado en `infra`/`tooling`. El gate programatico de `/implement` valida ahora que esos tres tipos declaren la seccion con al menos una linea no vacia (`Ninguno` cuenta como contenido; encabezado ausente o seccion vacia bloquean), preveniendo antes del pipeline el caso que hasta ahora solo se detectaba dentro de Stage 2.
+- `scripts/pr-sync.sh` ya no invoca ningun CLI de runtime concreto: su `run_agent` delega en el runner neutral `src/runtime/mefisto-run-agent.sh` (overridable con `MEFISTO_RUN_AGENT_BIN`), resuelve el runtime activo con `mefisto_resolve_runtime` y el modelo del `implementer` con `mefisto_resolve_model` (perfil `balanced`), y ya no exige el binario `claude` en su chequeo de dependencias ni copia `.claude/settings.json` al worktree temporal (MEF-ADR-0049/MEF-ADR-0050).
+- `scripts/pr-sync.sh` escribe su log principal y los logs por agente solo bajo la ubicacion canonica `.mefisto/pipeline/logs/` (via `mefisto_state_path`, mismo patron adoptado por `tdd-pipeline.sh` en #1156): desaparecen el literal `.claude/pipeline` y el `LOG_DIR` relativo, sin fallback de escritura al estado legacy (MEF-ADR-0053 seccion 4).
+- `/mefisto:merge` migra a la fuente neutral publicada (`src/published/commands/merge.md`): ahora tiene proyeccion tanto Claude como OpenCode. `scripts/pr-sync.sh` se agrega a la clausura empaquetada (`dist/{claude,opencode}/scripts/`), cerrando el ultimo paso de la neutralizacion de `/merge`.
+- `scripts/pr-sync.sh` adopta la politica de hold de MEF-ADR-0051 en `run_agent`: un fallo `RATE_LIMIT*`/`PROVIDER_UNAVAILABLE*` al resolver conflictos de merge (`merge-pr<N>`) o arreglar tests rotos (`fix-pr<N>`) ya no marca el PR como fallido de inmediato -- espera con `agent_hold_wait` (honrando `resets_at`, `MEFISTO_HOLD_PROBE_SECONDS` y `MEFISTO_HOLD_MAX_SECONDS`), deja la traza `[hold] ...` en el `events.log` que lee `/work-status`, y reintenta reanudando con `--resume-session` cuando el runtime activo lo soporta. Antes, un limite de uso durante `pr-sync --merge` abortaba el batch encadenado por `batch-pipeline.sh`.
+- `scripts/batch-pipeline.sh` (motor de `/sequential`) ya no exige el CLI `claude` a secas: resuelve el runtime activo con `mefisto_resolve_runtime` antes del primer eslabon, verifica su CLI y lo exporta (`MEFISTO_RUNTIME`) para que cada eslabon y `pr-sync.sh` corran en el mismo runtime (MEF-ADR-0049/MEF-ADR-0050).
+- `/mefisto:sequential` migra a la fuente neutral publicada (`src/published/commands/sequential.md`): ahora tiene proyeccion tanto Claude como OpenCode. `scripts/batch-pipeline.sh` se agrega a la clausura empaquetada (`dist/{claude,opencode}/scripts/`), habilitando `tmux-pipeline.sh --batch` en OpenCode.
+- Se migra `/batch-stop` al formato neutral publicado (`src/published/commands/batch-stop.md`, MEF-ADR-0049/0050/0053): OpenCode ya puede detener un `batch-pipeline.sh`/`parallel-pipeline.sh` en marcha igual que Claude Code, con el mismo patron de deteccion por proceso y la misma senal `pipeline-state/batch-stop`.
+- Se migra `/work-status` a la fuente neutral publicada (`src/published/commands/work-status.md`): el render del dashboard y el drill-down ahora se generan desde el JSON de `work-status-collect.sh --json` en lugar de leer directamente `.mefisto/pipeline/`/`.claude/pipeline/`, y el comando queda disponible tanto en Claude Code como en OpenCode.
+
+### Fixed
+
+- Se corrige la reanudacion de field notes tras merge: elimina su tracking ref rancia, evita recrear ramas para contenido ya entregado y abre una reentrega para contenido nuevo.
+- Se corrigen los templates de fixture write-side/read-side de
+  `docs/testing/tdd-consumer-certification.md`: ahora incluyen `## ADRs
+  aplicables` con un placeholder que el planner publicado sustituye, y el
+  parrafo de DoR de "Fixtures write-side/read-side (CA-2)" exige esa seccion
+  en los cuatro fixtures. Antes su ausencia hacia que el implementer de un
+  runtime bloqueara (conforme a doctrina) mientras el de otro no lo hacia,
+  invalidando la comparacion de la certificacion multi-runtime.
+- Se corrige el Gate 2 (fase verde) de `scripts/tdd-pipeline.sh`: antes,
+  cualquier `blockage-report.md` con tests rojos continuaba siempre al
+  reviewer, aunque el implementer lo hubiera escrito por un issue incompleto
+  (falta `## ADRs aplicables`, paso 1b de `implementer.md`) en vez de por
+  tests bloqueados. Ahora el gate distingue ambos motivos por un encabezado
+  canonico exacto (`## Issue incompleto` como primera linea del reporte):
+  con ese encabezado, el pipeline se detiene (estado `blocked`, sin Stage 2b,
+  Stage 3 ni PR) e indica refinar el issue con el planner y reanudar con
+  `--from-stage 2`; sin el encabezado, el comportamiento existente (reviewer
+  con autoridad para resolver, PR con label `bloqueado`) no cambia.
+- Se corrige la deteccion de Stage 2b (Smoke Test Writer) de
+  `scripts/tdd-pipeline.sh`: `SMOKE_FILES` se calcula desde un diff tomado
+  antes de Stage 1, así que incluía los tests recién escritos por el
+  test-writer, y el patrón `Function/` no se limitaba a `src/`. Cuando el
+  único match era una ruta `tests/`, el `sed` de derivación de dominio no
+  la transformaba y Stage 2b se saltaba en silencio con el mismo log que un
+  skip legítimo ("Proyecto SmokeTests no existe para ..."), en vez de la
+  rama correcta ("No se detectaron Function Apps ni tools MCP
+  modificadas"). Ahora `SMOKE_FILES` solo admite rutas bajo `src/`, y si un
+  match de `src/` no permite derivar un dominio válido, el pipeline emite
+  `warn`, escribe `SMOKE_ANOMALY: <ruta>` en `events.log` y agrega una nota
+  al PR — sin cambiar `AGENT_ST_RES` (se mantiene `skipped`, mismo formato
+  de métricas/historial).
+- `scripts/herdr-pipeline.sh` ya no reporta exito con solo que `herdr pane run` devuelva 0: `cmd_pane_runner` crea un marcador de arranque antes de lanzar el sub-pipeline, `dispatch_to_pane`/`cmd_parallel` lo esperan hasta un timeout configurable (`HERDR_DISPATCH_CONFIRM_TIMEOUT`, default 15s) y, si no aparece, `dispatch_to_pane` reintenta una unica vez en un pane nuevo (nunca reescribe el pane sospechoso) antes de fallar visible nombrando ambos paneles. Al agotar el plazo el despachador reclama el marcador en exclusiva, asi un runner que arranque tarde en el pane sospechoso aborta sin duplicar la corrida (MEF-ADR-0017).
+- `src/internal/scripts/mefisto-herdr-pipeline.sh` porta el mismo mecanismo de confirmacion de arranque de #1563 al lado interno: `cmd_pane_runner` crea un marcador de arranque antes de lanzar el sub-pipeline, `dispatch_to_pane` lo espera hasta `HERDR_DISPATCH_CONFIRM_TIMEOUT` (default 15s) y, si no aparece, reintenta una unica vez en un pane nuevo (nunca reescribe el pane sospechoso) antes de fallar visible nombrando ambos paneles. Al agotar el plazo el despachador reclama el marcador en exclusiva, asi un runner que arranque tarde en el pane sospechoso aborta sin duplicar la corrida (MEF-ADR-0017).
+- `scripts/tmux-pipeline.sh` resuelve el runtime activo (MEF-ADR-0049/0050) antes de despachar `--tooling`/`--batch`/`--parallel` y el enrutamiento automatico de un unico issue, y lo antepone (`MEFISTO_RUNTIME=...`) a los cuatro `send-keys` que lanzan sub-pipelines. Antes, con un servidor tmux ya vivo, la sesion nueva no heredaba el runtime del proceso que la creo y el pane autodetectaba por su cuenta -- abortando con "se detectaron varios runtimes disponibles" si habia mas de un CLI instalado, o corriendo en un runtime distinto del esperado si habia uno solo. Afectaba a `/tooling`, `/implement` y `/sequential` en modo tmux (issue #1593).
+- Los adaptadores publicados fijan `MEFISTO_RUNTIME=<claude|opencode>` en cada
+  invocacion traducida de `{{mefisto:run <script> <args>}}`, imponiendo el
+  runtime del propio adaptador sobre cualquier valor del entorno: evita que
+  `mefisto_resolve_runtime` aborte con "se detectaron varios runtimes
+  disponibles" fuera del workspace de `herdr-workspace.sh` cuando la maquina
+  tiene mas de un runtime instalado.
+- `tdd-pipeline.sh` escribe ahora el bloque `hold` estructurado (`cause`, `next_probe`, `ceiling_seconds`, `accumulated_seconds`) en su status canonico, con el mismo molde que `tooling-pipeline.sh`: mientras el pipeline espera por limite de uso o caida del proveedor, el status pasa a `state: "hold"` con la causa y la proxima sonda, en vez de mostrar su stage normal (`/work-status` solo cubria esta espera para corridas legacy).
+- `pr-sync.sh` escribe ahora un status estructurado por PR (`pipeline-status-pr-sync-<PR>.json`, mismo esquema que `update_status()` de `tooling-pipeline.sh`), incluido el bloque `hold` (`cause`, `next_probe`, `ceiling_seconds`, `accumulated_seconds`) mientras espera por limite de uso o caida del proveedor: antes, una sincronizacion de PRs (con o sin espera) era invisible para `/work-status`, y dentro de un `/sequential` el merge de cada eslabon no se veia en el dashboard. Un `trap` de cierre marca `failed` el status del PR en curso si el script se interrumpe con ese PR aun `running`/`hold`.
+- Se deriva el fixture de adaptadores publicados desde la clausura canonica para evitar que sus fuentes, modos e inventarios diverjan del generador.
+
 ## [0.38.2] - 2026-09-21
 
 ### Changed
@@ -2780,7 +2864,8 @@ Y reemplazar referencias en `CLAUDE.md` del proyecto: `/eda-evsourcing-azure-har
 - Los agentes `reviewer` e `implementer` mantienen el placeholder literal `ADR-XXXX` en sus plantillas de reporte (no es un bug; el agente lo sustituye en tiempo de ejecución por el número real del ADR aplicable).
 - Los ejemplos de código en `test-writer.md`, `implementer.md` y `smoke-test-writer.md` conservan nombres concretos de un proyecto consumidor (`Programacion`, `ControlHoras`) anotados en el "Contrato con el consumidor" de cada agente como ejemplos pedagógicos.
 
-[Unreleased]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.38.2...HEAD
+[Unreleased]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.39.0...HEAD
+[0.39.0]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.38.2...v0.39.0
 [0.38.2]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.38.1...v0.38.2
 [0.38.1]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.38.0...v0.38.1
 [0.38.0]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.37.16...v0.38.0
