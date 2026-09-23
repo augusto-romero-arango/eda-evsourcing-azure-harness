@@ -904,9 +904,11 @@ main() {
     # nueva (ver Contexto del issue), asi que sin esto el pane autodetectaria
     # por su cuenta -- y podria abortar (con varios CLIs instalados) o correr
     # en un runtime distinto del que lanzo este comando. --attach y --help no
-    # lanzan ningun sub-pipeline: no lo exigen.
+    # lanzan ningun sub-pipeline; --infra y --scaffold lanzan iac/scaffold-
+    # pipeline.sh, que no resuelven runtime: exigirlo ahi solo sumaria un aborto
+    # nuevo sin nada a quien propagarlo.
     case "$1" in
-        --help|-h|--attach) ;;
+        --help|-h|--attach|--infra|--scaffold) ;;
         *)
             mefisto_resolve_runtime >/dev/null \
                 || abort "No se pudo resolver el runtime activo: ${MEFISTO_RUNTIME_ERROR:-motivo desconocido}"

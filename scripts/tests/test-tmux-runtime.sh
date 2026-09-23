@@ -184,6 +184,9 @@ assert_eq "aborta (rc=1)" "1" "$LAST_RC"
 assert_contains "mensaje: no se pudo resolver el runtime activo" "$LAST_STDERR" "No se pudo resolver el runtime activo"
 assert_not_contains "no crea sesion tmux" "$(cat "$TMUX_STUB_LOG")" "new-session"
 
+run_wrapper --infra 253
+assert_not_contains "--infra no exige runtime (iac-pipeline.sh no lo resuelve)" "$LAST_STDERR" "No se pudo resolver el runtime activo"
+
 rm -f "$FAKE_BIN/claude" "$FAKE_BIN/opencode"
 
 echo ""
