@@ -94,8 +94,8 @@ CAFF="$(caffeinate_prefix)"
 # ids publicos de herdr como "w1:p3"). Vive junto al resto del estado runtime,
 # donde lo deja mefisto_state_path (.mefisto/pipeline/, issue #869).
 PANES_STATE="$(mefisto_state_path "herdr-report-panes.txt")"
-# Runtime resuelto de ESTA corrida (issue #1571): lo cachea resolve_report_runtime
-# la primera vez que acquire_report_pane la invoca, para que split_new_report_pane
+# Runtime resuelto de ESTA corrida (issue #1571): lo cachea resolve_report_runtime,
+# invocada por dispatch_to_pane en su propio shell, para que split_new_report_pane
 # (el reintento de dispatch_to_pane, CA-3) pueda crear un pane nuevo del MISMO
 # runtime sin volver a resolverlo.
 HERDR_RUNTIME=""
@@ -371,6 +371,11 @@ build_pane_runner_cmdline() {
 dispatch_to_pane() {
     local title="$1" issues_csv="$2"
     shift 2
+
+    # Resolver el runtime en ESTE shell (no dentro de $(acquire_report_pane),
+    # cuyo subshell pierde la cache al salir): el reintento de CA-3 registra su
+    # pane nuevo con HERDR_RUNTIME y, sin esto, lo anotaria sin runtime.
+    resolve_report_runtime
 
     local pane token marker cmdline
     pane=$(acquire_report_pane)

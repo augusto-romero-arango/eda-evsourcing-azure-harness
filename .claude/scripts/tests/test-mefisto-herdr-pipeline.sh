@@ -986,6 +986,7 @@ if grep -qF "pane run w1:p2" "$HERDR_STUB_LOG"; then pass "el reintento escribe 
 if printf '%s' "$LAST_STDERR" | grep -q "El pane w1:p1 no confirmo el arranque"; then pass "el aviso nombra el pane sospechoso"; else fail "mensaje inesperado: $LAST_STDERR"; fi
 if printf '%s' "$LAST_STDERR" | grep -qF "corriendo en el pane w1:p2"; then pass "el exito final nombra el pane de reintento"; else fail "mensaje inesperado: $LAST_STDERR"; fi
 if printf '%s' "$LAST_STDERR" | grep -qF "reintento tras un arranque no confirmado en w1:p1"; then pass "el exito final documenta el reintento"; else fail "mensaje inesperado: $LAST_STDERR"; fi
+if grep -qx "w1:p2 claude" "$FAKE_MEFISTO/.mefisto/pipeline/herdr-report-panes.txt"; then pass "el pane de reintento queda en el pool con el runtime de la corrida"; else fail "pool inesperado: $(cat "$FAKE_MEFISTO/.mefisto/pipeline/herdr-report-panes.txt")"; fi
 
 echo ""
 echo "[32] fallo doble: ni el pane original ni el de reintento confirman"
