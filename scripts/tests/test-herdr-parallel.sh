@@ -26,6 +26,8 @@
 #       en tmux. Multiples issues sin modo enrutan a --parallel.
 #   [F] (CA-5) should_delegate_to_herdr de tmux-pipeline.sh ya no excluye
 #       --parallel (delega dentro de herdr) y sigue excluyendo --attach.
+#   [G] (issue #1627 CA-4) cmd_infra despacha con MEFISTO_RUNTIME=$HERDR_RUNTIME
+#       via dispatch_to_pane, igual que --tooling -- ya lo hacia, se fija con test.
 #
 # Uso: scripts/tests/test-herdr-parallel.sh
 # Exit code: 0 si todos los chequeos pasan, 1 si alguno falla.
@@ -340,6 +342,22 @@ if declare -F should_delegate_to_herdr >/dev/null; then
         pass "fuera de herdr no delega"
     fi
 fi
+
+# --- [G] cmd_infra: MEFISTO_RUNTIME=$HERDR_RUNTIME propagado (issue #1627 CA-4) ---
+echo "[G] --infra despacha con MEFISTO_RUNTIME=\$HERDR_RUNTIME, igual que --tooling"
+
+OUT=$(run_parallel --infra 42)
+RC=$?
+STUB_CALLS=$(cat "$HERDR_STUB_LOG")
+assert_eq "--infra: exit 0" "0" "$RC"
+assert_contains "--infra: el runner corre iac-pipeline.sh" "$STUB_CALLS" "iac-pipeline.sh"
+assert_contains "--infra: runner recibe MEFISTO_RUNTIME=claude" "$STUB_CALLS" "MEFISTO_RUNTIME=claude"
+
+OUT=$(HERDR_TEST_RUNTIME=opencode run_parallel --infra 42)
+RC=$?
+STUB_CALLS=$(cat "$HERDR_STUB_LOG")
+assert_eq "--infra (opencode): exit 0" "0" "$RC"
+assert_contains "--infra (opencode): runner recibe MEFISTO_RUNTIME=opencode" "$STUB_CALLS" "MEFISTO_RUNTIME=opencode"
 
 # --- Resumen ---
 echo ""

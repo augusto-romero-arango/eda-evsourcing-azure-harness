@@ -68,7 +68,8 @@ SESSION_IF_EXISTS=""
 
 # RESOLVED_RUNTIME: runtime activo resuelto una vez en main() (issue #1593),
 # despues del punto de delegacion a Herdr y solo en los modos que lanzan un
-# sub-pipeline. Los cuatro send-keys que lo propagan (CA-3) lo leen de aqui.
+# sub-pipeline. Los cinco send-keys que lo propagan (CA-3, issue #1627 suma
+# --infra) lo leen de aqui.
 RESOLVED_RUNTIME=""
 
 # SCRIPT_DIR: ubicacion de ESTE script (el plugin), ya fijado arriba (junto a
@@ -611,7 +612,7 @@ cmd_infra() {
     tmux send-keys -t "$tail_pane" "tail -F '$EVENTS_LOG' '$EVENTS_LOG_LEGACY'" Enter
 
     pipe_pane=$(tmux split-window -h -t "$tail_pane" -c "$PROJECT_ROOT" -P -F '#{pane_id}')
-    tmux send-keys -t "$pipe_pane" "$CAFF '$SCRIPT_DIR/iac-pipeline.sh' $issue $extra_args" Enter
+    tmux send-keys -t "$pipe_pane" "MEFISTO_RUNTIME=$(printf '%q' "$RESOLVED_RUNTIME") $CAFF '$SCRIPT_DIR/iac-pipeline.sh' $issue $extra_args" Enter
 
     tmux select-layout -t "$session:main" even-horizontal
 
@@ -777,6 +778,15 @@ ${BOLD}Sesion existente (--if-exists reuse|replace|abort):${NC}
   toma por --if-exists, o por ese mismo default si no se paso el flag -- nunca
   se destruye una sesion viva sin pedirlo explicitamente.
 
+${BOLD}Runtime del pane (MEF-ADR-0049/0050):${NC}
+  Los modos que lanzan un sub-pipeline (issue suelto, --tooling, --infra,
+  --batch y --parallel) resuelven el runtime activo una sola vez, antes de
+  crear la sesion, y lo propagan al pane como MEFISTO_RUNTIME=<resuelto>: un
+  servidor tmux ya vivo no hereda esa variable en una sesion nueva. Sin
+  runtime resoluble abortan con 'No se pudo resolver el runtime activo:
+  <motivo>' sin crear la sesion. Quedan exentos --scaffold (scaffold-
+  pipeline.sh no resuelve runtime), --attach y --help (no lanzan nada).
+
 ${BOLD}Enrutamiento automatico:${NC}
   Sin --pipeline ni --tooling/--infra, el pipeline se determina por el label tipo:* del issue:
     tipo:feature|refactor|projection -> tdd-pipeline.sh
@@ -904,11 +914,12 @@ main() {
     # nueva (ver Contexto del issue), asi que sin esto el pane autodetectaria
     # por su cuenta -- y podria abortar (con varios CLIs instalados) o correr
     # en un runtime distinto del que lanzo este comando. --attach y --help no
-    # lanzan ningun sub-pipeline; --infra y --scaffold lanzan iac/scaffold-
-    # pipeline.sh, que no resuelven runtime: exigirlo ahi solo sumaria un aborto
-    # nuevo sin nada a quien propagarlo.
+    # lanzan ningun sub-pipeline; --scaffold lanza scaffold-pipeline.sh, que no
+    # resuelve runtime: exigirlo ahi solo sumaria un aborto nuevo sin nada a
+    # quien propagarlo. --infra SI resuelve (issue #1627, tras #1624: iac-
+    # pipeline.sh ya resuelve runtime del lado del sub-script).
     case "$1" in
-        --help|-h|--attach|--infra|--scaffold) ;;
+        --help|-h|--attach|--scaffold) ;;
         *)
             mefisto_resolve_runtime >/dev/null \
                 || abort "No se pudo resolver el runtime activo: ${MEFISTO_RUNTIME_ERROR:-motivo desconocido}"
