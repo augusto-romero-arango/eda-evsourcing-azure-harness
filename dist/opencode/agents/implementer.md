@@ -1233,9 +1233,16 @@ Lee todos los archivos de test listados para entender que se espera.
 El issue debe tener una seccion `## ADRs aplicables` que enumera los ADRs que rigen este trabajo. **Lee cada uno de esos ADRs completo antes de escribir codigo**. Estos documentos son la fuente de verdad arquitectonica del proyecto — no hay "reglas equivalentes" en este agente ni en ningun otro lado.
 
 Si el issue **no** tiene la seccion `## ADRs aplicables` o esta vacia:
-- Detente. No asumas que no hay ADRs que apliquen.
-- Reporta el gap al llamador del pipeline (escribe en `.mefisto/pipeline/blockage-report.md` seccion "Issue incompleto: falta ADRs aplicables") y termina normalmente.
-- El planner debe completar el issue antes de que el pipeline reanude.
+- Detente. No asumas que no hay ADRs que apliquen. No escribas codigo.
+- Reporta el gap al llamador del pipeline: escribe en `.mefisto/pipeline/blockage-report.md` un reporte cuya **primera linea** sea, exacta y sin variantes, el encabezado canonico `## Issue incompleto`. Es la marca que el gate del pipeline detecta (por linea completa, no por prosa libre) para distinguir este motivo del de "tests bloqueados" (seccion "Cuando reportar bloqueo" mas abajo) y detener el pipeline sin invocar al reviewer ni abrir PR:
+
+```markdown
+## Issue incompleto
+
+Falta la seccion `## ADRs aplicables` en el issue (o esta vacia). El planner debe completarla antes de reanudar con `--from-stage 2`.
+```
+
+- Termina normalmente (exit 0). No es un error — es un yield controlado, igual que el de la seccion 4b. El planner debe completar el issue antes de que el pipeline reanude.
 
 **Precedente ≠ autoridad**: si vas a replicar un patron visto en otro archivo del proyecto o en un PR previo, **verifica primero que ese patron cumple los ADRs aplicables**. Si descubres que el precedente viola un ADR (por ejemplo, un archivo existente usa `[JsonConstructor]` en ctor privado cuando MEF-ADR-0012 lo proscribe), **NO lo repliques**. Reporta el hallazgo en tu resumen de decisiones y aplica el patron correcto.
 
