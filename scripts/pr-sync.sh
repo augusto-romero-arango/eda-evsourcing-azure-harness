@@ -172,6 +172,14 @@ LOG_DIR_ABS="$(dirname "$(mefisto_state_path 'logs/.state')")"
 LOG_FILE_ABS="$LOG_DIR_ABS/pr-sync-$TIMESTAMP.log"
 touch "$LOG_FILE_ABS"
 
+# events.log es el mismo archivo canonico que /work-status lee para dibujar
+# "EN ESPERA": run_agent() deja ahi la linea "[hold] ..." de MEF-ADR-0051
+# seccion 3 (agent_hold_wait), compartido con tdd-pipeline.sh/tooling-pipeline.sh
+# si corren en el mismo repo. Atribuir esas horas a un issue en el reporte de
+# batch-pipeline.sh queda fuera de alcance (issue #1586): pr-sync solo conoce
+# el PR, no el issue que lo origino.
+EVENTS_LOG_ABS="$(mefisto_state_path 'events.log')"
+
 header "pr-sync — Sincronización de PRs con main"
 log "Log: $LOG_FILE_ABS"
 
@@ -238,39 +246,96 @@ if [ "$DO_MERGE" = true ]; then
 fi
 
 # ─── Función: invocar agente ──────────────────────────────────────────────────
+#
+# Aplica la politica de hold de MEF-ADR-0051 (issue #1586): un fallo que
+# classify_neutral_agent_failure clasifica como RATE_LIMIT*/PROVIDER_UNAVAILABLE*
+# (agent_failure_is_holdable) no retorna fallo de inmediato -- espera con
+# agent_hold_wait (honra resets_at, MEFISTO_HOLD_PROBE_SECONDS,
+# MEFISTO_HOLD_MAX_SECONDS) y reintenta, reanudando con --resume-session cuando
+# el terminal trajo session_id y el runtime activo soporta reanudacion
+# (runtime_supports_resume). Al agotarse el techo de espera, o ante cualquier
+# otro fallo (TIMEOUT/STREAM_CUT/KILLED/PROTOCOL_INVALID/API_ERROR_CLIENT/
+# CLI_ERROR, ninguno holdable), retorna != 0 sin esperar y el caller conserva
+# su fail_pr actual.
+#
+# pr-sync no tiene resumen de stage (MEF-ADR-0051 seccion 2, enmendada): el
+# trabajo de una sesion reanudada se acepta o rechaza con las postcondiciones
+# que el caller YA verifica despues de esta funcion (sin archivos en conflicto
+# para merge-pr, validate_tests para fix-pr) -- evidencia mas fuerte que un
+# resumen, asi que aqui no se agrega ningun chequeo nuevo.
 run_agent() {
     local label="$1"
     local agent="$2"
     local prompt="$3"
     local worktree="$4"
-    local log_file="$LOG_DIR_ABS/pr-sync-${label}-${TIMESTAMP}.log"
-    local events_file="$LOG_DIR_ABS/pr-sync-${label}-${TIMESTAMP}.events.jsonl"
-    local prompt_file system_file start_ts run_exit=0 elapsed
-    start_ts=$(date +%s)
-
-    log "Invocando $agent (modelo: ${IMPLEMENTER_MODEL:-<heredado>})..."
+    local log_base="$LOG_DIR_ABS/pr-sync-${label}-${TIMESTAMP}"
+    local prompt_file system_file start_ts run_exit elapsed
+    local failure_type="" hold_started="" resume_session="" attempt=0
 
     prompt_file="$(mktemp)"
     system_file="$(mktemp)"
     printf '%s' "$prompt" > "$prompt_file"
     printf '%s\n' 'You are running in non-interactive print mode. There is no human to approve anything. Use editing tools directly; never ask for permission. Do not push or create pull requests.' > "$system_file"
 
-    local args=(--runtime "$MEFISTO_RUNTIME_RESUELTO" --agent "$agent" --cwd "$worktree" --prompt-file "$prompt_file" --system-file "$system_file" --event-log "$events_file")
-    [ -n "$IMPLEMENTER_MODEL" ] && args+=(--model "$IMPLEMENTER_MODEL")
+    while :; do
+        attempt=$((attempt + 1))
+        local log_file="${log_base}-attempt-${attempt}.log"
+        local events_file="${log_base}-attempt-${attempt}.events.jsonl"
+        local attempt_prompt="$prompt_file"
+        run_exit=0
 
-    "$RUN_AGENT_BIN" "${args[@]}" >"$log_file" 2>&1 || run_exit=$?
-    rm -f "$prompt_file" "$system_file"
-    elapsed=$(( $(date +%s) - start_ts ))
+        if [ -n "$resume_session" ]; then
+            attempt_prompt="$(mktemp)"
+            printf '%s\n' "Continue the same stage and complete its work." > "$attempt_prompt"
+        fi
 
-    if [ "$run_exit" -eq 0 ] && agent_events_completed_successfully "$events_file"; then
-        log "$agent completado en ${elapsed}s"
-        return 0
-    fi
+        log "Invocando $agent (modelo: ${IMPLEMENTER_MODEL:-<heredado>})..."
+        start_ts=$(date +%s)
 
-    warn "$agent falló después de ${elapsed}s"
-    echo -e "\n${RED}── Últimas líneas del log de $agent:${NC}"
-    tail -20 "$log_file"
-    return 1
+        local args=(--runtime "$MEFISTO_RUNTIME_RESUELTO" --agent "$agent" --cwd "$worktree" --prompt-file "$attempt_prompt" --system-file "$system_file" --event-log "$events_file")
+        [ -n "$IMPLEMENTER_MODEL" ] && args+=(--model "$IMPLEMENTER_MODEL")
+        [ -n "$resume_session" ] && args+=(--resume-session "$resume_session")
+
+        "$RUN_AGENT_BIN" "${args[@]}" >"$log_file" 2>&1 || run_exit=$?
+        [ "$attempt_prompt" = "$prompt_file" ] || rm -f "$attempt_prompt"
+        elapsed=$(( $(date +%s) - start_ts ))
+
+        if [ "$run_exit" -eq 0 ] && agent_events_completed_successfully "$events_file"; then
+            log "$agent completado en ${elapsed}s"
+            rm -f "$prompt_file" "$system_file"
+            return 0
+        fi
+
+        failure_type="$(classify_neutral_agent_failure "$run_exit" "$events_file")"
+        if ! agent_failure_is_holdable "$failure_type"; then
+            warn "$agent falló después de ${elapsed}s"
+            echo -e "\n${RED}── Últimas líneas del log de $agent:${NC}"
+            tail -20 "$log_file"
+            rm -f "$prompt_file" "$system_file"
+            return 1
+        fi
+
+        [ -z "$hold_started" ] && hold_started=$(date +%s)
+        warn "$agent: $failure_type. Esperando (hold) antes de reintentar (MEF-ADR-0051)..."
+        local slept resets
+        resets="$(agent_events_resets_at "$events_file")"
+        if ! slept=$(agent_hold_wait "$EVENTS_LOG_ABS" "$failure_type" "$hold_started" "$resets"); then
+            warn "$agent: se agotó el techo de espera (MEFISTO_HOLD_MAX_SECONDS) tras ${elapsed}s en el último intento"
+            echo -e "\n${RED}── Últimas líneas del log de $agent:${NC}"
+            tail -20 "$log_file"
+            rm -f "$prompt_file" "$system_file"
+            return 1
+        fi
+        log "$agent: espera de ${slept}s cumplida, reintentando..."
+
+        resume_session="$(agent_events_session_id "$events_file")"
+        if [ -z "$resume_session" ]; then
+            warn "$agent: terminal sin session_id; la sonda inicia de cero"
+        elif ! runtime_supports_resume "$MEFISTO_RUNTIME_RESUELTO"; then
+            warn "$agent: runtime sin capacidad de reanudación; la sonda inicia de cero"
+            resume_session=""
+        fi
+    done
 }
 
 # ─── Función: validar tests post-merge ────────────────────────────────────────
