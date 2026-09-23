@@ -83,6 +83,7 @@ CLAUDE_ROOT_MIRRORS=(
     'src/published/commands/merge.md|commands/merge.md'
     'src/published/commands/sequential.md|commands/sequential.md'
     'src/published/commands/batch-stop.md|commands/batch-stop.md'
+    'src/published/commands/work-status.md|commands/work-status.md'
     'src/published/agents/tooling-writer.md|agents/tooling-writer.md'
     'src/published/agents/tooling-reviewer.md|agents/tooling-reviewer.md'
     'src/published/agents/test-writer.md|agents/test-writer.md'
