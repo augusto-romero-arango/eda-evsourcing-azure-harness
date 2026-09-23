@@ -57,7 +57,8 @@ fi
 echo '[b] allowlist MCP por runtime'
 claude_writer="$(< "$WORK/dist/claude/agents/infra-writer.md")"
 claude_reviewer="$(< "$WORK/dist/claude/agents/infra-reviewer.md")"
-contains "$claude_writer" 'mcp__terraform__*' 'Claude writer expone el matcher scoped de terraform'
+contains "$claude_writer" 'mcp__terraform__*' 'Claude writer expone el matcher corto de terraform'
+contains "$claude_writer" 'mcp__plugin_terraform_terraform__*' 'Claude writer expone el matcher scoped del plugin terraform'
 contains "$claude_writer" 'model: "sonnet"' 'Claude writer materializa perfil balanced'
 contains "$claude_reviewer" 'model: "opus"' 'Claude reviewer materializa perfil deep'
 absent "$claude_reviewer" 'mcp__' 'Claude reviewer no expone ningun matcher MCP'
