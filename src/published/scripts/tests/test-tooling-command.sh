@@ -50,10 +50,12 @@ for forbidden in 'Claude' 'OpenCode' '.claude/' '.opencode/' 'cache' 'model:' 't
 echo '[salidas] adaptadores y mirror'
 for file in "$CLAUDE" "$OPENCODE"; do [ -f "$file" ] && pass "existe ${file#"$REPO_ROOT/"}" || fail "falta ${file#"$REPO_ROOT/"}"; done
 contains "$(< "$CLAUDE")" 'model: "haiku"' 'Claude materializa el perfil fast'
-contains "$(< "$CLAUDE")" '"${MEFISTO_PACKAGE_ROOT}/scripts/tmux-pipeline.sh" --tooling $ARGUMENTS' 'Claude cita package root con espacios'
+contains "$(< "$CLAUDE")" 'MEFISTO_RUNTIME=claude "${MEFISTO_PACKAGE_ROOT}/scripts/tmux-pipeline.sh" --tooling $ARGUMENTS' 'Claude cita package root con espacios y fija su runtime'
+absent "$(< "$CLAUDE")" 'MEFISTO_RUNTIME=opencode' 'Claude no fija el runtime OpenCode'
 contains "$(< "$OPENCODE")" 'description:' 'OpenCode materializa el comando'
 contains "$(< "$OPENCODE")" 'mefisto-opencode' 'OpenCode resuelve la release activa'
-contains "$(< "$OPENCODE")" '"${MEFISTO_PACKAGE_ROOT}/scripts/tmux-pipeline.sh" --tooling $ARGUMENTS' 'OpenCode cita package root con espacios'
+contains "$(< "$OPENCODE")" 'MEFISTO_RUNTIME=opencode "${MEFISTO_PACKAGE_ROOT}/scripts/tmux-pipeline.sh" --tooling $ARGUMENTS' 'OpenCode cita package root con espacios y fija su runtime'
+absent "$(< "$OPENCODE")" 'MEFISTO_RUNTIME=claude' 'OpenCode no fija el runtime Claude'
 if cmp -s "$MIRROR" "$CLAUDE"; then pass 'mirror Claude coincide byte a byte'; else fail 'mirror Claude diverge'; fi
 contains "$(< "$MIRROR")" '<!-- GENERADO por src/published/scripts/generate-published-adapters.sh desde src/published/commands/tooling.md. No editar a mano. -->' 'mirror conserva marcador generado'
 if "$GENERATOR" --check >/dev/null; then pass 'generate-published-adapters --check esta al dia'; else fail 'generate-published-adapters --check detecto divergencias'; fi

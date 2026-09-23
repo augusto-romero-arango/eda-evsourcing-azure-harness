@@ -74,8 +74,10 @@ contains "$(< "$CLAUDE")" 'MEFISTO_PACKAGE_ROOT' 'Claude resuelve package root u
 contains "$(< "$OPENCODE")" 'description:' 'OpenCode materializa el comando'
 contains "$(< "$OPENCODE")" 'mefisto-opencode' 'OpenCode resuelve la release activa'
 [ "$(grep -c 'MEFISTO_PACKAGE_ROOT=.*package-root' "$OPENCODE")" -eq 1 ] && pass 'OpenCode tiene un preambulo de package root' || fail 'OpenCode duplica package root'
-contains "$(< "$CLAUDE")" '"${MEFISTO_PACKAGE_ROOT}/scripts/tmux-pipeline.sh" $ARGUMENTS' 'Claude conserva package root con espacios'
-contains "$(< "$OPENCODE")" '"${MEFISTO_PACKAGE_ROOT}/scripts/tmux-pipeline.sh" $ARGUMENTS' 'OpenCode conserva package root con espacios'
+contains "$(< "$CLAUDE")" 'MEFISTO_RUNTIME=claude "${MEFISTO_PACKAGE_ROOT}/scripts/tmux-pipeline.sh" $ARGUMENTS' 'Claude conserva package root con espacios y fija su runtime'
+absent "$(< "$CLAUDE")" 'MEFISTO_RUNTIME=opencode' 'Claude no fija el runtime OpenCode'
+contains "$(< "$OPENCODE")" 'MEFISTO_RUNTIME=opencode "${MEFISTO_PACKAGE_ROOT}/scripts/tmux-pipeline.sh" $ARGUMENTS' 'OpenCode conserva package root con espacios y fija su runtime'
+absent "$(< "$OPENCODE")" 'MEFISTO_RUNTIME=claude' 'OpenCode no fija el runtime Claude'
 if cmp -s "$MIRROR" "$CLAUDE"; then pass 'mirror Claude coincide byte a byte'; else fail 'mirror Claude diverge'; fi
 contains "$(< "$MIRROR")" '<!-- GENERADO por src/published/scripts/generate-published-adapters.sh desde src/published/commands/implement.md. No editar a mano. -->' 'mirror conserva marcador generado'
 if "$GENERATOR" --check >/dev/null; then pass 'generate-published-adapters --check esta al dia'; else fail 'generate-published-adapters --check detecto divergencias'; fi

@@ -143,13 +143,13 @@ Lanza directamente el script `pr-sync.sh` con `--merge`.
 Para los PRs validados en el paso 1 (numeros separados por espacio):
 
 ```bash
-"${MEFISTO_PACKAGE_ROOT}/scripts/pr-sync.sh" <PRs> --merge
+MEFISTO_RUNTIME=claude "${MEFISTO_PACKAGE_ROOT}/scripts/pr-sync.sh" <PRs> --merge
 ```
 
 Para todos los PRs abiertos:
 
 ```bash
-"${MEFISTO_PACKAGE_ROOT}/scripts/pr-sync.sh" --all --merge
+MEFISTO_RUNTIME=claude "${MEFISTO_PACKAGE_ROOT}/scripts/pr-sync.sh" --all --merge
 ```
 
 El script imprime progreso en tiempo real. Espera a que termine.
@@ -160,7 +160,7 @@ Bajo `HERDR_ENV=1`, si la tabla de resumen del paso anterior muestra al menos un
 
 ```bash
 if [ "${HERDR_ENV:-}" = "1" ]; then
-    CLOSED=$("${MEFISTO_PACKAGE_ROOT}/scripts/herdr-pipeline.sh" --collapse-panes 2>/dev/null || true)
+    CLOSED=$(MEFISTO_RUNTIME=claude "${MEFISTO_PACKAGE_ROOT}/scripts/herdr-pipeline.sh" --collapse-panes 2>/dev/null || true)
     echo "paneles_herdr_cerrados=${CLOSED:-0}"
 fi
 ```

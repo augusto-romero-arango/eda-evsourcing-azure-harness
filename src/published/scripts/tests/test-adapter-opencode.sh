@@ -155,7 +155,7 @@ printf '%s\n' 'Recursos: {{mefisto:skill-root projections}}/read-apis.md y {{mef
 skill_root_rendered="$(render "$WORK/raiz-skill.md")"; rc=$?
 skill_root_preambles="$(printf '%s\n' "$skill_root_rendered" | grep -c 'mefisto_opencode_launcher="$(mefisto_opencode_data_root)/active/bin/mefisto-opencode"')"
 [ "$rc" -eq 0 ] && assert_contains "$skill_root_rendered" '"${MEFISTO_PACKAGE_ROOT}/skills/mefisto-projections"/read-apis.md' 'skill-root OpenCode adapta el layout físico' || fail 'skill-root OpenCode debio renderizar'
-[ "$rc" -eq 0 ] && assert_contains "$skill_root_rendered" 'paquete ${MEFISTO_PACKAGE_ROOT}; ejecuta "${MEFISTO_PACKAGE_ROOT}/scripts/prueba.sh" "$ARGUMENTS con espacios"' 'skill-root convive con package-root y run en OpenCode' || fail 'directivas de raiz combinadas no se tradujeron en OpenCode'
+[ "$rc" -eq 0 ] && assert_contains "$skill_root_rendered" 'paquete ${MEFISTO_PACKAGE_ROOT}; ejecuta MEFISTO_RUNTIME=opencode "${MEFISTO_PACKAGE_ROOT}/scripts/prueba.sh" "$ARGUMENTS con espacios"' 'skill-root convive con package-root y run en OpenCode' || fail 'directivas de raiz combinadas no se tradujeron en OpenCode'
 [ "$skill_root_preambles" -eq 1 ] && pass 'varias directivas skill-root emiten un solo preambulo OpenCode' || fail 'skill-root OpenCode duplico el preambulo'
 
 printf '%s\n' '[contrato-efectivo] config-path e instructions-path'

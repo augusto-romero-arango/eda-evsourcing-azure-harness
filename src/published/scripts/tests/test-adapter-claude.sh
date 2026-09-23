@@ -75,7 +75,7 @@ printf '%s\n' 'Recursos: {{mefisto:skill-root projections}}/read-apis.md y {{mef
 skill_root_rendered="$(render "$WORK/raiz-skill.md")"; rc=$?
 skill_root_preambles="$(printf '%s\n' "$skill_root_rendered" | grep -c 'MEFISTO_PACKAGE_ROOT="$mefisto_claude_root"')"
 [ "$rc" -eq 0 ] && contains "$skill_root_rendered" '"${MEFISTO_PACKAGE_ROOT}/skills/projections"/read-apis.md' 'skill-root Claude resuelve el Skill lógico' || fail 'skill-root Claude debio renderizar'
-[ "$rc" -eq 0 ] && contains "$skill_root_rendered" 'paquete ${MEFISTO_PACKAGE_ROOT}; ejecuta "${MEFISTO_PACKAGE_ROOT}/scripts/prueba.sh" "$ARGUMENTS con espacios"' 'skill-root convive con package-root y run en Claude' || fail 'directivas de raiz combinadas no se tradujeron en Claude'
+[ "$rc" -eq 0 ] && contains "$skill_root_rendered" 'paquete ${MEFISTO_PACKAGE_ROOT}; ejecuta MEFISTO_RUNTIME=claude "${MEFISTO_PACKAGE_ROOT}/scripts/prueba.sh" "$ARGUMENTS con espacios"' 'skill-root convive con package-root y run en Claude' || fail 'directivas de raiz combinadas no se tradujeron en Claude'
 [ "$skill_root_preambles" -eq 1 ] && pass 'varias directivas skill-root emiten un solo preambulo Claude' || fail 'skill-root Claude duplico el preambulo'
 
 printf '%s\n' '[contrato-efectivo] config-path e instructions-path'
