@@ -286,6 +286,14 @@ git -C "$MEFISTO_REPO_ROOT" show-ref --verify --quiet "refs/heads/$DOC_BRANCH" &
 REMOTE_DOC_BRANCH_EXISTS=0
 git -C "$MEFISTO_REPO_ROOT" fetch origin "refs/heads/$DOC_BRANCH:refs/remotes/origin/$DOC_BRANCH" >/dev/null 2>&1 \
     && REMOTE_DOC_BRANCH_EXISTS=1
+if [ "$REMOTE_DOC_BRANCH_EXISTS" -eq 0 ]; then
+    # El fetch de un refspec explicito no poda una tracking ref que quedo tras
+    # borrar la rama remota al mergear el PR. Esa ref seria el valor implicito
+    # del lease del push y provocaria un falso "stale info" al recrear la rama.
+    # Se borra solo la ref de esta sesion; nunca se podan refs ajenas.
+    git -C "$MEFISTO_REPO_ROOT" update-ref -d "refs/remotes/origin/$DOC_BRANCH" \
+        || recovery_abort "worktree" "No se pudo eliminar la referencia remota local obsoleta de '$DOC_BRANCH'; inspecciona 'git -C $MEFISTO_REPO_ROOT show-ref refs/remotes/origin/$DOC_BRANCH' y reintenta."
+fi
 
 SUMMARIES_DIR="$MEFISTO_REPO_ROOT/.mefisto/pipeline/summaries"
 mkdir -p "$SUMMARIES_DIR"
@@ -383,6 +391,47 @@ fi
 COMMIT_SHA="$(git -C "$WORKTREE_DIR" rev-parse HEAD)"
 LAST_CHECKPOINT="commit"
 
+# --- Consultar el PR previo y decidir la reentrega (CA-2/CA-3) --------------
+#
+# La consulta ocurre ANTES del push: si el PR anterior fue mergeado y este
+# commit ya esta en la base, no hay nada que publicar. Si contiene una segunda
+# entrega, se conserva ese hecho para crear un PR nuevo despues del push, sin
+# confundirlo con el PR mergeado de la misma rama.
+query_pr_for_branch() {
+    gh pr list --head "$DOC_BRANCH" --base "$DEFAULT_BRANCH" --repo "$MEFISTO_REPO_SLUG" \
+        --state all --json number,url,state,mergedAt,createdAt
+}
+
+PR_LIST_JSON="$(query_pr_for_branch)"
+PR_LIST_RC=$?
+if [ "$PR_LIST_RC" -ne 0 ]; then
+    recovery_abort "consulta-pr" "'gh pr list' fallo para '$DOC_BRANCH'; el commit $COMMIT_SHA sigue disponible localmente. Revisa 'gh auth status' y reintenta con los mismos flags."
+fi
+
+# GitHub no documenta el orden de `gh pr list`; elegir explicitamente el PR
+# creado mas recientemente evita reutilizar un PR mergeado si ya hay una
+# reentrega abierta desde la misma rama de sesion.
+PR_INFO="$(printf '%s' "$PR_LIST_JSON" | jq -c 'if length > 0 then sort_by(.createdAt // "", .number) | last else empty end' 2>/dev/null)"
+PR_URL=""
+PR_STATE=""
+PR_MERGED_AT=""
+REDELIVERY=0
+SKIP_PUSH=0
+
+if [ -n "$PR_INFO" ]; then
+    PR_STATE="$(printf '%s' "$PR_INFO" | jq -r '.state')"
+    PR_MERGED_AT="$(printf '%s' "$PR_INFO" | jq -r '.mergedAt')"
+    PR_URL="$(printf '%s' "$PR_INFO" | jq -r '.url')"
+    if [ "$PR_STATE" = "MERGED" ] || { [ -n "$PR_MERGED_AT" ] && [ "$PR_MERGED_AT" != "null" ]; }; then
+        if git -C "$WORKTREE_DIR" merge-base --is-ancestor "$COMMIT_SHA" "origin/$DEFAULT_BRANCH"; then
+            SKIP_PUSH=1
+            echo "PR ya mergeado: la field note de esta sesion ya fue entregada ($PR_URL)"
+        else
+            REDELIVERY=1
+        fi
+    fi
+fi
+
 # --- Push (CA-1/CA-3) --------------------------------------------------------
 #
 # `--force-with-lease`: idempotente en el camino feliz (si origin ya tiene
@@ -392,33 +441,23 @@ LAST_CHECKPOINT="commit"
 # documental de un solo dueno (esta sesion): nadie mas le hace push, y
 # --force-with-lease igual aborta si origin diverge de lo que este fetch ya
 # observo (el de "Localizar rama/worktree preexistentes", arriba).
-git -C "$WORKTREE_DIR" push --force-with-lease -u origin "$DOC_BRANCH" \
-    || recovery_abort "push" "'git push --force-with-lease' de '$DOC_BRANCH' fallo; el commit $COMMIT_SHA sigue disponible localmente en '$WORKTREE_DIR' (o reanudable con los mismos --agent/--timestamp/--session-id). Revisa conectividad de red, permisos del remoto y reintenta."
-LAST_CHECKPOINT="push"
+if [ "$SKIP_PUSH" -eq 0 ]; then
+    git -C "$WORKTREE_DIR" push --force-with-lease -u origin "$DOC_BRANCH" \
+        || recovery_abort "push" "'git push --force-with-lease' de '$DOC_BRANCH' fallo; el commit $COMMIT_SHA sigue disponible localmente en '$WORKTREE_DIR' (o reanudable con los mismos --agent/--timestamp/--session-id). Revisa conectividad de red, permisos del remoto y reintenta."
+    LAST_CHECKPOINT="push"
+fi
 
 # --- Consultar y resolver el PR (CA-2/CA-3) ---------------------------------
 #
-# query_pr_for_branch imprime el PR mas reciente de DOC_BRANCH->DEFAULT_BRANCH
-# EN CUALQUIER ESTADO ('--state all'), o cadena vacia si no hay ninguno.
-# Deliberadamente NO usa `.[0] | [...] | @tsv` como unica condicion de
-# existencia (el defecto que reporta el issue: sobre `[]` esa expresion emite
-# tabuladores para el elemento nulo, indistinguibles en bash de "hay datos").
-# En su lugar, jq evalua la LONGITUD del array antes de indexar: `empty` no
-# imprime nada en absoluto cuando no hay PR.
-query_pr_for_branch() {
-    gh pr list --head "$DOC_BRANCH" --base "$DEFAULT_BRANCH" --repo "$MEFISTO_REPO_SLUG" \
-        --state all --json number,url,state,mergedAt
-}
-
-PR_LIST_JSON="$(query_pr_for_branch)"
-PR_LIST_RC=$?
-if [ "$PR_LIST_RC" -ne 0 ]; then
-    recovery_abort "consulta-pr" "'gh pr list' fallo para '$DOC_BRANCH'; la rama y el commit $COMMIT_SHA ya estan en origin (no se perdio nada). Revisa 'gh auth status' y reintenta con los mismos flags."
-fi
-
-PR_INFO="$(printf '%s' "$PR_LIST_JSON" | jq -c 'if length > 0 then .[0] else empty end' 2>/dev/null)"
-
-if [ -z "$PR_INFO" ]; then
+if [ "$SKIP_PUSH" -eq 1 ]; then
+    : # PR_URL ya identifica la entrega mergeada; no se recrea la rama.
+elif [ "$REDELIVERY" -eq 1 ]; then
+    PR_URL="$(gh pr create --repo "$MEFISTO_REPO_SLUG" --base "$DEFAULT_BRANCH" --head "$DOC_BRANCH" \
+        --title "docs(bitacora): reentrega de field note de $AGENT ${TIMESTAMP}" \
+        --body "Reentrega aislada de la field note de la sesion $AGENT ${SESSION_ID} tras el merge del PR anterior.")" \
+        || recovery_abort "creacion-pr" "'gh pr create' de reentrega fallo; la rama '$DOC_BRANCH' con el commit $COMMIT_SHA ya esta empujada a origin. Revisa 'gh auth status' y reintenta con los mismos flags."
+    echo "PR de reentrega creado tras el merge del PR anterior"
+elif [ -z "$PR_INFO" ]; then
     # Sin `2>&1` por la misma razon que arriba, y aqui es aun mas visible:
     # `gh pr create` escribe su progreso ("Creating pull request for <head>
     # into <base> in <repo>") en stderr y SOLO la URL en stdout. Fusionarlos
@@ -430,17 +469,7 @@ if [ -z "$PR_INFO" ]; then
         || recovery_abort "creacion-pr" "'gh pr create' fallo; la rama '$DOC_BRANCH' con el commit $COMMIT_SHA ya esta empujada a origin. Revisa 'gh auth status' y reintenta con los mismos flags -- la proxima corrida encontrara la rama ya lista y solo reintentara el PR."
     echo "PR creado (no existia ninguno para '$DOC_BRANCH')"
 else
-    PR_STATE="$(printf '%s' "$PR_INFO" | jq -r '.state')"
-    PR_MERGED_AT="$(printf '%s' "$PR_INFO" | jq -r '.mergedAt')"
-    PR_URL="$(printf '%s' "$PR_INFO" | jq -r '.url')"
-
-    # `state == "MERGED"` ya deberia bastar (asi lo modela `gh`), pero
-    # `mergedAt` no nulo es la evidencia de respaldo que pide el issue: un
-    # `state: CLOSED` por si solo no distingue cierre sin merge de entrega
-    # completada.
-    if [ "$PR_STATE" = "MERGED" ] || { [ -n "$PR_MERGED_AT" ] && [ "$PR_MERGED_AT" != "null" ]; }; then
-        echo "PR ya mergeado: la field note de esta sesion ya fue entregada ($PR_URL)"
-    elif [ "$PR_STATE" = "OPEN" ]; then
+    if [ "$PR_STATE" = "OPEN" ]; then
         echo "PR ya existente reutilizado (no se llamo a 'gh pr create')"
     else
         gh pr reopen --repo "$MEFISTO_REPO_SLUG" "$PR_URL" \

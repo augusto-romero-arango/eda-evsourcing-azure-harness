@@ -32,8 +32,9 @@
 #   [E]   PR abierto preexistente se reutiliza sin llamar a 'gh pr create'
 #         (CA-2).
 #   [F]   PR cerrado SIN merge se reabre via 'gh pr reopen' (CA-2).
-#   [G]   PR ya MERGEADO se considera entregado: no llama ni a 'gh pr create'
-#         ni a 'gh pr reopen' (CA-2, distingue de un CLOSED sin merge).
+#   [G]   PR mergeado con rama borrada: elimina la tracking ref rancia, no
+#         publica contenido identico, crea un PR de reentrega con contenido
+#         nuevo y reutiliza ese PR en un tercer cierre (issue #1554).
 #   [H]   Un fallo recuperable por checkpoint (CA-3): worktree (fetch remoto
 #         roto), commit (gpg.program invalido), push (hook pre-receive que
 #         rechaza 'docs/*'), consulta-pr ('gh pr list' con exit 1),
@@ -212,7 +213,7 @@ fi
 if [ "\$1" = "pr" ] && [ "\$2" = "list" ]; then
     head=\$(get_opt --head "\$@")
     base=\$(get_opt --base "\$@")
-    row=\$(awk -F'\t' -v h="\$head" -v b="\$base" '\$5 == h && \$6 == b { print; exit }' "$store" 2>/dev/null)
+    row=\$(awk -F'\t' -v h="\$head" -v b="\$base" '\$5 == h && \$6 == b { row = \$0 } END { print row }' "$store" 2>/dev/null)
     if [ -z "\$row" ]; then
         echo "[]"
         exit 0
@@ -741,10 +742,10 @@ else
     fail "CA-2: el PR deberia quedar OPEN tras reabrirse, quedo '$STORE_STATE_F'"
 fi
 
-# -------- Bloque G: PR ya MERGEADO se considera entregado (CA-2) --------
+# -------- Bloque G: reentrega tras PR mergeado (issue #1554) ----------------
 
 echo ""
-echo "[G] PR ya mergeado: se considera entregado, sin 'gh pr create' ni 'gh pr reopen'"
+echo "[G] PR mergeado y rama borrada: entrega identica, reentrega y tercer cierre"
 
 new_repo "g"
 FAKE_BIN_G="$TMP/g/bin"
@@ -769,32 +770,69 @@ git -C "$TMP/g/prep-wt" commit -q -m "docs(bitacora): agregar field note de $AGE
 git -C "$TMP/g/prep-wt" push -q -u origin "$DOC_BRANCH_G"
 git -C "$REPO_MAIN" worktree remove "$TMP/g/prep-wt"
 
+# Simula el merge y el borrado remoto del PR original. La tracking ref local
+# queda deliberadamente rancia para comprobar su eliminacion puntual.
+git -C "$REPO_MAIN" merge -q --ff-only "$DOC_BRANCH_G"
+git -C "$REPO_MAIN" push -q origin main
+git -C "$REPO_MAIN" push -q origin --delete "$DOC_BRANCH_G"
+git -C "$REPO_MAIN" update-ref "refs/remotes/origin/$DOC_BRANCH_G" "$(git -C "$REPO_MAIN" rev-parse "$DOC_BRANCH_G")"
+
 PR_URL_G="https://github.com/$REPO_SLUG/pull/9"
 seed_pr_store_row "$STORE_G" 9 "$PR_URL_G" "MERGED" "2026-09-13T19:30:00Z" "$DOC_BRANCH_G" "main"
 
 G_RC=$(run_field_note "$FAKE_BIN_G" "$AGENT_G" "$TIMESTAMP_G" "$SESSION_ID_G" "$CONTENT_G" "$TMP/g-stdout" "$TMP/g-stderr")
 if [ "$G_RC" -eq 0 ]; then
-    pass "PR mergeado: exit 0"
+    pass "entrega identica tras merge: exit 0"
 else
-    fail "PR mergeado: exit $G_RC. stdout=$(cat "$TMP/g-stdout") stderr=$(cat "$TMP/g-stderr")"
+    fail "entrega identica tras merge: exit $G_RC. stdout=$(cat "$TMP/g-stdout") stderr=$(cat "$TMP/g-stderr")"
 fi
 
-if grep -qF "mergeado" "$TMP/g-stdout"; then
-    pass "CA-2: reporta que el PR ya fue mergeado/entregado"
+if grep -q '^PR: '"$PR_URL_G"'$' "$TMP/g-stdout"; then
+    pass "CA-2: la entrega identica informa la URL del PR mergeado"
 else
-    fail "CA-2: no reporto el estado mergeado. stdout: $(cat "$TMP/g-stdout")"
+    fail "CA-2: URL del PR mergeado ausente. stdout: $(cat "$TMP/g-stdout")"
 fi
 
 if grep -qE '^pr create ' "$GH_CALL_LOG_G"; then
-    fail "CA-2: 'gh pr create' NO deberia haberse llamado con un PR ya mergeado"
+    fail "CA-2: la entrega identica no deberia crear otro PR"
 else
-    pass "CA-2: 'gh pr create' no se llamo (PR ya mergeado)"
+    pass "CA-2: la entrega identica no llama a 'gh pr create'"
 fi
 
-if grep -qE '^pr reopen ' "$GH_CALL_LOG_G"; then
-    fail "CA-2: 'gh pr reopen' NO deberia haberse llamado con un PR ya mergeado (MERGED != CLOSED sin merge)"
+if git --git-dir="$REPO_BARE" show-ref --verify --quiet "refs/heads/$DOC_BRANCH_G"; then
+    fail "CA-2: la entrega identica no deberia recrear la rama remota"
 else
-    pass "CA-2: 'gh pr reopen' no se llamo (MERGED se distingue de CLOSED sin merge)"
+    pass "CA-2: la entrega identica no recrea la rama remota"
+fi
+
+if git -C "$REPO_MAIN" show-ref --verify --quiet "refs/remotes/origin/$DOC_BRANCH_G"; then
+    fail "CA-1: la tracking ref rancia deberia eliminarse"
+else
+    pass "CA-1: se elimino solo la tracking ref rancia de la rama borrada"
+fi
+
+G2_CONTENT='## Contexto
+PR mergeado; contenido ampliado para la reentrega.'
+G2_RC=$(run_field_note "$FAKE_BIN_G" "$AGENT_G" "$TIMESTAMP_G" "$SESSION_ID_G" "$G2_CONTENT" "$TMP/g2-stdout" "$TMP/g2-stderr")
+PR_URL_G2="https://github.com/$REPO_SLUG/pull/2"
+if [ "$G2_RC" -eq 0 ] && grep -q '^PR: '"$PR_URL_G2"'$' "$TMP/g2-stdout"; then
+    pass "CA-3: contenido nuevo crea e informa un PR de reentrega"
+else
+    fail "CA-3: reentrega inesperada. rc=$G2_RC stdout=$(cat "$TMP/g2-stdout") stderr=$(cat "$TMP/g2-stderr")"
+fi
+
+if grep -qE '^pr create .*--title docs\(bitacora\): reentrega' "$GH_CALL_LOG_G"; then
+    pass "CA-3: el PR nuevo lleva titulo marcado como reentrega"
+else
+    fail "CA-3: falta el titulo de reentrega. Llamadas: $(cat "$GH_CALL_LOG_G")"
+fi
+
+G3_RC=$(run_field_note "$FAKE_BIN_G" "$AGENT_G" "$TIMESTAMP_G" "$SESSION_ID_G" "$G2_CONTENT" "$TMP/g3-stdout" "$TMP/g3-stderr")
+PR_CREATE_CALLS_G=$(grep -cE '^pr create ' "$GH_CALL_LOG_G" || true)
+if [ "$G3_RC" -eq 0 ] && [ "$PR_CREATE_CALLS_G" -eq 1 ] && grep -q '^PR: '"$PR_URL_G2"'$' "$TMP/g3-stdout"; then
+    pass "CA-4: el tercer cierre reutiliza el PR de reentrega mas reciente"
+else
+    fail "CA-4: tercer cierre creo o informo un PR incorrecto. rc=$G3_RC creates=$PR_CREATE_CALLS_G stdout=$(cat "$TMP/g3-stdout")"
 fi
 
 # -------- Bloque H: un fallo recuperable por checkpoint (CA-3) --------
@@ -873,7 +911,8 @@ else
 fi
 assert_main_untouched "H3" "$REPO_MAIN" "$REF_H3" "$SHA_H3" "$STATUS_H3"
 
-# H4: checkpoint 'consulta-pr' -- 'gh pr list' falla tras un push exitoso.
+# H4: checkpoint 'consulta-pr' -- 'gh pr list' falla antes del push, porque la
+# consulta previa permite detectar una reentrega antes de publicar la rama.
 new_repo "h4"
 REF_H4=$(git -C "$REPO_MAIN" symbolic-ref -q --short HEAD)
 SHA_H4=$(git -C "$REPO_MAIN" rev-parse HEAD)
@@ -894,16 +933,16 @@ exit 1
 EOF
 chmod +x "$FAKE_BIN_H4/gh"
 H4_RC=$(run_field_note "$FAKE_BIN_H4" "mefisto-planner" "2026-09-13-2000" "2026-09-13-2000-01-h4-55504" "contenido h4" "$TMP/h4-stdout" "$TMP/h4-stderr")
-if [ "$H4_RC" -ne 0 ] && grep -qF "fallo en el paso 'consulta-pr'" "$TMP/h4-stderr" && grep -qF "Ultimo checkpoint confirmado: push" "$TMP/h4-stderr"; then
-    pass "H4 (consulta-pr rota): aborta con checkpoint 'push' confirmado y paso 'consulta-pr' identificado"
+if [ "$H4_RC" -ne 0 ] && grep -qF "fallo en el paso 'consulta-pr'" "$TMP/h4-stderr" && grep -qF "Ultimo checkpoint confirmado: commit" "$TMP/h4-stderr"; then
+    pass "H4 (consulta-pr rota): aborta con checkpoint 'commit' confirmado y paso 'consulta-pr' identificado"
 else
     fail "H4 (consulta-pr rota): stderr inesperado: $(cat "$TMP/h4-stderr")"
 fi
 DOC_BRANCH_H4="docs/mefisto-planner-field-note-2026-09-13-2000-01-h4-55504"
 if git --git-dir="$REPO_BARE" show-ref --verify --quiet "refs/heads/$DOC_BRANCH_H4"; then
-    pass "H4: la rama quedo empujada en origin (el commit no se perdio pese al fallo de consulta)"
+    fail "H4: la rama no deberia empujarse si falla la consulta previa del PR"
 else
-    fail "H4: la rama no llego a origin"
+    pass "H4: la rama no se empujo al fallar la consulta previa del PR"
 fi
 assert_main_untouched "H4" "$REPO_MAIN" "$REF_H4" "$SHA_H4" "$STATUS_H4"
 
