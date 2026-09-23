@@ -122,6 +122,12 @@ COV_TABLE=""
 # y ese bloque corre tambien en las rutas donde el Stage 4 no se ejecuto
 # (refactor puro, --from-stage 5): sin este default, `set -u` la volaria.
 NOT_EVALUATED_FILES=""
+# Ruta que dispara la nota de anomalia de deteccion del Stage 2b (issue
+# #1562): un match de src/ que el sed de derivacion de dominio no supo
+# transformar. Se inicializa aqui (y no solo en Stage 2b) porque la
+# construccion del cuerpo del PR la lee incluso cuando Stage 2b no corrio
+# (refactor puro, --from-stage 3): sin este default, `set -u` la volaria.
+SMOKE_ANOMALY_PATH=""
 PIPELINE_TESTS=""
 PIPELINE_PR=""
 HAS_BLOCKAGE=false
@@ -1095,22 +1101,43 @@ fi
 # "Mcp.{Proposito}" completo de src/{NS}.Mcp.{Proposito}/... (el punto interno
 # no es separador de ruta), asi que ya cae en tests/{NS}.Mcp.{Proposito}.SmokeTests.
 if [ "$IS_REFACTOR" != true ] && [ "$FROM_STAGE" -le 2 ]; then
-    MCP_TOOL_PATTERN="src/${HARNESS_NAMESPACE_PREFIX}\.Mcp\.[^/]+/.*Tool\.cs$"
+    # Anclado a src/ (issue #1562): SNAPSHOT_COMMIT se toma ANTES de Stage 1,
+    # asi que el diff incluye los tests que escribio el test-writer -- sin el
+    # anclaje, una ruta tests/.../XFunction/... coincide con el patron
+    # 'Function/' igual que su equivalente de produccion, y el sed de
+    # deteccion de dominio (mas abajo) solo entiende src/<ns>.<Dominio>/...:
+    # un match de tests/ le deja una ruta invalida y Stage 2b se marcaba
+    # "skipped" con el mismo log que un skip legitimo (falso negativo
+    # silencioso, certificacion v0.38.2).
+    MCP_TOOL_PATTERN="^src/${HARNESS_NAMESPACE_PREFIX}\.Mcp\.[^/]+/.*Tool\.cs$"
     if [ "$IS_PROJECTION" = true ]; then
         SMOKE_FILES=$(git -C "$WORKTREE_PATH" diff --name-only "$SNAPSHOT_COMMIT"..HEAD \
-            | grep -E "Function/|/(Obtener|Listar)[A-Za-z0-9]*/FunctionEndpoint\.cs$|${MCP_TOOL_PATTERN}" || true)
+            | grep -E "^src/.*Function/|^src/.*/(Obtener|Listar)[A-Za-z0-9]*/FunctionEndpoint\.cs$|${MCP_TOOL_PATTERN}" || true)
     else
-        SMOKE_FILES=$(git -C "$WORKTREE_PATH" diff --name-only "$SNAPSHOT_COMMIT"..HEAD | grep -E "Function/|${MCP_TOOL_PATTERN}" || true)
+        SMOKE_FILES=$(git -C "$WORKTREE_PATH" diff --name-only "$SNAPSHOT_COMMIT"..HEAD | grep -E "^src/.*Function/|${MCP_TOOL_PATTERN}" || true)
     fi
 
     if [ -n "$SMOKE_FILES" ]; then
         # Detectar dominio (o servidor MCP) desde los archivos modificados
-        SMOKE_DOMAIN=$(echo "$SMOKE_FILES" | head -1 | sed "s|src/${HARNESS_NAMESPACE_PREFIX}\.\([^/]*\)/.*|\1|")
+        FIRST_SMOKE_FILE=$(echo "$SMOKE_FILES" | head -1)
+        SMOKE_DOMAIN=$(echo "$FIRST_SMOKE_FILE" | sed "s|src/${HARNESS_NAMESPACE_PREFIX}\.\([^/]*\)/.*|\1|")
         SMOKE_TEST_PROJECT="tests/${HARNESS_NAMESPACE_PREFIX}.${SMOKE_DOMAIN}.SmokeTests"
         IS_MCP_SMOKE=false
-        echo "$SMOKE_FILES" | head -1 | grep -qE "$MCP_TOOL_PATTERN" && IS_MCP_SMOKE=true
+        echo "$FIRST_SMOKE_FILE" | grep -qE "$MCP_TOOL_PATTERN" && IS_MCP_SMOKE=true
 
-        if [ -d "$WORKTREE_PATH/$SMOKE_TEST_PROJECT" ]; then
+        if [ "$SMOKE_DOMAIN" = "$FIRST_SMOKE_FILE" ] || [[ "$SMOKE_DOMAIN" == */* ]]; then
+            # El sed no transformo la ruta (o dejo un resultado con '/', p. ej. un
+            # src/ anidado): el match de src/ no tiene la forma src/<ns>.<Dominio>/...
+            # que la derivacion de dominio entiende (issue #1562, decision A). Senal visible en vez de un skip indistinguible
+            # del legitimo: warn + evento SMOKE_ANOMALY + nota en el PR.
+            # AGENT_ST_RES se mantiene en "skipped" para no alterar el formato
+            # de metricas/historial (se descarto un resultado nuevo "anomaly").
+            warn "No se pudo derivar el dominio de smoke tests desde '$FIRST_SMOKE_FILE' — revisa el patron de deteccion de Stage 2b"
+            echo "[$(date +%H:%M:%S)] SMOKE_ANOMALY: $FIRST_SMOKE_FILE" >> "$EVENTS_LOG_ABS"
+            SMOKE_ANOMALY_PATH="$FIRST_SMOKE_FILE"
+            AGENT_ST_RES="skipped"
+            update_status "2b-smoke-test-writer" "skipped"
+        elif [ -d "$WORKTREE_PATH/$SMOKE_TEST_PROJECT" ]; then
             header "Stage 2b: Smoke Test Writer"
 
             if [ "$IS_MCP_SMOKE" = true ]; then
@@ -2116,6 +2143,19 @@ ${ST_SUMMARY}
             fi
         fi
 
+        # Nota de anomalia de deteccion del Stage 2b (issue #1562): un match
+        # bajo src/ que no permitio derivar el proyecto de smoke tests. Senal
+        # visible para revision humana del patron de deteccion -- AGENT_ST_RES
+        # se mantiene en "skipped" (ver Stage 2b), asi que sin esta nota la
+        # anomalia quedaria indistinguible de un skip legitimo.
+        SMOKE_ANOMALY_SECTION=""
+        if [ -n "$SMOKE_ANOMALY_PATH" ]; then
+            SMOKE_ANOMALY_SECTION="## Anomalia de deteccion (Stage 2b)
+
+Un match bajo \`src/\` no permitio derivar el proyecto de smoke tests: \`$SMOKE_ANOMALY_PATH\`. Revisa el patron de deteccion en \`scripts/tdd-pipeline.sh\` (Stage 2b) -- se salto con \`AGENT_ST_RES=skipped\`, igual que un dominio sin proyecto SmokeTests, pero aqui la causa es un patron no reconocido.
+"
+        fi
+
         # Construir seccion de cobertura para el PR
         COVERAGE_SECTION=""
         if [ -n "$COV_TABLE" ]; then
@@ -2168,7 +2208,7 @@ ${RV_SUMMARY}
 
 </details>
 
-${COVERAGE_SECTION}## Commits
+${SMOKE_ANOMALY_SECTION}${COVERAGE_SECTION}## Commits
 
 $COMMITS_LIST
 
