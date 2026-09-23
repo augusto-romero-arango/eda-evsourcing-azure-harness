@@ -235,7 +235,7 @@ resolve_infra_model() {
         abort "No se pudo resolver el modelo de $agent_id (perfil $profile): ${MEFISTO_MODELS_ERROR:-motivo desconocido}"
     fi
     RESOLVED_INFRA_MODEL="$(cat "$output")"; rm -f "$output"
-    echo "[$(date +%H:%M:%S)] MODELS: $agent_id runtime=$MEFISTO_RUNTIME_RESUELTO perfil=$profile resuelto='${RESOLVED_INFRA_MODEL:-<heredado>}'" >> "$EVENTS_LOG_ABS"
+    echo "[$(date +%H:%M:%S)] MODELS: $agent_id runtime=$MEFISTO_RUNTIME_RESUELTO perfil=$profile solicitado=<automatico> resuelto='${RESOLVED_INFRA_MODEL:-<heredado>}'" >> "$EVENTS_LOG_ABS"
 }
 resolve_infra_model infra-writer balanced
 MODEL_WRITER="$RESOLVED_INFRA_MODEL"
