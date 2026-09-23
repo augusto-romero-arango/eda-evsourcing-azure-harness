@@ -1,0 +1,80 @@
+#!/usr/bin/env bash
+# Contrato del comando sequential neutral y sus dos proyecciones publicadas.
+set -uo pipefail
+export LC_ALL=C
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+REPO_ROOT="$(cd "$HERE/../../../.." && pwd -P)"
+SOURCE="$REPO_ROOT/src/published/commands/sequential.md"
+CLAUDE="$REPO_ROOT/dist/claude/commands/sequential.md"
+OPENCODE="$REPO_ROOT/dist/opencode/commands/mefisto:sequential.md"
+MIRROR="$REPO_ROOT/commands/sequential.md"
+GENERATOR="$REPO_ROOT/src/published/scripts/generate-published-adapters.sh"
+PASS=0; FAIL=0
+pass() { printf '  PASS: %s\n' "$1"; PASS=$((PASS + 1)); }
+fail() { printf '  FAIL: %s\n' "$1"; FAIL=$((FAIL + 1)); }
+contains() { case "$1" in *"$2"*) pass "$3" ;; *) fail "$3" ;; esac; }
+absent() { case "$1" in *"$2"*) fail "$3" ;; *) pass "$3" ;; esac; }
+
+echo '[fuente] contrato neutral'
+if bash "$REPO_ROOT/src/published/scripts/validate-published-artifacts.sh" "$SOURCE" >/dev/null; then pass 'la fuente valida'; else fail 'la fuente no valida'; fi
+metadata="$(awk 'NR == 1 { next } $0 == "---" { exit } { print }' "$SOURCE")"
+if printf '%s' "$metadata" | jq -e '.kind == "command" and .id == "sequential" and .profile == "fast" and .arguments == "<issue1> <issue2> ... [--pipeline tdd|tooling]" and (keys | sort) == ["arguments", "description", "id", "kind", "profile"]' >/dev/null; then pass 'metadata sin agent ni capabilities'; else fail 'metadata neutral invalida'; fi
+body="$(awk 'NR == 1 { next } $0 == "---" && !seen { seen=1; next } seen { print }' "$SOURCE")"
+contains "$body" '{{mefisto:assert-consumer-repo}}' 'guard consumidor presente'
+guard_line="$(grep -nF '{{mefisto:assert-consumer-repo}}' "$SOURCE" | cut -d: -f1)"
+operation_line="$(awk '/gh issue view/ { print NR; exit }' "$SOURCE")"
+[ -n "$guard_line" ] && [ -n "$operation_line" ] && [ "$guard_line" -lt "$operation_line" ] && pass 'guard precede cualquier operacion' || fail 'guard no precede las operaciones'
+contains "$body" '{{mefisto:run tmux-pipeline.sh --batch $ARGUMENTS}}' 'despacho neutral exacto'
+[ "$(grep -cF '{{mefisto:run tmux-pipeline.sh --batch $ARGUMENTS}}' "$SOURCE")" -eq 1 ] && pass 'existe un unico despacho' || fail 'el despacho no es unico'
+contains "$body" 'gh issue view' 'valida issues antes de lanzar'
+contains "$body" 'esta cerrado, informalo y excluyelo' 'excluye issues inexistentes o cerrados'
+contains "$body" 'Si no queda ningun issue valido, detente' 'se detiene sin issues validos'
+contains "$body" 'pipeline resuelto' 'resumen numerado con el pipeline resuelto'
+contains "$body" 'pasando `--pipeline` si el usuario lo proporciono' 'pasa --pipeline al wrapper'
+contains "$body" 'Herdr' 'documenta despacho Herdr'
+contains "$body" 'sesion tmux' 'documenta despacho tmux'
+contains "$body" '{{mefisto:command work-status}}' 'referencia work-status via directiva command'
+contains "$body" '{{mefisto:command batch-stop}}' 'referencia batch-stop via directiva command'
+contains "$body" 'No esperes a que termine' 'regla: no esperar'
+contains "$body" 'No implementes nada tu mismo' 'regla: no implementar'
+contains "$body" '{{mefisto:package-root}}/scripts/batch-pipeline.sh' 'regla --stop-on-error apunta a batch-pipeline.sh via package-root'
+contains "$body" 'tmux-pipeline.sh` no lo soporta' 'regla --stop-on-error explica la limitacion de tmux-pipeline.sh'
+for forbidden in 'Claude' 'OpenCode' '.claude/' '.opencode/' 'cache' 'model:' 'tools:' 'allowed-tools:' 'permission:' '.plugin-root' 'CLAUDE_' 'plugins/cache'; do absent "$body" "$forbidden" "fuente no publica token prohibido: $forbidden"; done
+
+echo '[salidas] adaptadores y mirror'
+for file in "$CLAUDE" "$OPENCODE"; do [ -f "$file" ] && pass "existe ${file#"$REPO_ROOT/"}" || fail "falta ${file#"$REPO_ROOT/"}"; done
+claude_body="$(< "$CLAUDE")"
+opencode_body="$(< "$OPENCODE")"
+contains "$claude_body" 'MEFISTO_RUNTIME=claude "${MEFISTO_PACKAGE_ROOT}/scripts/tmux-pipeline.sh" --batch $ARGUMENTS' 'Claude invoca tmux-pipeline.sh --batch y fija su runtime'
+absent "$claude_body" 'MEFISTO_RUNTIME=opencode' 'Claude no fija el runtime OpenCode'
+contains "$opencode_body" 'MEFISTO_RUNTIME=opencode "${MEFISTO_PACKAGE_ROOT}/scripts/tmux-pipeline.sh" --batch $ARGUMENTS' 'OpenCode invoca tmux-pipeline.sh --batch y fija su runtime'
+absent "$opencode_body" 'MEFISTO_RUNTIME=claude' 'OpenCode no fija el runtime Claude'
+contains "$claude_body" 'model: "haiku"' 'Claude materializa el perfil fast'
+absent "$opencode_body" 'model:' 'OpenCode no emite model'
+contains "$claude_body" '/mefisto:work-status' 'Claude resuelve la directiva command a /mefisto:work-status'
+contains "$opencode_body" '/mefisto:work-status' 'OpenCode resuelve la directiva command a /mefisto:work-status'
+contains "$claude_body" '/mefisto:batch-stop' 'Claude resuelve la directiva command a /mefisto:batch-stop'
+contains "$opencode_body" '/mefisto:batch-stop' 'OpenCode resuelve la directiva command a /mefisto:batch-stop'
+# La invocacion propia del comando (la linea que lanza tmux-pipeline.sh) no
+# debe reimplementar el lookup manual legacy que traia el comando Claude-only:
+# eso es lo que la directiva {{mefisto:run}} sustituye. El preambulo
+# compartido de resolucion de MEFISTO_PACKAGE_ROOT (identico en todo comando
+# ya migrado, p.ej. tooling.md) sigue citando el marcador canonico Claude como
+# fallback de lectura y queda fuera de este chequeo.
+claude_invocation="$(printf '%s\n' "$claude_body" | grep -F 'scripts/tmux-pipeline.sh" --batch')"
+opencode_invocation="$(printf '%s\n' "$opencode_body" | grep -F 'scripts/tmux-pipeline.sh" --batch')"
+for forbidden_path in '.claude/pipeline/.plugin-root' 'plugins/cache'; do
+    absent "$claude_invocation" "$forbidden_path" "invocacion Claude no reimplementa el lookup legacy ($forbidden_path)"
+    absent "$opencode_invocation" "$forbidden_path" "invocacion OpenCode no reimplementa el lookup legacy ($forbidden_path)"
+done
+absent "$opencode_body" '.claude/pipeline/.plugin-root' 'salida OpenCode completa sin marcador Claude'
+absent "$opencode_body" 'plugins/cache' 'salida OpenCode completa sin cache de plugins'
+if cmp -s "$MIRROR" "$CLAUDE"; then pass 'mirror Claude coincide byte a byte'; else fail 'mirror Claude diverge'; fi
+contains "$(< "$MIRROR")" '<!-- GENERADO por src/published/scripts/generate-published-adapters.sh desde src/published/commands/sequential.md. No editar a mano. -->' 'mirror conserva marcador generado'
+if [ -x "$REPO_ROOT/dist/claude/scripts/batch-pipeline.sh" ]; then pass 'batch-pipeline.sh empaquetado en dist/claude/scripts'; else fail 'falta dist/claude/scripts/batch-pipeline.sh'; fi
+if [ -x "$REPO_ROOT/dist/opencode/scripts/batch-pipeline.sh" ]; then pass 'batch-pipeline.sh empaquetado en dist/opencode/scripts'; else fail 'falta dist/opencode/scripts/batch-pipeline.sh'; fi
+if cmp -s "$REPO_ROOT/scripts/batch-pipeline.sh" "$REPO_ROOT/dist/opencode/scripts/batch-pipeline.sh"; then pass 'batch-pipeline.sh identico en dist/opencode/scripts'; else fail 'dist/opencode/scripts/batch-pipeline.sh diverge de la fuente'; fi
+if "$GENERATOR" --check >/dev/null; then pass 'generate-published-adapters --check esta al dia'; else fail 'generate-published-adapters --check detecto divergencias'; fi
+
+printf 'RESULTADO: %s pasaron, %s fallaron\n' "$PASS" "$FAIL"
+exit "$FAIL"
