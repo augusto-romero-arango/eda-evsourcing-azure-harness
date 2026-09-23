@@ -33,6 +33,9 @@ contains 'runtime_cli_available "$MEFISTO_RUNTIME_RESUELTO"' 'valida el CLI medi
 contains 'agent_events_completed_successfully "$events_file"' 'exige terminal exitoso neutral'
 contains 'classify_neutral_agent_failure "$run_exit" "$events_file"' 'clasifica el terminal neutral'
 contains 'agent_hold_wait "$EVENTS_LOG_ABS" "$failure_type" "$hold_started" "$(agent_events_resets_at "$events_file")"' 'hold consume resets_at neutral'
+contains 'update_status "$stage-$agent" "hold"' 'hold estructurado: run_agent actualiza el status antes de esperar (issue #1600)'
+contains 'HOLD_CAUSE_JSON="null"; HOLD_NEXT_PROBE_JSON="null"; HOLD_CEILING_JSON="null"; HOLD_TOTAL="$hold_total"' 'hold estructurado: run_agent limpia cause/next_probe/ceiling al terminar (issue #1600)'
+contains '"hold": {"cause": $HOLD_CAUSE_JSON, "next_probe": $HOLD_NEXT_PROBE_JSON, "ceiling_seconds": $HOLD_CEILING_JSON, "accumulated_seconds": $HOLD_TOTAL}' 'hold estructurado: update_status incluye el bloque hold (issue #1600)'
 contains 'args+=(--resume-session "$resume_session")' 'sonda reanuda por session_id'
 contains 'agent_events_denials "$events_file"' 'retry unico consume denegaciones neutrales'
 contains 'TIMEOUT|KILLED|STREAM_CUT|PROTOCOL_INVALID' 'terminales incompletos excluyen recuperacion'
@@ -212,7 +215,10 @@ mefisto_state_read_first(){ local rel="$1" root="$2"; local canonical="$root/.me
 log(){ :; }
 warn(){ :; }
 abort(){ printf 'ABORT:%s\n' "$1" > "$TMP/abort"; exit 99; }
-update_status(){ :; }
+# update_status persiste cada invocacion como una linea jsonl con el bloque
+# hold vigente al momento de la llamada (issue #1600, CA-4): asi el test puede
+# inspeccionar el estado "hold" intermedio sin depender de un status file real.
+update_status(){ printf '{"stage":"%s","state":"%s","hold":{"cause":%s,"next_probe":%s,"ceiling_seconds":%s,"accumulated_seconds":%s}}\n' "$1" "$2" "$HOLD_CAUSE_JSON" "$HOLD_NEXT_PROBE_JSON" "$HOLD_CEILING_JSON" "$HOLD_TOTAL" >> "$TMP/status-calls.jsonl"; }
 compute_stage_metrics(){ printf '{}'; }
 HARNESS_IDENTITY_JSON='null'
 enrich_stage_metrics(){ printf '%s' "${3:-null}"; }
@@ -224,7 +230,7 @@ agent_events_denials(){ agent_events_value "$1" '[.[] | select(.type == "run.fai
 agent_events_completed_successfully(){ jq -e -s '[.[] | select(.type == "run.failed" or .type == "run.completed")] | last | .type == "run.completed" and .status == "success"' "$1" >/dev/null 2>&1; }
 classify_neutral_agent_failure(){ case "$1" in 124) printf TIMEOUT;; *) printf '%s' "$(agent_events_kind "$2" | tr '[:lower:]' '[:upper:]')";; esac; }
 agent_failure_is_holdable(){ [ "$1" = RATE_LIMIT ] || [ "$1" = PROVIDER_UNAVAILABLE ]; }
-agent_hold_wait(){ printf 0; }
+agent_hold_wait(){ printf 1; }
 runtime_supports_resume(){ return 0; }
 resolve_stage_model(){ [ "${WITH_MODEL:-false}" = true ] && printf 'vendor/model'; return 0; }
 resolve_declared_agent_model(){ :; }
@@ -235,13 +241,16 @@ dotnet(){ printf called > "$TMP/gate-called"; return 0; }
 AGENT_TW_RES=pending; AGENT_IM_RES=pending; AGENT_ST_RES=pending; AGENT_RV_RES=pending
 AGENT_TW_METRICS_JSON=; AGENT_IM_METRICS_JSON=; AGENT_ST_METRICS_JSON=; AGENT_RV_METRICS_JSON=
 LAST_AGENT_DURATION=0; LAST_AGENT_METRICS_JSON=
+HOLD_CAUSE_JSON="null" HOLD_NEXT_PROBE_JSON="null" HOLD_CEILING_JSON="null" HOLD_TOTAL=0
 run_agent "$STAGE" "$AGENT" "${PROMPT:-prompt de regresion}"
 collect_summary "$STAGE" "$AGENT" > "$TMP/collected-summary"
+printf '%s\n%s\n%s\n' "$HOLD_CAUSE_JSON" "$HOLD_NEXT_PROBE_JSON" "$HOLD_TOTAL" > "$TMP/hold-after"
 EOF
 } > "$TMP/case.sh"
 
 reset_case() {
     rm -f "$TMP"/call-*.args "$TMP/calls" "$TMP/abort" "$TMP/gate-called" "$TMP/collected-summary" "$WT/src/partial.txt"
+    rm -f "$TMP/status-calls.jsonl" "$TMP/hold-after"
     rm -f "$WT/.mefisto/pipeline/summaries"/*.md "$WT/.claude/pipeline/summaries"/*.md
     git -C "$WT" reset -q --hard HEAD~1 2>/dev/null || true
 }
@@ -296,6 +305,29 @@ if run_case hold && [ "$(cat "$TMP/calls")" = 2 ] \
     pass 'fallo holdable sondea y reanuda por session_id neutral'
 else
     fail 'hold no produjo una unica sonda reanudada'
+fi
+
+# CA-4 (issue #1600): mismo escenario "hold" de arriba, verificando ademas el
+# bloque hold estructurado del status -- (a) durante la espera, state=hold con
+# cause/next_probe no nulos; (b) al completar, cause/next_probe vuelven a null
+# y accumulated_seconds conserva el total esperado (agent_hold_wait stub
+# duerme 1s, ver el stub en case.sh).
+HOLD_STATUS_LINE="$(jq -c 'select(.state == "hold")' "$TMP/status-calls.jsonl" 2>/dev/null | tail -1)"
+if [ -n "$HOLD_STATUS_LINE" ] \
+    && printf '%s' "$HOLD_STATUS_LINE" | jq -e '.hold.cause == "RATE_LIMIT"' >/dev/null 2>&1 \
+    && printf '%s' "$HOLD_STATUS_LINE" | jq -e '.hold.next_probe != null' >/dev/null 2>&1; then
+    pass 'CA-4a: durante la espera el status queda en state=hold con cause/next_probe no nulos'
+else
+    fail "CA-4a: status durante la espera no cumple el contrato: $HOLD_STATUS_LINE"
+fi
+HOLD_AFTER_CAUSE="$(sed -n '1p' "$TMP/hold-after" 2>/dev/null)"
+HOLD_AFTER_PROBE="$(sed -n '2p' "$TMP/hold-after" 2>/dev/null)"
+HOLD_AFTER_TOTAL="$(sed -n '3p' "$TMP/hold-after" 2>/dev/null)"
+if [ "$HOLD_AFTER_CAUSE" = "null" ] && [ "$HOLD_AFTER_PROBE" = "null" ] \
+    && [ -n "$HOLD_AFTER_TOTAL" ] && [ "$HOLD_AFTER_TOTAL" -ge 1 ]; then
+    pass 'CA-4b: al completar, cause/next_probe vuelven a null y accumulated_seconds conserva el total (>=1)'
+else
+    fail "CA-4b: hold tras completar no limpio (cause=$HOLD_AFTER_CAUSE next_probe=$HOLD_AFTER_PROBE total=$HOLD_AFTER_TOTAL)"
 fi
 
 reset_case
