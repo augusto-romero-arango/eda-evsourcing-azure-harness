@@ -29,30 +29,14 @@
 #       ruta exacta del resumen del stage, y la instruccion de continuar sin
 #       reiniciar el analisis.
 #   [2] CA-1 (estatico): tdd-pipeline.sh, tooling-pipeline.sh e
-#       iac-pipeline.sh invocan agent_resume_prompt dentro de su bucle de
-#       hold y pasan $RESUME_ARGS (vacio o "-c") a la sonda -- ninguna sonda
-#       reenvia "$prompt" a secas sin pasar por RESUME_ARGS/attempt_prompt.
-#   [3] CA-1 (comportamiento, con `claude` fake): la PRIMERA sonda del hold
-#       pasa "-c" antes de "-p" y usa el prompt corto de continuacion, nunca
-#       el prompt original completo -- si esa sonda tiene exito, el bucle
-#       termina sin degradar.
-#   [4] CA-2 (comportamiento, con `claude` fake): cuando la sonda resumida
-#       vuelve a fallar sin dejar el resumen del stage, la SIGUIENTE sonda
-#       corre SIN "-c" (RESUME_DEGRADED permanente) y con el prompt original
-#       completo -- nunca se vuelve a intentar reanudar en ese run_agent.
-#   [5] CA-2 (degradacion "sin conversacion previa"): cuando el intento muerto
-#       no dejo transcript en el worktree, NINGUNA sonda usa "-c" (aterrizaria
-#       en la sesion de otro stage anterior del mismo worktree) -- reenvia el
-#       prompt original completo, nombra el motivo en el warning y en el log
-#       de eventos, y NO marca RESUME_DEGRADED permanente. Esta degradacion no
-#       se delega al CLI a proposito: `claude -c` sin sesion previa arranca una
-#       sesion nueva con exit 0, pero IGNORANDO EN SILENCIO `--agent`
-#       (verificado con el CLI real: `-c --agent <nombre inexistente>` no falla
-#       y responde como Claude generico, mientras que sin `-c` aborta con "not
-#       found") -- delegarla mandaria el prompt de continuacion a una sesion
-#       virgen y sin la definicion del agente, con bypassPermissions activo.
-#       agent_session_transcript_count cubre la precondicion; el bloque [1b]
-#       la testea directo y el prompt trae ademas un corte de seguridad.
+#       iac-pipeline.sh (issue #1624: se sumo al runner neutral, ultimo de
+#       los tres en migrar) reanudan por session_id/capability neutrales --
+#       ninguno depende ya de agent_session_transcript_count ni de `-c` de un
+#       CLI concreto. El comportamiento dinamico de esa reanudacion (primera
+#       sonda con --resume-session, degradacion permanente si la sesion
+#       resumida vuelve a terminar sin el resumen del stage) vive en el arnes
+#       de cada pipeline (test-tooling-neutral-runner.sh,
+#       test-iac-pipeline-neutral-runner.sh), no aqui.
 #   [6] Nunca se usa --fork-session en la sonda de ningun pipeline (notas
 #       tecnicas del issue: reusar la sesion mantiene un solo transcript por
 #       stage).
@@ -141,7 +125,7 @@ rm -rf "$CFG_DIR" "$WT_PROBE"
 
 echo ""
 echo "[2] CA-1 (estatico): reanudacion neutral"
-for p in tdd-pipeline.sh tooling-pipeline.sh; do
+for p in tdd-pipeline.sh tooling-pipeline.sh iac-pipeline.sh; do
     FILE="$REPO_ROOT/scripts/$p"
     if grep -q 'agent_events_session_id' "$FILE" \
         && grep -q 'runtime_supports_resume' "$FILE" \
@@ -164,224 +148,13 @@ else
     fail "--fork-session invocado fuera de un comentario: $FORK_HITS"
 fi
 
-# -------- Arnes de comportamiento: extrae el bloque REAL del hold loop de --------
-# -------- iac-pipeline.sh (el mas simple de los tres) y lo ejercita con un --------
-# -------- 'claude' fake, sin tocar la red. -----------------------------------
-
-echo ""
-echo "[3]/[4] Comportamiento: bloque real del hold loop de iac-pipeline.sh"
-
-IAC_SCRIPT="$REPO_ROOT/scripts/iac-pipeline.sh"
-BLOCK=$(awk '
-    /^        local HOLD_STARTED_TS="" HOLD_TOTAL_SECONDS=0 hold_attempt=0$/ && !started { started=1 }
-    started { print; if (/^        done$/) exit }
-' "$IAC_SCRIPT")
-
-if [ -z "$BLOCK" ]; then
-    fail "no se pudo extraer el bloque del hold loop de $IAC_SCRIPT (¿cambio de forma del script?)"
-else
-    TMP_DIR=$(mktemp -d)
-    trap 'rm -rf "$TMP_DIR"' EXIT
-
-    # run_hold_scenario <call_log> <count_file> <mode> <baseline> <transcripts>
-    #   mode=succeed_on_resume  -> la sonda tiene exito en el primer intento
-    #                              (resumido) -- CA-1.
-    #   mode=fail_without_summary -> la sonda SIEMPRE falla con PROVIDER_UNAVAILABLE
-    #                              y nunca deja el resumen del stage -- CA-2.
-    #   mode=no_prior_session   -> la sonda falla siempre y el store del
-    #                              worktree NO crecio respecto a <baseline>
-    #                              (el intento muerto no dejo transcript) --
-    #                              CA-2, primera degradacion.
-    #
-    # <baseline> es el valor de RESUME_BASELINE_SESSIONS que el pipeline
-    # captura antes del intento original; <transcripts> cuantos archivos
-    # `.jsonl` tiene el store falso del worktree cuando corre el hold. El
-    # store es real (lo lee agent_session_transcript_count via
-    # CLAUDE_CONFIG_DIR), solo su contenido es fabricado -- asi el test
-    # ejercita el calculo de slug de verdad y no una funcion mockeada.
-    run_hold_scenario() {
-        local call_log="$1" count_file="$2" mode="$3" baseline="${4:-0}" transcripts="${5:-1}"
-        local worktree="$TMP_DIR/wt-$mode"
-        rm -rf "$worktree"
-        mkdir -p "$worktree"
-        : > "$call_log"
-        echo 0 > "$count_file"
-
-        local cfg_dir="$TMP_DIR/cfg-$mode"
-        local wt_real slug
-        wt_real=$(cd "$worktree" && pwd -P)
-        slug="${wt_real//\//-}"
-        slug="${slug//./-}"
-        rm -rf "$cfg_dir"
-        mkdir -p "$cfg_dir/projects/$slug"
-        local i=0
-        while [ "$i" -lt "$transcripts" ]; do
-            : > "$cfg_dir/projects/$slug/sesion-$i.jsonl"
-            i=$((i + 1))
-        done
-
-        local test_script="$TMP_DIR/block-$mode.sh"
-        cat > "$test_script" <<EOF
-#!/usr/bin/env bash
-set -uo pipefail
-# shellcheck source=/dev/null
-source "$REPO_ROOT/scripts/_pipeline-common.sh" 2>/dev/null
-
-export MEFISTO_HOLD_PROBE_SECONDS=1
-export MEFISTO_HOLD_MAX_SECONDS=5
-export CLAUDE_CONFIG_DIR="$cfg_dir"
-
-RESUME_BASELINE_SESSIONS=$baseline
-WORKTREE_PATH="$worktree"
-LOG_DIR_ABS="$TMP_DIR"
-TIMESTAMP="test"
-ISSUE_NUM="999"
-EVENTS_LOG_ABS="$TMP_DIR/events-$mode.log"
-: > "\$EVENTS_LOG_ABS"
-AGENT_TIMEOUT_SECONDS=5
-PIPELINE_CAPTURE_STREAM=false
-NONINTERACTIVE_SYSTEM="system"
-agent="infra-writer"
-stage="1"
-prompt="PROMPT ORIGINAL COMPLETO DEL STAGE"
-elapsed=0
-CLAUDE_EXIT=1
-failure_type="PROVIDER_UNAVAILABLE (exit 1)"
-
-warn() { echo "WARN: \$1"; }
-log() { echo "LOG: \$1"; }
-derive_stage_log_from_stream() { :; }
-
-claude() {
-    # Un argumento (attempt_prompt) puede traer saltos de linea de sobra
-    # (agent_resume_prompt es un heredoc multilinea) -- \$* los preservaria y
-    # partiria "una llamada" en varias lineas fisicas del log. Cada arg va
-    # entre corchetes con sus saltos de linea aplanados a espacio, asi una
-    # llamada completa es SIEMPRE una sola linea fisica.
-    {
-        printf 'CALL:'
-        for a in "\$@"; do
-            printf ' [%s]' "\$(printf '%s' "\$a" | tr '\n' ' ')"
-        done
-        printf '\n'
-    } >> "$call_log"
-    local n
-    n=\$(cat "$count_file")
-    n=\$((n + 1))
-    echo "\$n" > "$count_file"
-    if [ "$mode" = "succeed_on_resume" ]; then
-        echo "ok"
-        return 0
-    fi
-    # fail_without_summary: siempre PROVIDER_UNAVAILABLE, nunca deja el resumen
-    echo "API Error: 529 Service Unavailable"
-    return 1
-}
-
-run_hold_block() {
-$BLOCK
-echo "FINAL_CLAUDE_EXIT=\$CLAUDE_EXIT"
-echo "FINAL_RESUME_DEGRADED=\${RESUME_DEGRADED:-unset}"
-}
-run_hold_block
-EOF
-        bash "$test_script" 2>&1
-    }
-
-    CALL_LOG_A="$TMP_DIR/calls-succeed.log"
-    COUNT_A="$TMP_DIR/count-succeed"
-    OUT_A=$(run_hold_scenario "$CALL_LOG_A" "$COUNT_A" "succeed_on_resume" 0 1)
-
-    # CA-1: la primera (y unica) sonda debe pasar "-c" ANTES de "-p", con el
-    # prompt corto de continuacion -- nunca el prompt original completo.
-    if [ -f "$CALL_LOG_A" ] && grep -qE '^CALL: \[-c\] \[-p\] ' "$CALL_LOG_A"; then
-        pass "CA-1: la sonda resumida invoca 'claude -c -p ...' (continue antes de print)"
-    else
-        fail "CA-1: no se encontro 'claude -c -p ...' en $CALL_LOG_A: $(cat "$CALL_LOG_A" 2>/dev/null)"
-    fi
-    if [ -f "$CALL_LOG_A" ] && grep -q "PROMPT ORIGINAL COMPLETO DEL STAGE" "$CALL_LOG_A"; then
-        fail "CA-1: la sonda resumida reenvio el prompt original completo (no deberia)"
-    else
-        pass "CA-1: la sonda resumida NO reenvia el prompt original completo"
-    fi
-    if echo "$OUT_A" | grep -q "FINAL_CLAUDE_EXIT=0"; then
-        pass "CA-1: el hold termina en exito tras la sonda resumida"
-    else
-        fail "CA-1: el hold no termino en exito: $OUT_A"
-    fi
-
-    CALL_LOG_B="$TMP_DIR/calls-degrade.log"
-    COUNT_B="$TMP_DIR/count-degrade"
-    OUT_B=$(run_hold_scenario "$CALL_LOG_B" "$COUNT_B" "fail_without_summary" 0 1)
-
-    N_CALLS_B=$(wc -l < "$CALL_LOG_B" 2>/dev/null | tr -d ' ')
-    if [ "${N_CALLS_B:-0}" -ge 2 ]; then
-        pass "CA-2: el hold agotado (techo chico de prueba) dejo al menos 2 sondas"
-    else
-        fail "CA-2: se esperaban al menos 2 sondas, hubo ${N_CALLS_B:-0}: $(cat "$CALL_LOG_B" 2>/dev/null)"
-    fi
-
-    FIRST_CALL_B=$(sed -n '1p' "$CALL_LOG_B" 2>/dev/null || echo "")
-    LAST_CALL_B=$(tail -n 1 "$CALL_LOG_B" 2>/dev/null || echo "")
-
-    if echo "$FIRST_CALL_B" | grep -qE '^CALL: \[-c\] \[-p\] '; then
-        pass "CA-2: la primera sonda (aun sin degradar) usa -c"
-    else
-        fail "CA-2: la primera sonda no uso -c: $FIRST_CALL_B"
-    fi
-    if echo "$LAST_CALL_B" | grep -qE '^CALL: \[-p\] '; then
-        pass "CA-2: la ultima sonda (ya degradada) corre SIN -c"
-    else
-        fail "CA-2: la ultima sonda no degrado a 'claude -p ...' sin -c: $LAST_CALL_B"
-    fi
-    if echo "$LAST_CALL_B" | grep -q "PROMPT ORIGINAL COMPLETO DEL STAGE"; then
-        pass "CA-2: la sonda degradada reenvia el prompt original completo del stage"
-    else
-        fail "CA-2: la sonda degradada no reenvio el prompt original completo: $LAST_CALL_B"
-    fi
-    if echo "$OUT_B" | grep -q "FINAL_RESUME_DEGRADED=true"; then
-        pass "CA-2: RESUME_DEGRADED queda en true de forma permanente"
-    else
-        fail "CA-2: RESUME_DEGRADED no quedo en true: $OUT_B"
-    fi
-
-    # CA-2, primera degradacion: el intento muerto no dejo transcript en el
-    # worktree (el store no crecio respecto a la linea base), asi que `-c`
-    # aterrizaria en la sesion de otro stage anterior del mismo worktree --
-    # y ahi `--agent` se ignora en silencio. NINGUNA sonda debe usar -c.
-    CALL_LOG_C="$TMP_DIR/calls-noprior.log"
-    COUNT_C="$TMP_DIR/count-noprior"
-    OUT_C=$(run_hold_scenario "$CALL_LOG_C" "$COUNT_C" "no_prior_session" 1 1)
-
-    if grep -q '^CALL: \[-c\]' "$CALL_LOG_C" 2>/dev/null; then
-        fail "CA-2: hubo una sonda con -c sin conversacion previa de este stage: $(cat "$CALL_LOG_C")"
-    else
-        pass "CA-2: sin transcript nuevo del intento muerto, ninguna sonda usa -c"
-    fi
-    if grep -q "PROMPT ORIGINAL COMPLETO DEL STAGE" "$CALL_LOG_C" 2>/dev/null; then
-        pass "CA-2: esas sondas reenvian el prompt original completo del stage"
-    else
-        fail "CA-2: la sonda sin reanudacion no reenvio el prompt original: $(cat "$CALL_LOG_C" 2>/dev/null)"
-    fi
-    if echo "$OUT_C" | grep -q "sin conversacion previa de este stage"; then
-        pass "CA-2: el warning nombra el motivo de la degradacion"
-    else
-        fail "CA-2: no se emitio el warning que nombra el motivo: $OUT_C"
-    fi
-    if grep -q "no dejo transcript en el worktree" "$TMP_DIR/events-no_prior_session.log" 2>/dev/null; then
-        pass "CA-2: el motivo queda en el log de eventos del pipeline"
-    else
-        fail "CA-2: el log de eventos no registro el motivo: $(cat "$TMP_DIR/events-no_prior_session.log" 2>/dev/null)"
-    fi
-    # La degradacion NO es permanente en este caso: solo se salta la
-    # reanudacion mientras no haya nada que continuar (RESUME_DEGRADED, que si
-    # es permanente, esta reservado al caso de la sesion que muere dos veces).
-    if echo "$OUT_C" | grep -q "FINAL_RESUME_DEGRADED=false"; then
-        pass "CA-2: 'sin conversacion previa' no marca RESUME_DEGRADED permanente"
-    else
-        fail "CA-2: 'sin conversacion previa' no debe degradar permanentemente: $OUT_C"
-    fi
-fi
+# El arnes de comportamiento (primera sonda con --resume-session, degradacion
+# permanente cuando la sesion resumida vuelve a terminar sin el resumen del
+# stage) ya NO tiene un unico "pipeline mas simple" con mecanica propia que
+# extraer: los tres pipelines (tdd/tooling/iac) delegan la MISMA politica de
+# _pipeline-common.sh sobre el runner neutral. Esa cobertura dinamica vive en
+# el arnes propio de cada uno (test-tooling-neutral-runner.sh,
+# test-iac-pipeline-neutral-runner.sh), issue #1624.
 
 echo ""
 echo "=== Resumen: $PASS passed, $FAIL failed ==="
