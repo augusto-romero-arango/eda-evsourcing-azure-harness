@@ -28,6 +28,11 @@ set -uo pipefail
 # test corra dentro de un pane herdr.
 export MEFISTO_UI=tmux
 
+# Idem test-tmux-preparse.sh (issue #1593): fija el runtime para que la
+# resolucion de tmux-pipeline.sh no dependa de cuantos CLIs tenga instalados
+# la maquina que corre el test.
+export MEFISTO_RUNTIME=claude
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 TMUX_SCRIPT="$REPO_ROOT/scripts/tmux-pipeline.sh"

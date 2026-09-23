@@ -51,6 +51,12 @@ set -uo pipefail
 # El escape hatch fuerza el camino tmux, que es el que este test verifica.
 export MEFISTO_UI=tmux
 
+# tmux-pipeline.sh ahora resuelve el runtime activo antes de despachar (issue
+# #1593): sin esto, una maquina con mas de un CLI instalado abortaria por
+# ambiguedad antes incluso de llegar al codigo que este test cubre. Se fija a
+# un valor arbitrario y estable, independiente de los CLIs de la maquina.
+export MEFISTO_RUNTIME=claude
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 TMUX_SCRIPT="$REPO_ROOT/scripts/tmux-pipeline.sh"
