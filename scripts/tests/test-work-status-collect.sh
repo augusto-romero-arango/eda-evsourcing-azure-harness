@@ -315,9 +315,15 @@ fi
 
 echo ""
 echo "[11] CA-4: reconstruccion de log legacy cuando el status no declara uno"
-OUT=$(run_collect "$FIXTURES/log-reconstruct/canonical" "$TMP/no-existe-logrec-legacy")
+# El .log del fixture se materializa en runtime: '*.log' esta en .gitignore y
+# nunca llega versionado (issue #1626).
+CANON11="$TMP/log-reconstruct/canonical"
+mkdir -p "$CANON11/logs"
+cp "$FIXTURES/log-reconstruct/canonical/"*.json "$CANON11/"
+touch "$CANON11/logs/tooling-stage-2-reviewer-20260101-120000.log"
+OUT=$(run_collect "$CANON11" "$TMP/no-existe-logrec-legacy")
 LOG=$(jq -r '.rows[] | select(.issue == "500") | .log' <<< "$OUT")
-EXPECTED="$FIXTURES/log-reconstruct/canonical/logs/tooling-stage-2-reviewer-20260101-120000.log"
+EXPECTED="$CANON11/logs/tooling-stage-2-reviewer-20260101-120000.log"
 if [ "$LOG" = "$EXPECTED" ]; then
     pass "log reconstruido con el patron legacy de Tooling"
 else
@@ -364,6 +370,34 @@ if [ "$(jq -r '.history[0].detail' <<< "$OUT")" = "PR #42" ]; then
     pass "pr numerico produce detail 'PR #42'"
 else
     fail "detail con pr numerico incorrecto: $(jq -c '.history' <<< "$OUT")"
+fi
+
+echo ""
+echo "[14] #1626 CA-4: /infra en curso desde el root canonico (stage, pct, log con sufijo -issue-N, hold)"
+CANON14="$TMP/infra/canonical"; LEGACY14="$TMP/infra/legacy"
+mkdir -p "$CANON14/logs" "$LEGACY14/logs"
+echo '{"issue":"77","pipeline":"infra","state":"hold","stage":"1-infra-writer","started":"20260101-120000","runtime":"opencode","hold":{"cause":"rate_limit","next_probe":null,"ceiling_seconds":21600,"accumulated_seconds":0}}' > "$CANON14/pipeline-status-infra-77.json"
+touch "$CANON14/logs/iac-stage-1-infra-writer-20260101-120000-issue-77.log"
+echo '{"issue":"78","pipeline":"infra","state":"running","stage":"2-infra-reviewer","started":"20260101-110000"}' > "$LEGACY14/pipeline-status-infra-78.json"
+touch "$LEGACY14/logs/iac-stage-2-infra-reviewer-20260101-110000.log"
+OUT=$(run_collect "$CANON14" "$LEGACY14")
+ROW77=$(jq -c '.rows[] | select(.issue == "77")' <<< "$OUT")
+if [ "$(jq -r '.origin' <<< "$ROW77")" = "canonical" ] && [ "$(jq -r '.log' <<< "$ROW77")" = "$CANON14/logs/iac-stage-1-infra-writer-20260101-120000-issue-77.log" ]; then
+    pass "infra canonico: origin canonical y log por stage con sufijo -issue-N"
+else
+    fail "fila infra canonica incorrecta: $ROW77"
+fi
+if [ "$(jq -r '.progress_pct' <<< "$ROW77")" = "30" ] && [ "$(jq -r '.state' <<< "$ROW77")" = "hold" ] \
+   && [ "$(jq -r '.stage' <<< "$ROW77")" = "1-infra-writer" ]; then
+    pass "infra canonico: progreso 30 (infra-writer) y estado hold visibles"
+else
+    fail "progreso/hold ausentes en la fila infra: $ROW77"
+fi
+ROW78=$(jq -c '.rows[] | select(.issue == "78")' <<< "$OUT")
+if [ "$(jq -r '.origin' <<< "$ROW78")" = "legacy" ] && [ "$(jq -r '.log' <<< "$ROW78")" = "$LEGACY14/logs/iac-stage-2-infra-reviewer-20260101-110000.log" ]; then
+    pass "infra legacy sigue visible sin migrar, con su log sin sufijo"
+else
+    fail "fila infra legacy incorrecta: $ROW78"
 fi
 
 echo ""
