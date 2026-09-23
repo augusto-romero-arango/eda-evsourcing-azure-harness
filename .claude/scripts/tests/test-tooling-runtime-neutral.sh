@@ -30,7 +30,7 @@
 #       el CLI falso reproduce fixtures/runtime-opencode/empty-1.18.29.jsonl
 #       (stream vacio, fixture congelado) y sale con exit 1, sin resumen.
 #   (d) [E] Defaults: sin .mefisto/models.json ni --models, OpenCode recibe
-#       Terra para writer y Sol para reviewer; Claude conserva sonnet para
+#       GPT-6 Sol para writer y reviewer; Claude conserva sonnet para
 #       writer y opus para reviewer deep.
 #   (e) [F] Gate de neutralidad (issue #914): MEFISTO_RUNTIME=claude, el CLI
 #       falso del writer introduce ademas una fuga real -- un archivo nuevo
@@ -646,15 +646,15 @@ fi
 
 # ============================================================================
 # [E] Escenario (d): sin mapping local ni --models se aplican las tablas de
-# cada adaptador. Claude deep usa opus; OpenCode usa Terra/Sol para los stages.
+# cada adaptador. Claude deep usa opus; OpenCode usa GPT-6 Sol para ambos stages.
 # ============================================================================
 
 echo ""
 echo "[E] Escenario (d): defaults de modelo por runtime y perfil (CA-1)"
 
 if [ -n "$B_REVIEWER_CALL" ]; then
-    if _argv_has_flag_value "$B_REVIEWER_CALL" -m openai/gpt-5.6-sol; then
-        pass "E-1: opencode -- reviewer deep usa '-m openai/gpt-5.6-sol'"
+    if _argv_has_flag_value "$B_REVIEWER_CALL" -m openai/gpt-6-sol; then
+        pass "E-1: opencode -- reviewer deep usa '-m openai/gpt-6-sol'"
     else
         fail "E-1: opencode -- reviewer deep no uso el default Sol: $(cat "$B_REVIEWER_CALL")"
     fi
@@ -663,8 +663,8 @@ else
 fi
 
 if [ -n "$B_WRITER_CALL" ]; then
-    if _argv_has_flag_value "$B_WRITER_CALL" -m openai/gpt-5.6-terra; then
-        pass "E-2: opencode -- writer balanced usa '-m openai/gpt-5.6-terra'"
+    if _argv_has_flag_value "$B_WRITER_CALL" -m openai/gpt-6-sol; then
+        pass "E-2: opencode -- writer balanced usa '-m openai/gpt-6-sol'"
     else
         fail "E-2: opencode -- writer balanced no uso el default Terra: $(cat "$B_WRITER_CALL")"
     fi
