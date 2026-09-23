@@ -272,7 +272,12 @@ pr_sync_exit_trap() {
     fi
     exit "$rc"
 }
-trap pr_sync_exit_trap EXIT INT TERM
+# INT/TERM salen con su codigo convencional (130/143) y delegan en el trap de
+# EXIT: dentro de un trap de senal, $? es el del ultimo comando, no la senal,
+# y un Ctrl-C podria terminar con exit 0.
+trap pr_sync_exit_trap EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 header "pr-sync — Sincronización de PRs con main"
 log "Log: $LOG_FILE_ABS"
