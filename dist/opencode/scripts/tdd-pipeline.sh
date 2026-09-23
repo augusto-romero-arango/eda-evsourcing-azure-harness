@@ -134,6 +134,11 @@ HAS_BLOCKAGE=false
 PIPELINE_ERROR=""
 LAST_AGENT_DURATION=0
 CURRENT_STAGE="setup"
+# Hold estructurado en el status (issue #1600, molde tooling-pipeline.sh l.96):
+# run_agent fija estas variables antes de cada espera (agent_hold_wait) y las
+# limpia al terminar el agente, exito o fallo recuperado. Fuera de una espera
+# los tres primeros van en null; accumulated_seconds conserva el total esperado.
+HOLD_CAUSE_JSON="null" HOLD_NEXT_PROBE_JSON="null" HOLD_CEILING_JSON="null" HOLD_TOTAL=0
 IS_REFACTOR=false
 REFACTOR_JUSTIFICATION=""
 BASELINE_TEST_COUNT="?"
@@ -273,6 +278,7 @@ update_status() {
   "tests": $tests_val,
   "pr": $pr_val,
   "last_error": $error_val
+  ,"hold": {"cause": $HOLD_CAUSE_JSON, "next_probe": $HOLD_NEXT_PROBE_JSON, "ceiling_seconds": $HOLD_CEILING_JSON, "accumulated_seconds": $HOLD_TOTAL}
 }
 EOJSON
 }
@@ -813,9 +819,18 @@ Al cerrar este stage, deja tu resumen en: $summary_path"
         echo "[$(date +%H:%M:%S)] FALLO $agent: $failure_type" >> "$EVENTS_LOG_ABS"
         if ! agent_failure_is_holdable "$failure_type"; then break; fi
         [ -z "$hold_started" ] && hold_started=$(date +%s)
+        HOLD_CAUSE_JSON="\"$failure_type\""
+        HOLD_CEILING_JSON="${MEFISTO_HOLD_MAX_SECONDS:-21600}"
+        local next_probe_epoch next_probe
+        next_probe_epoch=$(( $(date +%s) + ${MEFISTO_HOLD_PROBE_SECONDS:-300} ))
+        next_probe="$(date -u -r "$next_probe_epoch" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d "@$next_probe_epoch" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || true)"
+        [ -n "$next_probe" ] && HOLD_NEXT_PROBE_JSON="\"$next_probe\"" || HOLD_NEXT_PROBE_JSON="null"
+        HOLD_TOTAL="$hold_total"
+        update_status "$stage-$agent" "hold"
         local slept
         if ! slept=$(agent_hold_wait "$EVENTS_LOG_ABS" "$failure_type" "$hold_started" "$(agent_events_resets_at "$events_file")"); then break; fi
         hold_total=$((hold_total + slept))
+        HOLD_TOTAL="$hold_total"
         summary_file="$(mefisto_state_read_first "summaries/stage-${stage}-${agent}.md" "$WORKTREE_PATH" 2>/dev/null || true)"
         if [ "$attempt_resume" = true ] && [ ! -s "$summary_file" ]; then
             warn "$agent: la sesion reanudada termino sin resumen; se degrada permanentemente a inicio limpio"
@@ -851,6 +866,7 @@ Al cerrar este stage, deja tu resumen en: $summary_path"
         fi
     fi
     case "$stage" in 1) AGENT_TW_METRICS_JSON="$metrics_json" ;; 2) AGENT_IM_METRICS_JSON="$metrics_json" ;; 2b) AGENT_ST_METRICS_JSON="$metrics_json" ;; 3) AGENT_RV_METRICS_JSON="$metrics_json" ;; esac
+    HOLD_CAUSE_JSON="null"; HOLD_NEXT_PROBE_JSON="null"; HOLD_CEILING_JSON="null"; HOLD_TOTAL="$hold_total"
     LAST_AGENT_DURATION=$((elapsed - hold_total)); LAST_AGENT_METRICS_JSON="$metrics_json"
     log "$agent completado en ${LAST_AGENT_DURATION}s"
 }
