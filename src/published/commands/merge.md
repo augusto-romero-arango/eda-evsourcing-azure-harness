@@ -84,10 +84,13 @@ El script imprime progreso en tiempo real. Espera a que termine.
 Bajo `HERDR_ENV=1`, si la tabla de resumen del paso anterior muestra al menos un PR en estado `mergeado`, cierra los paneles Herdr ociosos que dejo el lote (cada issue lanzado en paralelo termina en su propio pane apilado, y sin esto quedan abiertos hasta el proximo despacho). Es best-effort: nunca debe hacer fallar el comando ni bloquear el reporte final.
 
 ```bash
-{{mefisto:run herdr-pipeline.sh --collapse-panes}}
+if [ "${HERDR_ENV:-}" = "1" ]; then
+    CLOSED=$({{mefisto:run herdr-pipeline.sh --collapse-panes}} 2>/dev/null || true)
+    echo "paneles_herdr_cerrados=${CLOSED:-0}"
+fi
 ```
 
-Imprime por stdout la cantidad de paneles cerrados (o "0"; nunca falla, incluso sin estado previo). Fuera de `HERDR_ENV=1`, no ejecutes este bloque.
+`--collapse-panes` imprime por stdout la cantidad de paneles cerrados (o "0"; nunca falla, incluso sin estado previo). El `echo` final es lo unico que llega al output del bloque: lee de ahi el numero para el paso 5. Fuera de `HERDR_ENV=1`, no ejecutes el bloque.
 
 ### 5. Reportar resultado
 
@@ -99,7 +102,7 @@ El script ya imprime un resumen final con tabla `PR | Rama | Estado` y la ruta d
   ```
   Reintentar el PR fallido: {{mefisto:command merge}} <num>
   ```
-- Si el paso 4 conto una cantidad de paneles cerrados mayor que 0, mencionalo brevemente: "Paneles Herdr sobrantes cerrados: <n>". Si fue 0 (o no corriste el paso 4 por estar fuera de `HERDR_ENV=1`), no lo menciones.
+- Si el paso 4 imprimio `paneles_herdr_cerrados=<n>` con `<n>` mayor que 0, mencionalo brevemente: "Paneles Herdr sobrantes cerrados: <n>". Si fue 0 (o no corriste el paso 4 por estar fuera de `HERDR_ENV=1`), no lo menciones.
 
 ---
 

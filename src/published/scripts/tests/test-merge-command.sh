@@ -61,6 +61,12 @@ for forbidden_path in '.claude/pipeline/.plugin-root' 'plugins/cache'; do
     absent "$claude_invocations" "$forbidden_path" "invocacion Claude no reimplementa el lookup legacy ($forbidden_path)"
     absent "$opencode_invocations" "$forbidden_path" "invocacion OpenCode no reimplementa el lookup legacy ($forbidden_path)"
 done
+absent "$opencode_body" '.claude/pipeline/.plugin-root' 'salida OpenCode completa sin marcador Claude'
+absent "$claude_body" 'plugins/cache' 'salida Claude completa sin cache de plugins'
+absent "$opencode_body" 'plugins/cache' 'salida OpenCode completa sin cache de plugins'
+contains "$claude_body" 'paneles_herdr_cerrados=${CLOSED:-0}' 'Claude conserva el colapso Herdr best-effort'
+contains "$opencode_body" 'herdr-pipeline.sh" --collapse-panes 2>/dev/null || true' 'OpenCode conserva el colapso Herdr best-effort'
+
 contains "$claude_body" 'Nunca hagas merges manuales' 'Claude conserva las reglas'
 contains "$opencode_body" 'Nunca hagas merges manuales' 'OpenCode conserva las reglas'
 if cmp -s "$MIRROR" "$CLAUDE"; then pass 'mirror Claude coincide byte a byte'; else fail 'mirror Claude diverge'; fi
