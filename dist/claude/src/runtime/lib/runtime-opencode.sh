@@ -95,8 +95,7 @@ runtime_opencode_is_available() {
 runtime_opencode_default_model() {
     case "$1" in
         fast) printf '%s' "openai/gpt-5.6-luna" ;;
-        balanced) printf '%s' "openai/gpt-5.6-terra" ;;
-        deep) printf '%s' "openai/gpt-5.6-sol" ;;
+        balanced|deep) printf '%s' "openai/gpt-6-sol" ;;
         *) return 1 ;;
     esac
 }

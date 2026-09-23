@@ -98,8 +98,8 @@ mefisto_resolve_model claude writer fast >/dev/null && assert_model 'haiku' "Cla
 mefisto_resolve_model claude writer balanced >/dev/null && assert_model 'sonnet' "Claude balanced usa su default vigente"
 mefisto_resolve_model claude writer deep >/dev/null && assert_model 'opus' "Claude deep usa su default vigente"
 mefisto_resolve_model opencode writer fast >/dev/null && assert_model 'openai/gpt-5.6-luna' "OpenCode fast usa su default vigente"
-mefisto_resolve_model opencode writer balanced >/dev/null && assert_model 'openai/gpt-5.6-terra' "OpenCode balanced usa su default vigente"
-mefisto_resolve_model opencode writer deep >/dev/null && assert_model 'openai/gpt-5.6-sol' "OpenCode deep usa su default vigente"
+mefisto_resolve_model opencode writer balanced >/dev/null && assert_model 'openai/gpt-6-sol' "OpenCode balanced usa su default vigente"
+mefisto_resolve_model opencode writer deep >/dev/null && assert_model 'openai/gpt-6-sol' "OpenCode deep usa su default vigente"
 
 echo "RESULTADO modelos comunes: $PASS pasaron, $FAIL fallaron"
 [ "$FAIL" -eq 0 ]
