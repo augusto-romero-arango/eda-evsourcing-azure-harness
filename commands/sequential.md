@@ -87,6 +87,8 @@ Antes de continuar, aborta si existe `src/internal/scripts/generate-internal-ada
 
 Lanza el pipeline secuencial para multiples issues dentro de una sesion tmux. Cada issue se enruta automaticamente al pipeline correcto segun su label `tipo:*`. Comunicate en **espanol**.
 
+**Grupos homogeneos**: todos los issues del grupo deben pertenecer al repo activo. No uses flags `-R`.
+
 ## Entrada
 
 Los numeros de issues estan en: $ARGUMENTS
