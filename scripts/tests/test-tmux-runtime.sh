@@ -14,12 +14,15 @@
 # registran cada invocacion y devuelven respuestas deterministas -- nunca
 # tocan un servidor tmux real, la red, ni un workspace herdr real.
 #
-# Cubre (CA-4):
-#   (a) con MEFISTO_RUNTIME=opencode, los cuatro modos que lanzan
-#       sub-pipelines (single/tdd, batch, parallel, tooling) envian el
-#       comando con el prefijo MEFISTO_RUNTIME=opencode.
+# Cubre (CA-4/CA-5, issue #1627 suma --infra a la propagacion):
+#   (a) con MEFISTO_RUNTIME=opencode, los cinco modos que lanzan
+#       sub-pipelines (single/tdd, batch, parallel, tooling, infra) envian el
+#       comando con el prefijo MEFISTO_RUNTIME=opencode; --infra se verifica
+#       ademas con MEFISTO_RUNTIME=claude (ambos runtimes, issue #1627 CA-5).
 #   (b) con stubs de `claude` y `opencode` en PATH y sin MEFISTO_RUNTIME,
-#       aborta con el mensaje de CA-2 y no invoca `tmux new-session`.
+#       aborta con el mensaje de CA-2 y no invoca `tmux new-session` -- incluido
+#       --infra, que desde el issue #1627 (tras #1624: iac-pipeline.sh ya
+#       resuelve runtime) ya no esta exento.
 #   (c) con HERDR_ENV=1 (contexto herdr), delega a herdr-pipeline.sh sin
 #       resolver el runtime en tmux-pipeline.sh.
 #
@@ -143,7 +146,7 @@ run_wrapper() {
     LAST_STDERR=$(cat "$err")
 }
 
-echo "[a] MEFISTO_RUNTIME=opencode: los cuatro modos propagan el prefijo (CA-3/CA-4a)"
+echo "[a] MEFISTO_RUNTIME=opencode: los cinco modos propagan el prefijo (CA-3/CA-4a, issue #1627)"
 
 export MEFISTO_RUNTIME=opencode
 
@@ -162,6 +165,16 @@ assert_contains "parallel: send-keys con MEFISTO_RUNTIME=opencode" "$(cat "$TMUX
 run_wrapper --tooling 253
 assert_eq "tooling: no aborta" "0" "$LAST_RC"
 assert_contains "tooling: send-keys con MEFISTO_RUNTIME=opencode" "$(cat "$TMUX_STUB_LOG")" "MEFISTO_RUNTIME=opencode"
+
+run_wrapper --infra 253
+assert_eq "infra (opencode): no aborta" "0" "$LAST_RC"
+assert_contains "infra (opencode): send-keys con MEFISTO_RUNTIME=opencode" "$(cat "$TMUX_STUB_LOG")" "MEFISTO_RUNTIME=opencode"
+
+# --infra en el otro runtime soportado (CA-5: ambos runtimes, no solo opencode).
+export MEFISTO_RUNTIME=claude
+run_wrapper --infra 253
+assert_eq "infra (claude): no aborta" "0" "$LAST_RC"
+assert_contains "infra (claude): send-keys con MEFISTO_RUNTIME=claude" "$(cat "$TMUX_STUB_LOG")" "MEFISTO_RUNTIME=claude"
 
 unset MEFISTO_RUNTIME
 
@@ -185,7 +198,9 @@ assert_contains "mensaje: no se pudo resolver el runtime activo" "$LAST_STDERR" 
 assert_not_contains "no crea sesion tmux" "$(cat "$TMUX_STUB_LOG")" "new-session"
 
 run_wrapper --infra 253
-assert_not_contains "--infra no exige runtime (iac-pipeline.sh no lo resuelve)" "$LAST_STDERR" "No se pudo resolver el runtime activo"
+assert_eq "--infra tambien exige runtime resoluble (issue #1627, tras #1624)" "1" "$LAST_RC"
+assert_contains "--infra: mensaje no se pudo resolver el runtime activo" "$LAST_STDERR" "No se pudo resolver el runtime activo"
+assert_not_contains "--infra: no crea sesion tmux" "$(cat "$TMUX_STUB_LOG")" "new-session"
 
 rm -f "$FAKE_BIN/claude" "$FAKE_BIN/opencode"
 
