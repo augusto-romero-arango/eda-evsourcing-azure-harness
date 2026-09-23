@@ -21,7 +21,7 @@ humano con acceso a Herdr, a una sesion `tmux` real y a un consumidor
 sintetico -- exactamente el mismo tipo de operacion que
 `tdd-consumer-certification.md` documenta como fuera de alcance de un stage
 de escritura no interactivo en su seccion "Bloqueo estructural de la
-ejecucion automatizada (#1464)". Este documento dejar por eso, hasta que esa
+ejecucion automatizada (#1464)". Este documento deja por eso, hasta que esa
 sesion ocurra, las tablas de "Estado de la certificacion" en
 `PENDIENTE DE EJECUCION`.
 
@@ -57,7 +57,7 @@ sesion ocurra, las tablas de "Estado de la certificacion" en
 - **`tipo:infra` fuera de lotes**: la matriz de este protocolo no incluye
   `/mefisto:batch-stop`, `/mefisto:sequential` ni `/mefisto:parallel`
   (`SKIP:infra` en ambos orquestadores de cola); las cuatro corridas se lanzan
-  siempre como invocacion directa de `/mefisto:infra`/`{{mefisto:command infra}}`.
+  siempre como invocacion directa de `/mefisto:infra` (`/infra` en Claude Code).
 - Registra antes de crear ningun fixture: `<tag-certificable>`, `<version>`,
   `<commit-fuente>`, `<checksum-opencode>`, `<consumidor-certificable>`,
   `<sha-baseline-inicial>`/`<sha-baseline-final>`, version de `terraform` y
@@ -138,10 +138,10 @@ sin credenciales de Azure.
 
 | Corrida | Runtime | Contexto de lanzamiento | Invocacion |
 |---|---|---|---|
-| A | Claude Code | Herdr | `{{mefisto:command infra}} <issue-A>` desde el pane "ejecucion [claude]" de un workspace Herdr (`herdr-workspace.sh`) |
-| B | Claude Code | tmux autonomo | `{{mefisto:command infra}} <issue-B>` (o `scripts/tmux-pipeline.sh --infra <issue-B>` directo) fuera de cualquier sesion Herdr, con `tmux -CC attach -t infra-<issue-B>` para monitorear |
-| C | OpenCode | Herdr | equivalente OpenCode de A, pane "ejecucion [opencode]" del mismo workspace Herdr |
-| D | OpenCode | tmux autonomo | equivalente OpenCode de B, fuera de Herdr |
+| A | Claude Code | Herdr | `/infra <issue-A>` desde el pane "ejecucion [claude]" de un workspace Herdr (`herdr-workspace.sh`) |
+| B | Claude Code | tmux autonomo | `/infra <issue-B>` (o `scripts/tmux-pipeline.sh --infra <issue-B>` directo) fuera de cualquier sesion Herdr, con `tmux -CC attach -t infra-<issue-B>` para monitorear |
+| C | OpenCode | Herdr | `/mefisto:infra <issue-C>`, pane "ejecucion [opencode]" del mismo workspace Herdr |
+| D | OpenCode | tmux autonomo | `/mefisto:infra <issue-D>` fuera de Herdr, con la misma sesion `infra-<issue-D>` |
 
 Las cuatro corridas parten del mismo `<sha-baseline-inicial>` del consumidor y
 son independientes entre si: ninguna depende de que el PR fixture de otra se
@@ -152,13 +152,15 @@ nombrada `infra-<issue>` tal como documenta `commands/infra.md`.
 
 ## Resultados esperados de cada corrida (CA-2 de #1629)
 
-En las cuatro corridas, `/mefisto:infra`/`{{mefisto:command infra}}` debe:
+En las cuatro corridas, `/mefisto:infra` (`/infra` en Claude Code) debe:
 
-1. **Lanzar `iac-pipeline.sh` en el runtime correcto**: el primer evento de
-   `events.log` de cada stage incluye una linea `MODELS:` con el agente, el
-   runtime resuelto (`MEFISTO_RUNTIME_RESUELTO`), el perfil (`balanced` para
-   `infra-writer`, `deep` para `infra-reviewer`) y el modelo efectivo,
-   conforme escribe `scripts/iac-pipeline.sh` linea 256. Ninguna de las cuatro
+1. **Lanzar `iac-pipeline.sh` en el runtime correcto**: antes de la cabecera
+   `=== IAC STAGE <n>: <agente> ===`, `events.log` contiene una linea
+   `MODELS:` por agente (`infra-writer` e `infra-reviewer`) con
+   `runtime=<runtime-resuelto>`, `perfil=` (`balanced` para `infra-writer`,
+   `deep` para `infra-reviewer`) y `resuelto=` con el modelo efectivo,
+   conforme la escribe `resolve_infra_model` en `scripts/iac-pipeline.sh`. El
+   `runtime=` debe coincidir con el runtime de la columna de la matriz. Ninguna de las cuatro
    corridas fija `--models` ni un modelo explicito: la seleccion automatica
    por perfil neutral es parte de lo que se certifica.
 2. **Completar Stage 1 (`infra-writer`) y Stage 2 (`infra-reviewer`) con
@@ -188,12 +190,16 @@ lectura de `work-status-collect.sh` desde #1626):
 
 - `logs/iac-stage-<N>-<agente>-<ts>-issue-<issue>.log` por stage (Stage 1
   `infra-writer`, Stage 2 `infra-reviewer`).
-- Los streams neutrales por stage (`*.events.jsonl`), redactados conforme al
+- Los streams neutrales por stage e intento
+  (`logs/iac-stage-<N>-<agente>-<ts>-issue-<issue>-attempt-<k>.events.jsonl`;
+  mas de un intento solo aparece si hubo hold o reanudacion), redactados conforme al
   catalogo de centinelas de la seccion "Centinelas y limpieza" mas abajo.
 - `events.log` con la linea `MODELS:` de cada stage y los eventos de
   transicion de stage.
 - `pipeline-status-infra-<issue>.json` con `identity` (version/commit/estado
-  de la distribucion), `runtime` y, si hubo hold, el objeto `hold`.
+  de la distribucion), `runtime` y, si hubo hold, el objeto `hold`. El
+  pipeline lo borra al completar, asi que se captura mientras la corrida esta
+  en curso (o en hold); tras el cierre, la fuente es `pipeline-history.jsonl`.
 - `pipeline-history.jsonl` con una entrada por corrida, `runtime` e
   `identity`.
 
@@ -206,10 +212,12 @@ una divergencia de MEF-ADR-0053 seccion 4, no solo del protocolo, y produce
 ## Visibilidad en `/work-status` (CA-4 de #1629)
 
 - **En curso**: mientras cualquiera de las cuatro corridas esta `running`,
-  `/mefisto:work-status`/`{{mefisto:command work-status}}` en ambos runtimes
+  `/mefisto:work-status` (`/work-status` en Claude Code) en ambos runtimes
   muestra una fila con `pipeline=infra`, el `issue`, el `runtime` y el
-  `stage` vigente (`1-infra-writer` o `2-infra-reviewer`); si es la unica fila
-  activa con `activity.kind = stage`, agrega la barra de `progress_pct`.
+  `stage` vigente (`1-infra-writer` o `2-infra-reviewer`), con el
+  `progress_pct` que asigna `scripts/work-status-collect.sh` (30 para
+  `infra-writer`, 80 para `infra-reviewer`); la barra se dibuja cuando es la
+  unica fila activa con `activity.kind = stage`.
 - **Terminada**: al completar, la fila pasa a reflejar el PR (`pr` no vacio) y
   dejar de aparecer como `running`, conforme al historial en
   `pipeline-history.jsonl`.
@@ -219,7 +227,8 @@ una divergencia de MEF-ADR-0053 seccion 4, no solo del protocolo, y produce
   `.claude/scripts/tests/test-agent-hold.sh`/`scripts/tests/test-pr-sync-hold.sh`
   stubean para el resto de pipelines), o aprovechando un limite real de uso
   del proveedor si ocurre durante la ventana de la corrida. Mientras el hold
-  esta activo, `/work-status` debe mostrar `EN ESPERA` en lugar del stage, con
+  esta activo, la fila del colector debe traer `state: hold` /
+  `activity.kind = hold` y `/work-status` debe mostrar `EN ESPERA` en lugar del stage, con
   la causa (`activity.cause`) y la proxima sonda (`activity.next_probe`)
   visibles, en ambos runtimes -- MEF-ADR-0051 (mecanismo) y MEF-ADR-0053
   seccion 4 (raiz de estado unica) convergen aqui con MEF-ADR-0031: la
