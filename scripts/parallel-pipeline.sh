@@ -8,6 +8,7 @@
 #   ./scripts/parallel-pipeline.sh --pipeline tooling --max-parallel 2 60 62 63
 #   ./scripts/parallel-pipeline.sh 42 43 44 --max-parallel 2            # limitar concurrencia
 #   ./scripts/parallel-pipeline.sh 42 43 44 --keep-status               # no borrar status files al terminar
+#   MEFISTO_RUNTIME=<id> ./scripts/parallel-pipeline.sh 42 43 44         # fijar runtime si la autodeteccion es ambigua
 #
 # Enrutamiento automatico: sin --pipeline, cada issue se enruta segun su label tipo:*
 #   tipo:feature|refactor|projection -> tdd-pipeline.sh

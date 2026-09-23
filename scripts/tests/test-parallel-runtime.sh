@@ -27,6 +27,12 @@ if grep -qF 'for dep in gh git dotnet; do' "$PARALLEL_SCRIPT"; then
 else
     fail "CA-1: las dependencias base no coinciden"
 fi
+if grep -qF 'ERROR: no se encontro src/runtime junto al paquete publicado' "$PARALLEL_SCRIPT" \
+    && grep -qF 'ERROR: no se encontro mefisto-runtime.sh en la clausura publicada' "$PARALLEL_SCRIPT"; then
+    pass "CA-1: la clausura incompleta produce los diagnosticos esperados"
+else
+    fail "CA-1: faltan los diagnosticos de la clausura publicada"
+fi
 if grep -qE '^source .*mefisto-models\.sh' "$PARALLEL_SCRIPT"; then
     fail "CA-1: el scheduler no debe cargar mefisto-models.sh"
 else
@@ -78,9 +84,15 @@ run_parallel() {
     (
         cd "$work" || exit 99
         if [ -n "$runtime" ]; then
-            env PATH="$bin:$SAFE_SYSTEM_PATH" MEFISTO_RUNTIME="$runtime" ./scripts/parallel-pipeline.sh "$issue"
+            env PATH="$bin:$SAFE_SYSTEM_PATH" \
+                MEFISTO_STATE_DIR="$work/.mefisto/pipeline" \
+                MEFISTO_LEGACY_STATE_DIR="$work/.claude/pipeline" \
+                MEFISTO_RUNTIME="$runtime" ./scripts/parallel-pipeline.sh "$issue"
         else
-            env -u MEFISTO_RUNTIME PATH="$bin:$SAFE_SYSTEM_PATH" ./scripts/parallel-pipeline.sh "$issue"
+            env -u MEFISTO_RUNTIME PATH="$bin:$SAFE_SYSTEM_PATH" \
+                MEFISTO_STATE_DIR="$work/.mefisto/pipeline" \
+                MEFISTO_LEGACY_STATE_DIR="$work/.claude/pipeline" \
+                ./scripts/parallel-pipeline.sh "$issue"
         fi
     ) </dev/null >"$out" 2>"$err"
 }
@@ -109,12 +121,20 @@ echo "[b] dos CLIs sin seleccion abortan antes del primer issue"
 WORK_B="$TMP/work-b"; CALL_B="$TMP/call-b"; ENV_B="$TMP/env-b"; : > "$CALL_B"; : > "$ENV_B"
 setup_work_repo "$WORK_B" "$CALL_B" "$ENV_B"
 BIN_B="$TMP/bin-b"; make_base_bin "$BIN_B"
+GH_B="$TMP/gh-b"; : > "$GH_B"
+cat > "$BIN_B/gh" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "$GH_B"
+if [ "\$1" = issue ] && [ "\$2" = view ]; then printf 'OPEN|tipo:tooling\n'; fi
+EOF
+chmod +x "$BIN_B/gh"
 for cli in claude opencode; do printf '#!/usr/bin/env bash\nexit 0\n' > "$BIN_B/$cli"; chmod +x "$BIN_B/$cli"; done
 run_parallel "$WORK_B" "$BIN_B" '' 502 "$TMP/out-b" "$TMP/err-b"; RC_B=$?
-if [ "$RC_B" -ne 0 ] && cat "$TMP/out-b" "$TMP/err-b" | grep -qF 'No se pudo resolver el runtime activo' && [ ! -s "$CALL_B" ]; then
-    pass "b: aborta sin lanzar ningun issue"
+if [ "$RC_B" -ne 0 ] && cat "$TMP/out-b" "$TMP/err-b" | grep -qF 'No se pudo resolver el runtime activo' \
+    && [ ! -s "$GH_B" ] && [ ! -s "$CALL_B" ]; then
+    pass "b: aborta antes de consultar o lanzar ningun issue"
 else
-    fail "b: no aborto correctamente antes de lanzar el issue"
+    fail "b: no aborto correctamente antes de la pre-validacion"
 fi
 
 echo ""
@@ -131,10 +151,11 @@ fi
 
 echo ""
 echo "[d] la cabecera y el log del lote informan el runtime resuelto"
-if echo "$OUT_A" | grep -qF 'Runtime: opencode'; then
-    pass "d: la cabecera muestra Runtime: opencode"
+LOG_A=$(printf '%s\n' "$WORK_A"/.mefisto/pipeline/logs/parallel-[0-9]*.log)
+if echo "$OUT_A" | grep -qF 'Runtime: opencode' && grep -qF 'Runtime: opencode' "$LOG_A"; then
+    pass "d: la cabecera y el log muestran Runtime: opencode"
 else
-    fail "d: la cabecera no informa el runtime"
+    fail "d: la cabecera o el log no informan el runtime"
 fi
 
 echo ""
