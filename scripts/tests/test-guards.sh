@@ -3,7 +3,10 @@
 #
 # Valida que:
 #   A) Los skills publicados (commands/*.md) llevan el guard "cwd != Mefisto"
-#      al inicio (presencia del bloque que verifica .claude-plugin/plugin.json).
+#      al inicio: presencia del bloque manual que verifica
+#      .claude-plugin/plugin.json, o del guard neutral generado desde
+#      src/published/ (directiva {{mefisto:assert-consumer-repo}}, MEF-ADR-0049),
+#      que en su lugar verifica src/internal/scripts/generate-internal-adapters.sh.
 #   B) Los skills internos (.claude/commands/mefisto-*.md) llevan el guard inverso.
 #   C) Los pipelines publicados (scripts/tooling-pipeline.sh, scripts/parallel-pipeline.sh,
 #      scripts/batch-pipeline.sh, scripts/pr-sync.sh, scripts/tdd-pipeline.sh,
@@ -91,8 +94,10 @@ for skill in "${PUBLISHED_SKILLS[@]}"; do
     fi
     if grep -q '\.claude-plugin/plugin\.json' "$path"; then
         pass "$skill: menciona .claude-plugin/plugin.json"
+    elif grep -q 'src/internal/scripts/generate-internal-adapters\.sh' "$path"; then
+        pass "$skill: menciona el guard neutral generado (src/internal/scripts/generate-internal-adapters.sh)"
     else
-        fail "$skill: no menciona .claude-plugin/plugin.json (falta guard)"
+        fail "$skill: no menciona .claude-plugin/plugin.json ni el guard neutral generado (falta guard)"
     fi
 done
 

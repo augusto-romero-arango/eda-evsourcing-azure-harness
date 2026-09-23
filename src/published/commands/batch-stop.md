@@ -1,10 +1,13 @@
 ---
-description: "Escribe la senal de parada suave de los orquestadores publicados de Mefisto."
-model: "haiku"
+{
+  "kind": "command",
+  "id": "batch-stop",
+  "description": "Escribe la senal de parada suave de los orquestadores publicados de Mefisto.",
+  "profile": "fast"
+}
 ---
-<!-- GENERADO por src/published/scripts/generate-published-adapters.sh desde src/published/commands/batch-stop.md. No editar a mano. -->
 
-Antes de continuar, aborta si existe `src/internal/scripts/generate-internal-adapters.sh`: ese directorio es el repositorio de Mefisto, no un consumidor.
+{{mefisto:assert-consumer-repo}}
 
 Escribe la senal de parada suave de los orquestadores publicados de Mefisto (`batch-pipeline.sh` y `parallel-pipeline.sh`). Comunicate en **espanol**.
 
@@ -12,10 +15,10 @@ Escribe la senal de parada suave de los orquestadores publicados de Mefisto (`ba
 
 La senal es cooperativa: solo la consulta un orquestador que **mantiene una cola de issues sin lanzar**. Son dos:
 
-- `batch-pipeline.sh` --- el motor que lanza /mefisto:sequential. Se detiene tras el eslabon en curso (pipeline -> PR -> merge).
+- `batch-pipeline.sh` --- el motor que lanza {{mefisto:command sequential}}. Se detiene tras el eslabon en curso (pipeline -> PR -> merge).
 - `parallel-pipeline.sh` invocado directo (el camino de `--max-parallel` y de la serializacion de `tipo:projection`). Deja de lanzar pendientes; los worktrees ya en vuelo terminan.
 
-/mefisto:parallel **no** entra aqui: delega en `tmux-pipeline.sh --parallel`, que abre un pane por issue de entrada y no deja ninguna cola pendiente. Si el usuario pide detener un /mefisto:parallel en modo pane, dile que ahi no hay nada que retener --- todos los issues ya estan en vuelo --- y que la unica via es cerrar los panes de los que aun no quiera (con el costo de dejarlos a medio pipeline).
+{{mefisto:command parallel}} **no** entra aqui: delega en `tmux-pipeline.sh --parallel`, que abre un pane por issue de entrada y no deja ninguna cola pendiente. Si el usuario pide detener un {{mefisto:command parallel}} en modo pane, dile que ahi no hay nada que retener --- todos los issues ya estan en vuelo --- y que la unica via es cerrar los panes de los que aun no quiera (con el costo de dejarlos a medio pipeline).
 
 ## Proceso
 
@@ -60,7 +63,7 @@ Los issues no procesados quedaran "aplazado" en el resumen final, con la linea l
 
 ## Reglas
 
-- No pidas confirmacion adicional: el usuario ya la dio al escribir /mefisto:batch-stop explicitamente.
+- No pidas confirmacion adicional: el usuario ya la dio al escribir {{mefisto:command batch-stop}} explicitamente.
 - No mates ningun proceso ni pane: la senal es cooperativa, el propio motor la consulta.
 - No la escribas si no detectaste ningun orquestador corriendo (paso 1): dejarla puesta sin necesidad envenenaria la proxima corrida.
 - La senal se autoconsume: el propio motor la borra al detenerse (`pipeline-state/` es estado transitorio del pipeline y no se versiona, MEF-ADR-0017). Este comando nunca la borra por su cuenta.

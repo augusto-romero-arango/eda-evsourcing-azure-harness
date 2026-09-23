@@ -1,6 +1,5 @@
 ---
 description: "Escribe la senal de parada suave de los orquestadores publicados de Mefisto."
-model: "haiku"
 ---
 <!-- GENERADO por src/published/scripts/generate-published-adapters.sh desde src/published/commands/batch-stop.md. No editar a mano. -->
 
