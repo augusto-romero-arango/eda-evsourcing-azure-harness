@@ -95,6 +95,8 @@ CLAUDE_ROOT_MIRRORS=(
     'src/published/agents/projection-test-writer.md|agents/projection-test-writer.md'
     'src/published/agents/projection-implementer.md|agents/projection-implementer.md'
     'src/published/agents/domain-scaffolder.md|agents/domain-scaffolder.md'
+    'src/published/agents/infra-writer.md|agents/infra-writer.md'
+    'src/published/agents/infra-reviewer.md|agents/infra-reviewer.md'
 )
 
 usage_error() { printf 'ERROR: %s\n' "$1" >&2; exit 1; }

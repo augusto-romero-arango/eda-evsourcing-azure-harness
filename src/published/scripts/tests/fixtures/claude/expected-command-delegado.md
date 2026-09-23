@@ -1,7 +1,7 @@
 ---
 description: "Delega: \"si\"."
 argument-hint: "<ruta con espacios>"
-allowed-tools: "Read, Glob, Grep, mcp__terraform__*"
+allowed-tools: "Read, Glob, Grep, mcp__terraform__*, mcp__plugin_terraform_terraform__*"
 model: "haiku"
 ---
 <!-- GENERADO por prueba desde fixture. No editar a mano. -->
