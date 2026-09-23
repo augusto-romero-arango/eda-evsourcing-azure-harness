@@ -40,13 +40,9 @@ BOLD='\033[1m'
 NC='\033[0m'
 
 # ─── Logging ─────────────────────────────────────────────────────────────────
-# Estado operativo canonico (MEF-ADR-0053, patron adoptado por tdd-pipeline.sh
-# en #1156): mefisto_state_path escribe solo bajo .mefisto/pipeline y crea el
-# directorio padre necesario. pr-sync no lee estado previo, asi que no hace
-# falta mefisto_state_read_paths ni el fallback legacy.
+# LOG_DIR_ABS/LOG_FILE_ABS se resuelven en "Inicializar log", tras los guards,
+# porque mefisto_state_path crea el directorio al invocarse.
 TIMESTAMP=$(date +%Y%m%d-%H%M%S)
-LOG_DIR_ABS="$(dirname "$(mefisto_state_path 'logs/.state')")"
-LOG_FILE_ABS="$LOG_DIR_ABS/pr-sync-$TIMESTAMP.log"
 
 _strip_ansi() { sed 's/\x1b\[[0-9;]*m//g'; }
 _log_file()   { echo -e "$1" | _strip_ansi >> "$LOG_FILE_ABS"; }
@@ -169,6 +165,11 @@ fi
 cd "$REPO_ROOT"
 
 # ─── Inicializar log ──────────────────────────────────────────────────────────
+# Estado operativo canonico (MEF-ADR-0053 seccion 4, mismo patron que
+# tdd-pipeline.sh): solo se escribe bajo .mefisto/pipeline. pr-sync no lee
+# estado previo, asi que no usa mefisto_state_read_paths.
+LOG_DIR_ABS="$(dirname "$(mefisto_state_path 'logs/.state')")"
+LOG_FILE_ABS="$LOG_DIR_ABS/pr-sync-$TIMESTAMP.log"
 touch "$LOG_FILE_ABS"
 
 header "pr-sync — Sincronización de PRs con main"
