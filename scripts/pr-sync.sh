@@ -40,10 +40,13 @@ BOLD='\033[1m'
 NC='\033[0m'
 
 # ─── Logging ─────────────────────────────────────────────────────────────────
+# Estado operativo canonico (MEF-ADR-0053, patron adoptado por tdd-pipeline.sh
+# en #1156): mefisto_state_path escribe solo bajo .mefisto/pipeline y crea el
+# directorio padre necesario. pr-sync no lee estado previo, asi que no hace
+# falta mefisto_state_read_paths ni el fallback legacy.
 TIMESTAMP=$(date +%Y%m%d-%H%M%S)
-PIPELINE_DIR=".claude/pipeline"
-LOG_DIR="$PIPELINE_DIR/logs"
-LOG_FILE="$LOG_DIR/pr-sync-$TIMESTAMP.log"
+LOG_DIR_ABS="$(dirname "$(mefisto_state_path 'logs/.state')")"
+LOG_FILE_ABS="$LOG_DIR_ABS/pr-sync-$TIMESTAMP.log"
 
 _strip_ansi() { sed 's/\x1b\[[0-9;]*m//g'; }
 _log_file()   { echo -e "$1" | _strip_ansi >> "$LOG_FILE_ABS"; }
@@ -166,8 +169,6 @@ fi
 cd "$REPO_ROOT"
 
 # ─── Inicializar log ──────────────────────────────────────────────────────────
-mkdir -p "$LOG_DIR"
-LOG_FILE_ABS="$REPO_ROOT/$LOG_FILE"
 touch "$LOG_FILE_ABS"
 
 header "pr-sync — Sincronización de PRs con main"
@@ -236,9 +237,6 @@ if [ "$DO_MERGE" = true ]; then
 fi
 
 # ─── Función: invocar agente ──────────────────────────────────────────────────
-LOG_DIR_ABS="$REPO_ROOT/$LOG_DIR"
-mkdir -p "$LOG_DIR_ABS"
-
 run_agent() {
     local label="$1"
     local agent="$2"
