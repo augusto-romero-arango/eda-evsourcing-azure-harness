@@ -62,6 +62,7 @@ TOOLING_CLOSURE_ASSETS=(
     'scripts/batch-pipeline.sh|0755'
     'scripts/parallel-pipeline.sh|0755'
     'scripts/iac-pipeline.sh|0755'
+    'scripts/field-note.sh|0755'
     'src/runtime/mefisto-run-agent.sh|0755'
     'src/runtime/lib/mefisto-runtime.sh|0755'
     'src/runtime/lib/mefisto-models.sh|0644'
@@ -100,6 +101,7 @@ CLAUDE_ROOT_MIRRORS=(
     'src/published/agents/infra-writer.md|agents/infra-writer.md'
     'src/published/agents/infra-reviewer.md|agents/infra-reviewer.md'
     'src/published/agents/pr-sync.md|agents/pr-sync.md'
+    'src/published/agents/planner.md|agents/planner.md'
 )
 
 usage_error() { printf 'ERROR: %s\n' "$1" >&2; exit 1; }

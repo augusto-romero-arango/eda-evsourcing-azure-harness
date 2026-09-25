@@ -1,87 +1,31 @@
 ---
-name: "planner"
 description: "Agente de Knowledge Crunching y planificacion. Descubre el lenguaje del dominio a traves de eventos, y convierte ese conocimiento en issues accionables."
-tools: "Read, Glob, Grep, Edit, Write, Bash, Skill, mcp__microsoft-learn__*, mcp__plugin_mefisto_microsoft-learn__*"
-skills: ["projections"]
-model: "opus"
+mode: "all"
+permission: {"external_directory":"deny","doom_loop":"deny","lsp":"deny","todowrite":"deny","question":"deny","webfetch":"deny","websearch":"deny","skill":{"*":"deny","mefisto-projections":"allow"},"task":"deny","list":"allow","glob":"allow","grep":"allow","bash":{"*":"deny","git *":"allow","gh *":"allow","jq *":"allow","cat *":"allow","ls":"allow","ls *":"allow","find *":"allow","grep *":"allow","sort":"allow","sort *":"allow","bash scripts/*":"allow","sh scripts/*":"allow","scripts/*":"allow","./scripts/*":"allow","${MEFISTO_PACKAGE_ROOT}/scripts/*":"allow","mkdir *":"allow","mktemp":"allow","mktemp *":"allow","rm *":"deny","dotnet *":"allow","func init *":"allow","terraform init -backend=false*":"allow","terraform validate*":"allow","terraform fmt*":"allow","python3 - *":"allow","python3 -m json.tool*":"allow","cd *":"allow","echo *":"allow","date":"allow","date *":"allow","printf *":"allow","test *":"allow","[ *":"allow","touch *":"allow","tr *":"allow","head *":"allow","tail *":"allow","awk *":"allow","sed *":"allow","mv *":"allow","ilspycmd *":"allow","rm -f src/*":"allow","rm -rf src/*":"allow","rm -f tests/*":"allow","rm -f \"src/*":"allow","rm -rf \"src/*":"allow","rm -f \"tests/*":"allow","curl *":"deny","ssh *":"deny","scp *":"deny","sudo *":"deny"},"edit":{"*":"allow","commands/**":"deny","skills/**":"deny","agents/**":"deny","hooks/**":"deny",".claude-plugin/**":"deny","src/published/**":"deny","src/runtime/**":"deny","dist/**":"deny","docs/adr/mef-adr-*":"deny"},"write":{"*":"allow","commands/**":"deny","skills/**":"deny","agents/**":"deny","hooks/**":"deny",".claude-plugin/**":"deny","src/published/**":"deny","src/runtime/**":"deny","dist/**":"deny","docs/adr/mef-adr-*":"deny"},"patch":{"*":"allow","commands/**":"deny","skills/**":"deny","agents/**":"deny","hooks/**":"deny",".claude-plugin/**":"deny","src/published/**":"deny","src/runtime/**":"deny","dist/**":"deny","docs/adr/mef-adr-*":"deny"},"read":{"*":"allow",".env":"deny",".env.*":"deny","**/.env":"deny","**/.env.*":"deny","**/auth.json":"deny","**/.aws/**":"deny","**/.ssh/**":"deny"}}
+tools: {"microsoft-learn_*":true,"terraform_*":false}
 ---
 <!-- GENERADO por src/published/scripts/generate-published-adapters.sh desde src/published/agents/planner.md. No editar a mano. -->
+Antes de ejecutar este body, usa la tool nativa `skill` para cargar, en este orden: `mefisto-projections`. Si una carga es denegada o falla, detén la ejecución.
 ```bash
-mefisto_claude_root=''
-mefisto_claude_canonical_contaminated=0
-mefisto_claude_root_from_candidate() {
-    local root
-    case "$mefisto_claude_candidate" in /*) ;; *) return 1 ;; esac
-    root="$(cd "$mefisto_claude_candidate" 2>/dev/null && pwd -P)" || return 1
-    jq -e '
-      .name == "mefisto" and
-      (.version | type == "string" and test("^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?(\\+[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?$"))
-    ' "$root/.claude-plugin/plugin.json" >/dev/null 2>&1 || return 1
-    jq -e --arg version "$(jq -er '.version | strings' "$root/.claude-plugin/plugin.json" 2>/dev/null)" '
-      (keys | sort) == ["commit", "runtime", "schemaVersion", "version"] and
-      .schemaVersion == 1 and .runtime == "claude" and .version == $version and
-      (.commit | type == "string" and test("^[0-9a-f]{40}$"))
-    ' "$root/mefisto-manifest.json" >/dev/null 2>&1 || return 1
-    printf '%s\n' "$root"
+mefisto_opencode_data_root() {
+    if [ -n "${XDG_DATA_HOME:-}" ]; then printf '%s/mefisto\n' "$XDG_DATA_HOME"
+    elif [ "$(uname -s)" = Darwin ]; then printf '%s/Library/Application Support/mefisto\n' "$HOME"
+    else printf '%s/.local/share/mefisto\n' "$HOME"; fi
 }
-mefisto_claude_is_opencode_root() {
-    local root
-    case "$mefisto_claude_candidate" in /*) ;; *) return 1 ;; esac
-    root="$(cd "$mefisto_claude_candidate" 2>/dev/null && pwd -P)" || return 1
-    jq -e '
-      (keys | sort) == ["commit", "minimumRuntimeVersion", "runtime", "schemaVersion", "version"] and
-      .schemaVersion == 1 and .runtime == "opencode" and
-      (.version | type == "string" and test("^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?(\\+[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?$")) and
-      (.commit | type == "string" and test("^[0-9a-f]{40}$")) and
-      (.minimumRuntimeVersion | type == "string" and test("^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"))
-    ' "$root/mefisto-manifest.json" >/dev/null 2>&1
+mefisto_opencode_launcher="$(mefisto_opencode_data_root)/active/bin/mefisto-opencode"
+if [ ! -f "$mefisto_opencode_launcher" ] || [ -L "$mefisto_opencode_launcher" ] || [ ! -x "$mefisto_opencode_launcher" ]; then
+    printf '%s\n' 'ERROR OpenCode: no hay una release activa valida; instale o active la release OpenCode.' >&2; exit 1
+fi
+MEFISTO_PACKAGE_ROOT="$("$mefisto_opencode_launcher" package-root)" || {
+    printf '%s\n' 'ERROR OpenCode: no se pudo resolver la release activa; instale o active la release OpenCode.' >&2; exit 1;
 }
-if [ -n "${CLAUDE_PLUGIN_ROOT:-}" ]; then
-    mefisto_claude_candidate="$CLAUDE_PLUGIN_ROOT"
-    mefisto_claude_root="$(mefisto_claude_root_from_candidate)" || {
-        printf '%s\n' 'ERROR Claude: la raiz indicada por CLAUDE_PLUGIN_ROOT es invalida; reabra o reinstale el plugin.' >&2; exit 1;
-    }
-else
-    mefisto_claude_cursor="$PWD"
-    while :; do
-        if [ -f "$mefisto_claude_cursor/.mefisto/pipeline/.plugin-root" ]; then
-            mefisto_claude_candidate="$(< "$mefisto_claude_cursor/.mefisto/pipeline/.plugin-root")"
-            if mefisto_claude_root="$(mefisto_claude_root_from_candidate)"; then break; fi
-            if mefisto_claude_is_opencode_root; then
-                mefisto_claude_canonical_contaminated=1
-                break
-            else
-                printf '%s\n' 'ERROR Claude: metadata del marker canonico invalida; reabra o reinstale el plugin.' >&2; exit 1
-            fi
-        fi
-        if [ "$mefisto_claude_cursor" = / ]; then break; fi
-        mefisto_claude_cursor="$(cd "$mefisto_claude_cursor/.." && pwd -P)"
-    done
-    if [ -z "$mefisto_claude_root" ]; then
-        mefisto_claude_cursor="$PWD"
-        while :; do
-            if [ -f "$mefisto_claude_cursor/.claude/pipeline/.plugin-root" ]; then
-                mefisto_claude_candidate="$(< "$mefisto_claude_cursor/.claude/pipeline/.plugin-root")"
-                if mefisto_claude_root="$(mefisto_claude_root_from_candidate)"; then break; fi
-                if mefisto_claude_is_opencode_root; then
-                    printf '%s\n' 'ERROR Claude: el marker Claude identifica una distribucion de otro runtime; reabra Claude o reinstale el plugin.' >&2; exit 1
-                fi
-                printf '%s\n' 'ERROR Claude: metadata del marker Claude invalida; reabra o reinstale el plugin.' >&2; exit 1
-            fi
-            if [ "$mefisto_claude_cursor" = / ]; then break; fi
-            mefisto_claude_cursor="$(cd "$mefisto_claude_cursor/.." && pwd -P)"
-        done
-    fi
-fi
-if [ -z "$mefisto_claude_root" ]; then
-    if [ "$mefisto_claude_canonical_contaminated" -eq 1 ]; then
-        printf '%s\n' 'ERROR Claude: el marker canonico identifica una distribucion OpenCode y no existe un mirror Claude valido; reabra Claude o reinstale el plugin.' >&2
-    else
-        printf '%s\n' 'ERROR Claude: no se encontro una raiz Claude valida; reabra o reinstale el plugin.' >&2
-    fi
-    exit 1
-fi
-MEFISTO_PACKAGE_ROOT="$mefisto_claude_root"
+case "$MEFISTO_PACKAGE_ROOT" in
+    /*) ;;
+    *) printf '%s\n' 'ERROR OpenCode: la release activa no devolvio una raiz absoluta; reinstale o active la release OpenCode.' >&2; exit 1 ;;
+esac
+MEFISTO_PACKAGE_ROOT="$(cd "$MEFISTO_PACKAGE_ROOT" 2>/dev/null && pwd -P)" || {
+    printf '%s\n' 'ERROR OpenCode: la release activa no existe; reinstale o active la release OpenCode.' >&2; exit 1;
+}
 export MEFISTO_PACKAGE_ROOT
 ```
 ```bash
@@ -106,7 +50,7 @@ Eres el compañero de **Knowledge Crunching** de este proyecto. Comunícate siem
 
 ## Localizar los ADRs y los recursos del Skill
 
-Los ADRs del harness y los recursos de Nivel 3 del Skill `projections` (precargado por el frontmatter `skills:` de este agente) viven **dentro de la release activa e inmutable del plugin**, no en el repo donde corres este agente (`cwd = repo consumidor`). Los links relativos del Skill no se resuelven solos (`naming.md`, `modelos-marten.md`, `read-apis.md`, `config-test.md`): abrelos en `"${MEFISTO_PACKAGE_ROOT}/skills/projections"/<archivo>.md` cuando necesites el arbol de decision completo o un detalle que el Nivel 2 (el body de `SKILL.md`, ya precargado) no cubre. Abre cada ADR del marco en `${MEFISTO_PACKAGE_ROOT}/docs/adr/<archivo>.md`.
+Los ADRs del harness y los recursos de Nivel 3 del Skill `projections` (precargado por el frontmatter `skills:` de este agente) viven **dentro de la release activa e inmutable del plugin**, no en el repo donde corres este agente (`cwd = repo consumidor`). Los links relativos del Skill no se resuelven solos (`naming.md`, `modelos-marten.md`, `read-apis.md`, `config-test.md`): abrelos en `"${MEFISTO_PACKAGE_ROOT}/skills/mefisto-projections"/<archivo>.md` cuando necesites el arbol de decision completo o un detalle que el Nivel 2 (el body de `SKILL.md`, ya precargado) no cubre. Abre cada ADR del marco en `${MEFISTO_PACKAGE_ROOT}/docs/adr/<archivo>.md`.
 
 **Nunca uses una ruta relativa** `docs/adr/...` ni `skills/projections/...`: con `cwd = repo consumidor` resolverian contra el repo equivocado (inexistente ahi) y el ADR o el recurso parecerian "ausentes".
 
@@ -1258,7 +1202,7 @@ Todo el resto del cierre -- crear el worktree aislado desde `origin/$INITIAL_DEF
 FIELD_NOTE_GLOSSARY_ARGS=""
 [ -z "$GLOSSARY_PATH" ] || FIELD_NOTE_GLOSSARY_ARGS="--glossary-path $GLOSSARY_PATH --glossary $GLOSSARY_LOCAL"
 
-MEFISTO_RUNTIME=claude "${MEFISTO_PACKAGE_ROOT}/scripts/field-note.sh" --session-id "$SESSION_ID" --timestamp "$CLOSING_TIMESTAMP" --field-note "$FIELD_NOTE_LOCAL" $FIELD_NOTE_GLOSSARY_ARGS
+MEFISTO_RUNTIME=opencode "${MEFISTO_PACKAGE_ROOT}/scripts/field-note.sh" --session-id "$SESSION_ID" --timestamp "$CLOSING_TIMESTAMP" --field-note "$FIELD_NOTE_LOCAL" $FIELD_NOTE_GLOSSARY_ARGS
 ```
 
 Ejecútalo sin pausas ni confirmaciones. Reintentar con los MISMOS `--session-id`/`--timestamp` es seguro: el script reanuda la rama, el worktree, el commit y el PR de esta sesión en vez de duplicarlos -- no relances el cierre con valores nuevos solo porque una corrida anterior falló a mitad de camino.
