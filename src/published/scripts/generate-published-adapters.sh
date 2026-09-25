@@ -82,6 +82,7 @@ KNOWLEDGE_CLOSURE_ASSETS=()
 # publicados se reflejan alli desde la misma renderizacion Claude.
 CLAUDE_ROOT_MIRRORS=(
     'src/published/commands/tooling.md|commands/tooling.md'
+    'src/published/commands/draft.md|commands/draft.md'
     'src/published/commands/implement.md|commands/implement.md'
     'src/published/commands/merge.md|commands/merge.md'
     'src/published/commands/sequential.md|commands/sequential.md'
