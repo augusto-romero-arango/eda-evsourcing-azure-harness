@@ -54,7 +54,9 @@ comandos que meramente menciona. La política vigente permite `git`, `gh`,
 `ilspycmd`. Las cuatro últimas utilidades de texto previas a `mv` cubren
 subcomandos reales de tuberías y sustituciones de comando de esa doctrina.
 `terraform plan`/`apply`, `func start` y `az` continúan denegados por el
-default (MEF-ADR-0049 y MEF-ADR-0053).
+default (MEF-ADR-0049 y MEF-ADR-0053). El agente `planner` (issue #1640)
+sumó `date` y `printf`, ya requeridos por su propia doctrina (marcas de
+tiempo de sesión, cierre documental) y ausentes hasta entonces del registro.
 
 `rm *`, `curl *`, `ssh *`, `scp *` y `sudo *` conservan denegación explícita.
 La excepción de `rm` casa exclusivamente candidatos cuyo texto comienza por

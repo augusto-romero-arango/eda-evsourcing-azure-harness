@@ -740,7 +740,7 @@ fi
 # sola invocacion del script + reportar su salida (CA-5), con la prohibicion
 # explicita de crear la rama documental en el checkout principal.
 for required in \
-    '"$PLUGIN_ROOT/scripts/field-note.sh"' \
+    '"${MEFISTO_PACKAGE_ROOT}/scripts/field-note.sh"' \
     '--session-id "$SESSION_ID"' \
     '--timestamp "$CLOSING_TIMESTAMP"' \
     '--field-note "$FIELD_NOTE_LOCAL"' \
