@@ -73,15 +73,15 @@ Esta es la unica operacion permitida hacia el repo de Mefisto (MEF-ADR-0019). In
 Lee el slug efectivo del repo de Mefisto -- mismo campo y mismo default que usa el agente `planner` (MEF-ADR-0053 decision 4). El campo es opcional: si el config no lo declara o esta vacio, aplica el default sin abortar.
 
 ```bash
-HARNESS_REPO_SLUG=$(jq -r '.repoSlug // empty' "${MEFISTO_CONFIG_PATH}" 2>/dev/null)
-[ -z "$HARNESS_REPO_SLUG" ] && HARNESS_REPO_SLUG="augusto-romero-arango/eda-evsourcing-azure-harness"
-echo "$HARNESS_REPO_SLUG"
+REPO_SLUG=$(jq -r '.repoSlug // empty' "${MEFISTO_CONFIG_PATH}" 2>/dev/null)
+[ -z "$REPO_SLUG" ] && REPO_SLUG="augusto-romero-arango/eda-evsourcing-azure-harness"
+echo "$REPO_SLUG"
 ```
 
-Cada bloque `bash` corre en un shell nuevo: al llegar al `gh issue create -R "$HARNESS_REPO_SLUG"` de mas abajo, interpola el slug que imprimio este bloque (no asumas que la variable sobrevive entre bloques).
+Cada bloque `bash` corre en un shell nuevo: al llegar al `gh issue create -R "$REPO_SLUG"` de mas abajo, interpola el slug que imprimio este bloque (no asumas que la variable sobrevive entre bloques).
 
 ```bash
-gh issue create -R "$HARNESS_REPO_SLUG" \
+gh issue create -R "$REPO_SLUG" \
   --title "[titulo inferido]" \
   --label "estado:borrador,tipo:tooling" \
   --body "$(cat <<'DRAFTEOF'

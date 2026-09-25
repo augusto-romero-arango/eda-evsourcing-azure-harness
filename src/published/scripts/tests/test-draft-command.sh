@@ -29,9 +29,9 @@ operation_line="$(awk '/gh issue create/ { print NR; exit }' "$SOURCE")"
 [ -n "$guard_line" ] && [ -n "$operation_line" ] && [ "$guard_line" -lt "$operation_line" ] && pass 'guard precede cualquier operacion' || fail 'guard no precede las operaciones'
 contains "$body" 'domainLabels` de {{mefisto:config-path}}' 'domainLabels se lee desde config-path'
 contains "$body" "jq -r '.repoSlug // empty' \"{{mefisto:config-path}}\"" 'repoSlug se lee desde config-path con el molde del planner'
-contains "$body" 'HARNESS_REPO_SLUG="augusto-romero-arango/eda-evsourcing-azure-harness"' 'mismo default que el planner cuando el campo falta'
-contains "$body" 'gh issue create -R "$HARNESS_REPO_SLUG"' 'draft cross-repo usa -R con el slug resuelto'
-absent "$body" '${HARNESS_REPO_SLUG:-' 'HARNESS_REPO_SLUG ya no se lee como override de entorno'
+contains "$body" 'REPO_SLUG="augusto-romero-arango/eda-evsourcing-azure-harness"' 'mismo default que el planner cuando el campo falta'
+contains "$body" 'gh issue create -R "$REPO_SLUG"' 'draft cross-repo usa -R con el slug resuelto'
+absent "$body" 'HARNESS_REPO_SLUG' 'HARNESS_REPO_SLUG desaparece de la fuente (CA-2/CA-6c)'
 for forbidden in 'Claude' 'OpenCode' '.claude/' '.opencode/' 'cache' 'model:' 'tools:' 'allowed-tools:' 'permission:' '.plugin-root' 'CLAUDE_' 'plugins/cache'; do absent "$body" "$forbidden" "fuente no publica token prohibido: $forbidden"; done
 
 echo '[fuente] comportamiento conservado (CA-3/CA-4)'
@@ -61,8 +61,8 @@ contains "$opencode_body" '/mefisto:draft' 'OpenCode resuelve la directiva comma
 for content_label in claude opencode; do
     case "$content_label" in claude) content="$claude_body" ;; opencode) content="$opencode_body" ;; esac
     contains "$content" 'MEFISTO_CONFIG_PATH' "$content_label resuelve MEFISTO_CONFIG_PATH (CA-2)"
-    contains "$content" 'HARNESS_REPO_SLUG=$(jq -r' "$content_label conserva la lectura de repoSlug"
-    absent "$content" '${HARNESS_REPO_SLUG:-' "$content_label no reintroduce el override de entorno"
+    contains "$content" 'REPO_SLUG=$(jq -r' "$content_label conserva la lectura de repoSlug"
+    absent "$content" 'HARNESS_REPO_SLUG' "$content_label no nombra HARNESS_REPO_SLUG (CA-6c)"
     absent "$content" 'plugins/cache' "$content_label no reimplementa token prohibido: plugins/cache"
 done
 if cmp -s "$MIRROR" "$CLAUDE"; then pass 'mirror Claude coincide byte a byte (CA-5e)'; else fail 'mirror Claude diverge'; fi
