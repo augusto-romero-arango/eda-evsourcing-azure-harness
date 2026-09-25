@@ -1,7 +1,5 @@
 ---
 description: "Captura una idea como issue estado:borrador con minima friccion, incluido el draft cross-repo hacia Mefisto."
-argument-hint: "<descripcion de la idea>"
-model: "haiku"
 ---
 <!-- GENERADO por src/published/scripts/generate-published-adapters.sh desde src/published/commands/draft.md. No editar a mano. -->
 ```bash
