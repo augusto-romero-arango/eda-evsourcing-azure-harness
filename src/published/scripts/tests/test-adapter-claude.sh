@@ -53,7 +53,7 @@ if render "$FIXTURES/agent-completo.md" > "$WORK/agent.md" && cmp -s "$FIXTURES/
 agent="$(< "$WORK/agent.md")"
 contains "$agent" 'name: "agent-completo"' 'name de agente sin mefisto-'
 contains "$agent" 'description: "Lee: \"edita\"."' 'escaping de comillas y dos puntos'
-contains "$agent" 'tools: "Read, Glob, Grep, Edit, Write, Bash, WebFetch, WebSearch, Skill, Task, mcp__microsoft-learn__*, mcp__terraform__*, mcp__plugin_terraform_terraform__*"' 'tools y MCP cerrados'
+contains "$agent" 'tools: "Read, Glob, Grep, Edit, Write, Bash, WebFetch, WebSearch, Skill, Task, mcp__microsoft-learn__*, mcp__plugin_mefisto_microsoft-learn__*, mcp__terraform__*, mcp__plugin_terraform_terraform__*"' 'tools y MCP cerrados'
 contains "$agent" 'skills: ["projections"]' 'Skill publicado preservado'
 contains "$agent" 'model: "sonnet"' 'perfil con modelo'
 contains "$agent" 'Rutas: ${MEFISTO_CONFIG_PATH}, ${MEFISTO_INSTRUCTIONS_PATH} y ${MEFISTO_PACKAGE_ROOT}.' 'config-path, instructions-path y package-root traducen a variables'

@@ -49,7 +49,7 @@ opencode_body="$(< "$OPENCODE")"
 contains "$claude_body" 'name: "planner"' 'Claude expone el id del agente'
 contains "$claude_body" 'model: "opus"' 'Claude materializa el perfil deep como opus'
 contains "$claude_body" 'skills: ["projections"]' 'Claude declara el Skill projections'
-contains "$claude_body" 'mcp__microsoft-learn__*' 'Claude declara el matcher MCP scoped de microsoft-learn'
+contains "$claude_body" 'mcp__plugin_mefisto_microsoft-learn__*' 'Claude declara el matcher MCP scoped de microsoft-learn (plugin bundleado)'
 absent "$opencode_body" 'model:' 'OpenCode no emite model (hereda la configuracion interactiva del usuario)'
 contains "$opencode_body" 'mode: "all"' 'OpenCode conserva mode all'
 contains "$opencode_body" 'mefisto-projections' 'OpenCode solicita la carga nativa de mefisto-projections'

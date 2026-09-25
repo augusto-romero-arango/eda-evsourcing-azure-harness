@@ -1,7 +1,7 @@
 ---
 name: "planner"
 description: "Agente de Knowledge Crunching y planificacion. Descubre el lenguaje del dominio a traves de eventos, y convierte ese conocimiento en issues accionables."
-tools: "Read, Glob, Grep, Edit, Write, Bash, Skill, mcp__microsoft-learn__*"
+tools: "Read, Glob, Grep, Edit, Write, Bash, Skill, mcp__microsoft-learn__*, mcp__plugin_mefisto_microsoft-learn__*"
 skills: ["projections"]
 model: "opus"
 ---
