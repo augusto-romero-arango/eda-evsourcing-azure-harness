@@ -99,6 +99,7 @@ CLAUDE_ROOT_MIRRORS=(
     'src/published/agents/domain-scaffolder.md|agents/domain-scaffolder.md'
     'src/published/agents/infra-writer.md|agents/infra-writer.md'
     'src/published/agents/infra-reviewer.md|agents/infra-reviewer.md'
+    'src/published/agents/pr-sync.md|agents/pr-sync.md'
 )
 
 usage_error() { printf 'ERROR: %s\n' "$1" >&2; exit 1; }
