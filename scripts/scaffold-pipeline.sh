@@ -85,6 +85,9 @@ cleanup_on_error() {
     fi
 }
 trap cleanup_on_error ERR
+# abort() sale con exit 1 sin disparar ERR: el directorio temporal del runner
+# se limpia en cualquier salida, no solo ante error.
+trap 'rm -rf "$PIPELINE_TMP_DIR" 2>/dev/null || true' EXIT
 
 # --- Help ---
 show_help() {
