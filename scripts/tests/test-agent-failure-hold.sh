@@ -212,9 +212,10 @@ echo "[10] CA-6: los cuatro pipelines consumen la funcion compartida, no una cop
 for f in tdd-pipeline.sh tooling-pipeline.sh iac-pipeline.sh scaffold-pipeline.sh; do
     path="$REPO_ROOT/scripts/$f"
     classifier="classify_agent_failure"
-    # iac-pipeline.sh se sumo al runner neutral en el issue #1624: desde ahi
-    # clasifica igual que tdd/tooling, sobre el JSONL neutral.
-    case "$f" in tooling-pipeline.sh|tdd-pipeline.sh|iac-pipeline.sh) classifier="classify_neutral_agent_failure" ;; esac
+    # iac-pipeline.sh (issue #1624) y scaffold-pipeline.sh (issue #1644) se
+    # sumaron al runner neutral: desde ahi clasifican igual que tdd/tooling,
+    # sobre el JSONL neutral.
+    case "$f" in tooling-pipeline.sh|tdd-pipeline.sh|iac-pipeline.sh|scaffold-pipeline.sh) classifier="classify_neutral_agent_failure" ;; esac
     if grep -q "$classifier" "$path"; then
         pass "$f invoca $classifier"
     else
@@ -248,11 +249,11 @@ done
 
 echo ""
 echo "[11] CA-5: la sonda del bucle de espera corre bajo el watchdog de stage"
-# El bloque de la sonda se delimita por su propio nombre de log (-hold-) y el
-# watchdog por el `sleep <timeout>` que lo acompana: si la sonda volviera a
-# invocar el CLI de forma sincrona (sin `&` y sin watchdog), una invocacion
+# El watchdog de la sonda es el mismo --timeout del runner neutral (issue
+# #1644, scaffold-pipeline.sh se sumo al mismo molde): si la sonda volviera a
+# invocar el CLI de forma sincrona (sin delegar el watchdog), una invocacion
 # colgada dejaria el pipeline esperando indefinidamente.
-for f in tdd-pipeline.sh tooling-pipeline.sh iac-pipeline.sh; do
+for f in tdd-pipeline.sh tooling-pipeline.sh iac-pipeline.sh scaffold-pipeline.sh; do
     path="$REPO_ROOT/scripts/$f"
     if grep -q 'mefisto-run-agent.sh' "$path" && ! grep -q 'PROBE_WATCHDOG_PID' "$path"; then
         pass "$f: la sonda delega el watchdog al runner neutral"
@@ -260,12 +261,6 @@ for f in tdd-pipeline.sh tooling-pipeline.sh iac-pipeline.sh; do
         fail "$f: la sonda no delega el watchdog neutral"
     fi
 done
-path="$REPO_ROOT/scripts/scaffold-pipeline.sh"
-if grep -q "PROBE_WATCHDOG_PID" "$path" && grep -q "sonda de hold" "$path"; then
-    pass "scaffold-pipeline.sh: sonda con watchdog propio"
-else
-    fail "scaffold-pipeline.sh: la sonda de hold no corre bajo watchdog"
-fi
 
 echo ""
 echo "----------------------------------------"

@@ -1,5 +1,13 @@
 #!/usr/bin/env bash
 # test-scaffold-text-integrity.sh -- Gates de commit, integridad y pines OpenTelemetry del scaffold (#1229, #1237, #1242, #1246, #1247).
+#
+# Issue #1644: scaffold-pipeline.sh delega la invocacion del agente en el
+# runner neutral (mefisto-run-agent.sh). El stub de agente de este archivo ya
+# no reemplaza el CLI de un runtime concreto: reemplaza el runner completo via
+# MEFISTO_RUN_AGENT_BIN (mismo patron que test-iac-pipeline-state-paths.sh),
+# con MEFISTO_RUNTIME=fake + MEFISTO_FAKE_AVAILABLE=1 para que
+# mefisto_resolve_runtime/runtime_cli_available resuelvan sin invocar ningun
+# CLI real.
 
 set -uo pipefail
 
@@ -71,8 +79,21 @@ case "${1:-} ${2:-}" in
     *) exit 1 ;;
 esac
 EOF
-    cat > "$bin/claude" <<'EOF'
+    cat > "$bin/run-agent-stub.sh" <<'EOF'
 #!/usr/bin/env bash
+# Reemplaza el runner neutral completo (mefisto-run-agent.sh) via
+# MEFISTO_RUN_AGENT_BIN: emula al agente domain-scaffolder segun el guion
+# indicado por SCAFFOLD_FIXTURE y deja un terminal neutral en --event-log.
+set -u
+cwd="" event_log=""
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --cwd) cwd="$2"; shift 2 ;;
+        --event-log) event_log="$2"; shift 2 ;;
+        *) shift ;;
+    esac
+done
+cd "$cwd" || exit 90
 mkdir -p "$PWD/src/Certificacion.Prueba"
 mkdir -p "$PWD/tests/Certificacion.Prueba.Tests"
 case "$SCAFFOLD_FIXTURE" in
@@ -129,8 +150,10 @@ if [ "$SCAFFOLD_FIXTURE" = "marker-legitimo" ] || [ "$SCAFFOLD_FIXTURE" = "runti
     printf 'plugin-root' > "$PWD/.claude/pipeline/.plugin-root"
     git check-ignore -q .claude/pipeline/.plugin-root || exit 98
 fi
+printf '%s\n' '{"type":"run.completed","status":"success","session_id":"sess-scaffold","denials":0,"error":null}' > "$event_log"
+exit 0
 EOF
-    chmod +x "$bin/gh" "$bin/claude"
+    chmod +x "$bin/gh" "$bin/run-agent-stub.sh"
 }
 
 assert_otlp_gate_contract() {
@@ -179,6 +202,8 @@ run_case() {
     (
         cd "$consumer" || exit 99
         SCAFFOLD_FIXTURE="$scenario" GH_STUB_LOG="$GH_STUB_LOG" PATH="$bin:$PATH" \
+            MEFISTO_RUN_AGENT_BIN="$bin/run-agent-stub.sh" \
+            MEFISTO_RUNTIME=fake MEFISTO_FAKE_AVAILABLE=1 \
             "$PIPELINE" --domain prueba
     ) > "$TMP_DIR/$scenario.out" 2>&1
     LAST_RC=$?

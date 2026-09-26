@@ -49,9 +49,13 @@
 #                            --models: el pipeline IaC nunca lo soporto), con
 #                            --model condicional en el argv y una sola linea
 #                            de anuncio por stage.
-#   scaffold-pipeline.sh     - anuncia y persiste una vez el modelo declarado de
-#                            domain-scaffolder (o <heredado>) sin alterar sus
-#                            invocaciones iniciales ni las sondas de hold.
+#   scaffold-pipeline.sh     - resuelve el modelo neutral por perfil (issue
+#                            #1644, alineado con iac/tooling): domain-scaffolder
+#                            con perfil balanced via mefisto_resolve_model (sin
+#                            --models: este pipeline nunca lo soporto), con
+#                            --model condicional en el argv y una sola linea de
+#                            anuncio, sin duplicar entre el intento inicial y
+#                            las sondas de hold (mismo bucle).
 #   herdr-pipeline.sh       - la otra mitad de CA-3: dentro de un pane herdr,
 #                            tmux-pipeline.sh delega con `exec herdr-pipeline.sh
 #                            "$@"`, asi que el flag tiene que sobrevivir tambien
@@ -533,22 +537,22 @@ assert_scaffold_order() {
 }
 
 echo ""
-echo "[10e] scaffold: anuncia el modelo declarado una vez y conserva el argv (CA-1 a CA-5)"
-assert_scaffold_contains "consulta el helper compartido antes del encabezado" 'SCAFFOLD_AGENT_MODEL_VISIBLE="$(resolve_declared_agent_model "domain-scaffolder")"'
-assert_scaffold_contains "representa metadata ausente como heredado" 'SCAFFOLD_AGENT_MODEL_VISIBLE="<heredado>"'
-assert_scaffold_contains "etiqueta el modelo declarado" 'SCAFFOLD_AGENT_MODEL_ORIGIN="frontmatter"'
-assert_scaffold_contains "etiqueta el fallback heredado" 'SCAFFOLD_AGENT_MODEL_ORIGIN="heredado"'
-assert_scaffold_contains "muestra el modelo en el encabezado persistente y visible" 'header "Invocando domain-scaffolder (modelo: $SCAFFOLD_AGENT_MODEL_VISIBLE)..."'
-assert_scaffold_contains "persiste evidencia con el formato canonico" 'MODELS: stage scaffold/domain-scaffolder -> $SCAFFOLD_AGENT_MODEL_VISIBLE ($SCAFFOLD_AGENT_MODEL_ORIGIN)'
-assert_scaffold_order "resuelve el modelo antes de anunciarlo" 'SCAFFOLD_AGENT_MODEL_VISIBLE="$(resolve_declared_agent_model "domain-scaffolder")"' 'header "Invocando domain-scaffolder (modelo: $SCAFFOLD_AGENT_MODEL_VISIBLE)..."'
-assert_scaffold_order "registra evidencia durable antes del primer argv de claude" 'MODELS: stage scaffold/domain-scaffolder -> $SCAFFOLD_AGENT_MODEL_VISIBLE ($SCAFFOLD_AGENT_MODEL_ORIGIN)' '--agent domain-scaffolder'
-assert_scaffold_count "emite una sola evidencia durable, incluso con sondas de hold" 1 'MODELS: stage scaffold/domain-scaffolder -> $SCAFFOLD_AGENT_MODEL_VISIBLE ($SCAFFOLD_AGENT_MODEL_ORIGIN)'
-assert_scaffold_count "conserva los dos argv de claude para intento y sonda" 2 '--agent domain-scaffolder'
-SCAFFOLD_MODEL_ARG_COUNT=$(grep -cF -- '--model' "$SCAFFOLD_PIPELINE" || true)
-if [ "$SCAFFOLD_MODEL_ARG_COUNT" -eq 0 ]; then
-    pass "scaffold no agrega --model al argv inicial ni a las sondas de hold"
+echo "[10e] scaffold: resuelve el modelo neutral por perfil (issue #1644)"
+assert_scaffold_contains "domain-scaffolder resuelve con perfil balanced" 'mefisto_resolve_model "$MEFISTO_RUNTIME_RESUELTO" "domain-scaffolder" "balanced" "" "$CONSUMER_MODELS_FILE"'
+assert_scaffold_contains "aborta si la resolucion del adaptador falla" 'abort "No se pudo resolver el modelo de domain-scaffolder (perfil balanced): ${MEFISTO_MODELS_ERROR:-motivo desconocido}"'
+assert_scaffold_contains "anuncia el modelo resuelto o heredado en el encabezado" 'header "Invocando domain-scaffolder (modelo: ${SCAFFOLD_AGENT_MODEL:-<heredado>})..."'
+assert_scaffold_contains "persiste evidencia con el formato canonico" 'MODELS: domain-scaffolder runtime=$MEFISTO_RUNTIME_RESUELTO perfil=balanced solicitado=<automatico> resuelto='
+assert_scaffold_contains "run_scaffold_agent conserva el argv condicional --model" '[ -n "$SCAFFOLD_AGENT_MODEL" ] && args+=(--model "$SCAFFOLD_AGENT_MODEL")'
+assert_scaffold_contains "run_scaffold_agent conserva el argv neutral con agente y cwd" '--agent domain-scaffolder --cwd "$WORKTREE_PATH"'
+assert_scaffold_order "resuelve el modelo antes de anunciarlo" 'mefisto_resolve_model "$MEFISTO_RUNTIME_RESUELTO" "domain-scaffolder" "balanced" "" "$CONSUMER_MODELS_FILE"' 'header "Invocando domain-scaffolder (modelo: ${SCAFFOLD_AGENT_MODEL:-<heredado>})..."'
+assert_scaffold_order "registra evidencia durable antes del primer argv del runner" 'MODELS: domain-scaffolder runtime=$MEFISTO_RUNTIME_RESUELTO' '--agent domain-scaffolder --cwd "$WORKTREE_PATH"'
+assert_scaffold_count "emite una sola evidencia durable, incluso con sondas de hold" 1 'MODELS: domain-scaffolder runtime=$MEFISTO_RUNTIME_RESUELTO'
+assert_scaffold_count "un solo punto de armado de argv (intento y sondas de hold comparten el mismo bucle)" 1 '--agent domain-scaffolder --cwd "$WORKTREE_PATH"'
+SCAFFOLD_MODEL_ARG_COUNT=$(grep -cF -- '[ -n "$SCAFFOLD_AGENT_MODEL" ] && args+=(--model "$SCAFFOLD_AGENT_MODEL")' "$SCAFFOLD_PIPELINE" || true)
+if [ "$SCAFFOLD_MODEL_ARG_COUNT" -eq 1 ]; then
+    pass "scaffold agrega --model condicionalmente una sola vez (intento y sondas comparten el mismo bucle)"
 else
-    fail "scaffold no deberia agregar --model (obtenidos $SCAFFOLD_MODEL_ARG_COUNT)"
+    fail "se esperaba 1 punto de armado condicional de --model, obtenidos $SCAFFOLD_MODEL_ARG_COUNT"
 fi
 
 # --- tmux-pipeline.sh: reenvio/rechazo de --models por modo (CA-3) -----------
