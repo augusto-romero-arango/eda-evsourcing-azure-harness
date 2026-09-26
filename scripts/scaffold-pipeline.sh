@@ -14,6 +14,21 @@ set -euo pipefail
 
 source "$(dirname "${BASH_SOURCE[0]}")/_pipeline-common.sh"
 
+# La clausura publicada conserva src/runtime junto a este script (issue #1644,
+# mismo molde que iac-pipeline.sh/tooling-pipeline.sh). Solo estas dos
+# librerias son contrato del pipeline; el runner carga su adaptador aparte.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+RUNTIME_DIR="$(cd "$SCRIPT_DIR/../src/runtime" 2>/dev/null && pwd -P)" \
+    || { echo "ERROR: no se encontro src/runtime junto al paquete publicado" >&2; exit 1; }
+RUNTIME_LIB_DIR="$RUNTIME_DIR/lib"
+RUN_AGENT_BIN_DEFAULT="$RUNTIME_DIR/mefisto-run-agent.sh"
+[ -f "$RUNTIME_LIB_DIR/mefisto-runtime.sh" ] \
+    || { echo "ERROR: no se encontro mefisto-runtime.sh en la clausura publicada" >&2; exit 1; }
+[ -f "$RUNTIME_LIB_DIR/mefisto-models.sh" ] \
+    || { echo "ERROR: no se encontro mefisto-models.sh en la clausura publicada" >&2; exit 1; }
+source "$RUNTIME_LIB_DIR/mefisto-runtime.sh"
+source "$RUNTIME_LIB_DIR/mefisto-models.sh"
+
 # Guard defensivo: este pipeline es del lado publicado y solo aplica al consumidor.
 # Si detectamos .claude-plugin/plugin.json en la raiz, estamos en el repo de Mefisto.
 _REPO_TOP=$(git rev-parse --show-toplevel 2>/dev/null) || {
@@ -59,14 +74,20 @@ warn()    { echo -e "${YELLOW}⚠${NC} $1"; echo "WARN $1" >> "$LOG_FILE"; }
 header()  { echo -e "\n${CYAN}${BOLD}-- $1 --${NC}"; echo "-- $1 --" >> "$LOG_FILE"; }
 abort()   { echo -e "\n${RED}${BOLD}x $1${NC}" >&2; echo "ABORT $1" >> "$LOG_FILE"; exit 1; }
 
+PIPELINE_TMP_DIR="$(mktemp -d -t mefisto-scaffold)" || abort "No se pudo crear el directorio temporal del pipeline"
+
 # --- Cleanup on error ---
 WORKTREE_PATH=""
 cleanup_on_error() {
+    rm -rf "$PIPELINE_TMP_DIR" 2>/dev/null || true
     if [ -n "$WORKTREE_PATH" ] && [ -d "$WORKTREE_PATH" ]; then
         warn "Error detectado. El worktree queda disponible para inspeccion: $WORKTREE_PATH"
     fi
 }
 trap cleanup_on_error ERR
+# abort() sale con exit 1 sin disparar ERR: el directorio temporal del runner
+# se limpia en cualquier salida, no solo ante error.
+trap 'rm -rf "$PIPELINE_TMP_DIR" 2>/dev/null || true' EXIT
 
 # --- Help ---
 show_help() {
@@ -122,9 +143,19 @@ while [[ $# -gt 0 ]]; do
 done
 
 # --- Verificar dependencias ---
-for cmd in claude gh git; do
+for cmd in gh git jq; do
     command -v "$cmd" &>/dev/null || abort "$cmd no esta instalado"
 done
+[ -x "${MEFISTO_RUN_AGENT_BIN:-$RUN_AGENT_BIN_DEFAULT}" ] \
+    || abort "No es ejecutable el runner neutral: ${MEFISTO_RUN_AGENT_BIN:-$RUN_AGENT_BIN_DEFAULT}"
+RUN_AGENT_BIN="${MEFISTO_RUN_AGENT_BIN:-$RUN_AGENT_BIN_DEFAULT}"
+if ! mefisto_resolve_runtime >/dev/null; then
+    abort "No se pudo resolver el runtime activo: ${MEFISTO_RUNTIME_ERROR:-motivo desconocido}"
+fi
+MEFISTO_RUNTIME_RESUELTO="$MEFISTO_RESOLVED_RUNTIME"
+if ! runtime_cli_available "$MEFISTO_RUNTIME_RESUELTO"; then
+    abort "Falta el CLI del runtime resuelto ('$MEFISTO_RUNTIME_RESUELTO')"
+fi
 
 # --- Obtener contexto del issue ---
 ISSUE_TITLE=""
@@ -234,115 +265,113 @@ git -C "$REPO_ROOT" worktree add "$WORKTREE_PATH" -b "$BRANCH_NAME" origin/main 
 
 success "Worktree creado: $WORKTREE_PATH"
 
-# Parchear settings.json del worktree con ruta absoluta del events.log
-if [ -f "$REPO_ROOT/.claude/settings.json" ]; then
-    sed "s|\.claude/pipeline/events\.log|${EVENTS_LOG}|g" \
-        "$REPO_ROOT/.claude/settings.json" > "$WORKTREE_PATH/.claude/settings.json"
+# --- Resolver modelo neutral (issue #1644) ---------------------------------
+# El override publico gana por clave exacta (mapping opcional del consumidor);
+# sin override el adaptador decide su default por perfil, o se hereda. Mismo
+# helper que iac-pipeline.sh/tooling-pipeline.sh, sin --models (este pipeline
+# nunca lo soporto tampoco del lado Claude).
+CONSUMER_MODELS_FILE="$REPO_ROOT/.mefisto/models.json"
+_SCAFFOLD_MODEL_OUTPUT="$(mktemp)"
+if ! mefisto_resolve_model "$MEFISTO_RUNTIME_RESUELTO" "domain-scaffolder" "balanced" "" "$CONSUMER_MODELS_FILE" > "$_SCAFFOLD_MODEL_OUTPUT"; then
+    rm -f "$_SCAFFOLD_MODEL_OUTPUT"
+    abort "No se pudo resolver el modelo de domain-scaffolder (perfil balanced): ${MEFISTO_MODELS_ERROR:-motivo desconocido}"
 fi
+SCAFFOLD_AGENT_MODEL="$(cat "$_SCAFFOLD_MODEL_OUTPUT")"; rm -f "$_SCAFFOLD_MODEL_OUTPUT"
+echo "[$(date +%H:%M:%S)] MODELS: domain-scaffolder runtime=$MEFISTO_RUNTIME_RESUELTO perfil=balanced solicitado=<automatico> resuelto='${SCAFFOLD_AGENT_MODEL:-<heredado>}'" >> "$EVENTS_LOG"
 
 # --- Invocar domain-scaffolder ---
-# La resolucion solo hace observable la seleccion heredada del frontmatter;
-# nunca se reutiliza para construir el argv del runtime.
-SCAFFOLD_AGENT_MODEL_VISIBLE="$(resolve_declared_agent_model "domain-scaffolder")"
-if [ -n "$SCAFFOLD_AGENT_MODEL_VISIBLE" ]; then
-    SCAFFOLD_AGENT_MODEL_ORIGIN="frontmatter"
-else
-    SCAFFOLD_AGENT_MODEL_VISIBLE="<heredado>"
-    SCAFFOLD_AGENT_MODEL_ORIGIN="heredado"
-fi
-header "Invocando domain-scaffolder (modelo: $SCAFFOLD_AGENT_MODEL_VISIBLE)..."
+header "Invocando domain-scaffolder (modelo: ${SCAFFOLD_AGENT_MODEL:-<heredado>})..."
 
 SCAFFOLD_PROMPT="Crea el scaffold para el dominio '$DOMAIN_NAME'. El usuario ya confirmo la creacion -- omite la confirmacion del Paso 0 y procede directamente a crear el proyecto.
 
 PROHIBIDO hacer 'git push' o 'gh pr create' (ni ninguna operacion de publicacion de rama/PR): eso es responsabilidad exclusiva del pipeline, nunca tuya."
 SCAFFOLD_TIMEOUT=1800
-# Sufijo de DOMAIN_NAME + PID: ya se conoce el dominio en este punto, y sumar
-# el PID evita colision si el mismo dominio se relanza en el mismo segundo.
-SCAFFOLD_LOG="$LOG_DIR/scaffold-agent-$TIMESTAMP-$DOMAIN_NAME-$$.log"
 
 echo "[$(date +%H:%M:%S)] === SCAFFOLD: domain-scaffolder para '$DOMAIN_NAME' ===" >> "$EVENTS_LOG"
-echo "[$(date +%H:%M:%S)] MODELS: stage scaffold/domain-scaffolder -> $SCAFFOLD_AGENT_MODEL_VISIBLE ($SCAFFOLD_AGENT_MODEL_ORIGIN)" >> "$EVENTS_LOG"
 
-scaffold_start=$(date +%s)
+# run_scaffold_agent <prompt>
+#
+# Frontera neutral publicada (issue #1644, mismo molde que run_agent de
+# iac-pipeline.sh/tooling-pipeline.sh): el runner (mefisto-run-agent.sh) es
+# autoridad de watchdog, argv y terminal; esta funcion conserva exclusivamente
+# la politica de hold/retry de MEF-ADR-0051 sobre el JSONL neutral. A
+# diferencia de esos dos pipelines, aqui no hay stages: una sola invocacion.
+run_scaffold_agent() {
+    local prompt="$1"
+    local log_base="$LOG_DIR/scaffold-agent-$TIMESTAMP-$DOMAIN_NAME-$$"
+    local prompt_file="$PIPELINE_TMP_DIR/scaffold.prompt.md"
+    local system_file="$PIPELINE_TMP_DIR/scaffold.system.md"
+    local runner_file="$PIPELINE_TMP_DIR/scaffold.runner.log"
+    printf '%s' "$prompt" > "$prompt_file"
+    printf '%s\n' 'You are running in non-interactive print mode. There is no human to approve anything. Use editing tools directly; never ask for permission. Do not push or create pull requests.' > "$system_file"
 
-(cd "$WORKTREE_PATH" && claude -p "$SCAFFOLD_PROMPT" \
-    --agent domain-scaffolder \
-    --permission-mode bypassPermissions \
-    --output-format text \
-    >"$SCAFFOLD_LOG" 2>&1) &
-SCAFFOLD_PID=$!
+    local start_ts run_exit=0 elapsed=0 failure_type="" hold_started="" hold_total=0
+    local resume_session="" resume_degraded=false attempt=0
 
-(sleep $SCAFFOLD_TIMEOUT && kill -9 $SCAFFOLD_PID 2>/dev/null && \
-    echo "[$(date +%H:%M:%S)] TIMEOUT: domain-scaffolder supero ${SCAFFOLD_TIMEOUT}s" >> "$EVENTS_LOG") &
-WATCHDOG_PID=$!
+    start_ts=$(date +%s)
+    while :; do
+        attempt=$((attempt + 1))
+        local events_file="${log_base}-attempt-${attempt}.events.jsonl"
+        SCAFFOLD_LOG="${log_base}-attempt-${attempt}.log"
+        local attempt_prompt="$prompt_file" attempt_resume=false
+        if [ -n "$resume_session" ]; then
+            attempt_resume=true
+            attempt_prompt="$PIPELINE_TMP_DIR/scaffold-resume-${attempt}.prompt.md"
+            printf '%s\n' "Continue the same task and complete it." > "$attempt_prompt"
+        fi
+        local args=(--runtime "$MEFISTO_RUNTIME_RESUELTO" --agent domain-scaffolder --cwd "$WORKTREE_PATH" --prompt-file "$attempt_prompt" --system-file "$system_file" --event-log "$events_file" --events-log "$EVENTS_LOG" --redact-observability --timeout "$SCAFFOLD_TIMEOUT")
+        [ -n "$SCAFFOLD_AGENT_MODEL" ] && args+=(--model "$SCAFFOLD_AGENT_MODEL")
+        [ -n "$resume_session" ] && args+=(--resume-session "$resume_session")
+        if "$RUN_AGENT_BIN" "${args[@]}" >"$runner_file" 2>&1; then run_exit=0; else run_exit=$?; fi
+        [ "$attempt_prompt" = "$prompt_file" ] || rm -f "$attempt_prompt"
+        elapsed=$(( $(date +%s) - start_ts ))
+        derive_stage_log_from_stream "$events_file" "" "$SCAFFOLD_LOG"
 
-SCAFFOLD_EXIT=0
-wait $SCAFFOLD_PID || SCAFFOLD_EXIT=$?
-kill $WATCHDOG_PID 2>/dev/null || true
-wait $WATCHDOG_PID 2>/dev/null || true
-
-scaffold_elapsed=$(( $(date +%s) - scaffold_start ))
-
-if [ "$SCAFFOLD_EXIT" -ne 0 ]; then
-    SCAFFOLD_FAILURE_TYPE=$(classify_agent_failure "$SCAFFOLD_EXIT" "$scaffold_elapsed" "$SCAFFOLD_LOG" "")
-    echo "[$(date +%H:%M:%S)] FALLO domain-scaffolder: $SCAFFOLD_FAILURE_TYPE" >> "$EVENTS_LOG"
-
-    # Espera (hold) ante RATE_LIMIT/PROVIDER_UNAVAILABLE persistente (issue
-    # #971, doctrina de MEF-ADR-0051 -- mismos defaults/env vars que el lado
-    # interno, issue #967): el propio reintento hace de sonda, en un bucle
-    # acotado por agent_hold_wait (techo MEFISTO_HOLD_MAX_SECONDS).
-    HOLD_STARTED_TS=""
-    HOLD_TOTAL_SECONDS=0
-    hold_attempt=0
-    while agent_failure_is_holdable "$SCAFFOLD_FAILURE_TYPE"; do
-        [ -z "$HOLD_STARTED_TS" ] && HOLD_STARTED_TS=$(date +%s)
-        if ! hold_slept=$(agent_hold_wait "$EVENTS_LOG" "$SCAFFOLD_FAILURE_TYPE" "$HOLD_STARTED_TS"); then
-            warn "domain-scaffolder: techo de espera (hold) agotado -- ultima senal: $SCAFFOLD_FAILURE_TYPE"
+        if [ "$run_exit" -eq 0 ] && agent_events_completed_successfully "$events_file"; then
+            failure_type=""
             break
         fi
-        HOLD_TOTAL_SECONDS=$(( HOLD_TOTAL_SECONDS + hold_slept ))
-        hold_attempt=$((hold_attempt + 1))
-        warn "domain-scaffolder: $SCAFFOLD_FAILURE_TYPE -- en espera (hold), reintentando (sonda #$hold_attempt)..."
 
-        SCAFFOLD_LOG_HOLD="$LOG_DIR/scaffold-agent-$TIMESTAMP-$DOMAIN_NAME-$$-hold-${hold_attempt}.log"
-        # CA-5: lo que no cuenta contra el watchdog es la ESPERA (el `sleep` de
-        # agent_hold_wait, ya consumido arriba); la SONDA si corre bajo su
-        # propio watchdog de $SCAFFOLD_TIMEOUT, igual que el primer intento.
-        # Sin el, una sonda colgada dejaria el pipeline esperando para siempre
-        # y volveria decorativo el techo de agent_hold_wait, que solo se evalua
-        # al tope del bucle.
-        SCAFFOLD_EXIT=0
-        probe_start=$(date +%s)
-        (cd "$WORKTREE_PATH" && claude -p "$SCAFFOLD_PROMPT" \
-            --agent domain-scaffolder \
-            --permission-mode bypassPermissions \
-            --output-format text \
-            >"$SCAFFOLD_LOG_HOLD" 2>&1) &
-        SCAFFOLD_PID_HOLD=$!
-        (sleep $SCAFFOLD_TIMEOUT && kill -9 $SCAFFOLD_PID_HOLD 2>/dev/null && \
-            echo "[$(date +%H:%M:%S)] TIMEOUT: domain-scaffolder (sonda de hold #$hold_attempt) supero ${SCAFFOLD_TIMEOUT}s" >> "$EVENTS_LOG") &
-        PROBE_WATCHDOG_PID=$!
-        wait $SCAFFOLD_PID_HOLD || SCAFFOLD_EXIT=$?
-        kill $PROBE_WATCHDOG_PID 2>/dev/null || true
-        wait $PROBE_WATCHDOG_PID 2>/dev/null || true
-        # La duracion que se reporta es la de la SONDA, no el reloj desde que
-        # arranco el scaffold: sumar ahi las horas de espera inflaria el
-        # "completado en Xs" de la linea de cierre.
-        scaffold_elapsed=$(( $(date +%s) - probe_start ))
-        SCAFFOLD_LOG="$SCAFFOLD_LOG_HOLD"
+        failure_type="$(classify_neutral_agent_failure "$run_exit" "$events_file")"
+        echo "[$(date +%H:%M:%S)] FALLO domain-scaffolder: $failure_type" >> "$EVENTS_LOG"
+        if ! agent_failure_is_holdable "$failure_type"; then break; fi
 
-        if [ "$SCAFFOLD_EXIT" -eq 0 ]; then
-            echo "[$(date +%H:%M:%S)] RETRY_OK domain-scaffolder: exitoso tras hold" >> "$EVENTS_LOG"
+        [ -z "$hold_started" ] && hold_started=$(date +%s)
+        local resets slept
+        resets="$(agent_events_resets_at "$events_file")"
+        if ! slept=$(agent_hold_wait "$EVENTS_LOG" "$failure_type" "$hold_started" "$resets"); then
+            warn "domain-scaffolder: techo de espera (hold) agotado -- ultima senal: $failure_type"
             break
         fi
-        SCAFFOLD_FAILURE_TYPE=$(classify_agent_failure "$SCAFFOLD_EXIT" "$scaffold_elapsed" "$SCAFFOLD_LOG" "")
-        echo "[$(date +%H:%M:%S)] FALLO domain-scaffolder: $SCAFFOLD_FAILURE_TYPE (tras hold)" >> "$EVENTS_LOG"
+        hold_total=$((hold_total + slept))
+        warn "domain-scaffolder: $failure_type -- en espera (hold), reintentando..."
+
+        # Reanudacion de sesion (MEF-ADR-0051): mientras resume_degraded siga
+        # en false, la siguiente sonda continua la sesion truncada via el
+        # session_id del JSONL neutral en vez de reenviar el prompt entero.
+        if [ "$attempt_resume" = true ] && [ ! -d "$WORKTREE_PATH/src/${HARNESS_NAMESPACE_PREFIX}.$PASCAL_CASE" ]; then
+            warn "domain-scaffolder: la sesion reanudada termino sin crear el proyecto; se degrada permanentemente a inicio limpio"
+            resume_degraded=true; resume_session=""
+        elif [ "$resume_degraded" = false ]; then
+            resume_session="$(agent_events_session_id "$events_file")"
+            if [ -z "$resume_session" ]; then
+                warn "domain-scaffolder: terminal sin session_id; la sonda inicia de cero"
+            elif ! runtime_supports_resume "$MEFISTO_RUNTIME_RESUELTO"; then
+                warn "domain-scaffolder: runtime sin capacidad de reanudacion; la sonda inicia de cero"
+                resume_session=""
+            fi
+        fi
     done
 
-    if [ "$SCAFFOLD_EXIT" -ne 0 ]; then
-        abort "El scaffold del dominio '$DOMAIN_NAME' fallo despues de ${scaffold_elapsed}s ($SCAFFOLD_FAILURE_TYPE). Revisa: $SCAFFOLD_LOG"
+    if [ -n "$failure_type" ]; then
+        abort "El scaffold del dominio '$DOMAIN_NAME' fallo despues de ${elapsed}s ($failure_type). Revisa: $SCAFFOLD_LOG"
     fi
-fi
+
+    scaffold_elapsed=$((elapsed - hold_total))
+}
+
+scaffold_elapsed=0
+run_scaffold_agent "$SCAFFOLD_PROMPT"
 
 # Verificar que el proyecto fue creado
 if [ ! -d "$WORKTREE_PATH/src/${HARNESS_NAMESPACE_PREFIX}.$PASCAL_CASE" ]; then
@@ -353,9 +382,6 @@ echo "[$(date +%H:%M:%S)] OK domain-scaffolder (${scaffold_elapsed}s)" >> "$EVEN
 success "Scaffold completado en ${scaffold_elapsed}s"
 
 # --- Commit defensivo ---
-# El pipeline parcha .claude/settings.json en el worktree (runtime, no debe
-# viajar en el commit). Restaurarlo antes de evaluar/commitear.
-git -C "$WORKTREE_PATH" checkout -- .claude/ 2>/dev/null || true
 
 # El Paso 8 del agente (git add + commit) es no determinista por ser un LLM:
 # si dejo cambios sin commitear, los commiteamos aqui para que el PR nunca
@@ -528,7 +554,7 @@ header "Cleanup"
 
 log "Eliminando worktree..."
 cd "$REPO_ROOT"
-git -C "$WORKTREE_PATH" checkout -- .claude/ 2>/dev/null || true
+rm -rf "$PIPELINE_TMP_DIR" 2>/dev/null || true
 git worktree remove --force "$WORKTREE_PATH" >>"$LOG_FILE" 2>&1 \
     || warn "No se pudo eliminar el worktree automaticamente. Eliminalo manualmente: git worktree remove --force $WORKTREE_PATH"
 
