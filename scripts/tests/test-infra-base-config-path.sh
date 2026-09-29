@@ -3,8 +3,8 @@
 #
 # Cubre MEF-ADR-0053 para el prompt de infra-base-scaffolder: canonico, ambos
 # divergentes (prevalece canonico), legacy y ausencia. Tambien evita que una
-# lectura directa legacy reaparezca fuera de los bloques de fallback explicitos
-# del agente y del workflow generado.
+# lectura directa legacy reaparezca: desde #1649 el agente lee la ruta efectiva
+# que resuelve su adaptador y el workflow generado lee solo el canonico.
 
 set -uo pipefail
 
@@ -105,16 +105,16 @@ else
     pass "ausencia aborta"
 fi
 
-echo "[5] Prompt y workflow generado conservan el fallback explicito"
-REPO_CANONICAL_COUNT=$(grep -Fc 'CONFIG="$REPO_ROOT/.mefisto/harness.config.json"' "$AGENT" || true)
-REPO_LEGACY_COUNT=$(grep -Fc 'CONFIG="$REPO_ROOT/.claude/harness.config.json"' "$AGENT" || true)
+echo "[5] Los bloques del agente leen la ruta efectiva del adaptador; el workflow generado lee el canonico (#1649)"
+REPO_EFFECTIVE_COUNT=$(grep -Fc 'CONFIG="${MEFISTO_CONFIG_PATH}"' "$AGENT" || true)
+REPO_HARDCODED_COUNT=$(grep -Ec 'CONFIG="\$REPO_ROOT/\.(mefisto|claude)/harness\.config\.json"' "$AGENT" || true)
 WORKFLOW_CANONICAL_COUNT=$(grep -Fc 'CONFIG="$GITHUB_WORKSPACE/.mefisto/harness.config.json"' "$AGENT" || true)
 WORKFLOW_LEGACY_COUNT=$(grep -Fc 'CONFIG="$GITHUB_WORKSPACE/.claude/harness.config.json"' "$AGENT" || true)
-if [ "$REPO_CANONICAL_COUNT" -eq 3 ] && [ "$REPO_LEGACY_COUNT" -eq 3 ] \
-    && [ "$WORKFLOW_CANONICAL_COUNT" -eq 1 ] && [ "$WORKFLOW_LEGACY_COUNT" -eq 1 ]; then
-    pass "cada bloque del agente y el workflow parte del canonico y delimita un fallback legacy"
+if [ "$REPO_EFFECTIVE_COUNT" -eq 3 ] && [ "$REPO_HARDCODED_COUNT" -eq 0 ] \
+    && [ "$WORKFLOW_CANONICAL_COUNT" -eq 1 ] && [ "$WORKFLOW_LEGACY_COUNT" -eq 0 ]; then
+    pass "los tres bloques del agente usan la ruta efectiva del adaptador y el workflow lee el canonico"
 else
-    fail "resolvers inesperados (repo canonico/legacy=$REPO_CANONICAL_COUNT/$REPO_LEGACY_COUNT, workflow=$WORKFLOW_CANONICAL_COUNT/$WORKFLOW_LEGACY_COUNT)"
+    fail "resolvers inesperados (repo efectivo/hardcodeado=$REPO_EFFECTIVE_COUNT/$REPO_HARDCODED_COUNT, workflow canonico/legacy=$WORKFLOW_CANONICAL_COUNT/$WORKFLOW_LEGACY_COUNT)"
 fi
 if grep -Eq '(^|[;&|[:space:]])jq[[:space:]].*\.claude/harness\.config\.json' "$AGENT"; then
     fail "reaparecio una lectura jq directa del config legacy"
@@ -133,7 +133,7 @@ else
 fi
 if grep -Fq 'jq -r '\''{projectName, infraResourceGroupPrefix, terraformStateStorage, azureLocation, azureRegionShort, resourceSequence, serviceBus, projections}'\'' "$CONFIG"' "$AGENT" \
     && grep -Fq 'COUNT=$(jq -r '\''.secrets // [] | length'\'' "$CONFIG")' "$AGENT" \
-    && grep -Fq 'No se encontro .mefisto/harness.config.json ni el fallback legacy .claude/harness.config.json; no se pueden sembrar secretos.' "$AGENT"; then
+    && grep -Fq 'No se encontro .mefisto/harness.config.json; no se pueden sembrar secretos.' "$AGENT"; then
     pass "tokens del agente y secrets del workflow usan CONFIG y la ausencia aborta"
 else
     fail "alguna lectura efectiva o diagnostico de ausencia no usa el contrato resuelto"
