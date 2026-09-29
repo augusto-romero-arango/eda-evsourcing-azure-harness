@@ -12,6 +12,9 @@ TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 CONSUMER="$TMP/consumer"; mkdir -p "$CONSUMER/src/App" "$TMP/bin"
 git -C "$CONSUMER" init -q
 printf 'FROM scratch\n' > "$CONSUMER/src/App/Dockerfile"
+mkdir -p "$TMP/fuera"; printf 'FROM scratch\n' > "$TMP/fuera/Dockerfile"
+ln -s "$TMP/fuera" "$CONSUMER/src/Escape"
+ln -s "$TMP/fuera/Dockerfile" "$CONSUMER/src/App/Enlace.Dockerfile"
 STUB_LOG="$TMP/docker-calls.log"
 cat > "$TMP/bin/docker" <<STUB
 #!/usr/bin/env bash
@@ -32,7 +35,7 @@ run() { # script args...
 check_script() {
     local label="$1" script="$2"
     echo "[$label]"
-    for bad in "/abs/Dockerfile" "src/../Dockerfile" "infra/Dockerfile" "src/App/../../x/Dockerfile" "Dockerfile"; do
+    for bad in "/abs/Dockerfile" "src/../Dockerfile" "infra/Dockerfile" "src/App/../../x/Dockerfile" "Dockerfile" "src/Escape/Dockerfile" "src/App/Enlace.Dockerfile"; do
         : > "$STUB_LOG"
         if run "$script" "$bad" >/dev/null; then fail "acepta ruta invalida '$bad'"; else pass "rechaza '$bad'"; fi
         [ ! -s "$STUB_LOG" ] && pass "sin docker para '$bad'" || fail "invoco docker para '$bad'"

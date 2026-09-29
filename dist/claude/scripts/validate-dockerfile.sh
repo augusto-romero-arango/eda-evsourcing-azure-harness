@@ -3,8 +3,9 @@
 # worker de proyecciones (issue #1652). Uso: validate-dockerfile.sh <ruta-relativa-al-Dockerfile>
 #
 # Alcance acotado (MEF-ADR-0031): solo ejecuta `docker info` y
-# `docker build -f <ruta> <raiz-del-repo>`; nunca push, run ni otros subcomandos.
-# La ruta debe ser relativa, sin `..` y estar bajo `src/` del toplevel del consumidor.
+# `docker build -f <ruta> -t projections-worker-check <raiz-del-repo>`; nunca push, run ni otros subcomandos.
+# La ruta debe ser relativa, sin `..` y quedar bajo `src/` del toplevel del consumidor
+# tambien tras resolver symlinks.
 set -uo pipefail
 
 source "$(dirname "${BASH_SOURCE[0]}")/_pipeline-common.sh"
@@ -34,11 +35,19 @@ case "/$DOCKERFILE/" in
     */../*|*//*|*/./*) echo "ERROR: la ruta no admite segmentos '..', '.' ni vacios: $DOCKERFILE" >&2; exit 1 ;;
 esac
 
+_REPO_TOP=$(cd "$_REPO_TOP" && pwd -P) || exit 1
 cd "$_REPO_TOP" || exit 1
 if [ ! -f "$DOCKERFILE" ]; then
     echo "ERROR: no existe el Dockerfile: $DOCKERFILE" >&2
     exit 1
 fi
+_DIR_FISICO=$(cd "$(dirname "$DOCKERFILE")" && pwd -P) || exit 1
+_BASE_FISICO=$(basename "$DOCKERFILE")
+[ -L "$DOCKERFILE" ] && _DIR_FISICO=""
+case "$_DIR_FISICO/$_BASE_FISICO" in
+    "$_REPO_TOP"/src/*) ;;
+    *) echo "ERROR: el Dockerfile resuelto queda fuera de src/ del repo: $DOCKERFILE" >&2; exit 1 ;;
+esac
 
 if ! command -v docker >/dev/null 2>&1 || ! docker info >/dev/null 2>&1; then
     echo "docker no disponible: validacion del Dockerfile pendiente manual"
@@ -46,7 +55,7 @@ if ! command -v docker >/dev/null 2>&1 || ! docker info >/dev/null 2>&1; then
 fi
 
 LOG="$(mefisto_state_path logs/projections-docker-build.log "$_REPO_TOP")" || exit 1
-docker build -f "$DOCKERFILE" "$_REPO_TOP" > "$LOG" 2>&1
+docker build -f "$DOCKERFILE" -t projections-worker-check "$_REPO_TOP" > "$LOG" 2>&1
 rc=$?
 echo "docker build exit=$rc"
 tail -20 "$LOG"
