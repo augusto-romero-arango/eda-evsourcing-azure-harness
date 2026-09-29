@@ -128,10 +128,10 @@ gh issue view <issue> --json number,title,state,labels,body -q '"#\(.number): \(
 
 Si el issue no existe o esta cerrado (`CLOSED`), informa y detente.
 
-Si no hay `DOMAIN_NAME`, extrae del body la linea `Dominio: nombre-kebab` con una expresion portable (sin `grep -P`, que el `grep` BSD de macOS no admite):
+Si no hay `DOMAIN_NAME`, extrae del body la linea `Dominio: nombre-kebab` en cualquier posicion de la linea y sin distinguir mayusculas, con una expresion portable (sin `grep -P`, que el `grep` BSD de macOS no admite):
 
 ```bash
-gh issue view <issue> --json body -q '.body' | sed -n 's/^[[:space:]]*Dominio:[[:space:]]*\([a-z][a-z0-9-]*\).*/\1/p' | head -1
+gh issue view <issue> --json body -q '.body' | sed -n 's/.*[Dd][Oo][Mm][Ii][Nn][Ii][Oo]:[[:space:]]*\([A-Za-z][A-Za-z0-9-]*\).*/\1/p' | head -1
 ```
 
 ### 3. Validar que hay dominio
