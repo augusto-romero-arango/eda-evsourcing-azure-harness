@@ -78,6 +78,18 @@ skill_root_preambles="$(printf '%s\n' "$skill_root_rendered" | grep -c 'MEFISTO_
 [ "$rc" -eq 0 ] && contains "$skill_root_rendered" 'paquete ${MEFISTO_PACKAGE_ROOT}; ejecuta MEFISTO_RUNTIME=claude "${MEFISTO_PACKAGE_ROOT}/scripts/prueba.sh" "$ARGUMENTS con espacios"' 'skill-root convive con package-root y run en Claude' || fail 'directivas de raiz combinadas no se tradujeron en Claude'
 [ "$skill_root_preambles" -eq 1 ] && pass 'varias directivas skill-root emiten un solo preambulo Claude' || fail 'skill-root Claude duplico el preambulo'
 
+printf '%s\n' '[command-doc] ruta del comando generado'
+printf '%s\n' '---' '{"kind":"command","id":"doc-prueba","description":"Prueba."}' '---' '{{mefisto:assert-consumer-repo}}' 'Lee {{mefisto:command-doc draft}} y luego {{mefisto:command-doc seed-secret}}.' > "$WORK/doc-prueba.md"
+doc_rendered="$(render "$WORK/doc-prueba.md")"; rc=$?
+doc_preambles="$(printf '%s\n' "$doc_rendered" | grep -c 'MEFISTO_PACKAGE_ROOT="$mefisto_claude_root"')"
+[ "$rc" -eq 0 ] && contains "$doc_rendered" 'Lee "${MEFISTO_PACKAGE_ROOT}/commands/draft.md" y' 'command-doc Claude resuelve la ruta exacta' || fail 'command-doc Claude debio renderizar'
+[ "$rc" -eq 0 ] && contains "$doc_rendered" 'luego "${MEFISTO_PACKAGE_ROOT}/commands/seed-secret.md".' 'command-doc Claude segunda aparicion entre comillas' || fail 'command-doc Claude segunda aparicion'
+[ "$doc_preambles" -eq 1 ] && pass 'varias directivas command-doc emiten un solo preambulo Claude' || fail 'command-doc Claude duplico el preambulo'
+[ -f "$REPO_ROOT/dist/claude/commands/draft.md" ] && pass 'dist Claude contiene el comando referido' || fail 'dist Claude no contiene el comando referido'
+printf '%s\n' '---' '{"kind":"command","id":"doc-prueba","description":"Prueba."}' '---' '{{mefisto:assert-consumer-repo}}' 'Lee {{mefisto:command-doc no-existe-jamas}}.' > "$WORK/doc-inexistente.md"
+out="$(bash "$REPO_ROOT/src/published/scripts/validate-published-artifacts.sh" "$WORK/doc-inexistente.md" 2>&1)"; rc=$?
+[ "$rc" -ne 0 ] && contains "$out" 'no-existe-jamas' 'validador rechaza command-doc inexistente nombrando el id (Claude)' || fail 'validador debio rechazar command-doc inexistente (Claude)'
+
 printf '%s\n' '[contrato-efectivo] config-path e instructions-path'
 make_agent contrato-config '["read"]'
 printf '%s\n' '{{mefisto:config-path}}' >> "$WORK/contrato-config.md"

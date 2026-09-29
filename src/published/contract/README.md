@@ -173,6 +173,7 @@ o mal formada se rechaza.
 | `{{mefisto:run <script> <args>}}` | `MEFISTO_RUNTIME=claude` + script bajo `MEFISTO_PACKAGE_ROOT` + argumentos | `MEFISTO_RUNTIME=opencode` + script bajo `MEFISTO_PACKAGE_ROOT` + argumentos |
 | `{{mefisto:package-root}}` | `MEFISTO_PACKAGE_ROOT` | `MEFISTO_PACKAGE_ROOT` |
 | `{{mefisto:skill-root <id>}}` | raíz de `skills/<id>/` bajo `MEFISTO_PACKAGE_ROOT` | raíz de `skills/mefisto-<id>/` bajo `MEFISTO_PACKAGE_ROOT` |
+| `{{mefisto:command-doc <id>}}` | ruta de `commands/<id>.md` bajo `MEFISTO_PACKAGE_ROOT` | ruta de `commands/mefisto:<id>.md` bajo `MEFISTO_PACKAGE_ROOT` |
 | `{{mefisto:config-path}}` | `MEFISTO_CONFIG_PATH` (ruta efectiva de lectura) | `MEFISTO_CONFIG_PATH` (ruta efectiva de lectura) |
 | `{{mefisto:instructions-path}}` | `MEFISTO_INSTRUCTIONS_PATH` (ruta efectiva de lectura) | `MEFISTO_INSTRUCTIONS_PATH` (ruta efectiva de lectura) |
 | `{{mefisto:state-path <rel>}}` | `.mefisto/pipeline/<rel>` del consumidor | `.mefisto/pipeline/<rel>` del consumidor |
@@ -185,8 +186,15 @@ admite placeholders distintos de `$ARGUMENTS`.
 `skill-root` acepta exclusivamente un id kebab-case lógico, sin prefijo de
 runtime. El id debe existir bajo `skills/<id>/SKILL.md` y estar declarado en
 `skills` por ese mismo artefacto; por tanto expresa una dependencia ya cargada,
-no un inventario alternativo. Cuando un body usa `run`, `package-root` o
-`skill-root`, el adaptador antepone un bloque Bash
+no un inventario alternativo. `command-doc` acepta exclusivamente un id kebab-case lógico de un comando
+publicado (`src/published/commands/<id>.md`), sin prefijo de runtime, y un
+comando no puede referirse a sí mismo. La ruta apunta al comando **generado de
+la distribución activa**, que ya trae sus directivas traducidas para esa
+sesión. Su uso previsto es la composición por lectura (leer la doctrina de otro
+comando en lugar de duplicarla), no su ejecución.
+
+Cuando un body usa `run`, `package-root`, `skill-root` o
+`command-doc`, el adaptador antepone un bloque Bash
 que valida y exporta una única raíz física sin barra final:
 `MEFISTO_PACKAGE_ROOT`. Claude valida la distribución cargada desde su variable
 de runtime o los markers canónico/legacy del consumidor; OpenCode consulta el

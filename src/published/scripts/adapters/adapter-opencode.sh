@@ -17,7 +17,7 @@ source "$SCRIPT_DIR/../lib/effective-contract.sh" || { printf '%s\n' "ERROR: fal
 error() { printf '%s\n' "$1" >&2; return 1; }
 frontmatter() { awk 'NR == 1 { next } $0 == "---" { exit } { print }' "$1"; }
 body() { awk 'NR == 1 { next } $0 == "---" && !seen { seen=1; next } seen { print }' "$1"; }
-needs_package_root() { case "$1" in *'{{mefisto:run '*|*'{{mefisto:package-root}}'*|*'{{mefisto:skill-root '*) return 0 ;; *) return 1 ;; esac; }
+needs_package_root() { case "$1" in *'{{mefisto:run '*|*'{{mefisto:package-root}}'*|*'{{mefisto:skill-root '*|*'{{mefisto:command-doc '*) return 0 ;; *) return 1 ;; esac; }
 
 package_root_preamble() {
     cat <<'EOF'
@@ -148,6 +148,8 @@ published_opencode_translate_body() {
                     translated="${BASH_REMATCH[1]}"'${MEFISTO_PACKAGE_ROOT}'"${BASH_REMATCH[2]}"
                 elif [[ "$line" =~ ^(.*)\{\{mefisto:skill-root[[:space:]]+([a-z0-9]+(-[a-z0-9]+)*)\}\}(.*)$ ]]; then
                     translated="${BASH_REMATCH[1]}\"\${MEFISTO_PACKAGE_ROOT}/skills/mefisto-${BASH_REMATCH[2]}\"${BASH_REMATCH[4]}"
+                elif [[ "$line" =~ ^(.*)\{\{mefisto:command-doc[[:space:]]+([a-z0-9]+(-[a-z0-9]+)*)\}\}(.*)$ ]]; then
+                    translated="${BASH_REMATCH[1]}\"\${MEFISTO_PACKAGE_ROOT}/commands/mefisto:${BASH_REMATCH[2]}.md\"${BASH_REMATCH[4]}"
                 elif [[ "$line" =~ ^(.*)\{\{mefisto:lifecycle-launcher\}\}(.*)$ ]]; then
                     translated="${BASH_REMATCH[1]}$(lifecycle_launcher_preamble)${BASH_REMATCH[2]}"
                 elif [[ "$line" =~ ^(.*)\{\{mefisto:config-path\}\}(.*)$ ]]; then
