@@ -56,14 +56,17 @@ NC='\033[0m'
 
 # --- Logging ---
 REPO_ROOT="$(git rev-parse --show-toplevel)"
-PIPELINE_DIR="$REPO_ROOT/.claude/pipeline"
-LOG_DIR="$PIPELINE_DIR/logs"
+# Estado operativo exclusivamente bajo el root canonico que resuelve
+# mefisto_state_path() (MEF-ADR-0053 seccion 4); rutas absolutas.
+LOG_DIR="$(dirname "$(mefisto_state_path 'logs/.state')")"
 TIMESTAMP=$(date +%Y%m%d-%H%M%S)
 # Sufijo de PID ademas del TIMESTAMP: dos pipelines lanzados en paralelo en el
 # mismo segundo (scaffold de varios dominios a la vez, issue #234) no deben
 # compartir LOG_FILE. DOMAIN_NAME aun no se conoce en este punto del script.
 LOG_FILE="$LOG_DIR/scaffold-$TIMESTAMP-$$.log"
-EVENTS_LOG="$PIPELINE_DIR/events.log"
+EVENTS_LOG="$(mefisto_state_path 'events.log')"
+HISTORY_FILE="$(mefisto_state_path 'pipeline-history.jsonl')"
+PIPELINE_OWN_WRITES=(':!.mefisto/pipeline')
 
 mkdir -p "$LOG_DIR"
 touch "$EVENTS_LOG"
@@ -153,6 +156,7 @@ if ! mefisto_resolve_runtime >/dev/null; then
     abort "No se pudo resolver el runtime activo: ${MEFISTO_RUNTIME_ERROR:-motivo desconocido}"
 fi
 MEFISTO_RUNTIME_RESUELTO="$MEFISTO_RESOLVED_RUNTIME"
+MEFISTO_RUNTIME_JSON="\"$MEFISTO_RUNTIME_RESUELTO\""
 if ! runtime_cli_available "$MEFISTO_RUNTIME_RESUELTO"; then
     abort "Falta el CLI del runtime resuelto ('$MEFISTO_RUNTIME_RESUELTO')"
 fi
@@ -386,14 +390,15 @@ success "Scaffold completado en ${scaffold_elapsed}s"
 # El Paso 8 del agente (git add + commit) es no determinista por ser un LLM:
 # si dejo cambios sin commitear, los commiteamos aqui para que el PR nunca
 # falle con "No commits between main and ...".
-# El pathspec excluye el arbol `.claude/`: los hooks del plugin escriben estado
-# runtime en el worktree (`.claude/pipeline/.plugin-root`, `sessions.jsonl`, ...).
-# Nombrar como exclusion una hija ignorada hace que `git add` falle aun cuando se
-# excluya; la raiz del arbol evita ese falso error. Va en el guard *y* en el add
-# para que "la unica suciedad es estado runtime" no intente un commit vacio.
-if [ -n "$(git -C "$WORKTREE_PATH" status --porcelain -- . ':!.claude/')" ]; then
+# El pathspec excluye el estado propio del pipeline (PIPELINE_OWN_WRITES, mismo
+# patron que tooling-pipeline.sh) y, solo como defensa ante estado legacy, el
+# arbol `.claude/`. Nombrar como exclusion una hija ignorada hace que `git add`
+# falle aun cuando se excluya; la raiz del arbol evita ese falso error. Va en el
+# guard *y* en el add para que "la unica suciedad es estado runtime" no intente
+# un commit vacio.
+if [ -n "$(git -C "$WORKTREE_PATH" status --porcelain -- . "${PIPELINE_OWN_WRITES[@]}" ':!.claude/')" ]; then
     warn "El agente dejo cambios sin commitear; commiteando defensivamente."
-    git -C "$WORKTREE_PATH" add -A -- . ':!.claude/' >>"$LOG_FILE" 2>&1 \
+    git -C "$WORKTREE_PATH" add -A -- . "${PIPELINE_OWN_WRITES[@]}" ':!.claude/' >>"$LOG_FILE" 2>&1 \
         || abort "Fallo el 'git add -A' del commit defensivo del scaffold"
     git -C "$WORKTREE_PATH" commit -m "scaffold($DOMAIN_NAME): nuevo dominio $PASCAL_CASE" \
         >>"$LOG_FILE" 2>&1 || abort "Fallo el commit defensivo del scaffold"
@@ -546,8 +551,8 @@ if [ -n "$ISSUE_NUM" ]; then
 fi
 
 # Append al historial
-echo "{\"type\":\"scaffold\",\"domain\":\"$DOMAIN_NAME\",\"issue\":\"${ISSUE_NUM:-}\",\"started\":\"$TIMESTAMP\",\"finished\":\"$(date +%Y-%m-%dT%H:%M:%S)\",\"duration\":$scaffold_elapsed,\"pr\":\"$PR_URL\"}" \
-    >> "$PIPELINE_DIR/history.jsonl"
+echo "{\"pipeline\":\"scaffold\",\"runtime\":${MEFISTO_RUNTIME_JSON:-null},\"domain\":\"$DOMAIN_NAME\",\"issue\":\"${ISSUE_NUM:-}\",\"started\":\"$TIMESTAMP\",\"finished\":\"$(date +%Y-%m-%dT%H:%M:%S)\",\"state\":\"completed\",\"duration\":$scaffold_elapsed,\"pr\":\"${PR_URL:-}\"}" \
+    >> "$HISTORY_FILE"
 
 # --- Cleanup ---
 header "Cleanup"
