@@ -64,6 +64,7 @@ TOOLING_CLOSURE_ASSETS=(
     'scripts/iac-pipeline.sh|0755'
     'scripts/scaffold-pipeline.sh|0755'
     'scripts/field-note.sh|0755'
+    'scripts/register-harness-secret.sh|0755'
     'src/runtime/mefisto-run-agent.sh|0755'
     'src/runtime/lib/mefisto-runtime.sh|0755'
     'src/runtime/lib/mefisto-models.sh|0644'
