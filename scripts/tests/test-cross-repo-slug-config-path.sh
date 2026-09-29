@@ -6,12 +6,10 @@
 # Cubre agents/tooling-investigator.md (anclaje "Lee el slug del repo de
 # Mefisto (configurable para forks):"): canonico, ambos divergentes
 # (prevalece canonico), solo legacy, ausencia de ambos y canonico sin el
-# campo opcional `repoSlug`. Para este (todavia hand-escrito, no migrado a
-# la fuente neutral), el campo nunca aborta: siempre cae al default aunque
-# no exista ningun config.
+# campo opcional `repoSlug`.
 #
-# agents/planner.md (issue #1640) y commands/fix-review.md (issue #1665)
-# migraron a la fuente neutral publicada: leen
+# agents/planner.md (issue #1640), commands/fix-review.md (issue #1665) y
+# agents/tooling-investigator.md (issue #1668) migraron a la fuente neutral publicada: leen
 # `repoSlug` via `{{mefisto:config-path}}`, asi que ahora comparte el mismo
 # preambulo de resolucion efectiva que el resto de agentes publicados
 # (canonico primero, fallback legacy con AVISO, ABORTA si no existe ninguno
@@ -76,13 +74,17 @@ extract_config_preamble() {
 BLOCK_PLANNER_OWN="$(extract_after_anchor "$PLANNER" '### Slug del repo de Mefisto')"
 CONFIG_PREAMBLE="$(extract_config_preamble "$PLANNER")"
 BLOCK_PLANNER="$CONFIG_PREAMBLE"$'\n'"$BLOCK_PLANNER_OWN"
-BLOCK_INVESTIGATOR="$(extract_after_anchor "$INVESTIGATOR" 'Lee el slug del repo de Mefisto (configurable para forks):')"
+BLOCK_INVESTIGATOR_OWN="$(extract_after_anchor "$INVESTIGATOR" 'Lee el slug del repo de Mefisto (configurable para forks):')"
+# El mirror del investigator antepone tambien la resolucion de
+# {{mefisto:instructions-path}} en el mismo bloque: se aisla la parte de config.
+INVESTIGATOR_PREAMBLE="$(extract_config_preamble "$INVESTIGATOR" | awk '{ print } /^export MEFISTO_CONFIG_PATH$/ { exit }')"
+BLOCK_INVESTIGATOR="$INVESTIGATOR_PREAMBLE"$'\n'"$BLOCK_INVESTIGATOR_OWN"
 BLOCK_FIX_REVIEW_OWN="$(extract_after_anchor "$FIX_REVIEW" 'Lee el slug del repo de Mefisto (configurable para forks):')"
 FIX_REVIEW_PREAMBLE="$(extract_config_preamble "$FIX_REVIEW")"
 BLOCK_FIX_REVIEW="$FIX_REVIEW_PREAMBLE"$'\n'"$BLOCK_FIX_REVIEW_OWN"
 
 echo "[1] Extraccion de los tres bloques"
-if [ -n "$BLOCK_PLANNER_OWN" ] && [ -n "$CONFIG_PREAMBLE" ] && [ -n "$BLOCK_INVESTIGATOR" ] && [ -n "$BLOCK_FIX_REVIEW_OWN" ] && [ -n "$FIX_REVIEW_PREAMBLE" ]; then
+if [ -n "$BLOCK_PLANNER_OWN" ] && [ -n "$CONFIG_PREAMBLE" ] && [ -n "$BLOCK_INVESTIGATOR_OWN" ] && [ -n "$INVESTIGATOR_PREAMBLE" ] && [ -n "$BLOCK_FIX_REVIEW_OWN" ] && [ -n "$FIX_REVIEW_PREAMBLE" ]; then
     pass "los tres bloques (y los preambulos compartidos de planner y fix-review) se extrajeron desde sus anclajes"
 else
     fail "no se pudo extraer alguno de los bloques esperados"
@@ -91,6 +93,11 @@ if [ "$CONFIG_PREAMBLE" = "$FIX_REVIEW_PREAMBLE" ]; then
     pass "planner y fix-review (migrados) comparten el mismo preambulo de config-path"
 else
     fail "planner y fix-review divergen en el preambulo de config-path"
+fi
+if [ "$CONFIG_PREAMBLE" = "$INVESTIGATOR_PREAMBLE" ]; then
+    pass "planner y tooling-investigator (migrado, #1668) comparten el mismo preambulo de config-path"
+else
+    fail "planner y tooling-investigator divergen en el preambulo de config-path"
 fi
 contains "$BLOCK_FIX_REVIEW_OWN" 'MEFISTO_CONFIG_PATH' 'fix-review resuelve el slug via MEFISTO_CONFIG_PATH (preambulo compartido), no via CONFIG propio'
 absent "$BLOCK_FIX_REVIEW_OWN" 'CONFIG="$REPO_ROOT' 'fix-review ya no reconstruye CONFIG=$REPO_ROOT/... a mano'
@@ -207,8 +214,8 @@ run_matrix() {
 echo "[2] Matriz de resolucion (CA-3) para planner.md (preambulo compartido + bloque propio)"
 run_matrix "planner" "$BLOCK_PLANNER" "abort" "root"
 
-echo "[3] Matriz de resolucion (CA-3) para tooling-investigator.md"
-run_matrix "investigator" "$BLOCK_INVESTIGATOR" "default" "nested"
+echo "[3] Matriz de resolucion (CA-3) para tooling-investigator.md (preambulo compartido + bloque propio)"
+run_matrix "investigator" "$BLOCK_INVESTIGATOR" "abort" "root"
 
 echo "[4] Matriz de resolucion (CA-3) para fix-review.md (preambulo compartido + bloque propio)"
 run_matrix "fix-review" "$BLOCK_FIX_REVIEW" "abort" "root"
