@@ -42,6 +42,9 @@ for f in "$claude_body" "$opencode_body"; do
     absent "$f" '{{mefisto:' 'sin directivas sin resolver'
     absent "$f" 'plugins/cache' 'sin plugins/cache'
 done
+# El preludio Claude resuelve la raiz con .plugin-root por diseno del adaptador;
+# la salida OpenCode no debe heredar ningun token del runtime Claude.
+for forbidden in '.claude/' '.plugin-root' 'CLAUDE_'; do absent "$opencode_body" "$forbidden" "OpenCode sin token Claude: $forbidden"; done
 contains "$claude_body" 'model: "haiku"' 'Claude materializa el perfil fast'
 absent "$opencode_body" 'model:' 'OpenCode no emite model'
 if cmp -s "$MIRROR" "$CLAUDE"; then pass 'mirror Claude coincide byte a byte'; else fail 'mirror Claude diverge'; fi
