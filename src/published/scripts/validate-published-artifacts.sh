@@ -33,7 +33,7 @@ extract_frontmatter() {
 body_lines() { awk 'NR==1 { next } $0 == "---" && !seen { seen=1; next } seen { print NR ":" $0 }' "$1"; }
 
 validate_file() {
-    local file="$1" rel="${1#"$REPO_ROOT"/}" basename_no_ext frontmatter rc instance_json schema_json errors status=0 id skill skill_file declared_skills available_skills body_validation has_guard=0 agent agent_file command_mcp agent_mcp
+    local file="$1" rel="${1#"$REPO_ROOT"/}" basename_no_ext frontmatter rc instance_json schema_json errors status=0 id skill skill_file declared_skills available_skills available_commands command_file artifact_kind body_validation has_guard=0 agent agent_file command_mcp agent_mcp
     [ -f "$file" ] || { echo "$rel: archivo: no existe o no es un archivo regular"; return 1; }
     basename_no_ext="$(basename "$file" .md)"
     frontmatter="$(extract_frontmatter "$file")"; rc=$?
@@ -62,12 +62,13 @@ EOF
     done
     # Una sola pasada interpreta todas las reglas del cuerpo. Las excepciones se
     # seleccionan por artefacto, no por línea, para evitar procesos por hallazgo.
+    artifact_kind="$(printf '%s' "$instance_json" | jq -r '.kind // empty')"
     available_commands='|'
-    for skill_file in "$REPO_ROOT"/src/published/commands/*.md; do
-        [ -f "$skill_file" ] || continue
-        available_commands="${available_commands}$(basename "$skill_file" .md)|"
+    for command_file in "$REPO_ROOT"/src/published/commands/*.md; do
+        [ -f "$command_file" ] || continue
+        command_file="${command_file##*/}"; available_commands="${available_commands}${command_file%.md}|"
     done
-    body_validation="$(awk -v id="$id" -v kind="$(printf '%s' "$instance_json" | jq -r '.kind // empty')" -v rel="$rel" -v declared_skills="$declared_skills" -v available_skills="$available_skills" -v available_commands="$available_commands" '
+    body_validation="$(awk -v id="$id" -v kind="$artifact_kind" -v rel="$rel" -v declared_skills="$declared_skills" -v available_skills="$available_skills" -v available_commands="$available_commands" '
         function allowed_placeholder(value) {
             if (value == "$ARGUMENTS") return 1
             if (id == "domain-scaffolder" && value ~ /^\$(1|2|3|AJENOS|CSPROJ|ESPERA|GITHUB_OUTPUT|INTENTOS|INTRUSOS|JOB_STATUS|PENDIENTES|PR_NUM|REPO|REPO_ROOT|RUN|RUN_ID|SECONDS|SHA|TIMEOUT|archivo|destino|f|i|paquete|presupuesto|proj|temporal|version_esperada)$/) return 1
