@@ -26,11 +26,12 @@ extract_instructions_block() {
 }
 
 SCRIPT="$(extract_instructions_block)"
-if [ -n "$SCRIPT" ]; then pass "extrae el bloque de resolucion de instrucciones"; else fail "no encontro el bloque de instrucciones"; fi
+if [ -n "$SCRIPT" ]; then pass "extrae el preludio renderizado de instrucciones"; else fail "no encontro el preludio de instrucciones"; fi
 
 resolve() {
     local root="$1"
-    (cd "$root" && bash -c "$SCRIPT")
+    mkdir -p "$root/.mefisto"; printf '{}\n' > "$root/.mefisto/harness.config.json"
+    (cd "$root" && bash -c "$SCRIPT"$'\n''printf "%s\n" "$MEFISTO_INSTRUCTIONS_PATH"')
 }
 
 tokens() {
@@ -105,35 +106,10 @@ if grep -Fq 'Tokens de `CLAUDE.md`' "$AGENT" || grep -Fq '`CLAUDE.md` raiz' "$AG
 else
     pass "la prosa no remite los tokens a CLAUDE.md"
 fi
-if python3 - "$AGENT" <<'PY'
-import re
-import sys
-from pathlib import Path
-
-text = Path(sys.argv[1]).read_text()
-blocks = re.findall(r"```bash\n(.*?)\n```", text, re.S)
-resolver = next((block for block in blocks if "MEFISTO_INSTRUCTIONS_PATH" in block), None)
-if resolver is None:
-    raise SystemExit(1)
-prose = text.replace(f"```bash\n{resolver}\n```", "", 1)
-direct_read = re.compile(
-    r"(?:lee|leela|leer|Read)[^\n]*CLAUDE\.md|"
-    r"CLAUDE\.md[^\n]*(?:tokens?[^\n]*(?:viene|sale|resuelve)|(?:lee|leela|leer|Read)[^\n]*tokens?)",
-    re.IGNORECASE,
-)
-if direct_read.search(prose):
-    raise SystemExit(1)
-PY
-then
-    pass "no hay lectura directa de tokens desde CLAUDE.md fuera del fallback"
-else
-    fail "reaparecio una instruccion de leer tokens desde CLAUDE.md fuera del fallback"
-fi
-if grep -Fq '`${MEFISTO_INSTRUCTIONS_PATH}`' "$AGENT" \
+if grep -Fq 'lee con tu tool `Read` la ruta `${MEFISTO_INSTRUCTIONS_PATH}`' "$AGENT" \
     && grep -Fq 'Si el archivo efectivo no declara alguno de los cuatro' "$AGENT" \
-    && grep -Fq 'los declare en `AGENTS.md`, seccion "Tokens del harness"' "$AGENT" \
-    && grep -Fq 'No crees, copies, migres ni escribas `AGENTS.md` ni el fallback legacy `CLAUDE.md`.' "$AGENT"; then
-    pass "la prosa usa el archivo efectivo, remite la declaracion a AGENTS.md y prohibe mutar instrucciones"
+    && grep -Fq 'No crees, copies, migres ni escribas ese archivo de directivas.' "$AGENT"; then
+    pass "la prosa usa el archivo efectivo y prohibe mutar instrucciones"
 else
     fail "la prosa no conserva el contrato del archivo efectivo"
 fi

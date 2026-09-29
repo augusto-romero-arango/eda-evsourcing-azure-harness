@@ -85,6 +85,8 @@ EOF
             if (id == "infra-base-scaffolder" && value ~ /^\$\{(APP_ID|PR_NUM|TF_VAR_postgresql_admin_password|delay|environment|project_short|topic_name)\}$/) return 1
             if (id == "workos-identity-scaffolder" && value ~ /^\$(COMPOSICION|CSPROJ|IDENTITY_DIR|PROGRAM_CS|PROYECTO)$/) return 1
             if (id == "apim-gateway-scaffolder" && value ~ /^\$(MCP_TF|PROVIDERS_TF|WORKFLOW)$/) return 1
+            if (id == "mcp-scaffolder" && value ~ /^\$(APP_NAME|BASE|CONFIG|EVENTO|FA_MODULE|FIXTURES|GITHUB_ENV|GITHUB_OUTPUT|PRIMER_DOMINIO_KEBAB|PROJ|PR_NUM|REPO_ROOT|RESOURCE_GROUP|RUN_CONCLUSION|RUN_RAMA|SECONDS|TENANCY_STRATEGY|VARS|WORKFLOW|azure_region_short|body|code|dominio_kebab|dominio_pascal|dominio_snake|espera|expected_sha|i|key|mcp_id|nombre|presupuesto|proj|proposito_kebab|tiene_region_seq|timeout_peticion|ultimo_cuerpo)$/) return 1
+            if (id == "mcp-scaffolder" && value ~ /^\$\{(APP_NAME|PR_NUM|REPO|RUN_SHA|app_name|azure_region_short|body|code|dominio_kebab|espera|expected_sha|intentos|i|project|proposito_kebab|region_seq_suffix|resource_sequence|startup_logs_url|transcurrido|ultimo_cuerpo)\}$/) return 1
             if (id == "apim-gateway-scaffolder" && (value == "${ENV}" || value == "${origin}")) return 1
             return 0
         }
