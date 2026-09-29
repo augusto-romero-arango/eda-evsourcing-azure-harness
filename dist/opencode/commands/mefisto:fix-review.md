@@ -313,7 +313,7 @@ Cada ajuste aprobado tiene un **destino** segun donde viva el archivo a tocar:
 
 Reutiliza el mismo routing que el `planner` y el `tooling-investigator` publicados (ver la seccion C "Routing cross-repo: solo drafts" de MEF-ADR-0019, `${MEFISTO_PACKAGE_ROOT}/docs/adr/mef-adr-0019-*.md`). Lee el slug del repo de Mefisto (configurable para forks):
 
-Lee `repoSlug` desde `${MEFISTO_CONFIG_PATH}` (MEF-ADR-0053 decision 4). El campo es opcional: si no hay config, falta el campo o esta vacio, aplica el default sin abortar:
+Lee `repoSlug` desde `${MEFISTO_CONFIG_PATH}` (MEF-ADR-0053 decision 4). El campo es opcional: si el config no lo declara o esta vacio, aplica el default sin abortar:
 
 ```bash
 SLUG=$(jq -r '.repoSlug // empty' "${MEFISTO_CONFIG_PATH}" 2>/dev/null); echo "${SLUG:-augusto-romero-arango/eda-evsourcing-azure-harness}"
