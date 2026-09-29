@@ -304,12 +304,12 @@ case "$COMMAND" in
     servicebus-dlq)
         if [ -z "${SERVICEBUS_NAMESPACE:-}" ]; then
             error "Variable SERVICEBUS_NAMESPACE no definida en $ENV_FILE"
-            echo "  Agrega SERVICEBUS_NAMESPACE al archivo $ENV_FILE "
+            echo "  Agrega SERVICEBUS_NAMESPACE al archivo $ENV_FILE"
             exit 1
         fi
         if [ -z "${SERVICEBUS_RG:-}" ]; then
             error "Variable SERVICEBUS_RG no definida en $ENV_FILE"
-            echo "  Agrega SERVICEBUS_RG al archivo $ENV_FILE "
+            echo "  Agrega SERVICEBUS_RG al archivo $ENV_FILE"
             exit 1
         fi
 
@@ -363,12 +363,12 @@ case "$COMMAND" in
     servicebus-dlq-peek)
         if [ -z "${SERVICEBUS_NAMESPACE:-}" ]; then
             error "Variable SERVICEBUS_NAMESPACE no definida en $ENV_FILE"
-            echo "  Agrega SERVICEBUS_NAMESPACE al archivo $ENV_FILE "
+            echo "  Agrega SERVICEBUS_NAMESPACE al archivo $ENV_FILE"
             exit 1
         fi
         if [ -z "${SERVICEBUS_RG:-}" ]; then
             error "Variable SERVICEBUS_RG no definida en $ENV_FILE"
-            echo "  Agrega SERVICEBUS_RG al archivo $ENV_FILE "
+            echo "  Agrega SERVICEBUS_RG al archivo $ENV_FILE"
             exit 1
         fi
 
@@ -441,12 +441,12 @@ for i, m in enumerate(msgs):
     function-status)
         if [ -z "${FUNCTIONAPP_NAMES:-}" ]; then
             error "Variable FUNCTIONAPP_NAMES no definida en $ENV_FILE"
-            echo "  Agrega FUNCTIONAPP_NAMES al archivo $ENV_FILE "
+            echo "  Agrega FUNCTIONAPP_NAMES al archivo $ENV_FILE"
             exit 1
         fi
         if [ -z "${APPINSIGHTS_RG:-}" ]; then
             error "Variable APPINSIGHTS_RG no definida en $ENV_FILE (usada como resource group de las Function Apps)"
-            echo "  Agrega APPINSIGHTS_RG al archivo $ENV_FILE "
+            echo "  Agrega APPINSIGHTS_RG al archivo $ENV_FILE"
             exit 1
         fi
 
