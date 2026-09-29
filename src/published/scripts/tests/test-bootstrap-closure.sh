@@ -49,10 +49,15 @@ for name in "${SCRIPTS[@]}"; do
     fi
 
     out=$(cd "$CONSUMER" && PATH="$STUBS:$PATH" AZ_MODE=none STUB_LOG=/dev/null bash "$f" --help </dev/null 2>&1) || true
+    # Salida esperada: el error del cargador de config de _pipeline-common.sh
+    # (prueba que lo resolvio desde dist/) o, en azure-account-info, el de az login.
+    if [ "$name" = "azure-account-info" ]; then expected="Ejecuta 'az login' y reintenta"; else expected="no se encontro el config canonico"; fi
     if printf '%s' "$out" | grep -q 'No such file'; then
         fail "$name: dependencia no resuelta ($(printf '%s' "$out" | grep -m1 'No such file'))"
+    elif printf '%s' "$out" | grep -qF "$expected"; then
+        pass "$name: resuelve sus dependencias desde dist/ con la salida esperada"
     else
-        pass "$name: resuelve _pipeline-common.sh sin 'No such file'"
+        fail "$name: salida inesperada: $(printf '%s' "$out" | head -2)"
     fi
 
     out=$(cd "$PLUGIN" && PATH="$STUBS:$PATH" bash "$f" </dev/null 2>&1); rc=$?
@@ -72,7 +77,7 @@ if [ "$rc" -eq 0 ] && printf '%s' "$out" | jq -e 'keys == ["subscriptionId","sub
 else
     fail "JSON con sesion invalido (rc=$rc): $out"
 fi
-if [ "$(cat "$LOG")" = "account show -o json" ] || [ "$(grep -vc '^account show' "$LOG")" = "0" ]; then
+if [ -s "$LOG" ] && ! grep -qv '^account show' "$LOG"; then
     pass "solo se invoco 'az account show'"
 else
     fail "az invocado con otros comandos: $(cat "$LOG")"
