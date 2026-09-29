@@ -52,13 +52,13 @@ allowed() {
     printf '%s' "$permission" | jq -e --arg c "$1" '[.bash | to_entries[] | . as $e | select($e.value == "allow" and (($e.key | endswith("*")) and ($c | startswith($e.key | sub("\\*$"; ""))) or $e.key == $c))] | length > 0' >/dev/null 2>&1
 }
 commands="$(printf '%s\n' "$body" | awk '/^```bash$/ { f=1; next } /^```/ { f=0 } f' \
-    | grep -E '^[[:space:]]*(dotnet|terraform|sed|mkdir|cd|test|jq|grep|cat) ' | sed 's/^[[:space:]]*//' | sort -u)"
+    | grep -E '^[[:space:]]*(dotnet|terraform|sed|mkdir|cd|test|jq|grep|cat|echo|printf|awk|git) ' | sed 's/^[[:space:]]*//' | sort -u)"
 [ -n "$commands" ] && pass 'hay comandos en los bloques bash' || fail 'no se extrajeron comandos'
 while IFS= read -r cmd; do
     [ -n "$cmd" ] || continue
     if allowed "$cmd"; then pass "allow casa: $cmd"; else fail "ninguna regla allow casa: $cmd"; fi
 done <<< "$commands"
-for sample in 'terraform fmt -check' 'terraform validate' 'terraform init -backend=false' 'dotnet build' 'dotnet test' 'sed -n 1p x' 'mkdir -p x'; do
+for sample in 'terraform fmt -check' 'terraform validate' 'terraform init -backend=false' 'dotnet build' 'dotnet test' 'sed -n 1p x' 'mkdir -p x' 'git rev-parse --show-toplevel' 'awk -F- x' '[ -f x ]'; do
     if allowed "$sample"; then pass "bash permite '$sample'"; else fail "bash no permite '$sample'"; fi
 done
 
