@@ -77,6 +77,7 @@ EOF
             if (id == "projections-scaffolder" && value ~ /^\$(BASE|CSPROJ|GITHUB_OUTPUT|IMAGEN_ACTIVA|INTRUSOS|LOGIN_SERVER|PROJ|REPO_ROOT|SEAM|SOURCE_REVISION_ID|destino|domainEventsCsproj|dominio|nombre|seam)$/) return 1
             if (id == "infra-base-scaffolder" && value ~ /^\$(1|2|3|ALL_SECRETS|APPS|APP_NAME|BRANCH|CONFIG|COUNT|GITHUB_WORKSPACE|ISSUE_NUM|KEY_VAULT_NAME|NAME|NS|PROJECTIONS_ENABLED|PROVIDERS_TF|PR_NUM|RESOURCE_GROUP|TYPE|VALUE|VALUE_REF|attempt|delay|i|k|max_attempts|name|value)$/) return 1
             if (id == "infra-base-scaffolder" && value ~ /^\$\{(APP_ID|PR_NUM|TF_VAR_postgresql_admin_password|delay|environment|project_short|topic_name)\}$/) return 1
+            if (id == "workos-identity-scaffolder" && value ~ /^\$(COMPOSICION|CSPROJ|IDENTITY_DIR|PROGRAM_CS|PROYECTO)$/) return 1
             return 0
         }
         function valid_directive(value) {
