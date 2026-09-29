@@ -74,6 +74,8 @@ EOF
             if (id == "draft" && value == "$REPO_SLUG") return 1
             if (id == "planner" && value ~ /^\$(SESSION_ID|INITIAL_HEAD_SHA|INITIAL_DEFAULT_BRANCH|INITIAL_STATUS|HARNESS_REPO_SLUG|CLOSING_TIMESTAMP|GLOSSARY_PATH|FIELD_NOTE_LOCAL|GLOSSARY_LOCAL|FIELD_NOTE_GLOSSARY_ARGS)$/) return 1
             if (id == "planner" && value == "${SESSION_ID}") return 1
+            if (id == "infra-base-scaffolder" && value ~ /^\$(1|2|3|ALL_SECRETS|APPS|APP_NAME|BRANCH|CONFIG|COUNT|GITHUB_WORKSPACE|ISSUE_NUM|KEY_VAULT_NAME|NAME|NS|PROJECTIONS_ENABLED|PROVIDERS_TF|PR_NUM|RESOURCE_GROUP|TYPE|VALUE|VALUE_REF|attempt|delay|i|k|max_attempts|name|value)$/) return 1
+            if (id == "infra-base-scaffolder" && value ~ /^\$\{(APP_ID|PR_NUM|TF_VAR_postgresql_admin_password|delay|environment|project_short|topic_name)\}$/) return 1
             return 0
         }
         function valid_directive(value) {

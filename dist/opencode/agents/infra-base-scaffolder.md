@@ -1,86 +1,30 @@
 ---
-name: "infra-base-scaffolder"
 description: "Genera la infraestructura base del consumidor (8 modulos Terraform + esqueleto del entorno con outputs) en un greenfield. Genera ademas, de forma opt-in (token `projections.enabled` de `harness.config.json`), el paquete del worker de proyecciones: los 3 modulos Terraform (Container App sin ingress) y su alerta dedicada de spike de excepciones en el wiring del entorno (MEF-ADR-0034). Escribe el HCL inline, sin plantillas copiables. Idempotente."
-tools: "Read, Glob, Grep, Edit, Write, Bash"
-model: "sonnet"
+mode: "all"
+permission: {"external_directory":"deny","doom_loop":"deny","lsp":"deny","todowrite":"deny","question":"deny","webfetch":"deny","websearch":"deny","skill":"deny","task":"deny","list":"allow","glob":"allow","grep":"allow","bash":{"*":"deny","git *":"allow","gh *":"allow","jq *":"allow","cat *":"allow","ls":"allow","ls *":"allow","find *":"allow","grep *":"allow","sort":"allow","sort *":"allow","bash scripts/*":"allow","sh scripts/*":"allow","scripts/*":"allow","./scripts/*":"allow","${MEFISTO_PACKAGE_ROOT}/scripts/*":"allow","mkdir *":"allow","mktemp":"allow","mktemp *":"allow","rm *":"deny","dotnet *":"allow","func init *":"allow","terraform init -backend=false*":"allow","terraform validate*":"allow","terraform fmt*":"allow","python3 - *":"allow","python3 -m json.tool*":"allow","cd *":"allow","echo *":"allow","date":"allow","date *":"allow","printf *":"allow","test *":"allow","[ *":"allow","touch *":"allow","tr *":"allow","head *":"allow","tail *":"allow","awk *":"allow","sed *":"allow","mv *":"allow","ilspycmd *":"allow","rm -f src/*":"allow","rm -rf src/*":"allow","rm -f tests/*":"allow","rm -f \"src/*":"allow","rm -rf \"src/*":"allow","rm -f \"tests/*":"allow","curl *":"deny","ssh *":"deny","scp *":"deny","sudo *":"deny"},"edit":{"*":"allow","commands/**":"deny","skills/**":"deny","agents/**":"deny","hooks/**":"deny",".claude-plugin/**":"deny","src/published/**":"deny","src/runtime/**":"deny","dist/**":"deny","docs/adr/mef-adr-*":"deny"},"write":{"*":"allow","commands/**":"deny","skills/**":"deny","agents/**":"deny","hooks/**":"deny",".claude-plugin/**":"deny","src/published/**":"deny","src/runtime/**":"deny","dist/**":"deny","docs/adr/mef-adr-*":"deny"},"patch":{"*":"allow","commands/**":"deny","skills/**":"deny","agents/**":"deny","hooks/**":"deny",".claude-plugin/**":"deny","src/published/**":"deny","src/runtime/**":"deny","dist/**":"deny","docs/adr/mef-adr-*":"deny"},"read":{"*":"allow",".env":"deny",".env.*":"deny","**/.env":"deny","**/.env.*":"deny","**/auth.json":"deny","**/.aws/**":"deny","**/.ssh/**":"deny"}}
+tools: {"microsoft-learn_*":false,"terraform_*":false}
 ---
 <!-- GENERADO por src/published/scripts/generate-published-adapters.sh desde src/published/agents/infra-base-scaffolder.md. No editar a mano. -->
 ```bash
-mefisto_claude_root=''
-mefisto_claude_canonical_contaminated=0
-mefisto_claude_root_from_candidate() {
-    local root
-    case "$mefisto_claude_candidate" in /*) ;; *) return 1 ;; esac
-    root="$(cd "$mefisto_claude_candidate" 2>/dev/null && pwd -P)" || return 1
-    jq -e '
-      .name == "mefisto" and
-      (.version | type == "string" and test("^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?(\\+[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?$"))
-    ' "$root/.claude-plugin/plugin.json" >/dev/null 2>&1 || return 1
-    jq -e --arg version "$(jq -er '.version | strings' "$root/.claude-plugin/plugin.json" 2>/dev/null)" '
-      (keys | sort) == ["commit", "runtime", "schemaVersion", "version"] and
-      .schemaVersion == 1 and .runtime == "claude" and .version == $version and
-      (.commit | type == "string" and test("^[0-9a-f]{40}$"))
-    ' "$root/mefisto-manifest.json" >/dev/null 2>&1 || return 1
-    printf '%s\n' "$root"
+mefisto_opencode_data_root() {
+    if [ -n "${XDG_DATA_HOME:-}" ]; then printf '%s/mefisto\n' "$XDG_DATA_HOME"
+    elif [ "$(uname -s)" = Darwin ]; then printf '%s/Library/Application Support/mefisto\n' "$HOME"
+    else printf '%s/.local/share/mefisto\n' "$HOME"; fi
 }
-mefisto_claude_is_opencode_root() {
-    local root
-    case "$mefisto_claude_candidate" in /*) ;; *) return 1 ;; esac
-    root="$(cd "$mefisto_claude_candidate" 2>/dev/null && pwd -P)" || return 1
-    jq -e '
-      (keys | sort) == ["commit", "minimumRuntimeVersion", "runtime", "schemaVersion", "version"] and
-      .schemaVersion == 1 and .runtime == "opencode" and
-      (.version | type == "string" and test("^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?(\\+[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?$")) and
-      (.commit | type == "string" and test("^[0-9a-f]{40}$")) and
-      (.minimumRuntimeVersion | type == "string" and test("^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"))
-    ' "$root/mefisto-manifest.json" >/dev/null 2>&1
+mefisto_opencode_launcher="$(mefisto_opencode_data_root)/active/bin/mefisto-opencode"
+if [ ! -f "$mefisto_opencode_launcher" ] || [ -L "$mefisto_opencode_launcher" ] || [ ! -x "$mefisto_opencode_launcher" ]; then
+    printf '%s\n' 'ERROR OpenCode: no hay una release activa valida; instale o active la release OpenCode.' >&2; exit 1
+fi
+MEFISTO_PACKAGE_ROOT="$("$mefisto_opencode_launcher" package-root)" || {
+    printf '%s\n' 'ERROR OpenCode: no se pudo resolver la release activa; instale o active la release OpenCode.' >&2; exit 1;
 }
-if [ -n "${CLAUDE_PLUGIN_ROOT:-}" ]; then
-    mefisto_claude_candidate="$CLAUDE_PLUGIN_ROOT"
-    mefisto_claude_root="$(mefisto_claude_root_from_candidate)" || {
-        printf '%s\n' 'ERROR Claude: la raiz indicada por CLAUDE_PLUGIN_ROOT es invalida; reabra o reinstale el plugin.' >&2; exit 1;
-    }
-else
-    mefisto_claude_cursor="$PWD"
-    while :; do
-        if [ -f "$mefisto_claude_cursor/.mefisto/pipeline/.plugin-root" ]; then
-            mefisto_claude_candidate="$(< "$mefisto_claude_cursor/.mefisto/pipeline/.plugin-root")"
-            if mefisto_claude_root="$(mefisto_claude_root_from_candidate)"; then break; fi
-            if mefisto_claude_is_opencode_root; then
-                mefisto_claude_canonical_contaminated=1
-                break
-            else
-                printf '%s\n' 'ERROR Claude: metadata del marker canonico invalida; reabra o reinstale el plugin.' >&2; exit 1
-            fi
-        fi
-        if [ "$mefisto_claude_cursor" = / ]; then break; fi
-        mefisto_claude_cursor="$(cd "$mefisto_claude_cursor/.." && pwd -P)"
-    done
-    if [ -z "$mefisto_claude_root" ]; then
-        mefisto_claude_cursor="$PWD"
-        while :; do
-            if [ -f "$mefisto_claude_cursor/.claude/pipeline/.plugin-root" ]; then
-                mefisto_claude_candidate="$(< "$mefisto_claude_cursor/.claude/pipeline/.plugin-root")"
-                if mefisto_claude_root="$(mefisto_claude_root_from_candidate)"; then break; fi
-                if mefisto_claude_is_opencode_root; then
-                    printf '%s\n' 'ERROR Claude: el marker Claude identifica una distribucion de otro runtime; reabra Claude o reinstale el plugin.' >&2; exit 1
-                fi
-                printf '%s\n' 'ERROR Claude: metadata del marker Claude invalida; reabra o reinstale el plugin.' >&2; exit 1
-            fi
-            if [ "$mefisto_claude_cursor" = / ]; then break; fi
-            mefisto_claude_cursor="$(cd "$mefisto_claude_cursor/.." && pwd -P)"
-        done
-    fi
-fi
-if [ -z "$mefisto_claude_root" ]; then
-    if [ "$mefisto_claude_canonical_contaminated" -eq 1 ]; then
-        printf '%s\n' 'ERROR Claude: el marker canonico identifica una distribucion OpenCode y no existe un mirror Claude valido; reabra Claude o reinstale el plugin.' >&2
-    else
-        printf '%s\n' 'ERROR Claude: no se encontro una raiz Claude valida; reabra o reinstale el plugin.' >&2
-    fi
-    exit 1
-fi
-MEFISTO_PACKAGE_ROOT="$mefisto_claude_root"
+case "$MEFISTO_PACKAGE_ROOT" in
+    /*) ;;
+    *) printf '%s\n' 'ERROR OpenCode: la release activa no devolvio una raiz absoluta; reinstale o active la release OpenCode.' >&2; exit 1 ;;
+esac
+MEFISTO_PACKAGE_ROOT="$(cd "$MEFISTO_PACKAGE_ROOT" 2>/dev/null && pwd -P)" || {
+    printf '%s\n' 'ERROR OpenCode: la release activa no existe; reinstale o active la release OpenCode.' >&2; exit 1;
+}
 export MEFISTO_PACKAGE_ROOT
 ```
 ```bash
@@ -2022,15 +1966,15 @@ override.tf.json
 # Secretos fijos del BC (MEF-ADR-0025 decision #4/#5): siempre presentes. 'marten-connection' es
 # el unico 'composite' (formula fija de Postgres, ver Paso 2b mas abajo) -- ni este agente ni
 # /seed-secret emiten otro 'composite': es un vocabulario cerrado, reservado a este secreto.
-MEFISTO_RUNTIME=claude "${MEFISTO_PACKAGE_ROOT}/scripts/register-harness-secret.sh" "<secretName-interno>" "output" "service_bus_interno_connection_string"
-MEFISTO_RUNTIME=claude "${MEFISTO_PACKAGE_ROOT}/scripts/register-harness-secret.sh" "marten-connection" "composite" "marten-connection"
-MEFISTO_RUNTIME=claude "${MEFISTO_PACKAGE_ROOT}/scripts/register-harness-secret.sh" "app-insights-connection" "output" "app_insights_connection_string"
+MEFISTO_RUNTIME=opencode "${MEFISTO_PACKAGE_ROOT}/scripts/register-harness-secret.sh" "<secretName-interno>" "output" "service_bus_interno_connection_string"
+MEFISTO_RUNTIME=opencode "${MEFISTO_PACKAGE_ROOT}/scripts/register-harness-secret.sh" "marten-connection" "composite" "marten-connection"
+MEFISTO_RUNTIME=opencode "${MEFISTO_PACKAGE_ROOT}/scripts/register-harness-secret.sh" "app-insights-connection" "output" "app_insights_connection_string"
 
 # Uno por cada alias de serviceBus.external[] resuelto en el Paso 0 (omite el bloque
 # entero si no hay ninguno). El GitHub secret sigue el patron SB_EXTERNAL_<ALIAS>_CONNECTION_STRING
 # (CA-3, MEF-ADR-0024 decision #4); <secretName-alias-cosmos> es serviceBus.external[].secretName
 # del alias COSMOS del ejemplo -- repite una linea por alias real.
-MEFISTO_RUNTIME=claude "${MEFISTO_PACKAGE_ROOT}/scripts/register-harness-secret.sh" "<secretName-alias-cosmos>" "github-secret" "SB_EXTERNAL_COSMOS_CONNECTION_STRING"
+MEFISTO_RUNTIME=opencode "${MEFISTO_PACKAGE_ROOT}/scripts/register-harness-secret.sh" "<secretName-alias-cosmos>" "github-secret" "SB_EXTERNAL_COSMOS_CONNECTION_STRING"
 ```
 
 Sustituye `<secretName-interno>` y `<secretName-alias-cosmos>` por los valores reales resueltos en el Paso 0 (`service_bus_internal_secret` y `serviceBus.external[].secretName` de cada alias, respectivamente). Como `register-harness-secret.sh` es idempotente (busca por `name` y actualiza en vez de duplicar), correr este bloque en cada invocacion del agente mantiene `secrets[]` al dia aunque `infra-cd.yml` ya exista y no se regenere (p. ej. si el consumidor agrega un alias nuevo a `serviceBus.external[]` despues del primer `/infra-base`: el registro ya lo cubre incluso antes de que el workflow data-driven pueda leerlo, y si el consumidor regenera el workflow a mano mas adelante, el registro ya esta completo).
