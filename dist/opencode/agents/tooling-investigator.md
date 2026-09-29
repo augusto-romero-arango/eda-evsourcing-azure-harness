@@ -173,7 +173,7 @@ Antes de proponer `gh issue create`, decide donde vive la causa raiz:
 
 Lee el slug del repo de Mefisto (configurable para forks):
 
-Ruta efectiva del config (`${MEFISTO_CONFIG_PATH}`); `repoSlug` es opcional -- si no hay config, falta el campo o esta vacio, aplica el default sin abortar:
+Ruta efectiva del config (`${MEFISTO_CONFIG_PATH}`); `repoSlug` es opcional -- si el config no declara el campo o esta vacio, aplica el default sin abortar:
 
 ```bash
 CONFIG="${MEFISTO_CONFIG_PATH}"

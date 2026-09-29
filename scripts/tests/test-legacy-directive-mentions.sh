@@ -11,13 +11,15 @@
 # cerrada a proposito (los seis de la tabla del issue): un barrido global sobre
 # todo agents/*.md marcaria en falso los bloques `MEFISTO_INSTRUCTIONS_PATH`
 # de agentes ya migrados, que contienen `if [ -f "CLAUDE.md" ]` legitimos.
+# tooling-investigator migro a la fuente neutral (#1668): se verifica su
+# fuente, porque el mirror generado lleva ese mismo preambulo legitimo.
 
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
-TOOLING_INVESTIGATOR="$REPO_ROOT/agents/tooling-investigator.md"
+TOOLING_INVESTIGATOR="$REPO_ROOT/src/published/agents/tooling-investigator.md"
 PLANNER="$REPO_ROOT/agents/planner.md"
 HISTORIADOR="$REPO_ROOT/agents/historiador.md"
 FIX_REVIEW="$REPO_ROOT/commands/fix-review.md"
