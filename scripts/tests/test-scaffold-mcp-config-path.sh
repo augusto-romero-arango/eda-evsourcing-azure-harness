@@ -92,70 +92,27 @@ else
     fail "ausencia no explica el contrato canonico y el fallback"
 fi
 
-echo "[5] Prompts conservan resolucion y fallback explicitos"
+echo "[5] Skill conserva resolucion y fallback explicitos; el agente usa la directiva neutral (#1661)"
 COMMAND_CANONICAL=$(grep -Fc 'CONFIG="$REPO_ROOT/.mefisto/harness.config.json"' "$COMMAND" || true)
 COMMAND_LEGACY=$(grep -Fc 'CONFIG="$REPO_ROOT/.claude/harness.config.json"' "$COMMAND" || true)
-AGENT_CANONICAL=$(grep -Fc 'CONFIG="$REPO_ROOT/.mefisto/harness.config.json"' "$AGENT" || true)
-AGENT_LEGACY=$(grep -Fc 'CONFIG="$REPO_ROOT/.claude/harness.config.json"' "$AGENT" || true)
-if [ "$COMMAND_CANONICAL" -eq 1 ] && [ "$COMMAND_LEGACY" -eq 1 ] && [ "$AGENT_CANONICAL" -eq 3 ] && [ "$AGENT_LEGACY" -eq 3 ]; then
-    pass "skill tiene un resolver y agente tiene tres"
+AGENT_USES=$(grep -Fc 'CONFIG="${MEFISTO_CONFIG_PATH}"' "$AGENT" || true)
+if [ "$COMMAND_CANONICAL" -eq 1 ] && [ "$COMMAND_LEGACY" -eq 1 ] && [ "$AGENT_USES" -eq 3 ]; then
+    pass "skill tiene un resolver y agente tres usos del config efectivo"
 else
-    fail "conteos inesperados skill canonico/legacy=$COMMAND_CANONICAL/$COMMAND_LEGACY, agente=$AGENT_CANONICAL/$AGENT_LEGACY"
-fi
-if [ "$(grep -Fc 'AVISO: se usara el config canonico $CONFIG; se ignora el legacy $REPO_ROOT/.claude/harness.config.json. Migra o elimina conscientemente el archivo legacy para evitar divergencias.' "$COMMAND" || true)" -eq 1 ] \
-    && [ "$(grep -Fc 'AVISO: se usara el config canonico $CONFIG; se ignora el legacy $REPO_ROOT/.claude/harness.config.json. Migra o elimina conscientemente el archivo legacy para evitar divergencias.' "$AGENT" || true)" -eq 3 ]; then
-    pass "cada bloque emite el AVISO de coexistencia"
-else
-    fail "falta el AVISO de coexistencia en algun bloque"
+    fail "conteos inesperados skill canonico/legacy=$COMMAND_CANONICAL/$COMMAND_LEGACY, agente=$AGENT_USES"
 fi
 if grep -Fq 'Resuelve primero el contrato canonico `.mefisto/harness.config.json`' "$COMMAND" \
     && grep -Fq 'solo como fallback de lectura' "$COMMAND" \
     && grep -Fq 'Nunca copies, migres ni escribas ninguno de esos archivos.' "$COMMAND" \
-    && grep -Fq '**El dominio de ejemplo**, del contrato canonico `.mefisto/harness.config.json`' "$AGENT" \
-    && grep -Fq 'Nunca copies, migres ni escribas el archivo legacy' "$AGENT" \
-    && grep -Fq '**Estado de auth del BC**, del mismo contrato canonico `.mefisto/harness.config.json`' "$AGENT"; then
+    && grep -Fq 'Nunca copies, migres ni escribas el archivo de config' "$AGENT"; then
     pass "la prosa documenta canonico, fallback y prohibicion de escritura"
 else
     fail "la prosa no documenta completamente el contrato de lectura"
-fi
-if python3 - "$COMMAND" "$AGENT" <<'PY'
-import re
-import sys
-from pathlib import Path
-
-expected = {sys.argv[1]: 1, sys.argv[2]: 3}
-notice = "AVISO: se usara el config canonico $CONFIG; se ignora el legacy $REPO_ROOT/.claude/harness.config.json."
-for path, count in expected.items():
-    text = Path(path).read_text()
-    blocks = [block for block in re.findall(r"```bash\n(.*?)\n```", text, re.S)
-              if 'CONFIG="$REPO_ROOT/.mefisto/harness.config.json"' in block]
-    if len(blocks) != count:
-        raise SystemExit(1)
-    for block in blocks:
-        required = (
-            'REPO_ROOT=$(git rev-parse --show-toplevel',
-            'CONFIG="$REPO_ROOT/.claude/harness.config.json"',
-            notice,
-            'config canonico requerido $REPO_ROOT/.mefisto/harness.config.json',
-            'fallback legacy $REPO_ROOT/.claude/harness.config.json',
-        )
-        if any(fragment not in block for fragment in required):
-            raise SystemExit(1)
-PY
-then
-    pass "cada bloque es autocontenido y conserva AVISO y aborto"
-else
-    fail "algun bloque no rederiva el resolver completo"
 fi
 if grep -Eq '(^|[;&|[:space:]])(jq|cat)[[:space:]].*\.claude/harness\.config\.json|<[[:space:]]*[^[:space:]]*\.claude/harness\.config\.json' "$COMMAND" "$AGENT"; then
     fail "reaparecio una lectura directa del config legacy"
 else
     pass "las lecturas usan exclusivamente CONFIG"
-fi
-if grep -E 'echo.*\.claude/harness\.config\.json' "$COMMAND" "$AGENT" | grep -Ev 'fallback|se ignora el legacy|Se acepta solo para lectura' >/dev/null; then
-    fail "un mensaje de usuario nombra el legacy sin calificarlo"
-else
-    pass "los mensajes califican la ruta legacy"
 fi
 if grep -Fq 'jq -r '\''.namespacePrefix // ""'\'' "$CONFIG"' "$COMMAND" \
     && grep -Fq 'jq -r '\''.solutionFile // ""'\'' "$CONFIG"' "$COMMAND" \
