@@ -1,91 +1,16 @@
 ---
-description: "Registra un secreto nuevo post-greenfield y cablea su referencia Key Vault versionless en la Function App de un dominio."
-argument-hint: "<nombre> --domain <Dominio> (--from-output <output> | --from-github-secret <NOMBRE>) [--env <env>]"
-model: "sonnet"
+{
+  "kind": "command",
+  "id": "seed-secret",
+  "description": "Registra un secreto nuevo post-greenfield y cablea su referencia Key Vault versionless en la Function App de un dominio.",
+  "profile": "balanced",
+  "arguments": "<nombre> --domain <Dominio> (--from-output <output> | --from-github-secret <NOMBRE>) [--env <env>]"
+}
 ---
-<!-- GENERADO por src/published/scripts/generate-published-adapters.sh desde src/published/commands/seed-secret.md. No editar a mano. -->
-```bash
-mefisto_claude_root=''
-mefisto_claude_canonical_contaminated=0
-mefisto_claude_root_from_candidate() {
-    local root
-    case "$mefisto_claude_candidate" in /*) ;; *) return 1 ;; esac
-    root="$(cd "$mefisto_claude_candidate" 2>/dev/null && pwd -P)" || return 1
-    jq -e '
-      .name == "mefisto" and
-      (.version | type == "string" and test("^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?(\\+[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?$"))
-    ' "$root/.claude-plugin/plugin.json" >/dev/null 2>&1 || return 1
-    jq -e --arg version "$(jq -er '.version | strings' "$root/.claude-plugin/plugin.json" 2>/dev/null)" '
-      (keys | sort) == ["commit", "runtime", "schemaVersion", "version"] and
-      .schemaVersion == 1 and .runtime == "claude" and .version == $version and
-      (.commit | type == "string" and test("^[0-9a-f]{40}$"))
-    ' "$root/mefisto-manifest.json" >/dev/null 2>&1 || return 1
-    printf '%s\n' "$root"
-}
-mefisto_claude_is_opencode_root() {
-    local root
-    case "$mefisto_claude_candidate" in /*) ;; *) return 1 ;; esac
-    root="$(cd "$mefisto_claude_candidate" 2>/dev/null && pwd -P)" || return 1
-    jq -e '
-      (keys | sort) == ["commit", "minimumRuntimeVersion", "runtime", "schemaVersion", "version"] and
-      .schemaVersion == 1 and .runtime == "opencode" and
-      (.version | type == "string" and test("^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?(\\+[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?$")) and
-      (.commit | type == "string" and test("^[0-9a-f]{40}$")) and
-      (.minimumRuntimeVersion | type == "string" and test("^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"))
-    ' "$root/mefisto-manifest.json" >/dev/null 2>&1
-}
-if [ -n "${CLAUDE_PLUGIN_ROOT:-}" ]; then
-    mefisto_claude_candidate="$CLAUDE_PLUGIN_ROOT"
-    mefisto_claude_root="$(mefisto_claude_root_from_candidate)" || {
-        printf '%s\n' 'ERROR Claude: la raiz indicada por CLAUDE_PLUGIN_ROOT es invalida; reabra o reinstale el plugin.' >&2; exit 1;
-    }
-else
-    mefisto_claude_cursor="$PWD"
-    while :; do
-        if [ -f "$mefisto_claude_cursor/.mefisto/pipeline/.plugin-root" ]; then
-            mefisto_claude_candidate="$(< "$mefisto_claude_cursor/.mefisto/pipeline/.plugin-root")"
-            if mefisto_claude_root="$(mefisto_claude_root_from_candidate)"; then break; fi
-            if mefisto_claude_is_opencode_root; then
-                mefisto_claude_canonical_contaminated=1
-                break
-            else
-                printf '%s\n' 'ERROR Claude: metadata del marker canonico invalida; reabra o reinstale el plugin.' >&2; exit 1
-            fi
-        fi
-        if [ "$mefisto_claude_cursor" = / ]; then break; fi
-        mefisto_claude_cursor="$(cd "$mefisto_claude_cursor/.." && pwd -P)"
-    done
-    if [ -z "$mefisto_claude_root" ]; then
-        mefisto_claude_cursor="$PWD"
-        while :; do
-            if [ -f "$mefisto_claude_cursor/.claude/pipeline/.plugin-root" ]; then
-                mefisto_claude_candidate="$(< "$mefisto_claude_cursor/.claude/pipeline/.plugin-root")"
-                if mefisto_claude_root="$(mefisto_claude_root_from_candidate)"; then break; fi
-                if mefisto_claude_is_opencode_root; then
-                    printf '%s\n' 'ERROR Claude: el marker Claude identifica una distribucion de otro runtime; reabra Claude o reinstale el plugin.' >&2; exit 1
-                fi
-                printf '%s\n' 'ERROR Claude: metadata del marker Claude invalida; reabra o reinstale el plugin.' >&2; exit 1
-            fi
-            if [ "$mefisto_claude_cursor" = / ]; then break; fi
-            mefisto_claude_cursor="$(cd "$mefisto_claude_cursor/.." && pwd -P)"
-        done
-    fi
-fi
-if [ -z "$mefisto_claude_root" ]; then
-    if [ "$mefisto_claude_canonical_contaminated" -eq 1 ]; then
-        printf '%s\n' 'ERROR Claude: el marker canonico identifica una distribucion OpenCode y no existe un mirror Claude valido; reabra Claude o reinstale el plugin.' >&2
-    else
-        printf '%s\n' 'ERROR Claude: no se encontro una raiz Claude valida; reabra o reinstale el plugin.' >&2
-    fi
-    exit 1
-fi
-MEFISTO_PACKAGE_ROOT="$mefisto_claude_root"
-export MEFISTO_PACKAGE_ROOT
-```
 
 Registra un secreto nuevo post-greenfield en `harness.config.json > secrets[]` (registro declarativo que itera el step de siembra data-driven de `infra-cd.yml`, issue #256) y cablea su referencia `@Microsoft.KeyVault(...)` versionless + el rol `Key Vault Secrets User` en la Function App del dominio que lo consume. **No** toca el `Key Vault Secrets Officer` del SP de CI (MEF-ADR-0022, mecanismo M1): ese rol de escritura ya se auto-asigna el propio `apply`; este skill solo agrega -- o verifica que ya exista -- el rol de lectura de la app. Ningun valor de secreto viaja en claro (MEF-ADR-0025): este skill solo referencia nombres de GitHub secrets o de `terraform output`. Comunicate en **espanol**.
 
-Antes de continuar, aborta si existe `src/internal/scripts/generate-internal-adapters.sh`: ese directorio es el repositorio de Mefisto, no un consumidor.
+{{mefisto:assert-consumer-repo}}
 
 ## Entrada
 
@@ -96,7 +21,7 @@ Antes de continuar, aborta si existe `src/internal/scripts/generate-internal-ada
 ```
 
 - **`<nombre>`**: nombre del secreto en el Key Vault del BC (kebab-case recomendado, ej. `stripe-api-key`).
-- **`--domain <Dominio>`**: el dominio consumidor que va a leer el secreto. Acepta kebab o PascalCase (`facturacion` o `Facturacion`); **debe existir ya** -- `/mefisto:seed-secret` nunca crea un dominio, solo cablea en uno que `/mefisto:scaffold` ya genero.
+- **`--domain <Dominio>`**: el dominio consumidor que va a leer el secreto. Acepta kebab o PascalCase (`facturacion` o `Facturacion`); **debe existir ya** -- `{{mefisto:command seed-secret}}` nunca crea un dominio, solo cablea en uno que `{{mefisto:command scaffold}}` ya genero.
 - **`--from-output <output>`** o **`--from-github-secret <NOMBRE>`**: exactamente uno de los dos (D2, fijado por el mantenedor -- fuente explicita, sin heuristica por nombre). El primero para un valor derivable de un `terraform output` del entorno (p. ej. otro secreto de un modulo ya provisionado); el segundo para un valor que **no** es derivable (una API key de un proveedor externo, otra credencial que solo un admin conoce).
 - **`--env <env>`** (opcional): ambiente Terraform, default `dev`.
 
@@ -149,7 +74,7 @@ muestralos y extrae de la linea `Registro: <ruta>` la ruta `<REGISTRO_PATH>`. Es
 fuente de verdad de la ruta que el script escribio:
 
 ```bash
-MEFISTO_RUNTIME=claude "${MEFISTO_PACKAGE_ROOT}/scripts/seed-secret.sh" <nombre> --domain <Dominio> --env <env> <flag-de-fuente> <valor> 2>&1
+{{mefisto:run seed-secret.sh <nombre> --domain <Dominio> --env <env> <flag-de-fuente> <valor>}} 2>&1
 ```
 
 Donde `<flag-de-fuente> <valor>` es `--from-output <output>` o `--from-github-secret <NOMBRE>`. Si el script sale con codigo distinto de cero, muestra la salida y detente. Si la salida no trae ninguna linea `Registro: `, informa `ERROR: el script no informo la ruta de registro.` y detente.
@@ -165,7 +90,7 @@ Si el script termina con error (incluido config solo legacy, JSON invalido, domi
 
 ### 5. Cablear la referencia en el archivo Terraform del dominio
 
-Lee `DOMAIN_TF_FILE` (el que imprimio el script del paso 4). Dentro del bloque `module "function_app_<dominio>"`, en su mapa `app_settings = { ... }` (mismo patron que `${MEFISTO_PACKAGE_ROOT}/agents/domain-scaffolder.md`, ej. `SERVICE_BUS_CONNECTION_INTERNO`, `MartenConnectionString`):
+Lee `DOMAIN_TF_FILE` (el que imprimio el script del paso 4). Dentro del bloque `module "function_app_<dominio>"`, en su mapa `app_settings = { ... }` (mismo patron que `{{mefisto:package-root}}/agents/domain-scaffolder.md`, ej. `SERVICE_BUS_CONNECTION_INTERNO`, `MartenConnectionString`):
 
 - **Si ya existe** una linea con la clave `<APP_SETTING_KEY>` o una referencia `@Microsoft.KeyVault(...secrets/<nombre>)`, **no la dupliques**: reporta que ya estaba cableado y continua al paso 6.
 - **Si no existe**, agrega una linea nueva dentro del mapa, alineada con el mismo estilo de las lineas vecinas (el operador `=` alineado si el resto del bloque lo esta), inmediatamente antes del `}` de cierre del mapa:
@@ -212,7 +137,7 @@ Resumen claro:
 
 ## Reglas
 
-- **Nunca crees el dominio.** Si `--domain` no existe (el script lo valida contra `infra/environments/<env>/dominio-*.tf`), detente e indica al usuario que corra `/mefisto:scaffold <dominio>` primero.
+- **Nunca crees el dominio.** Si `--domain` no existe (el script lo valida contra `infra/environments/<env>/dominio-*.tf`), detente e indica al usuario que corra `{{mefisto:command scaffold}} <dominio>` primero.
 - **Nunca dupliques** un app setting, una referencia `@Microsoft.KeyVault(...)` o un `azurerm_role_assignment` ya presentes -- verifica antes de escribir (idempotencia, CA-5/CA-6).
 - **Nunca toques** el `Key Vault Secrets Officer` del SP de CI (MEF-ADR-0022, mecanismo M1): este skill solo agrega o verifica el rol de **lectura** (`Key Vault Secrets User`) de la Function App consumidora, nunca el rol de **escritura** del SP.
 - **Ningun valor de secreto viaja en claro** (MEF-ADR-0025). Este skill solo maneja **nombres** -- el nombre del secreto en Key Vault, el nombre de un GitHub secret, el nombre de un `terraform output` --; nunca pidas ni escribas el valor real de un secreto.
