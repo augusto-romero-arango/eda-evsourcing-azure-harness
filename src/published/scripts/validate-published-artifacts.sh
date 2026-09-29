@@ -74,6 +74,7 @@ EOF
             if (id == "draft" && value == "$REPO_SLUG") return 1
             if (id == "planner" && value ~ /^\$(SESSION_ID|INITIAL_HEAD_SHA|INITIAL_DEFAULT_BRANCH|INITIAL_STATUS|HARNESS_REPO_SLUG|CLOSING_TIMESTAMP|GLOSSARY_PATH|FIELD_NOTE_LOCAL|GLOSSARY_LOCAL|FIELD_NOTE_GLOSSARY_ARGS)$/) return 1
             if (id == "planner" && value == "${SESSION_ID}") return 1
+            if (id == "infra-base-scaffolder") return 1
             return 0
         }
         function valid_directive(value) {
