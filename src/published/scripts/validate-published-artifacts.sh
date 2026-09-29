@@ -74,6 +74,7 @@ EOF
             if (id == "draft" && value == "$REPO_SLUG") return 1
             if (id == "planner" && value ~ /^\$(SESSION_ID|INITIAL_HEAD_SHA|INITIAL_DEFAULT_BRANCH|INITIAL_STATUS|HARNESS_REPO_SLUG|CLOSING_TIMESTAMP|GLOSSARY_PATH|FIELD_NOTE_LOCAL|GLOSSARY_LOCAL|FIELD_NOTE_GLOSSARY_ARGS)$/) return 1
             if (id == "planner" && value == "${SESSION_ID}") return 1
+            if (id == "projections-scaffolder" && value ~ /^\$(BASE|CSPROJ|GITHUB_OUTPUT|IMAGEN_ACTIVA|INTRUSOS|LOGIN_SERVER|PROJ|REPO_ROOT|SEAM|SOURCE_REVISION_ID|destino|domainEventsCsproj|dominio|nombre|seam)$/) return 1
             if (id == "infra-base-scaffolder" && value ~ /^\$(1|2|3|ALL_SECRETS|APPS|APP_NAME|BRANCH|CONFIG|COUNT|GITHUB_WORKSPACE|ISSUE_NUM|KEY_VAULT_NAME|NAME|NS|PROJECTIONS_ENABLED|PROVIDERS_TF|PR_NUM|RESOURCE_GROUP|TYPE|VALUE|VALUE_REF|attempt|delay|i|k|max_attempts|name|value)$/) return 1
             if (id == "infra-base-scaffolder" && value ~ /^\$\{(APP_ID|PR_NUM|TF_VAR_postgresql_admin_password|delay|environment|project_short|topic_name)\}$/) return 1
             return 0
@@ -86,7 +87,7 @@ EOF
         !body { next }
         {
             line=NR; text=$0; lower=tolower(text); runtime_text=lower
-            legacy=(id == "test-writer" || id == "reviewer" || id == "projection-test-writer" || id == "projection-implementer" || id == "domain-scaffolder")
+            legacy=(id == "test-writer" || id == "reviewer" || id == "projection-test-writer" || id == "projection-implementer" || id == "domain-scaffolder" || id == "projections-scaffolder")
             runtime_pattern="claude|opencode|\\.claude|\\.opencode|marketplace|(^|[/[:space:].])cache([/[:space:]]|$)|(^|[^[:alnum:]_-])(model|tools|allowed-tools|permission)[[:space:]]*:"
             if (id == "domain-scaffolder") sub(/azure functions core tools:/, "azure functions core tools", runtime_text)
             if ((id == "runtimes" && lower ~ /\.claude|\.opencode|marketplace|(^|[\/[:space:].])cache([\/[:space:]]|$)|(^|[^[:alnum:]_-])(model|tools|allowed-tools|permission)[[:space:]]*:/) || (legacy && runtime_text ~ /opencode|\.opencode|(^|[^[:alnum:]_-])(model|tools|allowed-tools|permission)[[:space:]]*:/) || (!legacy && id != "runtimes" && lower ~ runtime_pattern)) {

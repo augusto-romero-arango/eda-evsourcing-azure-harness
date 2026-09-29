@@ -57,6 +57,15 @@ subcomandos reales de tuberías y sustituciones de comando de esa doctrina.
 default (MEF-ADR-0049 y MEF-ADR-0053). El agente `planner` (issue #1640)
 sumó `date` y `printf`, ya requeridos por su propia doctrina (marcas de
 tiempo de sesión, cierre documental) y ausentes hasta entonces del registro.
+El agente `projections-scaffolder` (issue #1652) sumó `basename`.
+
+`docker *` continúa denegado: la política `permission.bash` es global y no
+admite overrides por agente, y `docker build` ejecuta los `RUN` del Dockerfile,
+así que una regla `allow` equivaldría a ejecución arbitraria para todo agente
+con `shell`. La validación opcional del Dockerfile del worker de proyecciones
+se expone como `scripts/validate-dockerfile.sh`, un script distribuido que se
+invoca por la regla `${MEFISTO_PACKAGE_ROOT}/scripts/*`, valida que la ruta sea
+relativa y esté bajo `src/`, y solo ejecuta `docker info` y `docker build -f`.
 
 `rm *`, `curl *`, `ssh *`, `scp *` y `sudo *` conservan denegación explícita.
 La excepción de `rm` casa exclusivamente candidatos cuyo texto comienza por
