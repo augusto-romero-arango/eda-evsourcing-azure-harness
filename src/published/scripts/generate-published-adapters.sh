@@ -71,6 +71,7 @@ TOOLING_CLOSURE_ASSETS=(
     'scripts/bootstrap-backend.sh|0755'
     'scripts/setup-github-ci.sh|0755'
     'scripts/setup-github-labels.sh|0755'
+    'scripts/appinsights-query.sh|0755'
     'src/runtime/mefisto-run-agent.sh|0755'
     'src/runtime/lib/mefisto-runtime.sh|0755'
     'src/runtime/lib/mefisto-models.sh|0644'

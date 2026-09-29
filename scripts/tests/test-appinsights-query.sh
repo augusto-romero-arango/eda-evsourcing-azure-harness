@@ -52,11 +52,12 @@ TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 
 FAKE_REPO="$TMP/fake-consumer"
-mkdir -p "$FAKE_REPO/scripts"
+mkdir -p "$FAKE_REPO/scripts" "$FAKE_REPO/.mefisto"
 git -C "$FAKE_REPO" init -q
 cp "$REAL_SCRIPT" "$FAKE_REPO/scripts/appinsights-query.sh"
+cp "$REPO_ROOT/scripts/_pipeline-common.sh" "$FAKE_REPO/scripts/_pipeline-common.sh"
 chmod +x "$FAKE_REPO/scripts/appinsights-query.sh"
-cat > "$FAKE_REPO/scripts/.env" <<'EOF'
+cat > "$FAKE_REPO/.mefisto/appinsights.env" <<'EOF'
 APPINSIGHTS_APP=fake-app
 APPINSIGHTS_RG=fake-rg
 EOF
