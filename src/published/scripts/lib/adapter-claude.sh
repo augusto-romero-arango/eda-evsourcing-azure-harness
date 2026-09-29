@@ -34,7 +34,7 @@ published_claude_validate_skills() {
 }
 
 published_claude_needs_package_root() {
-    case "$1" in *'{{mefisto:run '*|*'{{mefisto:package-root}}'*|*'{{mefisto:skill-root '*) return 0 ;; *) return 1 ;; esac
+    case "$1" in *'{{mefisto:run '*|*'{{mefisto:package-root}}'*|*'{{mefisto:skill-root '*|*'{{mefisto:command-doc '*) return 0 ;; *) return 1 ;; esac
 }
 
 published_claude_lifecycle_launcher_preamble() {
@@ -169,6 +169,8 @@ published_claude_translate_body() {
                 translated="${BASH_REMATCH[1]}\${MEFISTO_PACKAGE_ROOT}${BASH_REMATCH[2]}"
             elif [[ "$line" =~ ^(.*)\{\{mefisto:skill-root[[:space:]]+([a-z0-9]+(-[a-z0-9]+)*)\}\}(.*)$ ]]; then
                 translated="${BASH_REMATCH[1]}\"\${MEFISTO_PACKAGE_ROOT}/skills/${BASH_REMATCH[2]}\"${BASH_REMATCH[4]}"
+            elif [[ "$line" =~ ^(.*)\{\{mefisto:command-doc[[:space:]]+([a-z0-9]+(-[a-z0-9]+)*)\}\}(.*)$ ]]; then
+                translated="${BASH_REMATCH[1]}\"\${MEFISTO_PACKAGE_ROOT}/commands/${BASH_REMATCH[2]}.md\"${BASH_REMATCH[4]}"
             elif [[ "$line" =~ ^(.*)\{\{mefisto:config-path\}\}(.*)$ ]]; then
                 translated="${BASH_REMATCH[1]}\${MEFISTO_CONFIG_PATH}${BASH_REMATCH[2]}"
             elif [[ "$line" =~ ^(.*)\{\{mefisto:instructions-path\}\}(.*)$ ]]; then

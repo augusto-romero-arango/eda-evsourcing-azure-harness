@@ -62,7 +62,12 @@ EOF
     done
     # Una sola pasada interpreta todas las reglas del cuerpo. Las excepciones se
     # seleccionan por artefacto, no por línea, para evitar procesos por hallazgo.
-    body_validation="$(awk -v id="$id" -v rel="$rel" -v declared_skills="$declared_skills" -v available_skills="$available_skills" '
+    available_commands='|'
+    for skill_file in "$REPO_ROOT"/src/published/commands/*.md; do
+        [ -f "$skill_file" ] || continue
+        available_commands="${available_commands}$(basename "$skill_file" .md)|"
+    done
+    body_validation="$(awk -v id="$id" -v kind="$(printf '%s' "$instance_json" | jq -r '.kind // empty')" -v rel="$rel" -v declared_skills="$declared_skills" -v available_skills="$available_skills" -v available_commands="$available_commands" '
         function allowed_placeholder(value) {
             if (value == "$ARGUMENTS") return 1
             if (id == "domain-scaffolder" && value ~ /^\$(1|2|3|AJENOS|CSPROJ|ESPERA|GITHUB_OUTPUT|INTENTOS|INTRUSOS|JOB_STATUS|PENDIENTES|PR_NUM|REPO|REPO_ROOT|RUN|RUN_ID|SECONDS|SHA|TIMEOUT|archivo|destino|f|i|paquete|presupuesto|proj|temporal|version_esperada)$/) return 1
@@ -116,6 +121,16 @@ EOF
                     directive=substr(rest, RSTART, RLENGTH)
                     if (directive == "{{mefisto:assert-consumer-repo}}") guard=1
                     else if (directive == "{{mefisto:package-root}}" || directive == "{{mefisto:config-path}}" || directive == "{{mefisto:instructions-path}}" || directive == "{{mefisto:lifecycle-launcher}}") {}
+                    else if (directive ~ /^\{\{mefisto:command-doc /) {
+                        if (directive !~ /^\{\{mefisto:command-doc [a-z0-9]+(-[a-z0-9]+)*\}\}$/) print rel ": body: linea " line " directiva mefisto mal formada: " directive
+                        else {
+                            cdoc=directive
+                            sub(/^\{\{mefisto:command-doc /, "", cdoc)
+                            sub(/\}\}$/, "", cdoc)
+                            if (index(available_commands, "|" cdoc "|") == 0) print rel ": body: linea " line " directiva command-doc " cdoc " no resuelve a src/published/commands/" cdoc ".md"
+                            if (kind == "command" && cdoc == id) print rel ": body: linea " line " directiva command-doc " cdoc " referencia al propio comando"
+                        }
+                    }
                     else if (directive ~ /^\{\{mefisto:skill-root /) {
                         if (directive !~ /^\{\{mefisto:skill-root [a-z0-9]+(-[a-z0-9]+)*\}\}$/ || directive ~ /^\{\{mefisto:skill-root mefisto-/) print rel ": body: linea " line " directiva mefisto mal formada: " directive
                         else {
