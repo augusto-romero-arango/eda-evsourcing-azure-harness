@@ -58,6 +58,7 @@ default (MEF-ADR-0049 y MEF-ADR-0053). El agente `planner` (issue #1640)
 sumó `date` y `printf`, ya requeridos por su propia doctrina (marcas de
 tiempo de sesión, cierre documental) y ausentes hasta entonces del registro.
 El agente `projections-scaffolder` (issue #1652) sumó `basename`.
+El agente `bug-investigator` (issue #1667) sumó `diff`, que compara los ensamblados decompilados bajo `{{mefisto:state-path tmp}}` (nunca `/tmp`, bloqueado por `external_directory`); `az` sigue denegado y sus consultas pasan por `appinsights-query.sh` (`plan-sites`/`plan-metrics`).
 
 `docker *` continúa denegado: la política `permission.bash` es global y no
 admite overrides por agente, y `docker build` ejecuta los `RUN` del Dockerfile,

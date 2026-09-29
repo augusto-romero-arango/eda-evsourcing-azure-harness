@@ -120,6 +120,7 @@ CLAUDE_ROOT_MIRRORS=(
     'src/published/agents/workos-identity-scaffolder.md|agents/workos-identity-scaffolder.md'
     'src/published/agents/apim-gateway-scaffolder.md|agents/apim-gateway-scaffolder.md'
     'src/published/agents/mcp-scaffolder.md|agents/mcp-scaffolder.md'
+    'src/published/agents/bug-investigator.md|agents/bug-investigator.md'
 )
 
 usage_error() { printf 'ERROR: %s\n' "$1" >&2; exit 1; }
