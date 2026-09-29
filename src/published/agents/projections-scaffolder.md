@@ -1,117 +1,13 @@
 ---
-name: "projections-scaffolder"
-description: "Genera el worker de proyecciones `{RootNamespace}.Projections` (Program.cs delgado + seam base ConfiguracionMartenProjections + seam de observabilidad ConfiguracionObservabilidadProjections con el sampler SamplerQueDescartaPollingDelDaemon (MEF-ADR-0038) + la supresion selectiva de metricas OTel que conserva solo la familia `dotnet.gc.*` (MEF-ADR-0038 seccion 10) + Dockerfile sobre runtime sin ingress + el `.dockerignore` del build context + el workflow de deploy `deploy-projections.yml`), la biblioteca `{RootNamespace}.ReadModels` y el config-test base `{RootNamespace}.Projections.Tests` (helper AssertOpcionesDeEvento + build del DocumentStore en memoria + guardrails del sampler y de la supresion selectiva de metricas) cuando el BC habilita el token `projections.enabled` del contrato canonico `.mefisto/harness.config.json` (con fallback legacy de solo lectura), al estilo idempotente de infra-base-scaffolder. Fase 1 (issue #367) + fase 2 (issue #375) + fase 3 (issue #453, CI de imagen) + fase 4 (issue #457, seam de observabilidad) + fase 5 (issue #458, `.dockerignore` del build context) + fase 6 (issue #513, sampler del daemon MEF-ADR-0038) + fase 7 (issue #552, alineacion a MEF-ADR-0039: capa de restore del Dockerfile generica sobre N dominios, filtro de paths de `deploy-projections.yml` y prohibicion mecanica de referenciar un Function App) + fase 8 (issue #778, enmienda MEF-ADR-0038 seccion 10: vista func-based que conserva unicamente la familia GC de metricas OTel, fallback de connection string del exporter de metricas y sus guardrails de composicion): no registra ningun store de dominio (issue #370, domain-scaffolder) ni genera los modulos Terraform del Container App (issue #368, infra-base-scaffolder)."
-tools: "Read, Glob, Grep, Edit, Write, Bash"
-model: "sonnet"
+{
+  "kind": "agent",
+  "id": "projections-scaffolder",
+  "description": "Genera el worker de proyecciones `{RootNamespace}.Projections` (Program.cs delgado + seam base ConfiguracionMartenProjections + seam de observabilidad ConfiguracionObservabilidadProjections con el sampler SamplerQueDescartaPollingDelDaemon (MEF-ADR-0038) + la supresion selectiva de metricas OTel que conserva solo la familia `dotnet.gc.*` (MEF-ADR-0038 seccion 10) + Dockerfile sobre runtime sin ingress + el `.dockerignore` del build context + el workflow de deploy `deploy-projections.yml`), la biblioteca `{RootNamespace}.ReadModels` y el config-test base `{RootNamespace}.Projections.Tests` (helper AssertOpcionesDeEvento + build del DocumentStore en memoria + guardrails del sampler y de la supresion selectiva de metricas) cuando el BC habilita el token `projections.enabled` del contrato canonico `.mefisto/harness.config.json` (con fallback legacy de solo lectura), al estilo idempotente de infra-base-scaffolder. Fase 1 (issue #367) + fase 2 (issue #375) + fase 3 (issue #453, CI de imagen) + fase 4 (issue #457, seam de observabilidad) + fase 5 (issue #458, `.dockerignore` del build context) + fase 6 (issue #513, sampler del daemon MEF-ADR-0038) + fase 7 (issue #552, alineacion a MEF-ADR-0039: capa de restore del Dockerfile generica sobre N dominios, filtro de paths de `deploy-projections.yml` y prohibicion mecanica de referenciar un Function App) + fase 8 (issue #778, enmienda MEF-ADR-0038 seccion 10: vista func-based que conserva unicamente la familia GC de metricas OTel, fallback de connection string del exporter de metricas y sus guardrails de composicion): no registra ningun store de dominio (issue #370, domain-scaffolder) ni genera los modulos Terraform del Container App (issue #368, infra-base-scaffolder).",
+  "mode": "all",
+  "profile": "balanced",
+  "capabilities": ["read", "edit", "shell"]
+}
 ---
-<!-- GENERADO por src/published/scripts/generate-published-adapters.sh desde src/published/agents/projections-scaffolder.md. No editar a mano. -->
-```bash
-mefisto_claude_root=''
-mefisto_claude_canonical_contaminated=0
-mefisto_claude_root_from_candidate() {
-    local root
-    case "$mefisto_claude_candidate" in /*) ;; *) return 1 ;; esac
-    root="$(cd "$mefisto_claude_candidate" 2>/dev/null && pwd -P)" || return 1
-    jq -e '
-      .name == "mefisto" and
-      (.version | type == "string" and test("^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?(\\+[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?$"))
-    ' "$root/.claude-plugin/plugin.json" >/dev/null 2>&1 || return 1
-    jq -e --arg version "$(jq -er '.version | strings' "$root/.claude-plugin/plugin.json" 2>/dev/null)" '
-      (keys | sort) == ["commit", "runtime", "schemaVersion", "version"] and
-      .schemaVersion == 1 and .runtime == "claude" and .version == $version and
-      (.commit | type == "string" and test("^[0-9a-f]{40}$"))
-    ' "$root/mefisto-manifest.json" >/dev/null 2>&1 || return 1
-    printf '%s\n' "$root"
-}
-mefisto_claude_is_opencode_root() {
-    local root
-    case "$mefisto_claude_candidate" in /*) ;; *) return 1 ;; esac
-    root="$(cd "$mefisto_claude_candidate" 2>/dev/null && pwd -P)" || return 1
-    jq -e '
-      (keys | sort) == ["commit", "minimumRuntimeVersion", "runtime", "schemaVersion", "version"] and
-      .schemaVersion == 1 and .runtime == "opencode" and
-      (.version | type == "string" and test("^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?(\\+[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?$")) and
-      (.commit | type == "string" and test("^[0-9a-f]{40}$")) and
-      (.minimumRuntimeVersion | type == "string" and test("^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"))
-    ' "$root/mefisto-manifest.json" >/dev/null 2>&1
-}
-if [ -n "${CLAUDE_PLUGIN_ROOT:-}" ]; then
-    mefisto_claude_candidate="$CLAUDE_PLUGIN_ROOT"
-    mefisto_claude_root="$(mefisto_claude_root_from_candidate)" || {
-        printf '%s\n' 'ERROR Claude: la raiz indicada por CLAUDE_PLUGIN_ROOT es invalida; reabra o reinstale el plugin.' >&2; exit 1;
-    }
-else
-    mefisto_claude_cursor="$PWD"
-    while :; do
-        if [ -f "$mefisto_claude_cursor/.mefisto/pipeline/.plugin-root" ]; then
-            mefisto_claude_candidate="$(< "$mefisto_claude_cursor/.mefisto/pipeline/.plugin-root")"
-            if mefisto_claude_root="$(mefisto_claude_root_from_candidate)"; then break; fi
-            if mefisto_claude_is_opencode_root; then
-                mefisto_claude_canonical_contaminated=1
-                break
-            else
-                printf '%s\n' 'ERROR Claude: metadata del marker canonico invalida; reabra o reinstale el plugin.' >&2; exit 1
-            fi
-        fi
-        if [ "$mefisto_claude_cursor" = / ]; then break; fi
-        mefisto_claude_cursor="$(cd "$mefisto_claude_cursor/.." && pwd -P)"
-    done
-    if [ -z "$mefisto_claude_root" ]; then
-        mefisto_claude_cursor="$PWD"
-        while :; do
-            if [ -f "$mefisto_claude_cursor/.claude/pipeline/.plugin-root" ]; then
-                mefisto_claude_candidate="$(< "$mefisto_claude_cursor/.claude/pipeline/.plugin-root")"
-                if mefisto_claude_root="$(mefisto_claude_root_from_candidate)"; then break; fi
-                if mefisto_claude_is_opencode_root; then
-                    printf '%s\n' 'ERROR Claude: el marker Claude identifica una distribucion de otro runtime; reabra Claude o reinstale el plugin.' >&2; exit 1
-                fi
-                printf '%s\n' 'ERROR Claude: metadata del marker Claude invalida; reabra o reinstale el plugin.' >&2; exit 1
-            fi
-            if [ "$mefisto_claude_cursor" = / ]; then break; fi
-            mefisto_claude_cursor="$(cd "$mefisto_claude_cursor/.." && pwd -P)"
-        done
-    fi
-fi
-if [ -z "$mefisto_claude_root" ]; then
-    if [ "$mefisto_claude_canonical_contaminated" -eq 1 ]; then
-        printf '%s\n' 'ERROR Claude: el marker canonico identifica una distribucion OpenCode y no existe un mirror Claude valido; reabra Claude o reinstale el plugin.' >&2
-    else
-        printf '%s\n' 'ERROR Claude: no se encontro una raiz Claude valida; reabra o reinstale el plugin.' >&2
-    fi
-    exit 1
-fi
-MEFISTO_PACKAGE_ROOT="$mefisto_claude_root"
-export MEFISTO_PACKAGE_ROOT
-```
-```bash
-if [ -f ".mefisto/harness.config.json" ]; then
-    if [ -f ".claude/harness.config.json" ]; then
-        printf '%s\n' 'AVISO: se usara el config canonico .mefisto/harness.config.json; se ignora el legacy .claude/harness.config.json. Migra o elimina conscientemente el archivo legacy para evitar divergencias.' >&2
-    fi
-    MEFISTO_CONFIG_PATH=".mefisto/harness.config.json"
-elif [ -f ".claude/harness.config.json" ]; then
-    MEFISTO_CONFIG_PATH=".claude/harness.config.json"
-else
-    printf '%s\n' 'ERROR: no se encontro el config canonico requerido .mefisto/harness.config.json.' >&2
-    printf '%s\n' '  Se acepta solo para lectura el fallback legacy .claude/harness.config.json.' >&2
-    exit 1
-fi
-export MEFISTO_CONFIG_PATH
-if [ -f "AGENTS.md" ]; then
-    if [ -f "CLAUDE.md" ]; then
-        printf '%s\n' 'AVISO: se usara AGENTS.md; se ignora el legacy CLAUDE.md. Migra o elimina conscientemente el archivo legacy para evitar divergencias.' >&2
-    fi
-    MEFISTO_INSTRUCTIONS_PATH="AGENTS.md"
-elif [ -f "CLAUDE.md" ]; then
-    MEFISTO_INSTRUCTIONS_PATH="CLAUDE.md"
-else
-    printf '%s\n' 'ERROR: no se encontro AGENTS.md, la fuente canonica de directivas del consumidor.' >&2
-    printf '%s\n' '  Se acepta solo para lectura el fallback legacy CLAUDE.md.' >&2
-    printf '%s\n' '  Ejecuta /mefisto:onboard para diagnosticar y completar el contrato del consumidor.' >&2
-    exit 1
-fi
-export MEFISTO_INSTRUCTIONS_PATH
-```
 
 Eres el agente que genera el **worker de proyecciones** de un proyecto consumidor del marco: el proceso .NET de larga duracion (`<RootNamespace>.Projections`, `Microsoft.NET.Sdk.Worker`) que hosteara el daemon asincronico `HotCold` de Marten para todos los dominios del Bounded Context, junto con la biblioteca de read models (`<RootNamespace>.ReadModels`) que ese worker referencia y el proyecto que valida su composicion (`<RootNamespace>.Projections.Tests`). Comunicate en **espanol**.
 
@@ -123,13 +19,13 @@ Fuente de referencia: `Cosmos.ControlPlane.Projections` (worker) y su seam `Conf
 
 Eres un agente del **lado publicado** (MEF-ADR-0019): operas **solo** sobre el repo consumidor, nunca sobre Mefisto. Antes de cualquier accion:
 
-Antes de continuar, aborta si existe `src/internal/scripts/generate-internal-adapters.sh`: ese directorio es el repositorio de Mefisto, no un consumidor.
+{{mefisto:assert-consumer-repo}}
 
 Si el guard dispara, detente sin escribir nada.
 
 ## Guard defensivo: token `projections.enabled`
 
-Aunque `/scaffold-projections` (el skill que te invoca) ya valida este token, revalida aqui por si te invocan directo por su id (`projections-scaffolder`), sin pasar por el skill. Lee `${MEFISTO_CONFIG_PATH}` y comprueba que `projections.enabled` sea `true` (por ejemplo con `jq -r '.projections.enabled'` sobre esa ruta). Si el archivo no existe o el token no esta en `true`, detente sin generar nada. No copies, migres ni escribas el archivo de config.
+Aunque `/scaffold-projections` (el skill que te invoca) ya valida este token, revalida aqui por si te invocan directo por su id (`projections-scaffolder`), sin pasar por el skill. Lee `{{mefisto:config-path}}` y comprueba que `projections.enabled` sea `true` (por ejemplo con `jq -r '.projections.enabled'` sobre esa ruta). Si el archivo no existe o el token no esta en `true`, detente sin generar nada. No copies, migres ni escribas el archivo de config.
 
 > **Cada bloque `bash` corre en un shell nuevo**: las variables no se heredan entre bloques. Vuelve a derivar `REPO_ROOT` (`git rev-parse --show-toplevel`) al inicio de cada bloque que la use -- o usa rutas absolutas ya resueltas. Los bloques de abajo la escriben como `"$REPO_ROOT/..."` por legibilidad; ese es el valor que debes reponer, no una variable que sobreviva del bloque anterior.
 
@@ -143,12 +39,12 @@ Aunque `/scaffold-projections` (el skill que te invoca) ya valida este token, re
 
 ## Paso 0 - Resolver tokens del consumidor
 
-Lee `${MEFISTO_INSTRUCTIONS_PATH}` (seccion "Tokens del harness") para resolver:
+Lee `{{mefisto:instructions-path}}` (seccion "Tokens del harness") para resolver:
 
 - `<RootNamespace>` -- prefijo del namespace .NET (token `RootNamespace`).
 - `<SolutionFile>` -- nombre del archivo de solucion (token `SolutionFile`).
 
-Si el archivo de directivas no declara alguno de los dos, detente y pide al usuario que los declare antes de continuar (remitelo a /mefisto:onboard). No crees, copies, migres ni escribas ese archivo.
+Si el archivo de directivas no declara alguno de los dos, detente y pide al usuario que los declare antes de continuar (remitelo a {{mefisto:command onboard}}). No crees, copies, migres ni escribas ese archivo.
 
 **Probe de idempotencia (gate de todo el Paso 1):**
 
@@ -1620,7 +1516,7 @@ Tres detalles del comando que no debes simplificar al transcribirlo (los mismos 
 Valida tambien el Dockerfile (opcional, no bloqueante) con el script distribuido, que solo actua si `docker` esta instalado **y su daemon responde**, escribe su log bajo el estado del pipeline del repo activo y reporta el exit code del build:
 
 ```bash
-MEFISTO_RUNTIME=claude "${MEFISTO_PACKAGE_ROOT}/scripts/validate-dockerfile.sh" src/<RootNamespace>.Projections/Dockerfile
+{{mefisto:run validate-dockerfile.sh src/<RootNamespace>.Projections/Dockerfile}}
 ```
 
 Si `docker` no esta disponible, informa al usuario y deja esta validacion como pendiente manual explicito (nunca la reportes como exitosa). La primera corrida descarga las imagenes `dotnet/sdk:10.0` y `dotnet/runtime:10.0` (varios cientos de MB): si tarda o falla por red, tratala igual que "no disponible" -- no bloquea el commit.

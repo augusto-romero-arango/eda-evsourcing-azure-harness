@@ -99,7 +99,15 @@ fi
 echo "[5] Skill y agente conservan el resolver explicito"
 for path in "$COMMAND" "$AGENT"; do
     name=$(basename "$path")
-    if grep -Fq 'CONFIG="$REPO_ROOT/.mefisto/harness.config.json"' "$path" \
+    if [ "$path" = "$AGENT" ]; then
+        if grep -Fq 'MEFISTO_CONFIG_PATH=".mefisto/harness.config.json"' "$path" \
+            && grep -Fq 'MEFISTO_CONFIG_PATH=".claude/harness.config.json"' "$path" \
+            && grep -Fq "AVISO: se usara el config canonico .mefisto/harness.config.json; se ignora el legacy .claude/harness.config.json." "$path"; then
+            pass "$name resuelve canonico, fallback y AVISO mediante el preludio renderizado de config-path"
+        else
+            fail "$name no contiene el resolver requerido"
+        fi
+    elif grep -Fq 'CONFIG="$REPO_ROOT/.mefisto/harness.config.json"' "$path" \
         && grep -Fq 'LEGACY_CONFIG="$REPO_ROOT/.claude/harness.config.json"' "$path" \
         && grep -Fq 'RAW=$(jq -r '\''.projections.enabled'\'' "$CONFIG" 2>/dev/null)' "$path" \
         && grep -Fq 'AVISO: se usara el config canonico $CONFIG; se ignora el legacy $LEGACY_CONFIG. Migra o elimina conscientemente el archivo legacy para evitar divergencias.' "$path"; then

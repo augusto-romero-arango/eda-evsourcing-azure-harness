@@ -20,6 +20,7 @@
         {"pattern": "cat *", "value": "allow"},
         {"pattern": "ls", "value": "allow"},
         {"pattern": "ls *", "value": "allow"},
+        {"pattern": "basename *", "value": "allow"},
         {"pattern": "find *", "value": "allow"},
         {"pattern": "grep *", "value": "allow"},
         {"pattern": "sort", "value": "allow"},

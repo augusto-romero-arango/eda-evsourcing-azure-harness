@@ -66,6 +66,7 @@ TOOLING_CLOSURE_ASSETS=(
     'scripts/field-note.sh|0755'
     'scripts/register-harness-secret.sh|0755'
     'scripts/seed-secret.sh|0755'
+    'scripts/validate-dockerfile.sh|0755'
     'src/runtime/mefisto-run-agent.sh|0755'
     'src/runtime/lib/mefisto-runtime.sh|0755'
     'src/runtime/lib/mefisto-models.sh|0644'
@@ -109,6 +110,7 @@ CLAUDE_ROOT_MIRRORS=(
     'src/published/agents/pr-sync.md|agents/pr-sync.md'
     'src/published/agents/planner.md|agents/planner.md'
     'src/published/agents/infra-base-scaffolder.md|agents/infra-base-scaffolder.md'
+    'src/published/agents/projections-scaffolder.md|agents/projections-scaffolder.md'
 )
 
 usage_error() { printf 'ERROR: %s\n' "$1" >&2; exit 1; }

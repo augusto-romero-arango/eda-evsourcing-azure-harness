@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # test-projections-scaffolder-instructions-path.sh -- Contrato de lectura de
 # instrucciones de projections-scaffolder (#1514, MEF-ADR-0053 decision 4).
+# Desde #1652 el resolver es el preludio renderizado de {{mefisto:*}} en el mirror generado.
 
 set -uo pipefail
 export LC_ALL=C
@@ -23,7 +24,7 @@ extract_bash_block() {
     ' "$file"
 }
 
-SCRIPT="$(extract_bash_block "$AGENT" 3)"
+SCRIPT="$(extract_bash_block "$AGENT" 2)"
 if [ -n "$SCRIPT" ] && grep -Fq 'MEFISTO_INSTRUCTIONS_PATH' <<<"$SCRIPT"; then
     pass "el Paso 0 contiene el bloque de resolucion de instrucciones"
 else
@@ -32,6 +33,7 @@ fi
 
 resolve_tokens() {
     local root="$1"
+    mkdir -p "$root/.mefisto"; printf '{"projections":{"enabled":true}}\n' > "$root/.mefisto/harness.config.json"
     (
         cd "$root" || exit 99
         bash -c "$SCRIPT"$'\n''grep -F "RootNamespace:" "$MEFISTO_INSTRUCTIONS_PATH" >/dev/null && grep -F "SolutionFile:" "$MEFISTO_INSTRUCTIONS_PATH" >/dev/null && printf "%s\\n" "$MEFISTO_INSTRUCTIONS_PATH"'
@@ -79,7 +81,7 @@ fi
 echo "[2] La prosa no vuelve a usar el archivo legacy como fuente de tokens"
 WITHOUT_RESOLVER="$WORK/agente-sin-fallback.md"
 awk '
-    /^```bash$/ { n++; if (n == 3) { skip=1; next } }
+    /^```bash$/ { n++; if (n == 2) { skip=1; next } }
     /^```$/ { if (skip) { skip=0; next } }
     !skip { print }
 ' "$AGENT" > "$WITHOUT_RESOLVER"
@@ -88,7 +90,7 @@ if grep -Fq 'Lee `CLAUDE.md`' "$WITHOUT_RESOLVER" || grep -Fq '`CLAUDE.md` raiz'
 else
     pass "la prosa usa exclusivamente MEFISTO_INSTRUCTIONS_PATH como fuente de tokens"
 fi
-if grep -Fq 'Lee `${MEFISTO_INSTRUCTIONS_PATH}`' "$AGENT" && grep -Fq 'Si `AGENTS.md` no declara alguno de los dos' "$AGENT"; then
+if grep -Fq 'Lee `${MEFISTO_INSTRUCTIONS_PATH}`' "$AGENT" && grep -Fq 'Si el archivo de directivas no declara alguno de los dos' "$AGENT"; then
     pass "la prosa nombra AGENTS.md al diagnosticar tokens ausentes"
 else
     fail "la prosa no declara la fuente y el diagnostico canonicos"
