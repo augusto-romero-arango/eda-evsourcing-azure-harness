@@ -176,6 +176,16 @@ run_wrapper --infra 253
 assert_eq "infra (claude): no aborta" "0" "$LAST_RC"
 assert_contains "infra (claude): send-keys con MEFISTO_RUNTIME=claude" "$(cat "$TMUX_STUB_LOG")" "MEFISTO_RUNTIME=claude"
 
+# --scaffold (issue #1646, tras #1644): propaga el runtime resuelto en ambos runtimes.
+export MEFISTO_RUNTIME=opencode
+run_wrapper --scaffold 253 --domain demo
+assert_eq "scaffold (opencode): no aborta" "0" "$LAST_RC"
+assert_contains "scaffold (opencode): send-keys con MEFISTO_RUNTIME=opencode" "$(cat "$TMUX_STUB_LOG")" "MEFISTO_RUNTIME=opencode"
+export MEFISTO_RUNTIME=claude
+run_wrapper --scaffold 253 --domain demo
+assert_eq "scaffold (claude): no aborta" "0" "$LAST_RC"
+assert_contains "scaffold (claude): send-keys con MEFISTO_RUNTIME=claude" "$(cat "$TMUX_STUB_LOG")" "MEFISTO_RUNTIME=claude"
+
 unset MEFISTO_RUNTIME
 
 echo ""
@@ -201,6 +211,11 @@ run_wrapper --infra 253
 assert_eq "--infra tambien exige runtime resoluble (issue #1627, tras #1624)" "1" "$LAST_RC"
 assert_contains "--infra: mensaje no se pudo resolver el runtime activo" "$LAST_STDERR" "No se pudo resolver el runtime activo"
 assert_not_contains "--infra: no crea sesion tmux" "$(cat "$TMUX_STUB_LOG")" "new-session"
+
+run_wrapper --scaffold 253 --domain demo
+assert_eq "--scaffold tambien exige runtime resoluble (issue #1646)" "1" "$LAST_RC"
+assert_contains "--scaffold: mensaje no se pudo resolver el runtime activo" "$LAST_STDERR" "No se pudo resolver el runtime activo"
+assert_not_contains "--scaffold: no crea sesion tmux" "$(cat "$TMUX_STUB_LOG")" "new-session"
 
 rm -f "$FAKE_BIN/claude" "$FAKE_BIN/opencode"
 

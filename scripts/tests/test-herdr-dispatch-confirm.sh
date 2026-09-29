@@ -239,6 +239,17 @@ else
     pass "el sub-pipeline no se lanzo"
 fi
 
+echo ""
+echo "[E] --scaffold despacha al pane con MEFISTO_RUNTIME=<resuelto> (issue #1646)"
+
+unset HERDR_STUB_NEVER_CONFIRM
+OUT=$(run_dispatch --scaffold 42 --domain demo)
+RC=$?
+STUB_CALLS=$(cat "$HERDR_STUB_LOG")
+
+assert_eq "exit code 0" "0" "$RC"
+assert_contains "el pane run lleva MEFISTO_RUNTIME=claude" "$(grep '^herdr pane run' <<< "$STUB_CALLS")" "MEFISTO_RUNTIME=claude"
+
 # --- Resumen ---
 echo ""
 echo "Resultado: $PASS PASS, $FAIL FAIL"
