@@ -111,6 +111,7 @@ CLAUDE_ROOT_MIRRORS=(
     'src/published/agents/planner.md|agents/planner.md'
     'src/published/agents/infra-base-scaffolder.md|agents/infra-base-scaffolder.md'
     'src/published/agents/projections-scaffolder.md|agents/projections-scaffolder.md'
+    'src/published/agents/workos-identity-scaffolder.md|agents/workos-identity-scaffolder.md'
 )
 
 usage_error() { printf 'ERROR: %s\n' "$1" >&2; exit 1; }
