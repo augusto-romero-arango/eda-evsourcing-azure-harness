@@ -780,12 +780,12 @@ ${BOLD}Sesion existente (--if-exists reuse|replace|abort):${NC}
 
 ${BOLD}Runtime del pane (MEF-ADR-0049/0050):${NC}
   Los modos que lanzan un sub-pipeline (issue suelto, --tooling, --infra,
-  --scaffold, --batch y --parallel) resuelven el runtime activo una sola vez, antes de
-  crear la sesion, y lo propagan al pane como MEFISTO_RUNTIME=<resuelto>: un
-  servidor tmux ya vivo no hereda esa variable en una sesion nueva. Sin
-  runtime resoluble abortan con 'No se pudo resolver el runtime activo:
-  <motivo>' sin crear la sesion. Quedan exentos --attach y --help
-  (no lanzan nada).
+  --scaffold, --batch y --parallel) resuelven el runtime activo una sola
+  vez, antes de crear la sesion, y lo propagan al pane como
+  MEFISTO_RUNTIME=<resuelto>: un servidor tmux ya vivo no hereda esa
+  variable en una sesion nueva. Sin runtime resoluble abortan con 'No se
+  pudo resolver el runtime activo: <motivo>' sin crear la sesion. Quedan
+  exentos --attach y --help (no lanzan nada).
 
 ${BOLD}Enrutamiento automatico:${NC}
   Sin --pipeline ni --tooling/--infra, el pipeline se determina por el label tipo:* del issue:
