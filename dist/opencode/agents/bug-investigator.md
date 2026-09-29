@@ -1,86 +1,30 @@
 ---
-name: "bug-investigator"
 description: "Investigador conversacional de errores en el entorno desplegado. Usa App Insights, codigo fuente y fuentes externas para diagnosticar problemas y proponer acciones."
-tools: "Read, Glob, Grep, Edit, Write, Bash, WebFetch, WebSearch"
-model: "opus"
+mode: "all"
+permission: {"external_directory":"deny","doom_loop":"deny","lsp":"deny","todowrite":"deny","question":"deny","webfetch":"allow","websearch":"allow","skill":"deny","task":"deny","list":"allow","glob":"allow","grep":"allow","bash":{"*":"deny","git *":"allow","gh *":"allow","jq *":"allow","cat *":"allow","ls":"allow","ls *":"allow","basename *":"allow","find *":"allow","grep *":"allow","sort":"allow","sort *":"allow","bash scripts/*":"allow","sh scripts/*":"allow","scripts/*":"allow","./scripts/*":"allow","${MEFISTO_PACKAGE_ROOT}/scripts/*":"allow","mkdir *":"allow","mktemp":"allow","mktemp *":"allow","rm *":"deny","dotnet *":"allow","func init *":"allow","terraform init -backend=false*":"allow","terraform validate*":"allow","terraform fmt*":"allow","python3 - *":"allow","python3 -m json.tool*":"allow","cd *":"allow","echo *":"allow","date":"allow","date *":"allow","printf *":"allow","test *":"allow","[ *":"allow","touch *":"allow","tr *":"allow","head *":"allow","tail *":"allow","awk *":"allow","sed *":"allow","mv *":"allow","ilspycmd *":"allow","diff *":"allow","rm -f src/*":"allow","rm -rf src/*":"allow","rm -f tests/*":"allow","rm -f \"src/*":"allow","rm -rf \"src/*":"allow","rm -f \"tests/*":"allow","curl *":"deny","ssh *":"deny","scp *":"deny","sudo *":"deny"},"edit":{"*":"allow","commands/**":"deny","skills/**":"deny","agents/**":"deny","hooks/**":"deny",".claude-plugin/**":"deny","src/published/**":"deny","src/runtime/**":"deny","dist/**":"deny","docs/adr/mef-adr-*":"deny"},"write":{"*":"allow","commands/**":"deny","skills/**":"deny","agents/**":"deny","hooks/**":"deny",".claude-plugin/**":"deny","src/published/**":"deny","src/runtime/**":"deny","dist/**":"deny","docs/adr/mef-adr-*":"deny"},"patch":{"*":"allow","commands/**":"deny","skills/**":"deny","agents/**":"deny","hooks/**":"deny",".claude-plugin/**":"deny","src/published/**":"deny","src/runtime/**":"deny","dist/**":"deny","docs/adr/mef-adr-*":"deny"},"read":{"*":"allow",".env":"deny",".env.*":"deny","**/.env":"deny","**/.env.*":"deny","**/auth.json":"deny","**/.aws/**":"deny","**/.ssh/**":"deny"}}
+tools: {"microsoft-learn_*":false,"terraform_*":false}
 ---
 <!-- GENERADO por src/published/scripts/generate-published-adapters.sh desde src/published/agents/bug-investigator.md. No editar a mano. -->
 ```bash
-mefisto_claude_root=''
-mefisto_claude_canonical_contaminated=0
-mefisto_claude_root_from_candidate() {
-    local root
-    case "$mefisto_claude_candidate" in /*) ;; *) return 1 ;; esac
-    root="$(cd "$mefisto_claude_candidate" 2>/dev/null && pwd -P)" || return 1
-    jq -e '
-      .name == "mefisto" and
-      (.version | type == "string" and test("^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?(\\+[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?$"))
-    ' "$root/.claude-plugin/plugin.json" >/dev/null 2>&1 || return 1
-    jq -e --arg version "$(jq -er '.version | strings' "$root/.claude-plugin/plugin.json" 2>/dev/null)" '
-      (keys | sort) == ["commit", "runtime", "schemaVersion", "version"] and
-      .schemaVersion == 1 and .runtime == "claude" and .version == $version and
-      (.commit | type == "string" and test("^[0-9a-f]{40}$"))
-    ' "$root/mefisto-manifest.json" >/dev/null 2>&1 || return 1
-    printf '%s\n' "$root"
+mefisto_opencode_data_root() {
+    if [ -n "${XDG_DATA_HOME:-}" ]; then printf '%s/mefisto\n' "$XDG_DATA_HOME"
+    elif [ "$(uname -s)" = Darwin ]; then printf '%s/Library/Application Support/mefisto\n' "$HOME"
+    else printf '%s/.local/share/mefisto\n' "$HOME"; fi
 }
-mefisto_claude_is_opencode_root() {
-    local root
-    case "$mefisto_claude_candidate" in /*) ;; *) return 1 ;; esac
-    root="$(cd "$mefisto_claude_candidate" 2>/dev/null && pwd -P)" || return 1
-    jq -e '
-      (keys | sort) == ["commit", "minimumRuntimeVersion", "runtime", "schemaVersion", "version"] and
-      .schemaVersion == 1 and .runtime == "opencode" and
-      (.version | type == "string" and test("^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?(\\+[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?$")) and
-      (.commit | type == "string" and test("^[0-9a-f]{40}$")) and
-      (.minimumRuntimeVersion | type == "string" and test("^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"))
-    ' "$root/mefisto-manifest.json" >/dev/null 2>&1
+mefisto_opencode_launcher="$(mefisto_opencode_data_root)/active/bin/mefisto-opencode"
+if [ ! -f "$mefisto_opencode_launcher" ] || [ -L "$mefisto_opencode_launcher" ] || [ ! -x "$mefisto_opencode_launcher" ]; then
+    printf '%s\n' 'ERROR OpenCode: no hay una release activa valida; instale o active la release OpenCode.' >&2; exit 1
+fi
+MEFISTO_PACKAGE_ROOT="$("$mefisto_opencode_launcher" package-root)" || {
+    printf '%s\n' 'ERROR OpenCode: no se pudo resolver la release activa; instale o active la release OpenCode.' >&2; exit 1;
 }
-if [ -n "${CLAUDE_PLUGIN_ROOT:-}" ]; then
-    mefisto_claude_candidate="$CLAUDE_PLUGIN_ROOT"
-    mefisto_claude_root="$(mefisto_claude_root_from_candidate)" || {
-        printf '%s\n' 'ERROR Claude: la raiz indicada por CLAUDE_PLUGIN_ROOT es invalida; reabra o reinstale el plugin.' >&2; exit 1;
-    }
-else
-    mefisto_claude_cursor="$PWD"
-    while :; do
-        if [ -f "$mefisto_claude_cursor/.mefisto/pipeline/.plugin-root" ]; then
-            mefisto_claude_candidate="$(< "$mefisto_claude_cursor/.mefisto/pipeline/.plugin-root")"
-            if mefisto_claude_root="$(mefisto_claude_root_from_candidate)"; then break; fi
-            if mefisto_claude_is_opencode_root; then
-                mefisto_claude_canonical_contaminated=1
-                break
-            else
-                printf '%s\n' 'ERROR Claude: metadata del marker canonico invalida; reabra o reinstale el plugin.' >&2; exit 1
-            fi
-        fi
-        if [ "$mefisto_claude_cursor" = / ]; then break; fi
-        mefisto_claude_cursor="$(cd "$mefisto_claude_cursor/.." && pwd -P)"
-    done
-    if [ -z "$mefisto_claude_root" ]; then
-        mefisto_claude_cursor="$PWD"
-        while :; do
-            if [ -f "$mefisto_claude_cursor/.claude/pipeline/.plugin-root" ]; then
-                mefisto_claude_candidate="$(< "$mefisto_claude_cursor/.claude/pipeline/.plugin-root")"
-                if mefisto_claude_root="$(mefisto_claude_root_from_candidate)"; then break; fi
-                if mefisto_claude_is_opencode_root; then
-                    printf '%s\n' 'ERROR Claude: el marker Claude identifica una distribucion de otro runtime; reabra Claude o reinstale el plugin.' >&2; exit 1
-                fi
-                printf '%s\n' 'ERROR Claude: metadata del marker Claude invalida; reabra o reinstale el plugin.' >&2; exit 1
-            fi
-            if [ "$mefisto_claude_cursor" = / ]; then break; fi
-            mefisto_claude_cursor="$(cd "$mefisto_claude_cursor/.." && pwd -P)"
-        done
-    fi
-fi
-if [ -z "$mefisto_claude_root" ]; then
-    if [ "$mefisto_claude_canonical_contaminated" -eq 1 ]; then
-        printf '%s\n' 'ERROR Claude: el marker canonico identifica una distribucion OpenCode y no existe un mirror Claude valido; reabra Claude o reinstale el plugin.' >&2
-    else
-        printf '%s\n' 'ERROR Claude: no se encontro una raiz Claude valida; reabra o reinstale el plugin.' >&2
-    fi
-    exit 1
-fi
-MEFISTO_PACKAGE_ROOT="$mefisto_claude_root"
+case "$MEFISTO_PACKAGE_ROOT" in
+    /*) ;;
+    *) printf '%s\n' 'ERROR OpenCode: la release activa no devolvio una raiz absoluta; reinstale o active la release OpenCode.' >&2; exit 1 ;;
+esac
+MEFISTO_PACKAGE_ROOT="$(cd "$MEFISTO_PACKAGE_ROOT" 2>/dev/null && pwd -P)" || {
+    printf '%s\n' 'ERROR OpenCode: la release activa no existe; reinstale o active la release OpenCode.' >&2; exit 1;
+}
 export MEFISTO_PACKAGE_ROOT
 ```
 ```bash
@@ -157,7 +101,7 @@ Si el sintoma sugiere un fallo en el pipeline de deploy (Function App que no arr
    - Plan de hosting: al menos B1, nunca Consumption Y1 con .NET 10+.
    - **Aislamiento por plan (MEF-ADR-0020)**: cada Function App corre en su propio App Service Plan dedicado (`asp-<proyecto>-<env>-<dominio>`), nunca uno compartido entre dominios. Verifica que el plan no esta compartido:
      ```bash
-     MEFISTO_RUNTIME=claude "${MEFISTO_PACKAGE_ROOT}/scripts/appinsights-query.sh" plan-sites <id-del-plan>   # 1 => dedicado; >1 => compartido (viola MEF-ADR-0020)
+     MEFISTO_RUNTIME=opencode "${MEFISTO_PACKAGE_ROOT}/scripts/appinsights-query.sh" plan-sites <id-del-plan>   # 1 => dedicado; >1 => compartido (viola MEF-ADR-0020)
      ```
      Tambien puedes revisar en Terraform que cada `module function_app_<dominio>` apunta a su propio `service_plan_id` (un `module service_plan_<dominio>` por dominio, sin plan compartido global). Un plan compartido reintroduce el *noisy neighbor* que origino #43: si el sintoma es timeouts, health checks lentos o fallos intermitentes de smoke, ve directo al «Patron de diagnostico: noisy neighbor por plan compartido» mas abajo.
    - App settings obligatorios: `FUNCTIONS_WORKER_RUNTIME`, `FUNCTIONS_EXTENSION_VERSION`, `WEBSITE_RUN_FROM_PACKAGE`.
@@ -182,12 +126,12 @@ Evidencia de referencia (#43, `Bitakora.ControlAsistencia`): ventana 11:15-12:00
 1. **CPU del plan en la ventana del sintoma** (Azure Monitor, no App Insights):
    ```bash
    # Metricas del plan en las ultimas N horas (ajusta --hours para cubrir la ventana del sintoma)
-   MEFISTO_RUNTIME=claude "${MEFISTO_PACKAGE_ROOT}/scripts/appinsights-query.sh" plan-metrics <id-del-app-service-plan> --metric CpuPercentage --hours 24
+   MEFISTO_RUNTIME=opencode "${MEFISTO_PACKAGE_ROOT}/scripts/appinsights-query.sh" plan-metrics <id-del-app-service-plan> --metric CpuPercentage --hours 24
    ```
 2. **Trafico real en esa misma ventana** (para confirmar el "en reposo"): cuenta requests y mensajes procesados con las queries del Stage 1 (`health-summary`, o un `custom` que sume `requests` y `customEvents` por `bin(timestamp, 5m)`). CPU alta + ~0 trafico = firma confirmada.
 3. **Aislamiento del plan**: confirma si la Function App comparte plan con otra:
    ```bash
-   MEFISTO_RUNTIME=claude "${MEFISTO_PACKAGE_ROOT}/scripts/appinsights-query.sh" plan-sites <id-del-plan>   # >1 => plan compartido (viola MEF-ADR-0020)
+   MEFISTO_RUNTIME=opencode "${MEFISTO_PACKAGE_ROOT}/scripts/appinsights-query.sh" plan-sites <id-del-plan>   # >1 => plan compartido (viola MEF-ADR-0020)
    ```
 
 ### Causa raiz (MEF-ADR-0020)
@@ -213,7 +157,7 @@ La firma diagnostica es **"compila + unit tests verdes pero revienta en runtime"
 
 1. **Correlaciona la excepcion en App Insights con el stack de activacion del host de Functions**: busca en el stacktrace la cadena `DefaultFunctionActivator.CreateInstance` -> constructor del servicio que fallo -> tipo de la dependencia no resuelta. Esa cadena confirma que el fallo es de activacion/DI del host, no de logica de negocio.
    ```bash
-   MEFISTO_RUNTIME=claude "${MEFISTO_PACKAGE_ROOT}/scripts/appinsights-query.sh" exceptions
+   MEFISTO_RUNTIME=opencode "${MEFISTO_PACKAGE_ROOT}/scripts/appinsights-query.sh" exceptions
    # busca el tipo de excepcion (p. ej. InvalidOperationException: "Unable to resolve service for type ...", la excepcion que lanza el contenedor Microsoft.Extensions.DependencyInjection del worker isolated) y su conteo en la ventana del deploy
    ```
 2. **Localiza ambas versiones del paquete en el almacen local de paquetes NuGet**:
@@ -255,32 +199,32 @@ Ejecuta queries predefinidas contra App Insights usando el script distribuido de
 
 ```bash
 # Vista general de salud
-MEFISTO_RUNTIME=claude "${MEFISTO_PACKAGE_ROOT}/scripts/appinsights-query.sh" health-summary
+MEFISTO_RUNTIME=opencode "${MEFISTO_PACKAGE_ROOT}/scripts/appinsights-query.sh" health-summary
 
 # Excepciones recientes
-MEFISTO_RUNTIME=claude "${MEFISTO_PACKAGE_ROOT}/scripts/appinsights-query.sh" exceptions
+MEFISTO_RUNTIME=opencode "${MEFISTO_PACKAGE_ROOT}/scripts/appinsights-query.sh" exceptions
 
 # Errores en funciones
-MEFISTO_RUNTIME=claude "${MEFISTO_PACKAGE_ROOT}/scripts/appinsights-query.sh" function-errors
+MEFISTO_RUNTIME=opencode "${MEFISTO_PACKAGE_ROOT}/scripts/appinsights-query.sh" function-errors
 
 # Dead letters en Service Bus
-MEFISTO_RUNTIME=claude "${MEFISTO_PACKAGE_ROOT}/scripts/appinsights-query.sh" dead-letters
+MEFISTO_RUNTIME=opencode "${MEFISTO_PACKAGE_ROOT}/scripts/appinsights-query.sh" dead-letters
 
 # Filtrar por el sintoma reportado
-MEFISTO_RUNTIME=claude "${MEFISTO_PACKAGE_ROOT}/scripts/appinsights-query.sh" traces --filter "SINTOMA_AQUI"
+MEFISTO_RUNTIME=opencode "${MEFISTO_PACKAGE_ROOT}/scripts/appinsights-query.sh" traces --filter "SINTOMA_AQUI"
 
 # Estado de Service Bus - dead letters en todas las subscriptions
-MEFISTO_RUNTIME=claude "${MEFISTO_PACKAGE_ROOT}/scripts/appinsights-query.sh" servicebus-dlq
+MEFISTO_RUNTIME=opencode "${MEFISTO_PACKAGE_ROOT}/scripts/appinsights-query.sh" servicebus-dlq
 
 # Estado de Azure Functions - running/stopped
-MEFISTO_RUNTIME=claude "${MEFISTO_PACKAGE_ROOT}/scripts/appinsights-query.sh" function-status
+MEFISTO_RUNTIME=opencode "${MEFISTO_PACKAGE_ROOT}/scripts/appinsights-query.sh" function-status
 ```
 
 **Heuristica DLQ**: si el sintoma menciona "dead letter", "mensaje perdido", "cola" o "DLQ", ejecuta tambien:
 
 ```bash
 # Peek al contenido de dead letters (sin consumir)
-MEFISTO_RUNTIME=claude "${MEFISTO_PACKAGE_ROOT}/scripts/appinsights-query.sh" servicebus-dlq-peek
+MEFISTO_RUNTIME=opencode "${MEFISTO_PACKAGE_ROOT}/scripts/appinsights-query.sh" servicebus-dlq-peek
 ```
 
 Ajusta el rango temporal con `--hours N` si el usuario reporta que el error fue hace mas de 24h.
@@ -299,7 +243,7 @@ Con los datos de App Insights en mano:
 
 ```bash
 # Ejemplo: contar eventos procesados de un tipo especifico
-MEFISTO_RUNTIME=claude "${MEFISTO_PACKAGE_ROOT}/scripts/appinsights-query.sh" custom "customEvents | where name == 'ProgramacionTurnoDiarioSolicitada' | summarize count() by bin(timestamp, 10m)"
+MEFISTO_RUNTIME=opencode "${MEFISTO_PACKAGE_ROOT}/scripts/appinsights-query.sh" custom "customEvents | where name == 'ProgramacionTurnoDiarioSolicitada' | summarize count() by bin(timestamp, 10m)"
 ```
 
 6. **Revisa configuracion de messaging**: si el problema involucra Service Bus, lee el `host.json` del dominio afectado para verificar `prefetchCount`, `maxConcurrentCalls`, `lockDuration` (leccion de Bug #47/#48)

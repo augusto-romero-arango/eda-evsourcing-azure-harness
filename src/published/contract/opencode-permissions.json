@@ -56,6 +56,7 @@
         {"pattern": "sed *", "value": "allow"},
         {"pattern": "mv *", "value": "allow"},
         {"pattern": "ilspycmd *", "value": "allow"},
+        {"pattern": "diff *", "value": "allow"},
         {"pattern": "rm -f src/*", "value": "allow"},
         {"pattern": "rm -rf src/*", "value": "allow"},
         {"pattern": "rm -f tests/*", "value": "allow"},

@@ -17,7 +17,6 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
-BUG_INVESTIGATOR="$REPO_ROOT/agents/bug-investigator.md"
 TOOLING_INVESTIGATOR="$REPO_ROOT/agents/tooling-investigator.md"
 PLANNER="$REPO_ROOT/agents/planner.md"
 HISTORIADOR="$REPO_ROOT/agents/historiador.md"
@@ -30,8 +29,8 @@ FAIL=0
 pass() { echo "  PASS: $1"; PASS=$((PASS + 1)); }
 fail() { echo "  FAIL: $1"; FAIL=$((FAIL + 1)); }
 
-echo "[1] Ninguna linea de CLAUDE.md sin calificar en los cinco artefactos"
-for f in "$BUG_INVESTIGATOR" "$TOOLING_INVESTIGATOR" "$PLANNER" "$HISTORIADOR" "$FIX_REVIEW"; do
+echo "[1] Ninguna linea de CLAUDE.md sin calificar en los artefactos"
+for f in "$TOOLING_INVESTIGATOR" "$PLANNER" "$HISTORIADOR" "$FIX_REVIEW"; do
     name="$(basename "$f")"
     OFFENDING=$(grep -n 'CLAUDE\.md' "$f" | grep -v -i 'legacy\|fallback\|@AGENTS')
     if [ -z "$OFFENDING" ]; then
