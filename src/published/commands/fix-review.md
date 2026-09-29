@@ -1,114 +1,24 @@
 ---
-description: "Resuelve los comentarios de revision de un PR del consumidor: triaje, plan, ejecucion, respuestas y mejora continua."
-argument-hint: "<numero-de-PR>"
-model: "opus"
+{
+  "kind": "command",
+  "id": "fix-review",
+  "description": "Resuelve los comentarios de revision de un PR del consumidor: triaje, plan, ejecucion, respuestas y mejora continua.",
+  "profile": "deep",
+  "arguments": "<numero-de-PR>"
+}
 ---
-<!-- GENERADO por src/published/scripts/generate-published-adapters.sh desde src/published/commands/fix-review.md. No editar a mano. -->
-```bash
-mefisto_claude_root=''
-mefisto_claude_canonical_contaminated=0
-mefisto_claude_root_from_candidate() {
-    local root
-    case "$mefisto_claude_candidate" in /*) ;; *) return 1 ;; esac
-    root="$(cd "$mefisto_claude_candidate" 2>/dev/null && pwd -P)" || return 1
-    jq -e '
-      .name == "mefisto" and
-      (.version | type == "string" and test("^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?(\\+[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?$"))
-    ' "$root/.claude-plugin/plugin.json" >/dev/null 2>&1 || return 1
-    jq -e --arg version "$(jq -er '.version | strings' "$root/.claude-plugin/plugin.json" 2>/dev/null)" '
-      (keys | sort) == ["commit", "runtime", "schemaVersion", "version"] and
-      .schemaVersion == 1 and .runtime == "claude" and .version == $version and
-      (.commit | type == "string" and test("^[0-9a-f]{40}$"))
-    ' "$root/mefisto-manifest.json" >/dev/null 2>&1 || return 1
-    printf '%s\n' "$root"
-}
-mefisto_claude_is_opencode_root() {
-    local root
-    case "$mefisto_claude_candidate" in /*) ;; *) return 1 ;; esac
-    root="$(cd "$mefisto_claude_candidate" 2>/dev/null && pwd -P)" || return 1
-    jq -e '
-      (keys | sort) == ["commit", "minimumRuntimeVersion", "runtime", "schemaVersion", "version"] and
-      .schemaVersion == 1 and .runtime == "opencode" and
-      (.version | type == "string" and test("^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?(\\+[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?$")) and
-      (.commit | type == "string" and test("^[0-9a-f]{40}$")) and
-      (.minimumRuntimeVersion | type == "string" and test("^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"))
-    ' "$root/mefisto-manifest.json" >/dev/null 2>&1
-}
-if [ -n "${CLAUDE_PLUGIN_ROOT:-}" ]; then
-    mefisto_claude_candidate="$CLAUDE_PLUGIN_ROOT"
-    mefisto_claude_root="$(mefisto_claude_root_from_candidate)" || {
-        printf '%s\n' 'ERROR Claude: la raiz indicada por CLAUDE_PLUGIN_ROOT es invalida; reabra o reinstale el plugin.' >&2; exit 1;
-    }
-else
-    mefisto_claude_cursor="$PWD"
-    while :; do
-        if [ -f "$mefisto_claude_cursor/.mefisto/pipeline/.plugin-root" ]; then
-            mefisto_claude_candidate="$(< "$mefisto_claude_cursor/.mefisto/pipeline/.plugin-root")"
-            if mefisto_claude_root="$(mefisto_claude_root_from_candidate)"; then break; fi
-            if mefisto_claude_is_opencode_root; then
-                mefisto_claude_canonical_contaminated=1
-                break
-            else
-                printf '%s\n' 'ERROR Claude: metadata del marker canonico invalida; reabra o reinstale el plugin.' >&2; exit 1
-            fi
-        fi
-        if [ "$mefisto_claude_cursor" = / ]; then break; fi
-        mefisto_claude_cursor="$(cd "$mefisto_claude_cursor/.." && pwd -P)"
-    done
-    if [ -z "$mefisto_claude_root" ]; then
-        mefisto_claude_cursor="$PWD"
-        while :; do
-            if [ -f "$mefisto_claude_cursor/.claude/pipeline/.plugin-root" ]; then
-                mefisto_claude_candidate="$(< "$mefisto_claude_cursor/.claude/pipeline/.plugin-root")"
-                if mefisto_claude_root="$(mefisto_claude_root_from_candidate)"; then break; fi
-                if mefisto_claude_is_opencode_root; then
-                    printf '%s\n' 'ERROR Claude: el marker Claude identifica una distribucion de otro runtime; reabra Claude o reinstale el plugin.' >&2; exit 1
-                fi
-                printf '%s\n' 'ERROR Claude: metadata del marker Claude invalida; reabra o reinstale el plugin.' >&2; exit 1
-            fi
-            if [ "$mefisto_claude_cursor" = / ]; then break; fi
-            mefisto_claude_cursor="$(cd "$mefisto_claude_cursor/.." && pwd -P)"
-        done
-    fi
-fi
-if [ -z "$mefisto_claude_root" ]; then
-    if [ "$mefisto_claude_canonical_contaminated" -eq 1 ]; then
-        printf '%s\n' 'ERROR Claude: el marker canonico identifica una distribucion OpenCode y no existe un mirror Claude valido; reabra Claude o reinstale el plugin.' >&2
-    else
-        printf '%s\n' 'ERROR Claude: no se encontro una raiz Claude valida; reabra o reinstale el plugin.' >&2
-    fi
-    exit 1
-fi
-MEFISTO_PACKAGE_ROOT="$mefisto_claude_root"
-export MEFISTO_PACKAGE_ROOT
-```
-```bash
-if [ -f ".mefisto/harness.config.json" ]; then
-    if [ -f ".claude/harness.config.json" ]; then
-        printf '%s\n' 'AVISO: se usara el config canonico .mefisto/harness.config.json; se ignora el legacy .claude/harness.config.json. Migra o elimina conscientemente el archivo legacy para evitar divergencias.' >&2
-    fi
-    MEFISTO_CONFIG_PATH=".mefisto/harness.config.json"
-elif [ -f ".claude/harness.config.json" ]; then
-    MEFISTO_CONFIG_PATH=".claude/harness.config.json"
-else
-    printf '%s\n' 'ERROR: no se encontro el config canonico requerido .mefisto/harness.config.json.' >&2
-    printf '%s\n' '  Se acepta solo para lectura el fallback legacy .claude/harness.config.json.' >&2
-    exit 1
-fi
-export MEFISTO_CONFIG_PATH
-```
 
 Resuelve los comentarios de revision de un pull request. Comunicate en **espanol**.
 
 **Alcance**: este comando solo resuelve PRs del proyecto consumidor.
 
-Antes de continuar, aborta si existe `src/internal/scripts/generate-internal-adapters.sh`: ese directorio es el repositorio de Mefisto, no un consumidor.
+{{mefisto:assert-consumer-repo}}
 
 ## Entrada
 
 El numero de PR esta en: $ARGUMENTS
 
-Si `$ARGUMENTS` esta vacio, responde: `Uso: /mefisto:fix-review <numero-de-PR>`
+Si `$ARGUMENTS` esta vacio, responde: `Uso: {{mefisto:command fix-review}} <numero-de-PR>`
 
 ---
 
@@ -315,11 +225,11 @@ Listo. PR #N:
 
 Cada comentario de review es evidencia de un gap en las instrucciones de un agente. Esta fase traza las correcciones hasta su origen y propone mejoras.
 
-> **Harness read-only.** Los agentes y skills del marco no viven en el repo consumidor: estan en la release instalada del plugin `mefisto`, read-only y versionada, en `${MEFISTO_PACKAGE_ROOT}/agents/`. Por eso una mejora a un artefacto del harness **no se puede editar en la rama del PR del consumidor**: se enruta como **draft** (`estado:borrador`) al repo de Mefisto via `gh -R`, igual que hacen el `planner` y el `tooling-investigator` publicados (ver la seccion C "Routing cross-repo: solo drafts" de MEF-ADR-0019, `${MEFISTO_PACKAGE_ROOT}/docs/adr/mef-adr-0019-*.md`). La edicion en-rama queda reservada a lo que realmente vive en el consumidor (un ADR local del proyecto, convenciones de su `AGENTS.md`, un fixture/helper propio).
+> **Harness read-only.** Los agentes y skills del marco no viven en el repo consumidor: estan en la release instalada del plugin `mefisto`, read-only y versionada, en `{{mefisto:package-root}}/agents/`. Por eso una mejora a un artefacto del harness **no se puede editar en la rama del PR del consumidor**: se enruta como **draft** (`estado:borrador`) al repo de Mefisto via `gh -R`, igual que hacen el `planner` y el `tooling-investigator` publicados (ver la seccion C "Routing cross-repo: solo drafts" de MEF-ADR-0019, `{{mefisto:package-root}}/docs/adr/mef-adr-0019-*.md`). La edicion en-rama queda reservada a lo que realmente vive en el consumidor (un ADR local del proyecto, convenciones de su `AGENTS.md`, un fixture/helper propio).
 
 ### 5.1 Trazar correcciones a su origen
 
-Lee el body del PR — el pipeline TDD registra decisiones de cada agente (test-writer, implementer, reviewer) en secciones `<details>`. Para cada comentario clasificado como "corregir", lee la definicion del agente del harness que produjo el codigo en `${MEFISTO_PACKAGE_ROOT}/agents/<id>.md` y responde:
+Lee el body del PR — el pipeline TDD registra decisiones de cada agente (test-writer, implementer, reviewer) en secciones `<details>`. Para cada comentario clasificado como "corregir", lee la definicion del agente del harness que produjo el codigo en `{{mefisto:package-root}}/agents/<id>.md` y responde:
 
 - **¿Que agente produjo el codigo?** (test-writer, implementer, reviewer, infra-writer, domain-scaffolder, etc.)
 - **¿Que tipo de gap causo el error?**
@@ -336,7 +246,7 @@ Para cada gap identificado, proponer:
 ## Propuesta de mejora — PR #N
 
 ### Ajuste 1: [descripcion breve]
-- **Agente/skill afectado**: `implementer` (o `reviewer`, `test-writer`, skill, pipeline). Si es del harness, lee su definicion en `${MEFISTO_PACKAGE_ROOT}/agents/<id>.md`; no vive en el consumidor.
+- **Agente/skill afectado**: `implementer` (o `reviewer`, `test-writer`, skill, pipeline). Si es del harness, lee su definicion en `{{mefisto:package-root}}/agents/<id>.md`; no vive en el consumidor.
 - **Destino del ajuste**: draft en el harness | edicion local en el consumidor
 - **Seccion**: [nombre de la seccion donde iria el cambio]
 - **Tipo de gap**: regla faltante | regla ignorada | conocimiento dominio | limitacion framework
@@ -364,17 +274,17 @@ Cada ajuste aprobado tiene un **destino** segun donde viva el archivo a tocar:
 
 | Destino | Donde vive el archivo | Accion |
 |---|---|---|
-| **Harness** (`mefisto`) | Release instalada del plugin (`${MEFISTO_PACKAGE_ROOT}/`), read-only y versionada | **Crear un draft** (`estado:borrador`) en el repo de Mefisto via `gh -R` |
+| **Harness** (`mefisto`) | Release instalada del plugin (`{{mefisto:package-root}}/`), read-only y versionada | **Crear un draft** (`estado:borrador`) en el repo de Mefisto via `gh -R` |
 | **Consumidor** (este repo) | ADR local del proyecto (`docs/adr/`), convencion de su `AGENTS.md`, fixture/helper propio | **Editar en-rama**, commit en la rama del PR |
 
 #### Si el ajuste es al harness: crear un draft cross-repo
 
-Reutiliza el mismo routing que el `planner` y el `tooling-investigator` publicados (ver la seccion C "Routing cross-repo: solo drafts" de MEF-ADR-0019, `${MEFISTO_PACKAGE_ROOT}/docs/adr/mef-adr-0019-*.md`). Lee el slug del repo de Mefisto (configurable para forks):
+Reutiliza el mismo routing que el `planner` y el `tooling-investigator` publicados (ver la seccion C "Routing cross-repo: solo drafts" de MEF-ADR-0019, `{{mefisto:package-root}}/docs/adr/mef-adr-0019-*.md`). Lee el slug del repo de Mefisto (configurable para forks):
 
-Lee `repoSlug` desde `${MEFISTO_CONFIG_PATH}` (MEF-ADR-0053 decision 4). El campo es opcional: si no hay config, falta el campo o esta vacio, aplica el default sin abortar:
+Lee `repoSlug` desde `{{mefisto:config-path}}` (MEF-ADR-0053 decision 4). El campo es opcional: si no hay config, falta el campo o esta vacio, aplica el default sin abortar:
 
 ```bash
-SLUG=$(jq -r '.repoSlug // empty' "${MEFISTO_CONFIG_PATH}" 2>/dev/null); echo "${SLUG:-augusto-romero-arango/eda-evsourcing-azure-harness}"
+SLUG=$(jq -r '.repoSlug // empty' "{{mefisto:config-path}}" 2>/dev/null); echo "${SLUG:-augusto-romero-arango/eda-evsourcing-azure-harness}"
 ```
 
 Cada bloque `bash` corre en un shell nuevo: en el `gh issue create -R "<slug>"` de mas abajo, sustituye `<slug>` por el slug que imprimio este bloque.

@@ -100,6 +100,7 @@ CLAUDE_ROOT_MIRRORS=(
     'src/published/commands/infra.md|commands/infra.md'
     'src/published/commands/scaffold.md|commands/scaffold.md'
     'src/published/commands/seed-secret.md|commands/seed-secret.md'
+    'src/published/commands/fix-review.md|commands/fix-review.md'
     'src/published/agents/tooling-writer.md|agents/tooling-writer.md'
     'src/published/agents/tooling-reviewer.md|agents/tooling-reviewer.md'
     'src/published/agents/test-writer.md|agents/test-writer.md'
