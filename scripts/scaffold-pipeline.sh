@@ -58,7 +58,6 @@ NC='\033[0m'
 REPO_ROOT="$(git rev-parse --show-toplevel)"
 # Estado operativo exclusivamente bajo el root canonico que resuelve
 # mefisto_state_path() (MEF-ADR-0053 seccion 4); rutas absolutas.
-PIPELINE_DIR="$(dirname "$(mefisto_state_path '.state')")"
 LOG_DIR="$(dirname "$(mefisto_state_path 'logs/.state')")"
 TIMESTAMP=$(date +%Y%m%d-%H%M%S)
 # Sufijo de PID ademas del TIMESTAMP: dos pipelines lanzados en paralelo en el
