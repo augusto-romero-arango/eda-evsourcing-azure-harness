@@ -107,6 +107,7 @@ CLAUDE_ROOT_MIRRORS=(
     'src/published/commands/work-status.md|commands/work-status.md'
     'src/published/commands/parallel.md|commands/parallel.md'
     'src/published/commands/infra.md|commands/infra.md'
+    'src/published/commands/infra-base.md|commands/infra-base.md'
     'src/published/commands/scaffold.md|commands/scaffold.md'
     'src/published/commands/seed-secret.md|commands/seed-secret.md'
     'src/published/commands/next-order.md|commands/next-order.md'
