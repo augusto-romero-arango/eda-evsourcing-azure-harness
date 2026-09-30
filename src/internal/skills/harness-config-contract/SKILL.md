@@ -2,7 +2,6 @@
 name: harness-config-contract
 description: "Contrato que el harness Mefisto impone al repo consumidor: esquema completo de `.mefisto/harness.config.json`, las secciones obligatorias de `AGENTS.md` (Tokens del harness, Verificación de fuentes), el puente mínimo de `CLAUDE.md` y la estructura de carpetas esperada (src/, tests/, infra/, docs/). Usar cuando se haga onboarding, scaffolding (dominio, infra base, MCP, proyecciones), validacion de config, o cualquier tarea que lea o escriba `harness.config.json` o dependa de la estructura de carpetas del consumidor."
 ---
-<!-- GENERADO por src/internal/scripts/generate-internal-adapters.sh desde src/internal/skills/harness-config-contract/SKILL.md. No editar a mano. -->
 
 # Contrato con el proyecto consumidor
 

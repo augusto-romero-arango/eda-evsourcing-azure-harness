@@ -29,6 +29,14 @@
 #                 llevar el marcador de generado -- no queda ningun adaptador
 #                 de autoria manual bajo esas rutas (issue #913).
 #
+# Agent Skills internos (issue #1685, MEF-ADR-0033/0049): la fuente canonica es
+# src/internal/skills/<id>/ (SKILL.md con frontmatter YAML portable + recursos
+# de Nivel 3). Se genera unicamente .claude/skills/<id>/, con el marcador de
+# generado tras el frontmatter de SKILL.md; OpenCode descubre ese mismo
+# directorio (verificado, ver src/internal/contract/README.md), asi que NO se
+# emite .opencode/skills/: duplicarlo cargaria el Skill dos veces. --check
+# aplica las mismas reglas faltante/distinta/huerfana/sin marcador.
+#
 # Exit code: 0 si genero (o, con --check, verifico) sin divergencias; 1 si la
 # validacion previa fallo, si algun archivo tiene una directiva de body
 # desconocida o una capacidad sin mapeo Claude, o si --check encontro
@@ -114,6 +122,9 @@ if [ ${#FILES[@]} -eq 0 ]; then
     while IFS= read -r f; do
         [ -n "$f" ] && FILES+=("$f")
     done < <(find "$REPO_ROOT/src/internal/agents" "$REPO_ROOT/src/internal/commands" -name '*.md' 2>/dev/null | sort)
+    while IFS= read -r f; do
+        [ -n "$f" ] && FILES+=("$f")
+    done < <(find "$REPO_ROOT/src/internal/skills" -type f 2>/dev/null | sort)
 fi
 
 # CA-5: con --check no se escribe nada, ni siquiera el directorio de salida
@@ -132,8 +143,42 @@ trap 'rm -rf "$STAGE_DIR"' EXIT
 GEN_STATUS=0
 GENERATED_RELPATHS=()
 
+# skill_rel_parts <ruta> -- imprime "<id>/<ruta-relativa-en-el-skill>" si la
+# ruta cae bajo src/internal/skills/<id>/, o nada. Acotado a esa raiz para que
+# un `skills/` en otra parte de la ruta no desvie un agente o comando.
+skill_rel_parts() {
+    case "$1" in
+        src/internal/skills/*/*|*/src/internal/skills/*/*) printf '%s' "${1##*src/internal/skills/}" ;;
+    esac
+}
+
 for file in ${FILES[@]+"${FILES[@]}"}; do
     rel_source="${file#"$REPO_ROOT"/}"
+
+    skill_part="$(skill_rel_parts "$file")"
+    if [ -n "$skill_part" ]; then
+        skill_relpath=".claude/skills/$skill_part"
+        mkdir -p "$(dirname "$STAGE_DIR/$skill_relpath")"
+        if [ "${skill_part##*/}" = "SKILL.md" ]; then
+            skill_fm="$(extract_frontmatter "$file")"
+            if [ -z "$skill_fm" ]; then
+                echo "ERROR: $rel_source: no se pudo extraer el frontmatter (deberia haber pasado la validacion previa)" >&2
+                GEN_STATUS=1
+                continue
+            fi
+            {
+                printf '%s\n' "---"
+                printf '%s\n' "$skill_fm"
+                printf '%s\n' "---"
+                printf '%s\n' "<!-- GENERADO por $MARKER_SOURCE_SCRIPT desde $rel_source. No editar a mano. -->"
+                printf '%s\n' "$(extract_body "$file")"
+            } > "$STAGE_DIR/$skill_relpath"
+        else
+            cp "$file" "$STAGE_DIR/$skill_relpath"
+        fi
+        GENERATED_RELPATHS+=("$skill_relpath")
+        continue
+    fi
 
     fm="$(extract_frontmatter "$file")"
     if [ -z "$fm" ]; then
@@ -222,6 +267,24 @@ if [ "$CHECK_MODE" -eq 1 ]; then
                 ;;
         esac
     done < <(find "$OUT_ROOT/.claude/agents" "$OUT_ROOT/.claude/commands" "$OUT_ROOT/.opencode/agents" "$OUT_ROOT/.opencode/commands" -name '*.md' 2>/dev/null | sort)
+
+    # Skills (issue #1685): SKILL.md exige marcador; todo archivo bajo
+    # .claude/skills debe estar ademas entre lo generado.
+    while IFS= read -r existing_file; do
+        [ -n "$existing_file" ] || continue
+        rel="${existing_file#"$OUT_ROOT"/}"
+        if [ "${rel##*/}" = "SKILL.md" ]; then
+            body_first_line="$(extract_body "$existing_file" 2>/dev/null | head -n1)"
+            case "$body_first_line" in
+                "<!-- GENERADO por $MARKER_SOURCE_SCRIPT desde "*) ;;
+                *) echo "$rel: sin marcador"; DIVERGENCE=1; continue ;;
+            esac
+        fi
+        if ! path_in_generated_list "$rel"; then
+            echo "$rel: huerfana"
+            DIVERGENCE=1
+        fi
+    done < <(find "$OUT_ROOT/.claude/skills" -type f 2>/dev/null | sort)
 
     exit $DIVERGENCE
 fi

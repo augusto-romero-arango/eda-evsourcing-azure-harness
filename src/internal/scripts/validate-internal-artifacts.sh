@@ -152,20 +152,77 @@ validate_file() {
     return $status
 }
 
+# validate_skill <archivo> -- valida el frontmatter YAML portable de un
+# src/internal/skills/<id>/SKILL.md (issue #1685, MEF-ADR-0033): `name` igual
+# al directorio, `description` presente, sin `allowed-tools`. Es un chequeo
+# textual sobre las claves de primer nivel; el body de un Skill no pasa por la
+# regla de neutralidad de agentes/comandos (documenta ambos runtimes).
+validate_skill() {
+    local file="$1"
+    local rel="${file#"$REPO_ROOT"/}"
+    local dir_id
+    dir_id="$(basename "$(dirname "$file")")"
+
+    if [ ! -f "$file" ]; then
+        echo "$rel: archivo: no existe o no es un archivo regular"
+        return 1
+    fi
+
+    local frontmatter extract_rc
+    frontmatter="$(extract_frontmatter "$file")"
+    extract_rc=$?
+    case "$extract_rc" in
+        1) echo "$rel: frontmatter: ausente (se esperaba un bloque '---' al inicio del archivo)"; return 1 ;;
+        2) echo "$rel: frontmatter: sin delimitador de cierre"; return 1 ;;
+    esac
+
+    local status=0 name_line
+    name_line="$(printf '%s\n' "$frontmatter" | grep -E '^name:' | head -n1)"
+    local name_val
+    name_val="$(printf '%s' "${name_line#name:}" | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//; s/^"(.*)"$/\1/')"
+    if [ -z "$name_val" ]; then
+        echo "$rel: name: ausente"
+        status=1
+    elif [ "$name_val" != "$dir_id" ]; then
+        echo "$rel: name: '$name_val' distinto del directorio '$dir_id'"
+        status=1
+    fi
+    if ! printf '%s\n' "$frontmatter" | grep -qE '^description:[[:space:]]*[^[:space:]]'; then
+        echo "$rel: description: ausente o vacia"
+        status=1
+    fi
+    if printf '%s\n' "$frontmatter" | grep -qE '^allowed-tools[[:space:]]*:'; then
+        echo "$rel: allowed-tools: prohibido en un SKILL.md portable (MEF-ADR-0033)"
+        status=1
+    fi
+    return $status
+}
+
 FILES=("$@")
 if [ ${#FILES[@]} -eq 0 ]; then
     FILES=()
     while IFS= read -r f; do
         [ -n "$f" ] && FILES+=("$f")
     done < <(find "$REPO_ROOT/src/internal/agents" "$REPO_ROOT/src/internal/commands" -name '*.md' 2>/dev/null | sort)
+    while IFS= read -r f; do
+        [ -n "$f" ] && FILES+=("$f")
+    done < <(find "$REPO_ROOT/src/internal/skills" -name 'SKILL.md' 2>/dev/null | sort)
 fi
 
 STATUS=0
 if [ ${#FILES[@]} -gt 0 ]; then
     for f in "${FILES[@]}"; do
-        if ! validate_file "$f"; then
-            STATUS=1
-        fi
+        case "$f" in
+            */skills/*/SKILL.md)
+                validate_skill "$f" || STATUS=1
+                ;;
+            */skills/*/*)
+                : # recurso de Nivel 3: no lleva frontmatter propio
+                ;;
+            *)
+                validate_file "$f" || STATUS=1
+                ;;
+        esac
     done
 fi
 
