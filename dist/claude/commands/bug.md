@@ -142,7 +142,7 @@ El sintoma que se le pasa al agente es `$ARGUMENTS` sin los flags.
 
 Delega sin validar prerequisitos de Azure:
 
-invoca la tool `Task` con el agente `mefisto:tooling-investigator` y este mensaje: Sintoma reportado: el sintoma sin flags. Espera su resultado final y continua con el paso siguiente del comando.
+invoca la tool `Task` con el agente `mefisto:tooling-investigator` y este mensaje: Sintoma reportado: <sintoma sin flags>. Espera su resultado final y continua con el paso siguiente del comando.
 
 Responde con:
 
@@ -172,11 +172,21 @@ Si sale con codigo distinto de `0`, muestra tal cual el mensaje que emitio el sc
 test -f .mefisto/appinsights.env && echo "OK" || echo "FAIL"
 ```
 
-Si falta, responde que `.mefisto/appinsights.env` no existe, remite al formato documentado por `appinsights-query.sh` (ejecutalo sin argumentos para verlo) y termina sin delegar.
+Si falta, responde con el formato que espera `appinsights-query.sh` y termina sin delegar:
+
+```
+No se encontro .mefisto/appinsights.env en la raiz del consumidor.
+Crea ese archivo con los nombres de recursos (sin secretos, versionable):
+  APPINSIGHTS_APP=<nombre del App Insights>
+  APPINSIGHTS_RG=<resource group del App Insights y las Function Apps>
+  SERVICEBUS_NAMESPACE=<namespace de Service Bus>
+  SERVICEBUS_RG=<resource group de Service Bus>
+  FUNCTIONAPP_NAMES=<function apps separadas por coma>
+```
 
 Si ambas validaciones pasan, delega:
 
-invoca la tool `Task` con el agente `mefisto:bug-investigator` y este mensaje: Sintoma reportado: el sintoma sin flags. Espera su resultado final y continua con el paso siguiente del comando.
+invoca la tool `Task` con el agente `mefisto:bug-investigator` y este mensaje: Sintoma reportado: <sintoma sin flags>. Espera su resultado final y continua con el paso siguiente del comando.
 
 Responde con:
 
