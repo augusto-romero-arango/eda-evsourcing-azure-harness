@@ -162,6 +162,31 @@ reconstruct_log() {
     return 1
 }
 
+# reconstruct_run_log <pipeline> <started> <variant>
+# Log de la corrida completa: infra iac-pipeline-<started>.log, tooling
+# tooling-pipeline-<started>[-<variant>].log, tdd pipeline-<started>[-<variant>].log.
+reconstruct_run_log() {
+    local pipeline="$1" started="$2" variant="$3"
+    [ -n "$started" ] || return 1
+    local sfx=""
+    [ -n "$variant" ] && sfx="-${variant}"
+    local fname=""
+    case "$pipeline" in
+        infra)   fname="iac-pipeline-${started}.log" ;;
+        tooling) fname="tooling-pipeline-${started}${sfx}.log" ;;
+        tdd)     fname="pipeline-${started}${sfx}.log" ;;
+        *)       return 1 ;;
+    esac
+    local dir
+    for dir in "$CANONICAL_DIR/logs" "$LEGACY_DIR/logs"; do
+        if [ -f "$dir/$fname" ]; then
+            printf '%s\n' "$dir/$fname"
+            return 0
+        fi
+    done
+    return 1
+}
+
 # --- Fase 1: recolectar status (Paso 1, con fallback por root) ----------
 
 collect_status_root() {
@@ -491,6 +516,9 @@ while IFS= read -r row_json; do
         resolved_log="$declared_log"
     else
         if resolved_log=$(reconstruct_log "$pipeline" "$stage" "$started" "$issue" "$variant"); then :; else resolved_log=""; fi
+        if [ -z "$resolved_log" ]; then
+            if resolved_log=$(reconstruct_run_log "$pipeline" "$started" "$variant"); then :; else resolved_log=""; fi
+        fi
     fi
 
     enriched=$(jq -c \
@@ -501,7 +529,11 @@ while IFS= read -r row_json; do
             if ($row.tests // null) != null then
                 (($row.tests | tostring) + " tests")
             elif ($row.environment // null) != null then
-                ("env:" + $row.environment)
+                (if ($row.pr // null) != null and $row.pr != "" then
+                    ("env:" + $row.environment + ", PR #" + ($row.pr | tostring | split("/") | last))
+                else
+                    ("env:" + $row.environment)
+                end)
             elif ($row.pr // null) != null and $row.pr != "" then
                 ("PR #" + ($row.pr | tostring | split("/") | last))
             else
@@ -516,6 +548,7 @@ while IFS= read -r row_json; do
             result: $row.state,
             duration: $duration,
             detail: $detail,
+            pr: ($row.pr // null),
             started: $row.started,
             origin: $row.origin,
             log: (if $resolved_log == "" then null else $resolved_log end)
