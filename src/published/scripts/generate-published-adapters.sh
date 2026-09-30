@@ -108,6 +108,7 @@ CLAUDE_ROOT_MIRRORS=(
     'src/published/commands/scaffold.md|commands/scaffold.md'
     'src/published/commands/seed-secret.md|commands/seed-secret.md'
     'src/published/commands/next-order.md|commands/next-order.md'
+    'src/published/commands/upgrade.md|commands/upgrade.md'
     'src/published/commands/health-check.md|commands/health-check.md'
     'src/published/commands/purge-store.md|commands/purge-store.md'
     'src/published/commands/fix-review.md|commands/fix-review.md'
