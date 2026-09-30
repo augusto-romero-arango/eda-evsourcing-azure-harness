@@ -100,6 +100,12 @@ if [ -s "$C/pipeline-history.jsonl" ] \
 else
     fail "historial ausente o invalido: $(cat "$C/pipeline-history.jsonl" 2>/dev/null)"
 fi
+LOG_DECL=$(jq -r 'select(.state=="completed") | .log // empty' "$C/pipeline-history.jsonl" 2>/dev/null | tail -n1)
+if [ -n "$LOG_DECL" ] && [ -f "$LOG_DECL" ] && [[ "$LOG_DECL" == /*/.mefisto/pipeline/logs/scaffold-*-*.log ]]; then
+    pass "la entrada completed declara log existente (scaffold-<ts>-<pid>.log)"
+else
+    fail "log ausente o inexistente en la entrada completed: '$LOG_DECL'"
+fi
 [ ! -e "$C/history.jsonl" ] && pass "no se escribe history.jsonl" || fail "history.jsonl legacy presente"
 [ ! -e "$A/work/.claude/pipeline" ] && pass "no se crea .claude/pipeline" || fail ".claude/pipeline creado"
 grep -Fq "$C/logs/" "$A/stdout" && pass "el resumen imprime ruta absoluta bajo .mefisto/pipeline/logs/" || fail "resumen sin ruta absoluta de logs"

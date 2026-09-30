@@ -296,6 +296,12 @@ if [ -s "$HISTORY_A" ]; then
     else
         fail "fila de historial incorrecta: $LAST_A"
     fi
+    LOG_A=$(printf '%s' "$LAST_A" | jq -r '.log // empty')
+    if [ -n "$LOG_A" ] && [ -f "$LOG_A" ] && [[ "$LOG_A" == /*/.mefisto/pipeline/logs/iac-pipeline-*.log ]]; then
+        pass "la entrada failed declara log absoluto existente bajo logs/"
+    else
+        fail "log ausente o inexistente en la entrada failed: $LAST_A"
+    fi
 else
     fail "no existe o esta vacio $HISTORY_A"
 fi

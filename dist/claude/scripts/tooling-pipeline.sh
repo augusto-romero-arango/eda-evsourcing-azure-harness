@@ -105,8 +105,8 @@ record_failed_history() {
     [ -n "${HISTORY_FILE:-}" ] || return 0
     jq -cn --arg issue "${ISSUE_NUM:-}" --arg title "${ISSUE_TITLE:-}" --argjson variant "${VARIANT_LABEL_JSON:-null}" \
         --argjson identity "$HARNESS_IDENTITY_JSON" --arg runtime "${MEFISTO_RUNTIME_RESUELTO:-}" --arg started "${TIMESTAMP:-}" --arg finished "$(date +%Y-%m-%dT%H:%M:%S)" \
-        --arg stage "$CURRENT_STAGE" --arg error "$PIPELINE_ERROR" --argjson writer "$AGENT_WR_METRICS" --argjson reviewer "$AGENT_RV_METRICS" \
-        '{issue:$issue,title:$title,pipeline:"tooling",variant:$variant,identity:$identity,runtime:(if $runtime == "" then null else $runtime end),started:$started,finished:$finished,state:"failed",stage:$stage,error:$error,agents:{writer:{metrics:$writer},reviewer:{metrics:$reviewer}}}' \
+        --arg stage "$CURRENT_STAGE" --arg error "$PIPELINE_ERROR" --argjson writer "$AGENT_WR_METRICS" --argjson reviewer "$AGENT_RV_METRICS" --arg log "${LOG_FILE_ABS:-}" \
+        '{issue:$issue,title:$title,pipeline:"tooling",variant:$variant,identity:$identity,runtime:(if $runtime == "" then null else $runtime end),started:$started,finished:$finished,state:"failed",stage:$stage,error:$error,agents:{writer:{metrics:$writer},reviewer:{metrics:$reviewer}},log:(if $log == "" then null else $log end)}' \
         >> "$HISTORY_FILE" 2>/dev/null || true
 }
 
@@ -994,8 +994,8 @@ append_completed_history "$HISTORY_FILE" "$EVENTS_LOG_ABS" \
     --argjson identity "$HARNESS_IDENTITY_JSON" --arg runtime "$MEFISTO_RUNTIME_RESUELTO" --arg started "$TIMESTAMP" --arg finished "$(date +%Y-%m-%dT%H:%M:%S)" \
     --argjson writer_duration "${AGENT_WR_DUR:-null}" --argjson reviewer_duration "${AGENT_RV_DUR:-null}" \
     --argjson writer_metrics "$AGENT_WR_METRICS" --argjson reviewer_metrics "$AGENT_RV_METRICS" \
-    --argjson tests "$TESTS_JSON" --argjson pr "$PR_JSON" \
-    '{issue:$issue,title:$title,pipeline:"tooling",variant:$variant,identity:$identity,runtime:$runtime,started:$started,finished:$finished,state:"completed",agents:{writer:{duration:$writer_duration,metrics:$writer_metrics},reviewer:{duration:$reviewer_duration,metrics:$reviewer_metrics}},tests:$tests,pr:$pr}'
+    --argjson tests "$TESTS_JSON" --argjson pr "$PR_JSON" --arg log "$LOG_FILE" \
+    '{issue:$issue,title:$title,pipeline:"tooling",variant:$variant,identity:$identity,runtime:$runtime,started:$started,finished:$finished,state:"completed",agents:{writer:{duration:$writer_duration,metrics:$writer_metrics},reviewer:{duration:$reviewer_duration,metrics:$reviewer_metrics}},tests:$tests,pr:$pr,log:$log}'
 
 # Eliminar archivo de estado individual (ya esta en el historial)
 rm -f "$(mefisto_state_path "$STATUS_FILENAME")"

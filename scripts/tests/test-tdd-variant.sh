@@ -143,6 +143,14 @@ else
     fail "solo $HISTORY_VARIANT_HITS linea(s) de historial llevan variant: se esperan 2 (completed y failed)"
 fi
 
+LOG_HIST_ARGS=$(grep -cF -- '--arg log "' "$PIPE")
+LOG_HIST_FIELDS=$(grep -cF ',log:' "$PIPE")
+if [ "$LOG_HIST_ARGS" -ge 2 ] && [ "$LOG_HIST_FIELDS" -ge 2 ]; then
+    pass "las entradas completed/failed declaran log en pipeline-history.jsonl (#1734)"
+else
+    fail "faltan --arg log / log: en las entradas terminales del historial"
+fi
+
 echo ""
 echo "----------------------------------------"
 echo "  tdd-pipeline.sh: $PASS pass, $FAIL fail (hasta aqui)"
