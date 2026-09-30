@@ -1,84 +1,27 @@
 ---
 description: "Diagnostica el onboarding del consumidor (config, directivas, labels, CI, auth, proyecciones) y ofrece provisiones opt-in."
-model: "haiku"
 ---
 <!-- GENERADO por src/published/scripts/generate-published-adapters.sh desde src/published/commands/onboard.md. No editar a mano. -->
 ```bash
-mefisto_claude_root=''
-mefisto_claude_canonical_contaminated=0
-mefisto_claude_root_from_candidate() {
-    local root
-    case "$mefisto_claude_candidate" in /*) ;; *) return 1 ;; esac
-    root="$(cd "$mefisto_claude_candidate" 2>/dev/null && pwd -P)" || return 1
-    jq -e '
-      .name == "mefisto" and
-      (.version | type == "string" and test("^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?(\\+[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?$"))
-    ' "$root/.claude-plugin/plugin.json" >/dev/null 2>&1 || return 1
-    jq -e --arg version "$(jq -er '.version | strings' "$root/.claude-plugin/plugin.json" 2>/dev/null)" '
-      (keys | sort) == ["commit", "runtime", "schemaVersion", "version"] and
-      .schemaVersion == 1 and .runtime == "claude" and .version == $version and
-      (.commit | type == "string" and test("^[0-9a-f]{40}$"))
-    ' "$root/mefisto-manifest.json" >/dev/null 2>&1 || return 1
-    printf '%s\n' "$root"
+mefisto_opencode_data_root() {
+    if [ -n "${XDG_DATA_HOME:-}" ]; then printf '%s/mefisto\n' "$XDG_DATA_HOME"
+    elif [ "$(uname -s)" = Darwin ]; then printf '%s/Library/Application Support/mefisto\n' "$HOME"
+    else printf '%s/.local/share/mefisto\n' "$HOME"; fi
 }
-mefisto_claude_is_opencode_root() {
-    local root
-    case "$mefisto_claude_candidate" in /*) ;; *) return 1 ;; esac
-    root="$(cd "$mefisto_claude_candidate" 2>/dev/null && pwd -P)" || return 1
-    jq -e '
-      (keys | sort) == ["commit", "minimumRuntimeVersion", "runtime", "schemaVersion", "version"] and
-      .schemaVersion == 1 and .runtime == "opencode" and
-      (.version | type == "string" and test("^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?(\\+[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?$")) and
-      (.commit | type == "string" and test("^[0-9a-f]{40}$")) and
-      (.minimumRuntimeVersion | type == "string" and test("^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"))
-    ' "$root/mefisto-manifest.json" >/dev/null 2>&1
+mefisto_opencode_launcher="$(mefisto_opencode_data_root)/active/bin/mefisto-opencode"
+if [ ! -f "$mefisto_opencode_launcher" ] || [ -L "$mefisto_opencode_launcher" ] || [ ! -x "$mefisto_opencode_launcher" ]; then
+    printf '%s\n' 'ERROR OpenCode: no hay una release activa valida; instale o active la release OpenCode.' >&2; exit 1
+fi
+MEFISTO_PACKAGE_ROOT="$("$mefisto_opencode_launcher" package-root)" || {
+    printf '%s\n' 'ERROR OpenCode: no se pudo resolver la release activa; instale o active la release OpenCode.' >&2; exit 1;
 }
-if [ -n "${CLAUDE_PLUGIN_ROOT:-}" ]; then
-    mefisto_claude_candidate="$CLAUDE_PLUGIN_ROOT"
-    mefisto_claude_root="$(mefisto_claude_root_from_candidate)" || {
-        printf '%s\n' 'ERROR Claude: la raiz indicada por CLAUDE_PLUGIN_ROOT es invalida; reabra o reinstale el plugin.' >&2; exit 1;
-    }
-else
-    mefisto_claude_cursor="$PWD"
-    while :; do
-        if [ -f "$mefisto_claude_cursor/.mefisto/pipeline/.plugin-root" ]; then
-            mefisto_claude_candidate="$(< "$mefisto_claude_cursor/.mefisto/pipeline/.plugin-root")"
-            if mefisto_claude_root="$(mefisto_claude_root_from_candidate)"; then break; fi
-            if mefisto_claude_is_opencode_root; then
-                mefisto_claude_canonical_contaminated=1
-                break
-            else
-                printf '%s\n' 'ERROR Claude: metadata del marker canonico invalida; reabra o reinstale el plugin.' >&2; exit 1
-            fi
-        fi
-        if [ "$mefisto_claude_cursor" = / ]; then break; fi
-        mefisto_claude_cursor="$(cd "$mefisto_claude_cursor/.." && pwd -P)"
-    done
-    if [ -z "$mefisto_claude_root" ]; then
-        mefisto_claude_cursor="$PWD"
-        while :; do
-            if [ -f "$mefisto_claude_cursor/.claude/pipeline/.plugin-root" ]; then
-                mefisto_claude_candidate="$(< "$mefisto_claude_cursor/.claude/pipeline/.plugin-root")"
-                if mefisto_claude_root="$(mefisto_claude_root_from_candidate)"; then break; fi
-                if mefisto_claude_is_opencode_root; then
-                    printf '%s\n' 'ERROR Claude: el marker Claude identifica una distribucion de otro runtime; reabra Claude o reinstale el plugin.' >&2; exit 1
-                fi
-                printf '%s\n' 'ERROR Claude: metadata del marker Claude invalida; reabra o reinstale el plugin.' >&2; exit 1
-            fi
-            if [ "$mefisto_claude_cursor" = / ]; then break; fi
-            mefisto_claude_cursor="$(cd "$mefisto_claude_cursor/.." && pwd -P)"
-        done
-    fi
-fi
-if [ -z "$mefisto_claude_root" ]; then
-    if [ "$mefisto_claude_canonical_contaminated" -eq 1 ]; then
-        printf '%s\n' 'ERROR Claude: el marker canonico identifica una distribucion OpenCode y no existe un mirror Claude valido; reabra Claude o reinstale el plugin.' >&2
-    else
-        printf '%s\n' 'ERROR Claude: no se encontro una raiz Claude valida; reabra o reinstale el plugin.' >&2
-    fi
-    exit 1
-fi
-MEFISTO_PACKAGE_ROOT="$mefisto_claude_root"
+case "$MEFISTO_PACKAGE_ROOT" in
+    /*) ;;
+    *) printf '%s\n' 'ERROR OpenCode: la release activa no devolvio una raiz absoluta; reinstale o active la release OpenCode.' >&2; exit 1 ;;
+esac
+MEFISTO_PACKAGE_ROOT="$(cd "$MEFISTO_PACKAGE_ROOT" 2>/dev/null && pwd -P)" || {
+    printf '%s\n' 'ERROR OpenCode: la release activa no existe; reinstale o active la release OpenCode.' >&2; exit 1;
+}
 export MEFISTO_PACKAGE_ROOT
 ```
 
@@ -113,7 +56,7 @@ Al cerrar el reporte, `/mefisto:onboard` imprime un bloque **"Proximos pasos"**:
 Corre este bloque tal cual. Invoca `onboard-diagnose.sh` del paquete activo: ese script trae el checklist completo de 9 secciones.
 
 ```bash
-MEFISTO_RUNTIME=claude "${MEFISTO_PACKAGE_ROOT}/scripts/onboard-diagnose.sh" 2>&1
+MEFISTO_RUNTIME=opencode "${MEFISTO_PACKAGE_ROOT}/scripts/onboard-diagnose.sh" 2>&1
 ```
 
 ### 2. Presentar el resultado
@@ -126,15 +69,15 @@ No reinterpretes ni recalcules el checklist ni el bloque "Proximos pasos": el bl
 
 Ofrece este paso **solo** cuando el diagnóstico reportó que falta `AGENTS.md` o, bajo el adaptador Claude, el puente exacto `@AGENTS.md` en `CLAUDE.md` (bajo OpenCode el puente es informativo: si solo falta el puente, ofrece el paso únicamente cuando el usuario indique que el equipo también usa Claude). Muestra primero el plan que produce `--preview`: crear `AGENTS.md` solamente si está ausente, crear o añadir el puente sin mover ni borrar texto existente, y cualquier aviso de doctrina legacy duplicada. Si `AGENTS.md` existe pero está incompleto, explica que no se fusiona por heurística y que debe completarse manualmente.
 
-Antes de previsualizar, pregunta si el equipo **también usa Claude**: si responde que sí, ofrece `--with-claude-bridge` (crea o completa el puente `CLAUDE.md` -> `@AGENTS.md` aun bajo OpenCode) y agrega ese flag tanto a la previsualización (`MEFISTO_RUNTIME=claude "${MEFISTO_PACKAGE_ROOT}/scripts/onboard-migrate-directives.sh" --preview --with-claude-bridge`) como a la aplicación (`MEFISTO_RUNTIME=claude "${MEFISTO_PACKAGE_ROOT}/scripts/onboard-migrate-directives.sh" --apply --with-claude-bridge`), para que el plan confirmado sea el que se aplica. Sin esa respuesta, no lo agregues.
+Antes de previsualizar, pregunta si el equipo **también usa Claude**: si responde que sí, ofrece `--with-claude-bridge` (crea o completa el puente `CLAUDE.md` -> `@AGENTS.md` aun bajo OpenCode) y agrega ese flag tanto a la previsualización (`MEFISTO_RUNTIME=opencode "${MEFISTO_PACKAGE_ROOT}/scripts/onboard-migrate-directives.sh" --preview --with-claude-bridge`) como a la aplicación (`MEFISTO_RUNTIME=opencode "${MEFISTO_PACKAGE_ROOT}/scripts/onboard-migrate-directives.sh" --apply --with-claude-bridge`), para que el plan confirmado sea el que se aplica. Sin esa respuesta, no lo agregues.
 
 Advierte que, aunque la migración es conservadora, escribe archivos del consumidor. Presenta primero el plan real con este bloque, sin aplicar cambios:
 
 ```bash
-MEFISTO_RUNTIME=claude "${MEFISTO_PACKAGE_ROOT}/scripts/onboard-migrate-directives.sh" --preview
+MEFISTO_RUNTIME=opencode "${MEFISTO_PACKAGE_ROOT}/scripts/onboard-migrate-directives.sh" --preview
 ```
 
-Si la previsualización aborta por un preflight fallido -- incluido un `AGENTS.md` existente pero incompleto -- muestra sus instrucciones manuales y no ofrezcas aplicar. Si imprime el plan, pregunta si desea aplicar **ese plan exacto**. Sin un `si` explícito, no ejecutes ninguna escritura. Solo tras ese `si`, ejecuta `MEFISTO_RUNTIME=claude "${MEFISTO_PACKAGE_ROOT}/scripts/onboard-migrate-directives.sh" --apply`. El script hace su preflight y es idempotente; no reimplementes su plantilla ni sus validaciones. Si informa secciones legacy en `CLAUDE.md`, deja visible que deben retirarse manualmente antes de que el contrato sea completamente canónico.
+Si la previsualización aborta por un preflight fallido -- incluido un `AGENTS.md` existente pero incompleto -- muestra sus instrucciones manuales y no ofrezcas aplicar. Si imprime el plan, pregunta si desea aplicar **ese plan exacto**. Sin un `si` explícito, no ejecutes ninguna escritura. Solo tras ese `si`, ejecuta `MEFISTO_RUNTIME=opencode "${MEFISTO_PACKAGE_ROOT}/scripts/onboard-migrate-directives.sh" --apply`. El script hace su preflight y es idempotente; no reimplementes su plantilla ni sus validaciones. Si informa secciones legacy en `CLAUDE.md`, deja visible que deben retirarse manualmente antes de que el contrato sea completamente canónico.
 
 ### 4. Provision opt-in de los labels faltantes
 
@@ -147,7 +90,7 @@ Aplica este paso **solo si** la seccion "Labels de GitHub" del diagnostico repor
 3. **Solo si el usuario confirma**, corre la provision:
 
 ```bash
-MEFISTO_RUNTIME=claude "${MEFISTO_PACKAGE_ROOT}/scripts/setup-github-labels.sh" 2>&1
+MEFISTO_RUNTIME=opencode "${MEFISTO_PACKAGE_ROOT}/scripts/setup-github-labels.sh" 2>&1
 ```
 
 Si el script sale con error, las causas tipicas son: `gh` no autenticado (corre `gh auth login` y reintenta); o un label `tipo:*`/`estado:*`/`bloqueado` que YA existia (el script los crea sin `--force` y aborta por `set -e`; solo es idempotente en `bug` y `dom:*`): borra el/los label(s) en conflicto, o crea a mano los que falten con `gh label create`, y reintenta. En caso de exito, sugiere volver a correr /mefisto:onboard para ver el diagnostico en verde.
@@ -166,16 +109,16 @@ Aplica este paso **solo si** la seccion "CI hacia Azure" del diagnostico reporto
 4. **Solo si el usuario confirma**, valida los prerequisitos del punto 1 (`az` instalado, `az account show` con sesion, subscription-id provisto; si falta alguno, reportalo y no invoques nada). Si el backend del tfstate aun no existe, corre primero `bootstrap-backend.sh` (mismo consentimiento; crea el Resource Group, la Storage Account y el container del tfstate):
 
 ```bash
-MEFISTO_RUNTIME=claude "${MEFISTO_PACKAGE_ROOT}/scripts/bootstrap-backend.sh" --subscription <subscription-id>
+MEFISTO_RUNTIME=opencode "${MEFISTO_PACKAGE_ROOT}/scripts/bootstrap-backend.sh" --subscription <subscription-id>
 ```
 
 Despues, sustituyendo `<subscription-id>` por el que dio el usuario:
 
 ```bash
-MEFISTO_RUNTIME=claude "${MEFISTO_PACKAGE_ROOT}/scripts/setup-github-ci.sh" <subscription-id>
+MEFISTO_RUNTIME=opencode "${MEFISTO_PACKAGE_ROOT}/scripts/setup-github-ci.sh" <subscription-id>
 ```
 
-Con `<owner/repo>` como segundo argumento (solo si la auto-resolucion fallo): `MEFISTO_RUNTIME=claude "${MEFISTO_PACKAGE_ROOT}/scripts/setup-github-ci.sh" <subscription-id> <owner/repo>`. El script crea la app de Entra + Service Principal SIN secret, los role assignments y las federated credentials OIDC (MEF-ADR-0022). Si falla, las causas tipicas son: `bootstrap-backend.sh` aun no corrio (no se resuelve la Storage del tfstate); sin permisos de gestion de aplicaciones en Microsoft Entra (pide a un admin que lo provisione); no se pudo resolver el slug owner/repo (reintenta pasandolo).
+Con `<owner/repo>` como segundo argumento (solo si la auto-resolucion fallo): `MEFISTO_RUNTIME=opencode "${MEFISTO_PACKAGE_ROOT}/scripts/setup-github-ci.sh" <subscription-id> <owner/repo>`. El script crea la app de Entra + Service Principal SIN secret, los role assignments y las federated credentials OIDC (MEF-ADR-0022). Si falla, las causas tipicas son: `bootstrap-backend.sh` aun no corrio (no se resuelve la Storage del tfstate); sin permisos de gestion de aplicaciones en Microsoft Entra (pide a un admin que lo provisione); no se pudo resolver el slug owner/repo (reintenta pasandolo).
 
 5. **Reporta el resultado al usuario (CA-5)** tal como lo imprimio el bloque. Si la provision fue exitosa, **recuerdale explicitamente que el script imprime 3 secrets OIDC** (`AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`) que debe **pegar a mano** en GitHub (Settings > Secrets and variables > Actions), porque ni el script ni `/mefisto:onboard` los suben; no hay client secret que expire (OIDC, MEF-ADR-0022). Si fallo, no abortes ni reescribas el resto del flujo: el diagnostico (pasos 1-2) y las otras provisiones (labels) son independientes. En ambos casos sugiere volver a correr `/mefisto:onboard` para confirmar el estado real tras la provision.
 
@@ -234,7 +177,7 @@ Aplica este paso **solo si** la seccion "Worker de proyecciones" del diagnostico
 
 1. **Pide confirmacion explicita (CA-4).** El BC ya declaro que adopta proyecciones (el token esta en `true`); este paso solo pregunta si generar el worker ahora, p. ej.: "El BC declara `projections.enabled: true` pero el worker de proyecciones (`<RootNamespace>.Projections`) todavia no existe. ¿Quieres que corra `/mefisto:scaffold-projections` ahora para generarlo (MEF-ADR-0034)? [si/no]".
 2. **No ejecutes nada sin un "si" explicito.** Si el usuario no confirma (o prefiere hacerlo despues), no invoques nada: recuerdale que puede correr `/mefisto:scaffold-projections` el mismo cuando quiera, y termina el paso. El comportamiento por defecto de `/mefisto:onboard` sigue siendo solo diagnostico.
-3. **Solo si el usuario confirma**, encadena `/mefisto:scaffold-projections` leyendo integramente su `Proceso` -- mismo patron que `/mefisto:install-auth` encadena `/mefisto:install-workos`/`/mefisto:install-apim`: nunca reimplementes la logica del skill ni la del agente `projections-scaffolder`. Lee `"${MEFISTO_PACKAGE_ROOT}/commands/scaffold-projections.md"` (el documento del comando `/mefisto:scaffold-projections` de la distribucion activa) sin transcribirlo aca.
+3. **Solo si el usuario confirma**, encadena `/mefisto:scaffold-projections` leyendo integramente su `Proceso` -- mismo patron que `/mefisto:install-auth` encadena `/mefisto:install-workos`/`/mefisto:install-apim`: nunca reimplementes la logica del skill ni la del agente `projections-scaffolder`. Lee `"${MEFISTO_PACKAGE_ROOT}/commands/mefisto:scaffold-projections.md"` (el documento del comando `/mefisto:scaffold-projections` de la distribucion activa) sin transcribirlo aca.
 
 Ejecuta sus pre-condiciones (token `projections.enabled`, cwd de consumidor) y su `Proceso` completo tal cual -- incluida su propia idempotencia interna: si el worker ya existiera (condicion de carrera improbable entre el diagnostico y este paso), `projections-scaffolder` lo reporta el mismo sin duplicar nada.
 
