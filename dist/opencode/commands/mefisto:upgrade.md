@@ -1,84 +1,27 @@
 ---
 description: "Actualiza Mefisto en el runtime activo y alinea el par de adaptadores ya adherido o, con una confirmacion, lo habilita."
-model: "haiku"
 ---
 <!-- GENERADO por src/published/scripts/generate-published-adapters.sh desde src/published/commands/upgrade.md. No editar a mano. -->
 ```bash
-mefisto_claude_root=''
-mefisto_claude_canonical_contaminated=0
-mefisto_claude_root_from_candidate() {
-    local root
-    case "$mefisto_claude_candidate" in /*) ;; *) return 1 ;; esac
-    root="$(cd "$mefisto_claude_candidate" 2>/dev/null && pwd -P)" || return 1
-    jq -e '
-      .name == "mefisto" and
-      (.version | type == "string" and test("^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?(\\+[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?$"))
-    ' "$root/.claude-plugin/plugin.json" >/dev/null 2>&1 || return 1
-    jq -e --arg version "$(jq -er '.version | strings' "$root/.claude-plugin/plugin.json" 2>/dev/null)" '
-      (keys | sort) == ["commit", "runtime", "schemaVersion", "version"] and
-      .schemaVersion == 1 and .runtime == "claude" and .version == $version and
-      (.commit | type == "string" and test("^[0-9a-f]{40}$"))
-    ' "$root/mefisto-manifest.json" >/dev/null 2>&1 || return 1
-    printf '%s\n' "$root"
+mefisto_opencode_data_root() {
+    if [ -n "${XDG_DATA_HOME:-}" ]; then printf '%s/mefisto\n' "$XDG_DATA_HOME"
+    elif [ "$(uname -s)" = Darwin ]; then printf '%s/Library/Application Support/mefisto\n' "$HOME"
+    else printf '%s/.local/share/mefisto\n' "$HOME"; fi
 }
-mefisto_claude_is_opencode_root() {
-    local root
-    case "$mefisto_claude_candidate" in /*) ;; *) return 1 ;; esac
-    root="$(cd "$mefisto_claude_candidate" 2>/dev/null && pwd -P)" || return 1
-    jq -e '
-      (keys | sort) == ["commit", "minimumRuntimeVersion", "runtime", "schemaVersion", "version"] and
-      .schemaVersion == 1 and .runtime == "opencode" and
-      (.version | type == "string" and test("^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?(\\+[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?$")) and
-      (.commit | type == "string" and test("^[0-9a-f]{40}$")) and
-      (.minimumRuntimeVersion | type == "string" and test("^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"))
-    ' "$root/mefisto-manifest.json" >/dev/null 2>&1
+mefisto_opencode_launcher="$(mefisto_opencode_data_root)/active/bin/mefisto-opencode"
+if [ ! -f "$mefisto_opencode_launcher" ] || [ -L "$mefisto_opencode_launcher" ] || [ ! -x "$mefisto_opencode_launcher" ]; then
+    printf '%s\n' 'ERROR OpenCode: no hay una release activa valida; instale o active la release OpenCode.' >&2; exit 1
+fi
+MEFISTO_PACKAGE_ROOT="$("$mefisto_opencode_launcher" package-root)" || {
+    printf '%s\n' 'ERROR OpenCode: no se pudo resolver la release activa; instale o active la release OpenCode.' >&2; exit 1;
 }
-if [ -n "${CLAUDE_PLUGIN_ROOT:-}" ]; then
-    mefisto_claude_candidate="$CLAUDE_PLUGIN_ROOT"
-    mefisto_claude_root="$(mefisto_claude_root_from_candidate)" || {
-        printf '%s\n' 'ERROR Claude: la raiz indicada por CLAUDE_PLUGIN_ROOT es invalida; reabra o reinstale el plugin.' >&2; exit 1;
-    }
-else
-    mefisto_claude_cursor="$PWD"
-    while :; do
-        if [ -f "$mefisto_claude_cursor/.mefisto/pipeline/.plugin-root" ]; then
-            mefisto_claude_candidate="$(< "$mefisto_claude_cursor/.mefisto/pipeline/.plugin-root")"
-            if mefisto_claude_root="$(mefisto_claude_root_from_candidate)"; then break; fi
-            if mefisto_claude_is_opencode_root; then
-                mefisto_claude_canonical_contaminated=1
-                break
-            else
-                printf '%s\n' 'ERROR Claude: metadata del marker canonico invalida; reabra o reinstale el plugin.' >&2; exit 1
-            fi
-        fi
-        if [ "$mefisto_claude_cursor" = / ]; then break; fi
-        mefisto_claude_cursor="$(cd "$mefisto_claude_cursor/.." && pwd -P)"
-    done
-    if [ -z "$mefisto_claude_root" ]; then
-        mefisto_claude_cursor="$PWD"
-        while :; do
-            if [ -f "$mefisto_claude_cursor/.claude/pipeline/.plugin-root" ]; then
-                mefisto_claude_candidate="$(< "$mefisto_claude_cursor/.claude/pipeline/.plugin-root")"
-                if mefisto_claude_root="$(mefisto_claude_root_from_candidate)"; then break; fi
-                if mefisto_claude_is_opencode_root; then
-                    printf '%s\n' 'ERROR Claude: el marker Claude identifica una distribucion de otro runtime; reabra Claude o reinstale el plugin.' >&2; exit 1
-                fi
-                printf '%s\n' 'ERROR Claude: metadata del marker Claude invalida; reabra o reinstale el plugin.' >&2; exit 1
-            fi
-            if [ "$mefisto_claude_cursor" = / ]; then break; fi
-            mefisto_claude_cursor="$(cd "$mefisto_claude_cursor/.." && pwd -P)"
-        done
-    fi
-fi
-if [ -z "$mefisto_claude_root" ]; then
-    if [ "$mefisto_claude_canonical_contaminated" -eq 1 ]; then
-        printf '%s\n' 'ERROR Claude: el marker canonico identifica una distribucion OpenCode y no existe un mirror Claude valido; reabra Claude o reinstale el plugin.' >&2
-    else
-        printf '%s\n' 'ERROR Claude: no se encontro una raiz Claude valida; reabra o reinstale el plugin.' >&2
-    fi
-    exit 1
-fi
-MEFISTO_PACKAGE_ROOT="$mefisto_claude_root"
+case "$MEFISTO_PACKAGE_ROOT" in
+    /*) ;;
+    *) printf '%s\n' 'ERROR OpenCode: la release activa no devolvio una raiz absoluta; reinstale o active la release OpenCode.' >&2; exit 1 ;;
+esac
+MEFISTO_PACKAGE_ROOT="$(cd "$MEFISTO_PACKAGE_ROOT" 2>/dev/null && pwd -P)" || {
+    printf '%s\n' 'ERROR OpenCode: la release activa no existe; reinstale o active la release OpenCode.' >&2; exit 1;
+}
 export MEFISTO_PACKAGE_ROOT
 ```
 
@@ -92,7 +35,7 @@ Actualiza Mefisto instalado en este consumidor a la ultima version publicada des
 
 No leas configuracion ajena, providers, modelos, permisos ni auth stores. La unica autoridad es la salida JSON versionada de `upgrade.sh --status`:
 
-MEFISTO_RUNTIME=claude "${MEFISTO_PACKAGE_ROOT}/scripts/upgrade.sh" --status
+MEFISTO_RUNTIME=opencode "${MEFISTO_PACKAGE_ROOT}/scripts/upgrade.sh" --status
 
 Presenta el JSON sin reinterpretarlo. Estados posibles de `peer.state`:
 
@@ -116,11 +59,11 @@ Invoca exactamente una de estas dos formas, segun la decision:
 
 Con alineacion del par:
 
-MEFISTO_RUNTIME=claude "${MEFISTO_PACKAGE_ROOT}/scripts/upgrade.sh" --align-peer
+MEFISTO_RUNTIME=opencode "${MEFISTO_PACKAGE_ROOT}/scripts/upgrade.sh" --align-peer
 
 Solo el runtime activo:
 
-MEFISTO_RUNTIME=claude "${MEFISTO_PACKAGE_ROOT}/scripts/upgrade.sh" 2>&1
+MEFISTO_RUNTIME=opencode "${MEFISTO_PACKAGE_ROOT}/scripts/upgrade.sh" 2>&1
 
 Si el script termina con `ERROR`, muestra su salida tal cual. Una falla deja las releases existentes para reintento o rollback; no intentes una reparacion adicional ni una poda.
 
@@ -132,7 +75,7 @@ Muestra sin reinterpretar la salida del script. Reten `Version cargada en esta s
 
 Solo si `HERDR_ENV=1`, refresca los agentes herdr con la version nueva. Es best-effort: un fallo o salida vacia no debe impedir la poda ni el cierre.
 
-MEFISTO_RUNTIME=claude "${MEFISTO_PACKAGE_ROOT}/scripts/herdr-pipeline.sh" --refresh-agents
+MEFISTO_RUNTIME=opencode "${MEFISTO_PACKAGE_ROOT}/scripts/herdr-pipeline.sh" --refresh-agents
 
 Reporta la salida sin reinterpretar: por cada linea no vacia `<pane_id> <runtime> <accion>`, muestra una tabla con las columnas `Pane`, `Runtime` y `Accion`. Si no hubo lineas, muestra exactamente: `Sin panes Herdr que refrescar`. No afirmes que la sesion o pane propio cambio. Fuera de herdr (`HERDR_ENV` distinto de `1`), no ejecutes ni menciones este paso.
 
@@ -140,7 +83,7 @@ Reporta la salida sin reinterpretar: por cada linea no vacia `<pane_id> <runtime
 
 La poda aplica solo al runtime activo y solo si el script listo versiones podables. Muestra la lista exacta y pide confirmacion explicita. Si responde exactamente `si`, invoca la poda; si la version cargada es conocida, agrega `--loaded <version-cargada>`. Si no confirma, no borres nada. Nunca podes la version cargada ni el par.
 
-MEFISTO_RUNTIME=claude "${MEFISTO_PACKAGE_ROOT}/scripts/upgrade.sh" --prune
+MEFISTO_RUNTIME=opencode "${MEFISTO_PACKAGE_ROOT}/scripts/upgrade.sh" --prune
 
 ### 6. Cerrar con el reload
 
