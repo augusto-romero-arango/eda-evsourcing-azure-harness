@@ -67,6 +67,14 @@ MEFISTO_FAKE_SCRIPT=success "$RUNNER" --runtime fake --agent a --cwd "$TMP/wt" \
     --prompt-file "$TMP/prompt" --event-log "$TMP/events-human.jsonl" --events-log "$HUMAN" >/dev/null 2>&1
 grep -q '\[stage\] a success' "$HUMAN" && pass || fail "telemetria explicita"
 
+HUMAN_TZ="$TMP/human-tz.log"
+TZ=America/Bogota MEFISTO_FAKE_SCRIPT=success "$RUNNER" --runtime fake --agent a --cwd "$TMP/wt" \
+    --prompt-file "$TMP/prompt" --event-log "$TMP/events-tz.jsonl" --events-log "$HUMAN_TZ" >/dev/null 2>&1
+TS_TERM="$(jq -r 'select(.type=="run.completed") | .ts' "$TMP/events-tz.jsonl" | head -1)"
+TS_EPOCH="$(TZ=UTC jq -nr --arg t "$TS_TERM" '$t | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601')"
+EXPECT_HMS="$(TZ=America/Bogota date -r "$TS_EPOCH" +%H:%M:%S 2>/dev/null || TZ=America/Bogota date -d "@$TS_EPOCH" +%H:%M:%S)"
+grep -q "^\[$EXPECT_HMS\]\[stage\] a success" "$HUMAN_TZ" && pass || fail "hora local en [stage] (esperada $EXPECT_HMS)"
+
 MEFISTO_FAKE_SCRIPT=hang "$RUNNER" --runtime fake --agent a --cwd "$TMP/wt" \
     --prompt-file "$TMP/prompt" --event-log "$TMP/timeout.jsonl" --timeout 1 >/dev/null 2>&1
 rc=$?
