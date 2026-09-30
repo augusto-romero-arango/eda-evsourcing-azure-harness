@@ -124,7 +124,9 @@ No reinterpretes ni recalcules el checklist ni el bloque "Proximos pasos": el bl
 
 ### 3. Migración opt-in de directivas canónicas
 
-Ofrece este paso **solo** cuando el diagnóstico reportó que falta `AGENTS.md` o, bajo el adaptador Claude, el puente exacto `@AGENTS.md` en `CLAUDE.md` (bajo OpenCode el puente es opcional e informativo: no lo ofrezcas salvo que el usuario lo pida). Muestra primero el plan que produce `--preview`: crear `AGENTS.md` solamente si está ausente, crear o añadir el puente sin mover ni borrar texto existente, y cualquier aviso de doctrina legacy duplicada. Si `AGENTS.md` existe pero está incompleto, explica que no se fusiona por heurística y que debe completarse manualmente.
+Ofrece este paso **solo** cuando el diagnóstico reportó que falta `AGENTS.md` o, bajo el adaptador Claude, el puente exacto `@AGENTS.md` en `CLAUDE.md` (bajo OpenCode el puente es informativo: si solo falta el puente, ofrece el paso únicamente cuando el usuario indique que el equipo también usa Claude). Muestra primero el plan que produce `--preview`: crear `AGENTS.md` solamente si está ausente, crear o añadir el puente sin mover ni borrar texto existente, y cualquier aviso de doctrina legacy duplicada. Si `AGENTS.md` existe pero está incompleto, explica que no se fusiona por heurística y que debe completarse manualmente.
+
+Antes de previsualizar, pregunta si el equipo **también usa Claude**: si responde que sí, ofrece `--with-claude-bridge` (crea o completa el puente `CLAUDE.md` -> `@AGENTS.md` aun bajo OpenCode) y agrega ese flag tanto a la previsualización (`MEFISTO_RUNTIME=claude "${MEFISTO_PACKAGE_ROOT}/scripts/onboard-migrate-directives.sh" --preview --with-claude-bridge`) como a la aplicación (`MEFISTO_RUNTIME=claude "${MEFISTO_PACKAGE_ROOT}/scripts/onboard-migrate-directives.sh" --apply --with-claude-bridge`), para que el plan confirmado sea el que se aplica. Sin esa respuesta, no lo agregues.
 
 Advierte que, aunque la migración es conservadora, escribe archivos del consumidor. Presenta primero el plan real con este bloque, sin aplicar cambios:
 
@@ -133,8 +135,6 @@ MEFISTO_RUNTIME=claude "${MEFISTO_PACKAGE_ROOT}/scripts/onboard-migrate-directiv
 ```
 
 Si la previsualización aborta por un preflight fallido -- incluido un `AGENTS.md` existente pero incompleto -- muestra sus instrucciones manuales y no ofrezcas aplicar. Si imprime el plan, pregunta si desea aplicar **ese plan exacto**. Sin un `si` explícito, no ejecutes ninguna escritura. Solo tras ese `si`, ejecuta `MEFISTO_RUNTIME=claude "${MEFISTO_PACKAGE_ROOT}/scripts/onboard-migrate-directives.sh" --apply`. El script hace su preflight y es idempotente; no reimplementes su plantilla ni sus validaciones. Si informa secciones legacy en `CLAUDE.md`, deja visible que deben retirarse manualmente antes de que el contrato sea completamente canónico.
-
-Antes de aplicar, pregunta si el equipo **también usa Claude**: si responde que sí, ofrece `--with-claude-bridge` (crea o completa el puente `CLAUDE.md` -> `@AGENTS.md` aun bajo OpenCode) y usa `MEFISTO_RUNTIME=claude "${MEFISTO_PACKAGE_ROOT}/scripts/onboard-migrate-directives.sh" --apply --with-claude-bridge` en lugar de la variante sin flag. Sin esa respuesta, no lo agregues.
 
 ### 4. Provision opt-in de los labels faltantes
 
