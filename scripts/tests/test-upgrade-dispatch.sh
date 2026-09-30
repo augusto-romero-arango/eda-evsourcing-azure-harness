@@ -26,6 +26,10 @@ cat > "$BIN/gh" <<'S'
 echo "gh $*" >> "$STUB_LOG"
 printf '%s\n' "${STUB_GH_TAG:-v1.1.0}"
 S
+cat > "$BIN/claude" <<'S'
+#!/usr/bin/env bash
+echo "unexpected"; exit 2
+S
 LAUNCHER="$TMP/mefisto-opencode"
 cat > "$LAUNCHER" <<'S'
 #!/usr/bin/env bash
@@ -38,7 +42,7 @@ case "$1" in
 esac
 exit 0
 S
-chmod +x "$STUBS"/*.sh "$BIN/gh" "$LAUNCHER"
+chmod +x "$STUBS"/*.sh "$BIN/gh" "$BIN/claude" "$LAUNCHER"
 export STUB_LOG="$TMP/log" MEFISTO_OPENCODE_LAUNCHER="$LAUNCHER" PATH="$BIN:$PATH"
 run() { : > "$STUB_LOG"; (cd "$CONSUMER" && "$STUBS/upgrade.sh" "$@" 2>&1); }
 log() { cat "$STUB_LOG"; }
