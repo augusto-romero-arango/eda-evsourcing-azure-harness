@@ -53,7 +53,7 @@ prepare_repo() {
 
 run_flip() {
     local repo="$1" output="$2"
-    (cd "$repo" && bash -c "$FLIP_BLOCK
+    (cd "$repo" && MEFISTO_PACKAGE_ROOT="$REPO_ROOT" bash -c "$FLIP_BLOCK
 $STAGE_BLOCK") >"$output" 2>&1
 }
 

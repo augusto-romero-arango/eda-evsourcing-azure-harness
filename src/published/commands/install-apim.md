@@ -1,107 +1,16 @@
 ---
-description: "Instala/actualiza el gateway APIM, cablea las GitHub variables y ejecuta la transicion a->b de tenancy."
-argument-hint: "--domain <Dominio> [--domain <Dominio2> ...] [--env <env>] [--cors-origin <origin> ...] [--authorization-server-url <url>]"
-model: "sonnet"
+{
+  "kind": "command",
+  "id": "install-apim",
+  "description": "Instala/actualiza el gateway APIM, cablea las GitHub variables y ejecuta la transicion a->b de tenancy.",
+  "profile": "balanced",
+  "arguments": "--domain <Dominio> [--domain <Dominio2> ...] [--env <env>] [--cors-origin <origin> ...] [--authorization-server-url <url>]"
+}
 ---
-<!-- GENERADO por src/published/scripts/generate-published-adapters.sh desde src/published/commands/install-apim.md. No editar a mano. -->
-```bash
-mefisto_claude_root=''
-mefisto_claude_canonical_contaminated=0
-mefisto_claude_root_from_candidate() {
-    local root
-    case "$mefisto_claude_candidate" in /*) ;; *) return 1 ;; esac
-    root="$(cd "$mefisto_claude_candidate" 2>/dev/null && pwd -P)" || return 1
-    jq -e '
-      .name == "mefisto" and
-      (.version | type == "string" and test("^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?(\\+[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?$"))
-    ' "$root/.claude-plugin/plugin.json" >/dev/null 2>&1 || return 1
-    jq -e --arg version "$(jq -er '.version | strings' "$root/.claude-plugin/plugin.json" 2>/dev/null)" '
-      (keys | sort) == ["commit", "runtime", "schemaVersion", "version"] and
-      .schemaVersion == 1 and .runtime == "claude" and .version == $version and
-      (.commit | type == "string" and test("^[0-9a-f]{40}$"))
-    ' "$root/mefisto-manifest.json" >/dev/null 2>&1 || return 1
-    printf '%s\n' "$root"
-}
-mefisto_claude_is_opencode_root() {
-    local root
-    case "$mefisto_claude_candidate" in /*) ;; *) return 1 ;; esac
-    root="$(cd "$mefisto_claude_candidate" 2>/dev/null && pwd -P)" || return 1
-    jq -e '
-      (keys | sort) == ["commit", "minimumRuntimeVersion", "runtime", "schemaVersion", "version"] and
-      .schemaVersion == 1 and .runtime == "opencode" and
-      (.version | type == "string" and test("^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?(\\+[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?$")) and
-      (.commit | type == "string" and test("^[0-9a-f]{40}$")) and
-      (.minimumRuntimeVersion | type == "string" and test("^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"))
-    ' "$root/mefisto-manifest.json" >/dev/null 2>&1
-}
-if [ -n "${CLAUDE_PLUGIN_ROOT:-}" ]; then
-    mefisto_claude_candidate="$CLAUDE_PLUGIN_ROOT"
-    mefisto_claude_root="$(mefisto_claude_root_from_candidate)" || {
-        printf '%s\n' 'ERROR Claude: la raiz indicada por CLAUDE_PLUGIN_ROOT es invalida; reabra o reinstale el plugin.' >&2; exit 1;
-    }
-else
-    mefisto_claude_cursor="$PWD"
-    while :; do
-        if [ -f "$mefisto_claude_cursor/.mefisto/pipeline/.plugin-root" ]; then
-            mefisto_claude_candidate="$(< "$mefisto_claude_cursor/.mefisto/pipeline/.plugin-root")"
-            if mefisto_claude_root="$(mefisto_claude_root_from_candidate)"; then break; fi
-            if mefisto_claude_is_opencode_root; then
-                mefisto_claude_canonical_contaminated=1
-                break
-            else
-                printf '%s\n' 'ERROR Claude: metadata del marker canonico invalida; reabra o reinstale el plugin.' >&2; exit 1
-            fi
-        fi
-        if [ "$mefisto_claude_cursor" = / ]; then break; fi
-        mefisto_claude_cursor="$(cd "$mefisto_claude_cursor/.." && pwd -P)"
-    done
-    if [ -z "$mefisto_claude_root" ]; then
-        mefisto_claude_cursor="$PWD"
-        while :; do
-            if [ -f "$mefisto_claude_cursor/.claude/pipeline/.plugin-root" ]; then
-                mefisto_claude_candidate="$(< "$mefisto_claude_cursor/.claude/pipeline/.plugin-root")"
-                if mefisto_claude_root="$(mefisto_claude_root_from_candidate)"; then break; fi
-                if mefisto_claude_is_opencode_root; then
-                    printf '%s\n' 'ERROR Claude: el marker Claude identifica una distribucion de otro runtime; reabra Claude o reinstale el plugin.' >&2; exit 1
-                fi
-                printf '%s\n' 'ERROR Claude: metadata del marker Claude invalida; reabra o reinstale el plugin.' >&2; exit 1
-            fi
-            if [ "$mefisto_claude_cursor" = / ]; then break; fi
-            mefisto_claude_cursor="$(cd "$mefisto_claude_cursor/.." && pwd -P)"
-        done
-    fi
-fi
-if [ -z "$mefisto_claude_root" ]; then
-    if [ "$mefisto_claude_canonical_contaminated" -eq 1 ]; then
-        printf '%s\n' 'ERROR Claude: el marker canonico identifica una distribucion OpenCode y no existe un mirror Claude valido; reabra Claude o reinstale el plugin.' >&2
-    else
-        printf '%s\n' 'ERROR Claude: no se encontro una raiz Claude valida; reabra o reinstale el plugin.' >&2
-    fi
-    exit 1
-fi
-MEFISTO_PACKAGE_ROOT="$mefisto_claude_root"
-export MEFISTO_PACKAGE_ROOT
-```
-```bash
-if [ -f "AGENTS.md" ]; then
-    if [ -f "CLAUDE.md" ]; then
-        printf '%s\n' 'AVISO: se usara AGENTS.md; se ignora el legacy CLAUDE.md. Migra o elimina conscientemente el archivo legacy para evitar divergencias.' >&2
-    fi
-    MEFISTO_INSTRUCTIONS_PATH="AGENTS.md"
-elif [ -f "CLAUDE.md" ]; then
-    MEFISTO_INSTRUCTIONS_PATH="CLAUDE.md"
-else
-    printf '%s\n' 'ERROR: no se encontro AGENTS.md, la fuente canonica de directivas del consumidor.' >&2
-    printf '%s\n' '  Se acepta solo para lectura el fallback legacy CLAUDE.md.' >&2
-    printf '%s\n' '  Ejecuta /mefisto:onboard para diagnosticar y completar el contrato del consumidor.' >&2
-    exit 1
-fi
-export MEFISTO_INSTRUCTIONS_PATH
-```
 
-Instala/actualiza el gateway APIM (Azure API Management) delante de las Function Apps del BC, fiel a MEF-ADR-0032: invoca el agente `apim-gateway-scaffolder` (issue #335) para generar/actualizar los modulos Terraform `api-management`/`apim-function-api` de forma aditiva por dominio, cablea `TF_VAR_workos_client_id` desde la GitHub variable `WORKOS_CLIENT_ID` (la que registro `/mefisto:install-workos`), y ejecuta la **transicion a->b de tenancy** (MEF-ADR-0028 seccion 4, issue #337, enmendada por el issue #802): flip de `tenancy.strategy` a `"multi-tenant-header"`, scaffold de la biblioteca `src/{RootNamespace}.TenantResolver/` (patron AsyncLocal + middleware, issue #803) y migracion del `ITenantResolver` de **todos** los dominios ya scaffoldeados del BC -- incluidos los que quedaron en el hibrido `AgregarTenantResolverHibrido()` probado roto en Azure Functions isolated worker (issue #802) -- a esa biblioteca. Ademas **detecta automaticamente los servidores MCP del BC** (`src/{RootNamespace}.Mcp.*`, issue #820) y los expone en el mismo flip a->b con el modulo `apim-mcp-api` (gate OAuth de la variante MCP/Connect, MEF-ADR-0032 seccion 9), cableando `Mcp__ResourceUri`/`Mcp__AuthorizationServer` del servidor a la URL real de APIM. Es la capa de **borde** de la auth (segunda tras `/mefisto:install-workos`): APIM se monta delante de Function Apps existentes, asi que exige infra base + al menos un dominio ya scaffoldeado. Comunicate en **espanol**.
+Instala/actualiza el gateway APIM (Azure API Management) delante de las Function Apps del BC, fiel a MEF-ADR-0032: invoca el agente `apim-gateway-scaffolder` (issue #335) para generar/actualizar los modulos Terraform `api-management`/`apim-function-api` de forma aditiva por dominio, cablea `TF_VAR_workos_client_id` desde la GitHub variable `WORKOS_CLIENT_ID` (la que registro `{{mefisto:command install-workos}}`), y ejecuta la **transicion a->b de tenancy** (MEF-ADR-0028 seccion 4, issue #337, enmendada por el issue #802): flip de `tenancy.strategy` a `"multi-tenant-header"`, scaffold de la biblioteca `src/{RootNamespace}.TenantResolver/` (patron AsyncLocal + middleware, issue #803) y migracion del `ITenantResolver` de **todos** los dominios ya scaffoldeados del BC -- incluidos los que quedaron en el hibrido `AgregarTenantResolverHibrido()` probado roto en Azure Functions isolated worker (issue #802) -- a esa biblioteca. Ademas **detecta automaticamente los servidores MCP del BC** (`src/{RootNamespace}.Mcp.*`, issue #820) y los expone en el mismo flip a->b con el modulo `apim-mcp-api` (gate OAuth de la variante MCP/Connect, MEF-ADR-0032 seccion 9), cableando `Mcp__ResourceUri`/`Mcp__AuthorizationServer` del servidor a la URL real de APIM. Es la capa de **borde** de la auth (segunda tras `{{mefisto:command install-workos}}`): APIM se monta delante de Function Apps existentes, asi que exige infra base + al menos un dominio ya scaffoldeado. Comunicate en **espanol**.
 
-Antes de continuar, aborta si existe `src/internal/scripts/generate-internal-adapters.sh`: ese directorio es el repositorio de Mefisto, no un consumidor.
+{{mefisto:assert-consumer-repo}}
 
 ## Entrada
 
@@ -111,12 +20,12 @@ Antes de continuar, aborta si existe `src/internal/scripts/generate-internal-ada
 --domain <Dominio> [--domain <Dominio2> ...] [--env <env>] [--cors-origin <origin> ...] [--authorization-server-url <url>]
 ```
 
-- **`--domain <Dominio>`** (obligatorio, repetible): uno o mas dominios **ya scaffoldeados** (`/mefisto:scaffold`) a exponer detras del gateway. Acepta kebab o PascalCase. Podes correr este skill varias veces agregando dominios nuevos cada vez (CA-2, aditivo) sin re-crear la instancia.
+- **`--domain <Dominio>`** (obligatorio, repetible): uno o mas dominios **ya scaffoldeados** (`{{mefisto:command scaffold}}`) a exponer detras del gateway. Acepta kebab o PascalCase. Podes correr este skill varias veces agregando dominios nuevos cada vez (CA-2, aditivo) sin re-crear la instancia.
 - **`--env <env>`** (opcional, default `dev`): ambiente Terraform.
 - **`--cors-origin <origin>`** (repetible): origen del SPA para el preflight CORS (B3, MEF-ADR-0032). **Obligatorio solo la primera vez** que se instala el gateway en este entorno (cuando `apim.tf` todavia no existe); en corridas posteriores se ignora -- agregar un origen a un gateway ya instalado es cambiar el valor de la GitHub variable `CORS_ALLOWED_ORIGINS` (fuera del alcance de este skill, se hace con `gh variable set CORS_ALLOWED_ORIGINS`).
 - **`--authorization-server-url <url>`** (issue #820): dominio AuthKit del entorno (MEF-ADR-0032 B12), **nunca** el issuer client-specific de login. No hace falta pasarlo a mano si `WORKOS_AUTHORIZATION_SERVER_URL` ya esta registrada como GitHub variable (de una corrida previa que expuso un servidor MCP); **obligatorio solo la primera vez que este skill detecta al menos un servidor MCP** (Paso 2b) y esa variable todavia no existe. Un BC sin ningun servidor MCP puede ignorar esta flag por completo (CA-5).
 
-**Los servidores MCP del BC (`src/{RootNamespace}.Mcp.*`) se detectan automaticamente** -- no hay una flag `--mcp-server`: a diferencia de los dominios (que este skill nunca crea), el operador no elige "cuales" servidores MCP exponer, expone **todos** los que `/mefisto:scaffold-mcp` ya genero, igual que la migracion de tenancy del paso 9 aplica a todos los dominios ya scaffoldeados (no solo a los pasados por `--domain`).
+**Los servidores MCP del BC (`src/{RootNamespace}.Mcp.*`) se detectan automaticamente** -- no hay una flag `--mcp-server`: a diferencia de los dominios (que este skill nunca crea), el operador no elige "cuales" servidores MCP exponer, expone **todos** los que `{{mefisto:command scaffold-mcp}}` ya genero, igual que la migracion de tenancy del paso 9 aplica a todos los dominios ya scaffoldeados (no solo a los pasados por `--domain`).
 
 Si falta `--domain`, responde con el uso exacto y detente sin ejecutar nada.
 
@@ -124,9 +33,9 @@ Si falta `--domain`, responde con el uso exacto y detente sin ejecutar nada.
 
 | Artefacto | Nombre | Por que |
 |---|---|---|
-| GitHub **variable** (client_id de login) | `WORKOS_CLIENT_ID` | Ya la registro `/mefisto:install-workos` (MEF-ADR-0032 seccion 6/7); este skill solo la **lee/verifica**, nunca la crea desde cero. |
-| GitHub **variable** (origenes CORS) | `CORS_ALLOWED_ORIGINS` | JSON list; requerida sin default por `apim.tf` (`var.cors_allowed_origins`), solo la primera vez que se crea el archivo (`${MEFISTO_PACKAGE_ROOT}/agents/apim-gateway-scaffolder.md` Paso 3b). |
-| GitHub **variable** (dominio AuthKit del entorno, issue #820) | `WORKOS_AUTHORIZATION_SERVER_URL` | No secreta (MEF-ADR-0032 seccion 6, mismo estatus que `WORKOS_CLIENT_ID`); requerida sin default por `apim-mcp-prm.tf` (`var.mcp_authorization_server_url`), solo la primera vez que este skill detecta al menos un servidor MCP (`${MEFISTO_PACKAGE_ROOT}/agents/apim-gateway-scaffolder.md` Paso 3c). |
+| GitHub **variable** (client_id de login) | `WORKOS_CLIENT_ID` | Ya la registro `{{mefisto:command install-workos}}` (MEF-ADR-0032 seccion 6/7); este skill solo la **lee/verifica**, nunca la crea desde cero. |
+| GitHub **variable** (origenes CORS) | `CORS_ALLOWED_ORIGINS` | JSON list; requerida sin default por `apim.tf` (`var.cors_allowed_origins`), solo la primera vez que se crea el archivo (`{{mefisto:package-root}}/agents/apim-gateway-scaffolder.md` Paso 3b). |
+| GitHub **variable** (dominio AuthKit del entorno, issue #820) | `WORKOS_AUTHORIZATION_SERVER_URL` | No secreta (MEF-ADR-0032 seccion 6, mismo estatus que `WORKOS_CLIENT_ID`); requerida sin default por `apim-mcp-prm.tf` (`var.mcp_authorization_server_url`), solo la primera vez que este skill detecta al menos un servidor MCP (`{{mefisto:package-root}}/agents/apim-gateway-scaffolder.md` Paso 3c). |
 | Token en `.mefisto/harness.config.json` | `tenancy.strategy = "multi-tenant-header"` | Flip que ejecuta CA-4 (MEF-ADR-0028 seccion 4). El legacy solo es fallback de lectura. |
 | Biblioteca de tenancy scaffoldeada | `src/<RootNamespace>.TenantResolver/` | `TenantExecutionContext` + `TenantContextMiddleware`, patron AsyncLocal + middleware (MEF-ADR-0028 seccion 4, enmendada por el issue #802). Una sola por BC, referenciada por todos los dominios migrados. |
 | Registro de `ITenantResolver` que reemplaza el transitorio (o el hibrido roto) | `services.AgregarTenantResolverAsyncLocal()` | Extension de la biblioteca scaffoldeada de arriba -- ya no de `Cosmos.MultiTenancy.CritterStack` (issue #802). |
@@ -142,12 +51,12 @@ Extrae la lista de `DOMINIOS` (uno o mas `--domain`), `ENV` (default `dev`), la 
 
 ```bash
 test -f "infra/environments/${ENV}/main.tf" && test -d infra/modules/resource-group || {
-  echo "FALTA la infraestructura base: corre /mefisto:infra-base antes de este comando."
+  echo "FALTA la infraestructura base: corre {{mefisto:command infra-base}} antes de este comando."
   exit 1
 }
 
 ls infra/environments/"${ENV}"/dominio-*.tf >/dev/null 2>&1 || {
-  echo "FALTA: ningun dominio esta scaffoldeado todavia en el entorno ${ENV}. Corre /mefisto:scaffold <dominio> primero -- APIM se monta delante de Function Apps existentes, no tiene sentido sin al menos una."
+  echo "FALTA: ningun dominio esta scaffoldeado todavia en el entorno ${ENV}. Corre {{mefisto:command scaffold}} <dominio> primero -- APIM se monta delante de Function Apps existentes, no tiene sentido sin al menos una."
   exit 1
 }
 ```
@@ -159,7 +68,7 @@ Si cualquiera de los dos falta, detente con el mensaje -- no continues con el re
 Resuelve primero `<RootNamespace>` desde el archivo efectivo de instrucciones (seccion "Tokens del harness"), igual que el paso 9.1 -- este paso lo necesita antes que aquel. Si no esta declarado en ese archivo, **no te detengas aca**: reporta `SERVIDORES_MCP` como no determinable y segui (el paso 9.1 vuelve a intentarlo y ahi si es bloqueante).
 
 ```bash
-ROOT_NAMESPACE=$(awk '/^[[:space:]]*RootNamespace:[[:space:]]*/ { sub(/^[[:space:]]*RootNamespace:[[:space:]]*/, ""); print; exit }' "${MEFISTO_INSTRUCTIONS_PATH}")
+ROOT_NAMESPACE=$(awk '/^[[:space:]]*RootNamespace:[[:space:]]*/ { sub(/^[[:space:]]*RootNamespace:[[:space:]]*/, ""); print; exit }' "{{mefisto:instructions-path}}")
 if [ -z "$ROOT_NAMESPACE" ]; then
     SERVIDORES_MCP="no determinable"
 else
@@ -167,7 +76,7 @@ else
 fi
 ```
 
-Cada nombre listado es un `{Proposito}` (PascalCase) ya scaffoldeado por `/mefisto:scaffold-mcp`. Llama a esta lista `SERVIDORES_MCP` -- puede venir vacia, y **eso es un resultado normal, no un error** (CA-5): un BC sin servidores MCP sigue el resto del proceso exactamente igual que antes del issue #820, sin ningun paso adicional de MCP en ningun punto de este skill. No hay flag para elegir "cuales" servidores MCP exponer -- se exponen todos los detectados, igual que la migracion de tenancy del paso 9 aplica a todos los dominios.
+Cada nombre listado es un `{Proposito}` (PascalCase) ya scaffoldeado por `{{mefisto:command scaffold-mcp}}`. Llama a esta lista `SERVIDORES_MCP` -- puede venir vacia, y **eso es un resultado normal, no un error** (CA-5): un BC sin servidores MCP sigue el resto del proceso exactamente igual que antes del issue #820, sin ningun paso adicional de MCP en ningun punto de este skill. No hay flag para elegir "cuales" servidores MCP exponer -- se exponen todos los detectados, igual que la migracion de tenancy del paso 9 aplica a todos los dominios.
 
 ### 3. Confirmar con el usuario
 
@@ -227,13 +136,13 @@ test -f "infra/environments/${ENV}/apim.tf" && echo "GATEWAY_EXISTE=true" || ech
 - Si `GATEWAY_EXISTE=false` (primera instalacion): `--cors-origin` es **obligatorio**. Si `$ARGUMENTS` no trajo ninguno, responde con el uso exacto y detente -- sin al menos un origen, `apim.tf` quedaria con `cors_allowed_origins` (variable requerida, sin default) sin forma de resolverla en el paso 7.
 - Si `GATEWAY_EXISTE=true`: ignora cualquier `--cors-origin` recibido y avisa al usuario que un origen nuevo se agrega actualizando la GitHub variable `CORS_ALLOWED_ORIGINS` directamente (`gh variable set CORS_ALLOWED_ORIGINS --body '[...]'`), fuera del alcance de este skill.
 
-### 6. Resolver `WORKOS_CLIENT_ID` (GitHub variable, ya registrada por `/mefisto:install-workos`)
+### 6. Resolver `WORKOS_CLIENT_ID` (GitHub variable, ya registrada por `{{mefisto:command install-workos}}`)
 
 ```bash
 WORKOS_CLIENT_ID=$(gh variable list --json name,value -q '.[] | select(.name=="WORKOS_CLIENT_ID") | .value' 2>/dev/null)
 ```
 
-- Si no hay valor **y** es la primera instalacion (`GATEWAY_EXISTE=false`): detente. Indica al usuario correr `/mefisto:install-workos` primero (produce este valor guiando el dashboard de WorkOS) o, si ya tiene la cuenta configurada, `gh variable set WORKOS_CLIENT_ID --body "<client_id>"`.
+- Si no hay valor **y** es la primera instalacion (`GATEWAY_EXISTE=false`): detente. Indica al usuario correr `{{mefisto:command install-workos}}` primero (produce este valor guiando el dashboard de WorkOS) o, si ya tiene la cuenta configurada, `gh variable set WORKOS_CLIENT_ID --body "<client_id>"`.
 - Si no hay valor pero el gateway ya existe (`GATEWAY_EXISTE=true`): continua -- el `apply` de CI ya tiene el valor cableado de una corrida anterior. Marca en el reporte final que la re-verificacion del discovery doc (Paso 0.3 del agente) no pudo correr por falta del client_id en este chat.
 - Si `gh` no esta autenticado o falla, repórtalo `NO VERIFICADO` y continua -- no bloquees el resto del skill por esto.
 
@@ -270,7 +179,7 @@ MCP_AUTH_SERVER_URL=$(gh variable list --json name,value -q '.[] | select(.name=
 
 ### 8. Invocar el agente `apim-gateway-scaffolder` (CA-2, CA-3)
 
-invoca la tool `Task` con el agente `mefisto:apim-gateway-scaffolder` y este mensaje: Instala/actualiza el gateway APIM en el entorno <env> para los dominios: <lista de --domain, separados por coma>. WorkOS client_id: <WORKOS_CLIENT_ID resuelto, o 'NO VERIFICADO' si vacio>. CORS allowed origins: <lista de --cors-origin, o 'gateway ya instalado, no recrear cors_allowed_origins' si GATEWAY_EXISTE=true>. Servidores MCP a exponer: <lista de SERVIDORES_MCP separados por coma, o 'ninguno' si vacia>. Dominio AuthKit del entorno (authorization_server_url): <MCP_AUTH_SERVER_URL resuelto, o 'N/A -- sin servidores MCP' si SERVIDORES_MCP vino vacia>.. Espera su resultado final y continua con el paso siguiente del comando.
+{{mefisto:launch-agent apim-gateway-scaffolder Instala/actualiza el gateway APIM en el entorno <env> para los dominios: <lista de --domain, separados por coma>. WorkOS client_id: <WORKOS_CLIENT_ID resuelto, o 'NO VERIFICADO' si vacio>. CORS allowed origins: <lista de --cors-origin, o 'gateway ya instalado, no recrear cors_allowed_origins' si GATEWAY_EXISTE=true>. Servidores MCP a exponer: <lista de SERVIDORES_MCP separados por coma, o 'ninguno' si vacia>. Dominio AuthKit del entorno (authorization_server_url): <MCP_AUTH_SERVER_URL resuelto, o 'N/A -- sin servidores MCP' si SERVIDORES_MCP vino vacia>.}}
 
 Espera el resultado del agente; luego continua con el paso 9 en esta misma sesion.
 
@@ -280,11 +189,11 @@ El agente es aditivo/idempotente por su cuenta (sus Pasos 0.2/0.4/1/2/2b/3/3b/3c
 
 #### 9.1 Resolver `<RootNamespace>`
 
-Reusa `<RootNamespace>` resuelto en el paso 2b. Si este bloque corre en un shell nuevo y debe releerlo, usa el mismo archivo efectivo de instrucciones. Si no esta declarado, detente y pide al usuario que lo declare en `AGENTS.md` (seccion "Tokens del harness") -- mismo criterio que `domain-scaffolder`; si el contrato del consumidor esta incompleto, sugiere /mefisto:onboard para diagnosticarlo.
+Reusa `<RootNamespace>` resuelto en el paso 2b. Si este bloque corre en un shell nuevo y debe releerlo, usa el mismo archivo efectivo de instrucciones. Si no esta declarado, detente y pide al usuario que lo declare en `AGENTS.md` (seccion "Tokens del harness") -- mismo criterio que `domain-scaffolder`; si el contrato del consumidor esta incompleto, sugiere {{mefisto:command onboard}} para diagnosticarlo.
 
 ```bash
 if [ -z "${ROOT_NAMESPACE:-}" ]; then
-    ROOT_NAMESPACE=$(awk '/^[[:space:]]*RootNamespace:[[:space:]]*/ { sub(/^[[:space:]]*RootNamespace:[[:space:]]*/, ""); print; exit }' "${MEFISTO_INSTRUCTIONS_PATH}")
+    ROOT_NAMESPACE=$(awk '/^[[:space:]]*RootNamespace:[[:space:]]*/ { sub(/^[[:space:]]*RootNamespace:[[:space:]]*/, ""); print; exit }' "{{mefisto:instructions-path}}")
 fi
 
 if [ -z "$ROOT_NAMESPACE" ]; then
@@ -298,7 +207,7 @@ fi
 ```bash
 REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || { echo "ERROR: no estas en un repositorio git"; exit 1; }
 
-COMMON="${MEFISTO_PACKAGE_ROOT}/scripts/_pipeline-common.sh"
+COMMON="{{mefisto:package-root}}/scripts/_pipeline-common.sh"
 if [ ! -f "$COMMON" ]; then
   echo "ERROR: no se hallo _pipeline-common.sh en el paquete activo ($COMMON)."
   exit 1
@@ -635,7 +544,7 @@ dotnet sln <SolutionFile> add "tests/<RootNamespace>.TenantResolver.Tests/"
 
 (`dotnet sln add` sobre un proyecto ya listado es no-op: imprime "La solucion ... ya contiene el proyecto X", sale con codigo 0 y no duplica la entrada -- misma idempotencia que ya explotan `domain-scaffolder` y `projections-scaffolder`. Si el repo no tiene archivo de solucion, omitilo y repórtalo.)
 
-**Verificar `global.json`** (mismo requisito que el resto del repo para xUnit v3 mtp-v2, ver `${MEFISTO_PACKAGE_ROOT}/agents/domain-scaffolder.md`): si `global.json` en la raiz no tiene la seccion `test`, este proyecto nuevo no corre con `dotnet test`. No lo toques si ya existe (otro scaffold ya lo dejo listo) -- solo repórtalo si falta.
+**Verificar `global.json`** (mismo requisito que el resto del repo para xUnit v3 mtp-v2, ver `{{mefisto:package-root}}/agents/domain-scaffolder.md`): si `global.json` en la raiz no tiene la seccion `test`, este proyecto nuevo no corre con `dotnet test`. No lo toques si ya existe (otro scaffold ya lo dejo listo) -- solo repórtalo si falta.
 
 **h. Compilar y correr los tests (gate antes de dar la biblioteca por lista):**
 
@@ -704,7 +613,7 @@ Para cada dominio a migrar:
 
 **c. `Program.cs`**: agrega `builder.UsarTenantContextMiddleware();` inmediatamente antes de `await builder.Build().RunAsync();` (sobre el `FunctionsApplicationBuilder`, nunca sobre ningun `app` -- MEF-ADR-0028 seccion 4, referencia [3]). En ambos estados de origen (etapa a o hibrido roto) esta linea falta por completo -- ninguna version anterior de este skill la agregaba -- asi que es siempre una insercion nueva, no un reemplazo. Agrega tambien `using <RootNamespace>.TenantResolver;` en `Program.cs` si no lo tiene ya (verifica con el build del paso f si hace falta).
 
-**d. `.github/workflows/deploy-{kebab}.yml`**: agrega `src/<RootNamespace>.TenantResolver/**` al filtro `on.push.paths`, junto a las rutas de `src/<RootNamespace>.{PascalCase}.DomainEvents/**` y `src/<RootNamespace>.PublicEvents/**` que ya estan ahi (si ya figura, no la dupliques). El paso a acaba de meter esa biblioteca **dentro** del artefacto que este workflow publica: sin la ruta, un cambio posterior a `TenantContextMiddleware`/`TenantExecutionContext` no dispara nada en el push a main y la Function App sigue sirviendo el binario anterior -- exactamente la staleness silenciosa (no una rotura que CI atrape) que documenta `${MEFISTO_PACKAGE_ROOT}/agents/domain-scaffolder.md` para las mismas rutas compartidas del BC (issues #454/#544). El filtro de alcance del job `determinar-alcance` (rama `workflow_run`) del mismo archivo acepta la misma lista: los dos filtros se mueven juntos.
+**d. `.github/workflows/deploy-{kebab}.yml`**: agrega `src/<RootNamespace>.TenantResolver/**` al filtro `on.push.paths`, junto a las rutas de `src/<RootNamespace>.{PascalCase}.DomainEvents/**` y `src/<RootNamespace>.PublicEvents/**` que ya estan ahi (si ya figura, no la dupliques). El paso a acaba de meter esa biblioteca **dentro** del artefacto que este workflow publica: sin la ruta, un cambio posterior a `TenantContextMiddleware`/`TenantExecutionContext` no dispara nada en el push a main y la Function App sigue sirviendo el binario anterior -- exactamente la staleness silenciosa (no una rotura que CI atrape) que documenta `{{mefisto:package-root}}/agents/domain-scaffolder.md` para las mismas rutas compartidas del BC (issues #454/#544). El filtro de alcance del job `determinar-alcance` (rama `workflow_run`) del mismo archivo acepta la misma lista: los dos filtros se mueven juntos.
 
 **e. Elimina** `Infraestructura/TenantResolverMonoTenantPorDefecto.cs` de ese dominio, **si existe** (un dominio que venia del hibrido roto ya no lo tiene -- la migracion anterior ya lo habia borrado; esto es normal, no un error).
 
@@ -807,7 +716,7 @@ Resumen claro y en orden:
 - **`WORKOS_CLIENT_ID`/`CORS_ALLOWED_ORIGINS`** (pasos 6-7): resueltos, registrados, o `NO VERIFICADO`.
 - **Servidores MCP detectados** (paso 2b, issue #820): lista de `SERVIDORES_MCP` (o "ninguno" -- CA-5); si vino al menos uno, `WORKOS_AUTHORIZATION_SERVER_URL` (paso 7b): resuelta, registrada, o el bloqueo si faltaba y no vino `--authorization-server-url`.
 - **Agente `apim-gateway-scaffolder`** (paso 8): modulos creados/omitidos, dominios agregados/omitidos (con el motivo si alguno fallo el guard de scaffold), resultado de `terraform validate`, gates B5/B10 pendientes que el agente haya reportado, y el delta manual de CORS (`<method>QUERY</method>` ausente en un modulo `api-management` preexistente, issue #608) si el agente lo reporto.
-- **Servidores MCP expuestos** (paso 8, issue #820), si `SERVIDORES_MCP` no vino vacia: `apim-mcp-api`/`apim-mcp-prm.tf` creados u omitidos; `apim-mcp-{proposito-kebab}.tf` por servidor, creado u omitido; cualquier servidor MCP que fallo el guard de scaffold del agente (indicar `/mefisto:scaffold-mcp <Proposito>`); si el patch de `Mcp__ResourceUri`/`Mcp__AuthorizationServer` en `mcp-{proposito-kebab}.tf` se aplico o ya estaba resuelto (CA-4); gate B12 (dominio AuthKit del entorno) marcado `NO VERIFICADO` si el agente no pudo confirmarlo contra el discovery doc en vivo; si algun servidor MCP detectado todavia no tuvo su primer deploy de codigo exitoso (el `apply` de su modulo fallaria al leer `mcp_extension` -- avisa antes de mergear el PR).
+- **Servidores MCP expuestos** (paso 8, issue #820), si `SERVIDORES_MCP` no vino vacia: `apim-mcp-api`/`apim-mcp-prm.tf` creados u omitidos; `apim-mcp-{proposito-kebab}.tf` por servidor, creado u omitido; cualquier servidor MCP que fallo el guard de scaffold del agente (indicar `{{mefisto:command scaffold-mcp}} <Proposito>`); si el patch de `Mcp__ResourceUri`/`Mcp__AuthorizationServer` en `mcp-{proposito-kebab}.tf` se aplico o ya estaba resuelto (CA-4); gate B12 (dominio AuthKit del entorno) marcado `NO VERIFICADO` si el agente no pudo confirmarlo contra el discovery doc en vivo; si algun servidor MCP detectado todavia no tuvo su primer deploy de codigo exitoso (el `apply` de su modulo fallaria al leer `mcp_extension` -- avisa antes de mergear el PR).
 - **Checklist operativo CA-4, por cada servidor MCP expuesto**: el `resource_uri` resuelto y el recordatorio de confirmar en el dashboard de WorkOS que el Resource Indicator del cliente MCP es ese mismo string byte a byte (trailing slash incluido), y de reconectar cualquier cliente MCP ya conectado despues del `apply`.
 - **Migracion de tenancy** (paso 9): token flip en `.mefisto/harness.config.json` (hecho / ya estaba en etapa b); biblioteca `src/<RootNamespace>.TenantResolver/` (creada y verificada por build+test / ya existia); lista de dominios migrados (distinguiendo si venian de la etapa (a) mono-tenant o del hibrido roto `AgregarTenantResolverHibrido()`, issue #802); lista de dominios ya migrados al patron nuevo (omitidos); lista de dominios degradados (con el motivo) o con resolver custom (revision manual pendiente). Si el flip no pudo materializarse por config ausente o legacy-only, reporta ese bloqueo y no continues al 9.3.
 - **Siguiente paso**: push + PR (si todo quedo verde) o la lista de reconciliacion pendiente.
@@ -816,7 +725,7 @@ Resumen claro y en orden:
 ## Reglas
 
 - **Nunca ejecutes `terraform plan` ni `terraform apply`.** El `apply` real corre en CI al mergear el PR (MEF-ADR-0022); este skill (via el agente del paso 8) solo llega hasta `fmt`/`validate`.
-- **Nunca crees el/los dominio(s) destino ni ningun servidor MCP.** Si un `--domain` o un servidor MCP detectado en el paso 2b no esta scaffoldeado, el agente del paso 8 lo omite y lo reporta -- indica `/mefisto:scaffold <dominio>` o `/mefisto:scaffold-mcp <Proposito>` en el reporte final, no lo crees vos.
+- **Nunca crees el/los dominio(s) destino ni ningun servidor MCP.** Si un `--domain` o un servidor MCP detectado en el paso 2b no esta scaffoldeado, el agente del paso 8 lo omite y lo reporta -- indica `{{mefisto:command scaffold}} <dominio>` o `{{mefisto:command scaffold-mcp}} <Proposito>` en el reporte final, no lo crees vos.
 - **Un BC sin servidores MCP corre este skill identico a como corria antes del issue #820** (CA-5): el paso 2b detecta la lista vacia, el paso 7b se omite entero, y el agente del paso 8 nunca genera `infra/modules/apim-mcp-api/` ni toca `providers.tf`.
 - **Nunca pidas ni imprimas el valor de `WORKOS_API_KEY`** ni de ningun otro secreto, incluida `WORKOS_AUTHORIZATION_SERVER_URL` -- esta ultima es un dominio publico, no una credencial, pero sigue el mismo tratamiento no-secreto que `WORKOS_CLIENT_ID`/`CORS_ALLOWED_ORIGINS` (GitHub **variable**, nunca secret).
 - **Nunca migres un dominio fuera de los descubiertos en el paso 9.4** (todo `src/<RootNamespace>.*/Infraestructura/ComposicionServicios*.cs`) -- la migracion aplica a **todo** el BC, no solo a los `--domain` de esta corrida, pero nunca a una forma de registro que no sea exactamente la mono-tenant transitoria de MEF-ADR-0028 seccion 2 o el hibrido roto `AgregarTenantResolverHibrido()` que esta migracion reemplaza (issue #802) -- un resolver custom sigue siendo revision manual, nunca auto-migrado.
