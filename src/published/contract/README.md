@@ -186,7 +186,9 @@ Hay dos formas, excluyentes dentro de un mismo comando:
 
 1. **Delegación de comando completo**: el frontmatter `agent: <id>`. En OpenCode
    emite `agent` + `subtask: true`; en Claude el body queda precedido por la
-   instrucción de invocar `Task` con `mefisto:<id>` y `$ARGUMENTS` como mensaje.
+   instrucción de invocar `Task` con `mefisto:<id>`, pasándole `$ARGUMENTS`
+   y las instrucciones del body, sin que la sesión primaria las ejecute (paridad
+   con el template que OpenCode entrega al subtask).
 2. **Delegación puntual**: `{{mefisto:launch-agent <id> <mensaje>}}` en el body.
    El mensaje es obligatorio, texto libre en una línea (sin `{` ni `}`), y puede
    citar variables que el comando ya resolvió. El adaptador lo traduce a la

@@ -231,7 +231,7 @@ published_claude_render() {
     [ -z "$preamble" ] || printf '%s\n' "$preamble"
     if [ "$kind" = command ]; then
         agent="$(printf '%s' "$instance" | jq -r '.agent // empty')"
-        [ -z "$agent" ] || printf '%s\n' "Delega este comando completo: invoca la tool \`Task\` con el agente \`mefisto:${agent}\` y \$ARGUMENTS como mensaje, espera su resultado final y devuelvelo."
+        [ -z "$agent" ] || printf '%s\n' "Delega este comando completo: invoca la tool \`Task\` con el agente \`mefisto:${agent}\` y \$ARGUMENTS como mensaje, junto con las instrucciones que siguen; no las ejecutes tu mismo. Espera su resultado final y devuelvelo."
     fi
     printf '%s\n' "$translated"
 }

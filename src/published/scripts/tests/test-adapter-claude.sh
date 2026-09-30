@@ -296,6 +296,17 @@ mk_cmd cmd-alt '{"kind":"command","id":"cmd-alt","description":"x"}' 'Si aplica 
 render "$WORK/cmd-alt.md" > "$WORK/cmd-alt.out"; alt_c="$(< "$WORK/cmd-alt.out")"
 contains "$alt_c" 'este mensaje: Mensaje A.' 'alternativa A traducida'
 contains "$alt_c" 'este mensaje: Mensaje B.' 'alternativa B traducida'
+contains "$completo_c" 'no las ejecutes tu mismo' 'delegacion completa no ejecuta el body en la sesion primaria'
+VALIDATOR="$REPO_ROOT/src/published/scripts/validate-published-artifacts.sh"
+mk_cmd rechazo-sin-mensaje '{"kind":"command","id":"rechazo-sin-mensaje","description":"x"}' '{{mefisto:launch-agent bug-investigator}}'
+out="$(bash "$VALIDATOR" "$WORK/rechazo-sin-mensaje.md" 2>&1)"; rc=$?
+[ "$rc" -ne 0 ] && contains "$out" 'directiva mefisto mal formada' 'rechaza launch-agent sin mensaje' || fail 'launch-agent sin mensaje debio fallar'
+mk_cmd rechazo-inexistente '{"kind":"command","id":"rechazo-inexistente","description":"x"}' '{{mefisto:launch-agent agente-inexistente Haz algo}}'
+out="$(bash "$VALIDATOR" "$WORK/rechazo-inexistente.md" 2>&1)"; rc=$?
+[ "$rc" -ne 0 ] && contains "$out" "launch-agent 'agente-inexistente' no existe" 'rechaza launch-agent con id inexistente' || fail 'launch-agent con id inexistente debio fallar'
+mk_cmd rechazo-con-agent '{"kind":"command","id":"rechazo-con-agent","description":"x","agent":"bug-investigator"}' '{{mefisto:launch-agent bug-investigator Haz algo}}'
+out="$(bash "$VALIDATOR" "$WORK/rechazo-con-agent.md" 2>&1)"; rc=$?
+[ "$rc" -ne 0 ] && contains "$out" 'un comando con agent no puede usar launch-agent' 'rechaza launch-agent junto a agent' || fail 'launch-agent junto a agent debio fallar'
 
 printf 'RESULTADO: %s pasaron, %s fallaron\n' "$PASS" "$FAIL"
 exit "$FAIL"

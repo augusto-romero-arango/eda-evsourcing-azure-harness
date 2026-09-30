@@ -449,6 +449,15 @@ alt_o="$(render "$WORK/cmd-alt.md")"
 assert_contains "$alt_o" 'este mensaje: Mensaje A.' 'alternativa A traducida'
 assert_contains "$alt_o" 'este mensaje: Mensaje B.' 'alternativa B traducida'
 assert_not_contains "$alt_o" 'subtask' 'alternativas no generan subtask'
+printf '%s\n' '---' '{"kind":"command","id":"consulta-mcp","description":"x"}' '---' '{{mefisto:assert-consumer-repo}}' '{{mefisto:launch-agent ejecutor-mcp}}' > "$MCP_ROOT/src/published/commands/consulta-mcp.md"
+out="$("$MCP_ARTIFACT_VALIDATOR" "$MCP_ROOT/src/published/commands/consulta-mcp.md" 2>&1)"; rc=$?
+[ "$rc" -ne 0 ] && assert_contains "$out" 'directiva mefisto mal formada' 'rechaza launch-agent sin mensaje' || fail 'launch-agent sin mensaje debio fallar'
+printf '%s\n' '---' '{"kind":"command","id":"consulta-mcp","description":"x"}' '---' '{{mefisto:assert-consumer-repo}}' '{{mefisto:launch-agent agente-inexistente Haz algo}}' > "$MCP_ROOT/src/published/commands/consulta-mcp.md"
+out="$("$MCP_ARTIFACT_VALIDATOR" "$MCP_ROOT/src/published/commands/consulta-mcp.md" 2>&1)"; rc=$?
+[ "$rc" -ne 0 ] && assert_contains "$out" "launch-agent 'agente-inexistente' no existe" 'rechaza launch-agent con id inexistente' || fail 'launch-agent con id inexistente debio fallar'
+printf '%s\n' '---' '{"kind":"command","id":"consulta-mcp","description":"x","agent":"ejecutor-mcp"}' '---' '{{mefisto:assert-consumer-repo}}' '{{mefisto:launch-agent ejecutor-mcp Haz algo}}' > "$MCP_ROOT/src/published/commands/consulta-mcp.md"
+out="$("$MCP_ARTIFACT_VALIDATOR" "$MCP_ROOT/src/published/commands/consulta-mcp.md" 2>&1)"; rc=$?
+[ "$rc" -ne 0 ] && assert_contains "$out" 'un comando con agent no puede usar launch-agent' 'rechaza launch-agent junto a agent' || fail 'launch-agent junto a agent debio fallar'
 
 printf 'RESULTADO: %s pasaron, %s fallaron\n' "$PASS" "$FAIL"
 exit "$FAIL"
