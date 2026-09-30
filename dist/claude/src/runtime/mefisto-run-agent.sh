@@ -46,7 +46,8 @@
 #   --stderr-log <f>      Donde conservar el stderr crudo del proceso. Mismo
 #                         default que --raw-log si se omite.
 #   --events-log <archivo> Telemetria HUMANA del pipeline (issue #863), NUNCA
-#                         el JSONL neutral de --event-log: lineas
+#                         el JSONL neutral de --event-log (HH:MM:SS en hora
+#                         local del proceso, respeta TZ): lineas
 #                         "[HH:MM:SS][archivo] <ruta>" con el MISMO formato
 #                         que hoy escribe el hook publicado
 #                         (hooks/hooks.json), mas "[HH:MM:SS][tool] <agente>
@@ -660,7 +661,7 @@ EVENTS_LOG_LINES="$(printf '%s\n' "$NON_TERMINAL_JSON" | jq -s -r \
     --arg agent "$OPT_AGENT" \
     --arg term_ts "$EVENTS_LOG_TERM_TS" \
     --arg term_status "$EVENTS_LOG_TERM_STATUS" '
-    def hms: if (type == "string") and (length >= 19) then .[11:19] else "--:--:--" end;
+    def hms: try (sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601 | strflocaltime("%H:%M:%S")) catch "--:--:--";
     # Un tool.started solo produce linea [archivo] si el tool ES de archivo.
     # `Bash`/`bash` tambien trae input_summary -- los primeros 80 caracteres
     # del comando (ver "Notas tecnicas" de #863) -- pero un comando NO es una
