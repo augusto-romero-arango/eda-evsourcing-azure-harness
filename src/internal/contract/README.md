@@ -83,9 +83,9 @@ Los Skills no pasan por la regla de neutralidad de body de agentes/comandos
 
 ### Verificacion de descubrimiento en OpenCode (issue #1685, CA-1)
 
-- **Fecha**: 2026-09-29. **Version**: 1.18.32 (binario instalado; el adaptador
-  se escribio contra 1.18.29 y el repo no fija otra version en un manifiesto
-  propio, no existe `.opencode/package.json`). **Fuente**: evidencia empirica
+- **Fecha**: 2026-09-29. **Version**: 1.18.32 (la fijada en
+  `.opencode/package.json` via `@opencode-ai/plugin`, igual al binario
+  instalado en la verificacion). **Fuente**: evidencia empirica
   mas documentacion oficial (<https://opencode.ai/docs/skills/>, verificada
   2026-09-06 en el Skill `agent-skill-authoring`).
 - **Resultado**: `debug skill` ejecutado en la raiz del repo lista

@@ -144,10 +144,11 @@ GEN_STATUS=0
 GENERATED_RELPATHS=()
 
 # skill_rel_parts <ruta> -- imprime "<id>/<ruta-relativa-en-el-skill>" si la
-# ruta cae bajo un directorio skills/<id>/, o nada.
+# ruta cae bajo src/internal/skills/<id>/, o nada. Acotado a esa raiz para que
+# un `skills/` en otra parte de la ruta no desvie un agente o comando.
 skill_rel_parts() {
     case "$1" in
-        */skills/*/*) local tail="${1##*/skills/}"; printf '%s' "$tail" ;;
+        src/internal/skills/*/*|*/src/internal/skills/*/*) printf '%s' "${1##*src/internal/skills/}" ;;
     esac
 }
 
