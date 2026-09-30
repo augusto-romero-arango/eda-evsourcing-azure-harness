@@ -121,6 +121,7 @@ CLAUDE_ROOT_MIRRORS=(
     'src/published/commands/purge-store.md|commands/purge-store.md'
     'src/published/commands/fix-review.md|commands/fix-review.md'
     'src/published/commands/eraser-diagram.md|commands/eraser-diagram.md'
+    'src/published/commands/bug.md|commands/bug.md'
     'src/published/agents/tooling-writer.md|agents/tooling-writer.md'
     'src/published/agents/tooling-reviewer.md|agents/tooling-reviewer.md'
     'src/published/agents/test-writer.md|agents/test-writer.md'

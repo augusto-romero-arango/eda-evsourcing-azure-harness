@@ -113,6 +113,7 @@ EOF
             runtime_pattern="claude|opencode|\\.claude|\\.opencode|marketplace|(^|[/[:space:].])cache([/[:space:]]|$)|(^|[^[:alnum:]_-])(model|tools|allowed-tools|permission)[[:space:]]*:"
             if (id == "domain-scaffolder") sub(/azure functions core tools:/, "azure functions core tools", runtime_text)
             if (id == "eraser-diagram") sub(/cache hit/, "hit", lower)
+            if (id == "bug") sub(/`\.claude\/`, /, "", lower)
             if ((id == "runtimes" && lower ~ /\.claude|\.opencode|marketplace|(^|[\/[:space:].])cache([\/[:space:]]|$)|(^|[^[:alnum:]_-])(model|tools|allowed-tools|permission)[[:space:]]*:/) || (legacy && runtime_text ~ /opencode|\.opencode|(^|[^[:alnum:]_-])(model|tools|allowed-tools|permission)[[:space:]]*:/) || (!legacy && id != "runtimes" && lower ~ runtime_pattern)) {
                 print rel ": body: linea " line " referencia un runtime, CLI, cache, directorio o metadata propia de runtime"
             }
