@@ -407,10 +407,12 @@ mkdir -p "$CANON15/logs" "$LEGACY15/logs"
 touch "$CANON15/logs/iac-pipeline-20260101-100000.log"
 touch "$CANON15/logs/tooling-pipeline-20260101-110000-v2.log"
 touch "$CANON15/logs/run-12-20260101-120000.log" "$CANON15/logs/pipeline-20260101-120000.log"
+touch "$LEGACY15/logs/pipeline-20260101-130000-v3.log"
 {
     echo '{"issue":66,"pipeline":"infra","state":"completed","started":"20260101-100000","finished":"2026-01-01T10:05:00","environment":"dev","pr":"https://github.com/o/r/pull/66"}'
     echo '{"issue":67,"pipeline":"tooling","variant":"v2","state":"completed","started":"20260101-110000","finished":"2026-01-01T11:05:00"}'
     echo "{\"issue\":68,\"pipeline\":\"tdd\",\"state\":\"completed\",\"started\":\"20260101-120000\",\"finished\":\"2026-01-01T12:05:00\",\"log\":\"$CANON15/logs/run-12-20260101-120000.log\"}"
+    echo '{"issue":69,"pipeline":"tdd","variant":"v3","state":"completed","started":"20260101-130000","finished":"2026-01-01T13:05:00"}'
 } > "$CANON15/pipeline-history.jsonl"
 OUT=$(run_collect "$CANON15" "$LEGACY15")
 H66=$(jq -c '.history[] | select(.issue == "66" or .issue == 66)' <<< "$OUT")
@@ -433,6 +435,12 @@ if [ "$(jq -r '.log' <<< "$H68")" = "$CANON15/logs/run-12-20260101-120000.log" ]
     pass "log declarado existente conserva prioridad sobre el log de corrida"
 else
     fail "log declarado no conservado: $H68"
+fi
+H69=$(jq -c '.history[] | select(.issue == "69" or .issue == 69)' <<< "$OUT")
+if [ "$(jq -r '.log' <<< "$H69")" = "$LEGACY15/logs/pipeline-20260101-130000-v3.log" ]; then
+    pass "tdd con variant: log de corrida resuelto desde el root legacy"
+else
+    fail "fallback legacy de log de corrida incorrecto: $H69"
 fi
 
 echo ""
