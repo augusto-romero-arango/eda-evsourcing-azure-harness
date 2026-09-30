@@ -24,6 +24,9 @@ contains "$body" '{{mefisto:assert-consumer-repo}}' 'guard consumidor presente'
 for s in '## Paso 1 ' '## Paso 2 ' '## Paso 3 ' '## Paso 4 '; do contains "$body" "$s" "conserva $s"; done
 contains "$body" 'https://app.eraser.io/api/render/elements' 'endpoint de render presente'
 contains "$body" 'Authorization: Bearer ${ERASER_API_TOKEN}' 'Bearer con ERASER_API_TOKEN'
+contains "$body" 'Si falla por falta de `ERASER_API_TOKEN`, muestra el DSL' 'degradacion visible sin token'
+absent "$body" 'echo "$ERASER_API_TOKEN' 'el token no se imprime'
+absent "$body" '${ERASER_API_TOKEN}" >' 'el token no se escribe a archivo'
 for t in sequence-diagram cloud-architecture-diagram flowchart-diagram entity-relationship-diagram bpmn-diagram; do contains "$body" "$t" "sintaxis de $t"; done
 for forbidden in '.claude' '.plugin-root' 'plugins/cache' 'PLUGIN_SCRIPTS' 'CLAUDE_'; do absent "$body" "$forbidden" "fuente sin token prohibido: $forbidden"; done
 
@@ -35,7 +38,7 @@ for pair in "claude:$claude_body" "opencode:$opencode_body"; do
     rt="${pair%%:*}"; f="${pair#*:}"
     contains "$f" 'https://app.eraser.io/api/render/elements' "$rt llama al endpoint"
     contains "$f" 'Authorization: Bearer ${ERASER_API_TOKEN}' "$rt usa Bearer del entorno"
-    contains "$f" 'ERASER_API_TOKEN' "$rt degrada sin token"
+    contains "$f" 'Si falla por falta de `ERASER_API_TOKEN`, muestra el DSL y explica que se puede pegar en https://app.eraser.io para renderizar.' "$rt degrada sin token"
     absent "$f" '{{mefisto:' "$rt sin directivas sin resolver"
     absent "$f" 'PLUGIN_SCRIPTS' "$rt sin PLUGIN_SCRIPTS"
     absent "$f" 'plugins/cache' "$rt sin plugins/cache"
@@ -43,7 +46,7 @@ for pair in "claude:$claude_body" "opencode:$opencode_body"; do
     # El guard precede a la llamada.
     before="${f%%api/render/elements*}"
     contains "$before" 'Paso 1' "$rt: pasos previos a la llamada"
-    case "$before" in *'git rev-parse'*|*'assert'*|*'consumidor'*|*'Mefisto'*) pass "$rt: guard precede a la llamada" ;; *) fail "$rt: guard no precede a la llamada" ;; esac
+    contains "$before" 'aborta si existe `src/internal/scripts/generate-internal-adapters.sh`' "$rt: guard precede a la llamada"
 done
 guard_pos="${body%%api/render/elements*}"
 contains "$guard_pos" '{{mefisto:assert-consumer-repo}}' 'fuente: guard precede a la llamada'
