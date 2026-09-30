@@ -13,6 +13,7 @@
 # de agentes ya migrados, que contienen `if [ -f "CLAUDE.md" ]` legitimos.
 # tooling-investigator migro a la fuente neutral (#1668): se verifica su
 # fuente, porque el mirror generado lleva ese mismo preambulo legitimo.
+# historiador migro igual (#1671): tambien se verifica su fuente.
 
 set -uo pipefail
 
@@ -21,7 +22,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 TOOLING_INVESTIGATOR="$REPO_ROOT/src/published/agents/tooling-investigator.md"
 PLANNER="$REPO_ROOT/agents/planner.md"
-HISTORIADOR="$REPO_ROOT/agents/historiador.md"
+HISTORIADOR="$REPO_ROOT/src/published/agents/historiador.md"
 FIX_REVIEW="$REPO_ROOT/commands/fix-review.md"
 SETUP_LABELS="$REPO_ROOT/scripts/setup-github-labels.sh"
 
