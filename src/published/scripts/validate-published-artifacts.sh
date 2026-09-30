@@ -78,6 +78,8 @@ EOF
             if (id == "runtimes" && (value == "$MEFISTO_LIFECYCLE_LAUNCHER" || value == "$MEFISTO_LIFECYCLE_CONFIG_ROOT")) return 1
             if (id == "batch-stop" && value == "$REPO_ROOT") return 1
             if (id == "draft" && value == "$REPO_SLUG") return 1
+            if (id == "purge-store" && value ~ /^\$(0|ATTEMPT_AHORA|ATTEMPT_PREVIO|CONFIG|DOMAIN_EVENTS_DIR|DOMINIO|DOMINIO_FLAT|DOMINIO_KEBAB|ENV|ESTADO|RUN_ID|flat|i)$/) return 1
+            if (id == "purge-store" && value == "${DOMINIO_KEBAB}") return 1
             if (id == "planner" && value ~ /^\$(SESSION_ID|INITIAL_HEAD_SHA|INITIAL_DEFAULT_BRANCH|INITIAL_STATUS|HARNESS_REPO_SLUG|CLOSING_TIMESTAMP|GLOSSARY_PATH|FIELD_NOTE_LOCAL|GLOSSARY_LOCAL|FIELD_NOTE_GLOSSARY_ARGS)$/) return 1
             if (id == "planner" && value == "${SESSION_ID}") return 1
             if (id == "tooling-investigator" && (value == "$CONFIG" || value == "$HARNESS_REPO_SLUG")) return 1

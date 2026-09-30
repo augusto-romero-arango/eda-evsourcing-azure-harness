@@ -1,106 +1,16 @@
 ---
-description: "Diagnostica con evidencia si un dominio en dev tiene datos de era vieja, confirma con el humano, purga el store via purge-store.sh y valida relanzando los smoke tests fallidos."
-argument-hint: "<dominio> [--env <env>]"
-model: "sonnet"
+{
+  "kind": "command",
+  "id": "purge-store",
+  "description": "Diagnostica con evidencia si un dominio en dev tiene datos de era vieja, confirma con el humano, purga el store via purge-store.sh y valida relanzando los smoke tests fallidos.",
+  "profile": "balanced",
+  "arguments": "<dominio> [--env <env>]"
+}
 ---
-<!-- GENERADO por src/published/scripts/generate-published-adapters.sh desde src/published/commands/purge-store.md. No editar a mano. -->
-```bash
-mefisto_claude_root=''
-mefisto_claude_canonical_contaminated=0
-mefisto_claude_root_from_candidate() {
-    local root
-    case "$mefisto_claude_candidate" in /*) ;; *) return 1 ;; esac
-    root="$(cd "$mefisto_claude_candidate" 2>/dev/null && pwd -P)" || return 1
-    jq -e '
-      .name == "mefisto" and
-      (.version | type == "string" and test("^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?(\\+[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?$"))
-    ' "$root/.claude-plugin/plugin.json" >/dev/null 2>&1 || return 1
-    jq -e --arg version "$(jq -er '.version | strings' "$root/.claude-plugin/plugin.json" 2>/dev/null)" '
-      (keys | sort) == ["commit", "runtime", "schemaVersion", "version"] and
-      .schemaVersion == 1 and .runtime == "claude" and .version == $version and
-      (.commit | type == "string" and test("^[0-9a-f]{40}$"))
-    ' "$root/mefisto-manifest.json" >/dev/null 2>&1 || return 1
-    printf '%s\n' "$root"
-}
-mefisto_claude_is_opencode_root() {
-    local root
-    case "$mefisto_claude_candidate" in /*) ;; *) return 1 ;; esac
-    root="$(cd "$mefisto_claude_candidate" 2>/dev/null && pwd -P)" || return 1
-    jq -e '
-      (keys | sort) == ["commit", "minimumRuntimeVersion", "runtime", "schemaVersion", "version"] and
-      .schemaVersion == 1 and .runtime == "opencode" and
-      (.version | type == "string" and test("^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?(\\+[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?$")) and
-      (.commit | type == "string" and test("^[0-9a-f]{40}$")) and
-      (.minimumRuntimeVersion | type == "string" and test("^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"))
-    ' "$root/mefisto-manifest.json" >/dev/null 2>&1
-}
-if [ -n "${CLAUDE_PLUGIN_ROOT:-}" ]; then
-    mefisto_claude_candidate="$CLAUDE_PLUGIN_ROOT"
-    mefisto_claude_root="$(mefisto_claude_root_from_candidate)" || {
-        printf '%s\n' 'ERROR Claude: la raiz indicada por CLAUDE_PLUGIN_ROOT es invalida; reabra o reinstale el plugin.' >&2; exit 1;
-    }
-else
-    mefisto_claude_cursor="$PWD"
-    while :; do
-        if [ -f "$mefisto_claude_cursor/.mefisto/pipeline/.plugin-root" ]; then
-            mefisto_claude_candidate="$(< "$mefisto_claude_cursor/.mefisto/pipeline/.plugin-root")"
-            if mefisto_claude_root="$(mefisto_claude_root_from_candidate)"; then break; fi
-            if mefisto_claude_is_opencode_root; then
-                mefisto_claude_canonical_contaminated=1
-                break
-            else
-                printf '%s\n' 'ERROR Claude: metadata del marker canonico invalida; reabra o reinstale el plugin.' >&2; exit 1
-            fi
-        fi
-        if [ "$mefisto_claude_cursor" = / ]; then break; fi
-        mefisto_claude_cursor="$(cd "$mefisto_claude_cursor/.." && pwd -P)"
-    done
-    if [ -z "$mefisto_claude_root" ]; then
-        mefisto_claude_cursor="$PWD"
-        while :; do
-            if [ -f "$mefisto_claude_cursor/.claude/pipeline/.plugin-root" ]; then
-                mefisto_claude_candidate="$(< "$mefisto_claude_cursor/.claude/pipeline/.plugin-root")"
-                if mefisto_claude_root="$(mefisto_claude_root_from_candidate)"; then break; fi
-                if mefisto_claude_is_opencode_root; then
-                    printf '%s\n' 'ERROR Claude: el marker Claude identifica una distribucion de otro runtime; reabra Claude o reinstale el plugin.' >&2; exit 1
-                fi
-                printf '%s\n' 'ERROR Claude: metadata del marker Claude invalida; reabra o reinstale el plugin.' >&2; exit 1
-            fi
-            if [ "$mefisto_claude_cursor" = / ]; then break; fi
-            mefisto_claude_cursor="$(cd "$mefisto_claude_cursor/.." && pwd -P)"
-        done
-    fi
-fi
-if [ -z "$mefisto_claude_root" ]; then
-    if [ "$mefisto_claude_canonical_contaminated" -eq 1 ]; then
-        printf '%s\n' 'ERROR Claude: el marker canonico identifica una distribucion OpenCode y no existe un mirror Claude valido; reabra Claude o reinstale el plugin.' >&2
-    else
-        printf '%s\n' 'ERROR Claude: no se encontro una raiz Claude valida; reabra o reinstale el plugin.' >&2
-    fi
-    exit 1
-fi
-MEFISTO_PACKAGE_ROOT="$mefisto_claude_root"
-export MEFISTO_PACKAGE_ROOT
-```
-```bash
-if [ -f ".mefisto/harness.config.json" ]; then
-    if [ -f ".claude/harness.config.json" ]; then
-        printf '%s\n' 'AVISO: se usara el config canonico .mefisto/harness.config.json; se ignora el legacy .claude/harness.config.json. Migra o elimina conscientemente el archivo legacy para evitar divergencias.' >&2
-    fi
-    MEFISTO_CONFIG_PATH=".mefisto/harness.config.json"
-elif [ -f ".claude/harness.config.json" ]; then
-    MEFISTO_CONFIG_PATH=".claude/harness.config.json"
-else
-    printf '%s\n' 'ERROR: no se encontro el config canonico requerido .mefisto/harness.config.json.' >&2
-    printf '%s\n' '  Se acepta solo para lectura el fallback legacy .claude/harness.config.json.' >&2
-    exit 1
-fi
-export MEFISTO_CONFIG_PATH
-```
 
 Diagnostica con evidencia si un dominio tiene datos de era vieja tras un movimiento/renombrado de eventos persistidos (MEF-ADR-0036), confirma con el humano mostrando exactamente que se pierde, y valida el resultado tras purgar. Los pasos destructivos los ejecuta siempre `purge-store.sh` (issue #725) -- este comando nunca corre `psql`/`DROP`/firewall por su cuenta. Comunicate en **espanol**.
 
-Antes de continuar, aborta si existe `src/internal/scripts/generate-internal-adapters.sh`: ese directorio es el repositorio de Mefisto, no un consumidor.
+{{mefisto:assert-consumer-repo}}
 
 ## Entrada
 
@@ -119,10 +29,10 @@ Si falta `<dominio>`, responde con el uso exacto de arriba y detente sin ejecuta
 
 ### 1. Parsear `$ARGUMENTS` y resolver el dominio canonico
 
-Extrae `DOMINIO` y `ENV` (default `dev`). Resuelve **ya aqui** la forma canonica contra `domainLabels` de `${MEFISTO_CONFIG_PATH}`. Es lectura pura, cero efectos: los pasos 3/4 buscan evidencia por nombre de dominio, y un dominio mal tecleado o no declarado produciria un "no hay evidencia" enganoso (que este comando trata como "no purgar") en vez del error real. Mismo criterio de comparacion que `purge-store.sh` (formas "aplanadas": minusculas sin guiones), y la forma que se usa de aqui en adelante es la declarada, nunca la que tecleo el operador:
+Extrae `DOMINIO` y `ENV` (default `dev`). Resuelve **ya aqui** la forma canonica contra `domainLabels` de `{{mefisto:config-path}}`. Es lectura pura, cero efectos: los pasos 3/4 buscan evidencia por nombre de dominio, y un dominio mal tecleado o no declarado produciria un "no hay evidencia" enganoso (que este comando trata como "no purgar") en vez del error real. Mismo criterio de comparacion que `purge-store.sh` (formas "aplanadas": minusculas sin guiones), y la forma que se usa de aqui en adelante es la declarada, nunca la que tecleo el operador:
 
 ```bash
-CONFIG="${MEFISTO_CONFIG_PATH}"
+CONFIG="{{mefisto:config-path}}"
 [ -f "$CONFIG" ] || { echo "ERROR: no se encontro el config del harness en $CONFIG" >&2; exit 1; }
 
 DOMINIO_FLAT=$(printf '%s' "$DOMINIO" | tr '[:upper:]' '[:lower:]' | tr -d '-')
@@ -142,7 +52,7 @@ Si imprime `ERROR`, muestra el mensaje y detente sin ejecutar nada mas: no hay d
 ### 2. Validar la sesion de Azure
 
 ```bash
-MEFISTO_RUNTIME=claude "${MEFISTO_PACKAGE_ROOT}/scripts/azure-account-info.sh" 2>&1
+{{mefisto:run azure-account-info.sh 2>&1}}
 ```
 
 Si sale con codigo distinto de `0`, muestra tal cual el mensaje que emitio el script (indica iniciar sesion en Azure) y detente: no hay diagnostico sin acceso a la evidencia.
@@ -154,7 +64,7 @@ La configuracion de telemetria vive en `.mefisto/appinsights.env`; si falta, `ap
 Busca el sintoma de identidad rota descrito en MEF-ADR-0036 (columna `mt_dotnet_type` desactualizada, error `42804` de Postgres al leer `mt_version`, o una excepcion de tipo no resuelto) en la ultima semana:
 
 ```bash
-MEFISTO_RUNTIME=claude "${MEFISTO_PACKAGE_ROOT}/scripts/appinsights-query.sh" custom "exceptions | where timestamp > ago(168h) | where outerMessage has '42804' or outerMessage has 'mt_version' or outerMessage has 'UnknownEventTypeException' | project timestamp, cloud_RoleName, type, outerMessage, operation_Name | order by timestamp desc | take 20"
+{{mefisto:run appinsights-query.sh custom "exceptions | where timestamp > ago(168h) | where outerMessage has '42804' or outerMessage has 'mt_version' or outerMessage has 'UnknownEventTypeException' | project timestamp, cloud_RoleName, type, outerMessage, operation_Name | order by timestamp desc | take 20"}}
 ```
 
 **El recurso de App Insights es uno por Bounded Context, no por dominio**, y el schema que la purga destruye es de un solo dominio: una fila de otro dominio **no** es evidencia para purgar este. Por eso la query proyecta `cloud_RoleName` -- para el write-side es el nombre de la Function App (`func-{dominio}-...`, MEF-ADR-0045) y para el read-side es el `service.name` del worker, compartido por todo el BC (`<RootNamespace>.Projections`, MEF-ADR-0034 seccion 10). Atribuye cada fila antes de contarla como evidencia:
@@ -197,7 +107,7 @@ No se encontro evidencia de datos de era vieja para "<dominio-canonico>":
   - Ultimo deploy (<workflow o "sin runs">): <resumen: verde, o rojo por un motivo no relacionado>.
 
 No se ofrece la purga: MEF-ADR-0036 exige diagnostico positivo antes de destruir el store.
-Si el sintoma es otro, usa /mefisto:bug "<descripcion>" para investigarlo.
+Si el sintoma es otro, usa {{mefisto:command bug}} "<descripcion>" para investigarlo.
 ```
 
 Y **detente sin continuar al paso 6**.
@@ -209,7 +119,7 @@ Si hay evidencia (de cualquiera de los dos pasos), continua.
 Ejecuta el `--dry-run` de la mitad determinista -- revalida el dominio contra `domainLabels`, calcula el schema y reporta streams/tablas de read model/checkpoints sin tocar nada:
 
 ```bash
-MEFISTO_RUNTIME=claude "${MEFISTO_PACKAGE_ROOT}/scripts/purge-store.sh" --domain "$DOMINIO_KEBAB" --env "$ENV" --dry-run
+{{mefisto:run purge-store.sh --domain "$DOMINIO_KEBAB" --env "$ENV" --dry-run}}
 ```
 
 Si el script termina con error (dominio no declarado, recurso de Azure ausente, ambiguedad de Function App), muestra el mensaje tal cual y **detente sin continuar**.
@@ -260,7 +170,7 @@ Si la respuesta no es un "s"/"si" inequivoco, detente sin escribir ni ejecutar n
 El unico paso destructivo, y **solo** via el script:
 
 ```bash
-MEFISTO_RUNTIME=claude "${MEFISTO_PACKAGE_ROOT}/scripts/purge-store.sh" --domain "$DOMINIO_KEBAB" --env "$ENV"
+{{mefisto:run purge-store.sh --domain "$DOMINIO_KEBAB" --env "$ENV"}}
 ```
 
 Muestra la salida completa. Si el script falla a mitad de camino, reporta el error tal cual -- **nunca** intentes completar manualmente lo que quedo a medias (ni `psql`, ni reinicios sueltos): la idempotencia de un reintento la garantiza el propio script.
@@ -294,8 +204,8 @@ Usa el `VEREDICTO_CONCLUSION` de ese bloque -- el del intento nuevo -- para el v
 Cierra siempre con un veredicto explicito, nunca ambiguo:
 
 - **Si la `conclusion` del intento nuevo es `success`**: "Veredicto: los smoke tests que estaban rojos por datos de era vieja en '<dominio>' quedaron verdes tras la purga."
-- **Si sigue en rojo**: trae `gh run view <databaseId> --log-failed` y reporta "Veredicto: la purga NO resolvio los smoke tests de '<dominio>'. Siguen fallando: <resumen del log>. El sintoma probablemente no era (solo) datos de era vieja -- investiga con /mefisto:bug." de una vez.
-- **Si el paso 4 no identifico ningun deploy fallido que relanzar** (el ultimo deploy ya estaba verde, o no se encontro el workflow): reporta que no hay smoke que relanzar y sugiere /mefisto:health-check para confirmar el estado actual del dominio.
+- **Si sigue en rojo**: trae `gh run view <databaseId> --log-failed` y reporta "Veredicto: la purga NO resolvio los smoke tests de '<dominio>'. Siguen fallando: <resumen del log>. El sintoma probablemente no era (solo) datos de era vieja -- investiga con {{mefisto:command bug}}." de una vez.
+- **Si el paso 4 no identifico ningun deploy fallido que relanzar** (el ultimo deploy ya estaba verde, o no se encontro el workflow): reporta que no hay smoke que relanzar y sugiere {{mefisto:command health-check}} para confirmar el estado actual del dominio.
 
 ## Reglas
 
