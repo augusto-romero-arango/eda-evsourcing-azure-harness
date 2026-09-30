@@ -1,34 +1,22 @@
 ---
-description: "Genera el worker de proyecciones, ReadModels, el config-test base y el workflow de deploy delegando en projections-scaffolder, solo si projections.enabled esta habilitado."
-model: "haiku"
+{
+  "kind": "command",
+  "id": "scaffold-projections",
+  "description": "Genera el worker de proyecciones, ReadModels, el config-test base y el workflow de deploy delegando en projections-scaffolder, solo si projections.enabled esta habilitado.",
+  "profile": "fast"
+}
 ---
-<!-- GENERADO por src/published/scripts/generate-published-adapters.sh desde src/published/commands/scaffold-projections.md. No editar a mano. -->
-```bash
-if [ -f ".mefisto/harness.config.json" ]; then
-    if [ -f ".claude/harness.config.json" ]; then
-        printf '%s\n' 'AVISO: se usara el config canonico .mefisto/harness.config.json; se ignora el legacy .claude/harness.config.json. Migra o elimina conscientemente el archivo legacy para evitar divergencias.' >&2
-    fi
-    MEFISTO_CONFIG_PATH=".mefisto/harness.config.json"
-elif [ -f ".claude/harness.config.json" ]; then
-    MEFISTO_CONFIG_PATH=".claude/harness.config.json"
-else
-    printf '%s\n' 'ERROR: no se encontro el config canonico requerido .mefisto/harness.config.json.' >&2
-    printf '%s\n' '  Se acepta solo para lectura el fallback legacy .claude/harness.config.json.' >&2
-    exit 1
-fi
-export MEFISTO_CONFIG_PATH
-```
 
-Antes de continuar, aborta si existe `src/internal/scripts/generate-internal-adapters.sh`: ese directorio es el repositorio de Mefisto, no un consumidor.
+{{mefisto:assert-consumer-repo}}
 
 Genera el worker de proyecciones `<RootNamespace>.Projections` (daemon asincronico `HotCold` de Marten, seam de observabilidad `ConfiguracionObservabilidadProjections` con el sampler que descarta el polling del daemon, MEF-ADR-0038), la biblioteca `<RootNamespace>.ReadModels`, el config-test base `<RootNamespace>.Projections.Tests`, el workflow de deploy `deploy-projections.yml` y el `.dockerignore` del build context delegando en el agente `projections-scaffolder`, al estilo de `infra-base-scaffolder`. **Alcance acotado (fase 1, issue #367 + fase 2, issue #375 + fase 3, issue #453 + fase 4, issue #457 + fase 5, issue #458 + fase 6, issue #513 + fase 7, issue #552)**: el registro del store de cada dominio lo hace `domain-scaffolder` (issue #370); ninguna proyeccion ni read model concreto se genera aqui (issues `tipo:projection`). Comunicate en **espanol**.
 
 ## Pre-condicion: token `projections.enabled` (CA-1)
 
-El worker solo se genera si el BC declaro explicitamente que adopta proyecciones. El token vive en el contrato canonico `.mefisto/harness.config.json` bajo `projections.enabled` y se lee desde `${MEFISTO_CONFIG_PATH}` (MEF-ADR-0053, decision 4). El mecanismo de deteccion lo fija MEF-ADR-0034 (seccion 8); su contrato formal completo lo fija el issue #369. Este comando consume el token en la forma minima que necesita (no pasa por `load_harness_config`, que requiere `boundedContext` obligatorio y otros campos que aqui no hacen falta).
+El worker solo se genera si el BC declaro explicitamente que adopta proyecciones. El token vive en el contrato canonico `.mefisto/harness.config.json` bajo `projections.enabled` y se lee desde `{{mefisto:config-path}}` (MEF-ADR-0053, decision 4). El mecanismo de deteccion lo fija MEF-ADR-0034 (seccion 8); su contrato formal completo lo fija el issue #369. Este comando consume el token en la forma minima que necesita (no pasa por `load_harness_config`, que requiere `boundedContext` obligatorio y otros campos que aqui no hacen falta).
 
 ```bash
-jq -r '.projections.enabled' "${MEFISTO_CONFIG_PATH}" 2>/dev/null
+jq -r '.projections.enabled' "{{mefisto:config-path}}" 2>/dev/null
 ```
 
 Sin `//` en el filtro `jq`: `false // "null"` devuelve `"null"` (false es falsy en jq) y confundiria `deshabilitado` con `ausente`.
@@ -47,7 +35,7 @@ Para habilitarlo, agrega en .mefisto/harness.config.json:
 
   "projections": { "enabled": true }
 
-(el contrato formal del token, incluida la validacion y el reporte de /mefisto:onboard,
+(el contrato formal del token, incluida la validacion y el reporte de {{mefisto:command onboard}},
 lo fija el issue #369).
 ```
 
@@ -98,7 +86,7 @@ fase 5, issue #458 + fase 6, issue #513):
                                           exista, de donde salen los nombres del
                                           resource group y del Container App: si
                                           falta, el agente lo reporta pendiente y
-                                          hay que correr /mefisto:infra-base primero)
+                                          hay que correr {{mefisto:command infra-base}} primero)
 
   .dockerignore                         (en la RAIZ del repo, que es el build context del
                                           Dockerfile: filtra bin/obj de todos los proyectos,
@@ -121,7 +109,7 @@ existente.
 
 Solo despues de que el gate del token haya pasado:
 
-invoca la tool `Task` con el agente `mefisto:projections-scaffolder` y este mensaje: Genera el worker de proyecciones.. Espera su resultado final y continua con el paso siguiente del comando.
+{{mefisto:launch-agent projections-scaffolder Genera el worker de proyecciones.}}
 
 ### 3. Tras terminar
 
@@ -139,13 +127,13 @@ Worker de proyecciones, ReadModels y config-test base generados. Siguiente:
      compatibilidad; la completa la verifica el reviewer bajo gate, MEF-ADR-0034 seccion 6).
   3. Los modulos Terraform del Container App (container-registry,
      container-app-environment, container-app) son opt-in y los genera
-     infra-base-scaffolder (via /mefisto:infra-base) cuando corra de nuevo con el token ya habilitado
+     infra-base-scaffolder (via {{mefisto:command infra-base}}) cuando corra de nuevo con el token ya habilitado
      (issue #368, MEF-ADR-0034 seccion 8).
   4. deploy-projections.yml solo publica la imagen despues de que infra-cd.yml
      haya sembrado los secretos del Key Vault al menos una vez (MEF-ADR-0034
      seccion 8, documentado en la cabecera del propio workflow). Si el agente lo
      reporto pendiente por falta de infra/environments/dev/variables.tf, corre
-     /mefisto:infra-base y vuelve a lanzar este skill: es idempotente.
+     {{mefisto:command infra-base}} y vuelve a lanzar este skill: es idempotente.
 ```
 
 ## Reglas
