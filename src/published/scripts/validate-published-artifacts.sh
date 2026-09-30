@@ -95,6 +95,8 @@ EOF
             if (id == "historiador" && (value == "${FECHA}" || value == "${FECHA_MAS_RECIENTE}")) return 1
             if (id == "install-apim" && value ~ /^\$(COMMON|CONFIG|CORS_JSON|ESTRATEGIA|HARNESS_CONFIG_PATH|REPO_ROOT|ROOT_NAMESPACE|TENANCY_TOKEN_FLIPPED|TMP|s)$/) return 1
             if (id == "install-apim" && (value == "${ENV}" || value == "${ROOT_NAMESPACE}")) return 1
+            if (id == "install-auth" && (value == "${ENV}" || value == "${#CORS_ORIGINS[@]}" || value == "$?")) return 1
+            if (id == "install-auth" && value ~ /^\$(GH_VAR_RC|GH_SECRET_RC|WORKOS_CLIENT_ID|WORKOS_API_KEY_PRESENTE)$/) return 1
             if (id == "apim-gateway-scaffolder" && (value == "${ENV}" || value == "${origin}")) return 1
             return 0
         }
