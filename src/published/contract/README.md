@@ -170,7 +170,7 @@ o mal formada se rechaza.
 | Directiva | Claude Code | OpenCode |
 |---|---|---|
 | `{{mefisto:assert-consumer-repo}}` | guard generado que aborta en el repo de Mefisto | el mismo guard de consumidor, sin importar políticas internas |
-| `{{mefisto:launch-agent <id>}}` | delegación al agente generado del plugin | delegación al agente global generado |
+| `{{mefisto:launch-agent <id> <mensaje>}}` | instrucción de invocar la tool `Task` con el agente `mefisto:<id>` y el mensaje dado | instrucción de invocar la tool `task` con el agente global generado `<id>` y el mensaje dado |
 | `{{mefisto:run <script> <args>}}` | `MEFISTO_RUNTIME=claude` + script bajo `MEFISTO_PACKAGE_ROOT` + argumentos | `MEFISTO_RUNTIME=opencode` + script bajo `MEFISTO_PACKAGE_ROOT` + argumentos |
 | `{{mefisto:package-root}}` | `MEFISTO_PACKAGE_ROOT` | `MEFISTO_PACKAGE_ROOT` |
 | `{{mefisto:skill-root <id>}}` | raíz de `skills/<id>/` bajo `MEFISTO_PACKAGE_ROOT` | raíz de `skills/mefisto-<id>/` bajo `MEFISTO_PACKAGE_ROOT` |
@@ -179,6 +179,40 @@ o mal formada se rechaza.
 | `{{mefisto:instructions-path}}` | `MEFISTO_INSTRUCTIONS_PATH` (ruta efectiva de lectura) | `MEFISTO_INSTRUCTIONS_PATH` (ruta efectiva de lectura) |
 | `{{mefisto:state-path <rel>}}` | `.mefisto/pipeline/<rel>` del consumidor | `.mefisto/pipeline/<rel>` del consumidor |
 | `{{mefisto:command <id>}}` | `/mefisto:<id>` | `/mefisto:<id>` |
+
+### Delegación en agentes
+
+Hay dos formas, excluyentes dentro de un mismo comando:
+
+1. **Delegación de comando completo**: el frontmatter `agent: <id>`. En OpenCode
+   emite `agent` + `subtask: true`; en Claude el body queda precedido por la
+   instrucción de invocar `Task` con `mefisto:<id>`, pasándole `$ARGUMENTS`
+   y las instrucciones del body, sin que la sesión primaria las ejecute (paridad
+   con el template que OpenCode entrega al subtask).
+2. **Delegación puntual**: `{{mefisto:launch-agent <id> <mensaje>}}` en el body.
+   El mensaje es obligatorio, texto libre en una línea (sin `{` ni `}`), y puede
+   citar variables que el comando ya resolvió. El adaptador lo traduce a la
+   invocación de la tool de subagentes sobre el agente generado de su
+   distribución; el agente devuelve su resultado final y el comando continúa
+   con el paso siguiente. Nunca convierte el comando en subtask, así que los
+   pasos propios del comando conservan su política de permisos (MEF-ADR-0031).
+
+Un body puede tener varias delegaciones puntuales (alternativas o sucesivas). Un
+comando que declara `agent` no puede además usar `launch-agent`. El validador
+rechaza `launch-agent` sin mensaje, con un id inexistente en
+`src/published/agents/` o junto a `agent`; la regla de MCP considera la unión de
+los `mcp` de todos los agentes delegados. `command-doc` compone comandos por
+lectura del body, por eso la delegación puntual, expresada en el body, es la
+forma que sobrevive a esa composición.
+
+Decisión sobre la capacidad `task`: el comando no la declara; la sesión primaria
+del usuario ya dispone de la tool de subagentes y `allowed-tools` solo
+preaprueba, no restringe su disponibilidad.
+
+Verificación empírica (CA-6, #1687): pendiente. Requiere una sesión interactiva
+real de cada runtime con un comando fixture de delegación puntual; no se pudo
+ejecutar en el pipeline no interactivo. Hasta registrar fecha y versión de cada
+runtime, la devolución del resultado al comando no está certificada.
 
 Los adaptadores materializan comandos como `/mefisto:<id>`. El body no puede
 nombrar CLIs, variables, cachés, directorios ni metadata de un runtime. Tampoco

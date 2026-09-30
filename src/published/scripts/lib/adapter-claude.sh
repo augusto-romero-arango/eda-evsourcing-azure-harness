@@ -179,8 +179,9 @@ published_claude_translate_body() {
                 translated="${BASH_REMATCH[1]}.mefisto/pipeline/${BASH_REMATCH[2]}${BASH_REMATCH[3]}"
             elif [[ "$line" =~ ^(.*)\{\{mefisto:command[[:space:]]+([a-z0-9-]+)\}\}(.*)$ ]]; then
                 translated="${BASH_REMATCH[1]}/mefisto:${BASH_REMATCH[2]}${BASH_REMATCH[3]}"
-            elif [[ "$line" =~ ^(.*)\{\{mefisto:launch-agent[[:space:]]+([a-z0-9-]+)\}\}(.*)$ ]]; then
-                translated="${BASH_REMATCH[1]}Actua como el agente \`${BASH_REMATCH[2]}\` con este mensaje inicial: \$ARGUMENTS${BASH_REMATCH[3]}"
+            elif [[ "$line" =~ ^(.*)\{\{mefisto:launch-agent[[:space:]]+([a-z0-9-]+)[[:space:]]+([^{}]+)\}\}(.*)$ ]]; then
+                args="$(printf '%s' "${BASH_REMATCH[3]}" | sed -E 's/[[:space:]]+$//')"
+                translated="${BASH_REMATCH[1]}invoca la tool \`Task\` con el agente \`mefisto:${BASH_REMATCH[2]}\` y este mensaje: ${args}. Espera su resultado final y continua con el paso siguiente del comando.${BASH_REMATCH[4]}"
             elif [[ "$line" =~ ^(.*)\{\{mefisto:assert-consumer-repo\}\}(.*)$ ]]; then
                 translated="${BASH_REMATCH[1]}Antes de continuar, aborta si existe \`src/internal/scripts/generate-internal-adapters.sh\`: ese directorio es el repositorio de Mefisto, no un consumidor.${BASH_REMATCH[2]}"
             else
@@ -193,7 +194,7 @@ published_claude_translate_body() {
 }
 
 published_claude_render() {
-    local source="$1" marker="$2" repo_root="$3" rel fm instance kind raw_body translated preamble='' tools profile model model_line=''
+    local source="$1" marker="$2" repo_root="$3" rel fm instance kind raw_body translated preamble='' tools profile model model_line='' agent
     rel="${source#"$repo_root"/}"
     fm="$(awk 'NR == 1 { next } $0 == "---" { exit } { print }' "$source")" || { published_claude_error "$rel" frontmatter 'no se pudo extraer'; return 1; }
     instance="$(printf '%s\n' "$fm" | jq -c '.' 2>/dev/null)" || { published_claude_error "$rel" frontmatter 'no es JSON valido'; return 1; }
@@ -228,5 +229,9 @@ published_claude_render() {
     [ -z "$model_line" ] || printf '%s\n' "$model_line"
     printf '%s\n%s\n' '---' "$marker"
     [ -z "$preamble" ] || printf '%s\n' "$preamble"
+    if [ "$kind" = command ]; then
+        agent="$(printf '%s' "$instance" | jq -r '.agent // empty')"
+        [ -z "$agent" ] || printf '%s\n' "Delega este comando completo: invoca la tool \`Task\` con el agente \`mefisto:${agent}\` y \$ARGUMENTS como mensaje, junto con las instrucciones que siguen; no las ejecutes tu mismo. Espera su resultado final y devuelvelo."
+    fi
     printf '%s\n' "$translated"
 }

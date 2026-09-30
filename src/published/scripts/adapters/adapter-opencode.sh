@@ -133,8 +133,6 @@ published_opencode_translate_body() {
         original="$line"
         if [[ "$line" =~ ^[[:space:]]*\{\{mefisto:assert-consumer-repo\}\}[[:space:]]*$ ]]; then
             printf '%s\n' 'Antes de continuar, aborta si existe `src/internal/scripts/generate-internal-adapters.sh`: ese directorio es el repositorio de Mefisto, no un consumidor.'
-        elif [[ "$line" =~ ^[[:space:]]*\{\{mefisto:launch-agent[[:space:]]+([a-z0-9-]+)\}\}[[:space:]]*$ ]]; then
-            printf 'Actua como el agente `%s` con este mensaje inicial: $ARGUMENTS\n' "${BASH_REMATCH[1]}"
         else
             # Se reemplaza de derecha a izquierda para admitir varias
             # directivas inline sin perder el texto que las rodea.
@@ -160,6 +158,9 @@ published_opencode_translate_body() {
                     translated="${BASH_REMATCH[1]}.mefisto/pipeline/${BASH_REMATCH[2]}${BASH_REMATCH[3]}"
                 elif [[ "$line" =~ ^(.*)\{\{mefisto:command[[:space:]]+([a-z0-9-]+)\}\}(.*)$ ]]; then
                     translated="${BASH_REMATCH[1]}/mefisto:${BASH_REMATCH[2]}${BASH_REMATCH[3]}"
+                elif [[ "$line" =~ ^(.*)\{\{mefisto:launch-agent[[:space:]]+([a-z0-9-]+)[[:space:]]+([^{}]+)\}\}(.*)$ ]]; then
+                    args="$(printf '%s' "${BASH_REMATCH[3]}" | sed -E 's/[[:space:]]+$//')"
+                    translated="${BASH_REMATCH[1]}invoca la tool \`task\` con el agente \`${BASH_REMATCH[2]}\` y este mensaje: ${args}. Espera su resultado final y continua con el paso siguiente del comando.${BASH_REMATCH[4]}"
                 else
                     error "$rel: body: directiva sin mapping OpenCode: '$original'"
                     return 1
@@ -198,16 +199,6 @@ fi
 export MEFISTO_LIFECYCLE_LAUNCHER MEFISTO_LIFECYCLE_CONFIG_ROOT
 ```
 EOF
-}
-
-launch_agent_id() {
-    local input="$1" line
-    while IFS= read -r line || [ -n "$line" ]; do
-        if [[ "$line" =~ ^[[:space:]]*\{\{mefisto:launch-agent[[:space:]]+([a-z0-9-]+)\}\}[[:space:]]*$ ]]; then
-            printf '%s' "${BASH_REMATCH[1]}"
-            return 0
-        fi
-    done <<< "$input"
 }
 
 # OpenCode descubre Skills por directorio. La fuente permanece nativa para
@@ -548,7 +539,6 @@ render() {
         tools="$(mcp_tools_json "$rel" "$mcp_json")" || return 1
         printf 'mode: %s\npermission: %s\ntools: %s\n' "$(printf '%s' "$mode" | jq -Rr '@json')" "$permissions" "$tools"
     else
-        [ -n "$agent" ] || agent="$(launch_agent_id "$raw_body")"
         [ -z "$agent" ] || printf 'agent: %s\nsubtask: true\n' "$(printf '%s' "$agent" | jq -Rr '@json')"
     fi
     printf '%s\n%s\n' '---' "$marker"
