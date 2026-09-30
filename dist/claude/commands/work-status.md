@@ -103,7 +103,7 @@ Trata la salida como el unico JSON de esta corrida (referencialo como `DATA`). E
 
 - `now`: fecha y hora a mostrar en el encabezado;
 - `rows[]`: una fila por corrida vigente (`pipeline`, `issue`, `variant`, `title`, `runtime`, `stage`, `state`, `started`, `updated`, `log`, `pr`, `last_error`, `agents`, `activity`, `progress_pct`);
-- `history[]`: hasta 5 entradas, de la mas reciente a la mas antigua (`pipeline`, `issue`, `variant`, `runtime`, `result`, `duration`, `detail`, `started`, `log`);
+- `history[]`: hasta 5 entradas, de la mas reciente a la mas antigua (`pipeline`, `issue`, `variant`, `runtime`, `result`, `duration`, `detail`, `pr`, `started`, `log`);
 - `empty`: `{status, history}`, cada uno verdadero cuando esa coleccion viene vacia.
 
 `activity` trae `kind` (`hold`, `stale` o `stage`) y, solo cuando `kind` es `hold`, `cause`, `next_probe` y `ceiling`.
