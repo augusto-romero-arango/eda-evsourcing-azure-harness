@@ -47,7 +47,11 @@ OUT=$(cd "$FAKE" && ./metrics-report.sh 2>&1)
 RC=$?
 [ "$RC" -eq 0 ] && pass "exit 0" || fail "exit $RC: $OUT"
 echo "$OUT" | grep -q "Corridas totales en la ventana: 2" && pass "cuenta las 2 corridas" || fail "no cuenta 2 corridas"
-echo "$OUT" | grep -q "tdd .*1 corridas\|tdd .*2 corridas" && pass "reporte segmentado por pipeline con filas claude y opencode (tokens null toleradas)" || fail "sin seccion tdd"
+echo "$OUT" | grep -q "tdd .*2 corridas (instrumentadas: 2" && pass "ambas filas (claude y opencode con tokens null) cuentan como instrumentadas" || fail "sin seccion tdd con 2 instrumentadas"
+# El reporte no tiene eje literal "runtime": la fila de cada runtime se
+# distingue por su modelo declarado en la tabla "Por stage".
+echo "$OUT" | grep -Eq "^implementer +- +opus " && pass "fila del stage para la corrida claude" || fail "falta la fila opus (claude) en Por stage"
+echo "$OUT" | grep -Eq "^implementer +- +modelo-abierto " && pass "fila del stage para la corrida opencode (tokens null)" || fail "falta la fila modelo-abierto (opencode) en Por stage"
 
 echo ""
 echo "Resultado: $PASS pass, $FAIL fail"
