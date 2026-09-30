@@ -77,6 +77,7 @@ EOF
             if (id == "reviewer" && (value == "$PLUGIN_ROOT" || value == "$HOME")) return 1
             if (id == "runtimes" && (value == "$MEFISTO_LIFECYCLE_LAUNCHER" || value == "$MEFISTO_LIFECYCLE_CONFIG_ROOT")) return 1
             if (id == "batch-stop" && value == "$REPO_ROOT") return 1
+            if (id == "scaffold-mcp" && value ~ /^\$(\{)?(ROOT_NAMESPACE|SOLUTION_FILE|VERSION|PROPOSITO_PASCAL)(\})?$/) return 1
             if (id == "draft" && value == "$REPO_SLUG") return 1
             if (id == "eraser-diagram" && value == "${ERASER_API_TOKEN}") return 1
             if (id == "purge-store" && value ~ /^\$(0|ATTEMPT_AHORA|ATTEMPT_PREVIO|CONFIG|DOMAIN_EVENTS_DIR|DOMINIO|DOMINIO_FLAT|DOMINIO_KEBAB|ENV|ESTADO|RUN_ID|flat|i)$/) return 1

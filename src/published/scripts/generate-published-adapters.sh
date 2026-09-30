@@ -109,6 +109,7 @@ CLAUDE_ROOT_MIRRORS=(
     'src/published/commands/infra.md|commands/infra.md'
     'src/published/commands/infra-base.md|commands/infra-base.md'
     'src/published/commands/scaffold-projections.md|commands/scaffold-projections.md'
+    'src/published/commands/scaffold-mcp.md|commands/scaffold-mcp.md'
     'src/published/commands/scaffold.md|commands/scaffold.md'
     'src/published/commands/seed-secret.md|commands/seed-secret.md'
     'src/published/commands/install-workos.md|commands/install-workos.md'

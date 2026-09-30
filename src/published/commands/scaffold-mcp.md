@@ -1,104 +1,14 @@
 ---
-description: "Genera el proyecto de un servidor MCP (RootNamespace.Mcp.Proposito) delegando en mcp-scaffolder: identidad, OAuth app-side, Terraform, deploy y SmokeTests."
-argument-hint: "<proposito>"
-model: "haiku"
+{
+  "kind": "command",
+  "id": "scaffold-mcp",
+  "description": "Genera el proyecto de un servidor MCP (RootNamespace.Mcp.Proposito) delegando en mcp-scaffolder: identidad, OAuth app-side, Terraform, deploy y SmokeTests.",
+  "profile": "fast",
+  "arguments": "<proposito>"
+}
 ---
-<!-- GENERADO por src/published/scripts/generate-published-adapters.sh desde src/published/commands/scaffold-mcp.md. No editar a mano. -->
-```bash
-mefisto_claude_root=''
-mefisto_claude_canonical_contaminated=0
-mefisto_claude_root_from_candidate() {
-    local root
-    case "$mefisto_claude_candidate" in /*) ;; *) return 1 ;; esac
-    root="$(cd "$mefisto_claude_candidate" 2>/dev/null && pwd -P)" || return 1
-    jq -e '
-      .name == "mefisto" and
-      (.version | type == "string" and test("^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?(\\+[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?$"))
-    ' "$root/.claude-plugin/plugin.json" >/dev/null 2>&1 || return 1
-    jq -e --arg version "$(jq -er '.version | strings' "$root/.claude-plugin/plugin.json" 2>/dev/null)" '
-      (keys | sort) == ["commit", "runtime", "schemaVersion", "version"] and
-      .schemaVersion == 1 and .runtime == "claude" and .version == $version and
-      (.commit | type == "string" and test("^[0-9a-f]{40}$"))
-    ' "$root/mefisto-manifest.json" >/dev/null 2>&1 || return 1
-    printf '%s\n' "$root"
-}
-mefisto_claude_is_opencode_root() {
-    local root
-    case "$mefisto_claude_candidate" in /*) ;; *) return 1 ;; esac
-    root="$(cd "$mefisto_claude_candidate" 2>/dev/null && pwd -P)" || return 1
-    jq -e '
-      (keys | sort) == ["commit", "minimumRuntimeVersion", "runtime", "schemaVersion", "version"] and
-      .schemaVersion == 1 and .runtime == "opencode" and
-      (.version | type == "string" and test("^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?(\\+[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?$")) and
-      (.commit | type == "string" and test("^[0-9a-f]{40}$")) and
-      (.minimumRuntimeVersion | type == "string" and test("^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"))
-    ' "$root/mefisto-manifest.json" >/dev/null 2>&1
-}
-if [ -n "${CLAUDE_PLUGIN_ROOT:-}" ]; then
-    mefisto_claude_candidate="$CLAUDE_PLUGIN_ROOT"
-    mefisto_claude_root="$(mefisto_claude_root_from_candidate)" || {
-        printf '%s\n' 'ERROR Claude: la raiz indicada por CLAUDE_PLUGIN_ROOT es invalida; reabra o reinstale el plugin.' >&2; exit 1;
-    }
-else
-    mefisto_claude_cursor="$PWD"
-    while :; do
-        if [ -f "$mefisto_claude_cursor/.mefisto/pipeline/.plugin-root" ]; then
-            mefisto_claude_candidate="$(< "$mefisto_claude_cursor/.mefisto/pipeline/.plugin-root")"
-            if mefisto_claude_root="$(mefisto_claude_root_from_candidate)"; then break; fi
-            if mefisto_claude_is_opencode_root; then
-                mefisto_claude_canonical_contaminated=1
-                break
-            else
-                printf '%s\n' 'ERROR Claude: metadata del marker canonico invalida; reabra o reinstale el plugin.' >&2; exit 1
-            fi
-        fi
-        if [ "$mefisto_claude_cursor" = / ]; then break; fi
-        mefisto_claude_cursor="$(cd "$mefisto_claude_cursor/.." && pwd -P)"
-    done
-    if [ -z "$mefisto_claude_root" ]; then
-        mefisto_claude_cursor="$PWD"
-        while :; do
-            if [ -f "$mefisto_claude_cursor/.claude/pipeline/.plugin-root" ]; then
-                mefisto_claude_candidate="$(< "$mefisto_claude_cursor/.claude/pipeline/.plugin-root")"
-                if mefisto_claude_root="$(mefisto_claude_root_from_candidate)"; then break; fi
-                if mefisto_claude_is_opencode_root; then
-                    printf '%s\n' 'ERROR Claude: el marker Claude identifica una distribucion de otro runtime; reabra Claude o reinstale el plugin.' >&2; exit 1
-                fi
-                printf '%s\n' 'ERROR Claude: metadata del marker Claude invalida; reabra o reinstale el plugin.' >&2; exit 1
-            fi
-            if [ "$mefisto_claude_cursor" = / ]; then break; fi
-            mefisto_claude_cursor="$(cd "$mefisto_claude_cursor/.." && pwd -P)"
-        done
-    fi
-fi
-if [ -z "$mefisto_claude_root" ]; then
-    if [ "$mefisto_claude_canonical_contaminated" -eq 1 ]; then
-        printf '%s\n' 'ERROR Claude: el marker canonico identifica una distribucion OpenCode y no existe un mirror Claude valido; reabra Claude o reinstale el plugin.' >&2
-    else
-        printf '%s\n' 'ERROR Claude: no se encontro una raiz Claude valida; reabra o reinstale el plugin.' >&2
-    fi
-    exit 1
-fi
-MEFISTO_PACKAGE_ROOT="$mefisto_claude_root"
-export MEFISTO_PACKAGE_ROOT
-```
-```bash
-if [ -f ".mefisto/harness.config.json" ]; then
-    if [ -f ".claude/harness.config.json" ]; then
-        printf '%s\n' 'AVISO: se usara el config canonico .mefisto/harness.config.json; se ignora el legacy .claude/harness.config.json. Migra o elimina conscientemente el archivo legacy para evitar divergencias.' >&2
-    fi
-    MEFISTO_CONFIG_PATH=".mefisto/harness.config.json"
-elif [ -f ".claude/harness.config.json" ]; then
-    MEFISTO_CONFIG_PATH=".claude/harness.config.json"
-else
-    printf '%s\n' 'ERROR: no se encontro el config canonico requerido .mefisto/harness.config.json.' >&2
-    printf '%s\n' '  Se acepta solo para lectura el fallback legacy .claude/harness.config.json.' >&2
-    exit 1
-fi
-export MEFISTO_CONFIG_PATH
-```
 
-Antes de continuar, aborta si existe `src/internal/scripts/generate-internal-adapters.sh`: ese directorio es el repositorio de Mefisto, no un consumidor.
+{{mefisto:assert-consumer-repo}}
 
 Lanza el agente `mcp-scaffolder`, que genera el proyecto de un servidor MCP (Model Context Protocol) `<RootNamespace>.Mcp.{Proposito}` para el Bounded Context del consumidor -- fases 1, 2, 3 e identidad/OAuth app-side (issues #768/#769/#770/#819): proyecto del servidor, el propagador de identidad tenant/usuario, los componentes OAuth app-side de defensa en profundidad (PRM, validador de token, middleware), tool de ejemplo, endpoints de gate, unit tests base, el Terraform del servidor, el workflow de deploy y la suite SmokeTests e2e con su reusable de CI (MEF-ADR-0047/MEF-ADR-0048). Comunicate en **espanol**.
 
@@ -111,11 +21,11 @@ El guard de consumidor de arriba aborta si el cwd es el repo de Mefisto: este sk
 `$ARGUMENTS` debe traer el proposito del servidor (una palabra o frase corta, ej. `Consultas`, `Comandos`, `consultas-turnos`). Si esta vacio, responde y detente:
 
 ```
-Uso: /mefisto:scaffold-mcp <proposito>
+Uso: {{mefisto:command scaffold-mcp}} <proposito>
 
 Ejemplos:
-  /mefisto:scaffold-mcp Consultas
-  /mefisto:scaffold-mcp Comandos
+  {{mefisto:command scaffold-mcp}} Consultas
+  {{mefisto:command scaffold-mcp}} Comandos
 
 El proposito distingue servidores MCP del mismo BC (particion Consultas/Comandos por
 credencial, MEF-ADR-0047 seccion 2). Se normaliza a PascalCase: "consultas-turnos" ->
@@ -127,11 +37,11 @@ Si trae argumento, normaliza `<proposito>` a PascalCase (separa por espacios/gui
 
 ## Pre-condicion 3: config y tokens del harness
 
-El config se lee desde `${MEFISTO_CONFIG_PATH}` (contrato canonico `.mefisto/harness.config.json`, MEF-ADR-0053, decision 4). Nunca copies, migres ni escribas ese archivo.
+El config se lee desde `{{mefisto:config-path}}` (contrato canonico `.mefisto/harness.config.json`, MEF-ADR-0053, decision 4). Nunca copies, migres ni escribas ese archivo.
 
 ```bash
-ROOT_NAMESPACE=$(jq -r '.namespacePrefix // ""' "${MEFISTO_CONFIG_PATH}")
-SOLUTION_FILE=$(jq -r '.solutionFile // ""' "${MEFISTO_CONFIG_PATH}")
+ROOT_NAMESPACE=$(jq -r '.namespacePrefix // ""' "{{mefisto:config-path}}")
+SOLUTION_FILE=$(jq -r '.solutionFile // ""' "{{mefisto:config-path}}")
 
 if [ -z "$ROOT_NAMESPACE" ] || [ -z "$SOLUTION_FILE" ]; then
     echo "ERROR: faltan 'namespacePrefix' y/o 'solutionFile' en .mefisto/harness.config.json."
@@ -146,7 +56,7 @@ Si falta cualquiera de los dos, detente con el mensaje de arriba. Con `ROOT_NAME
 ### 1. Informar que se va a generar
 
 ```bash
-VERSION=$(jq -r '.version' "${MEFISTO_PACKAGE_ROOT}/mefisto-manifest.json" 2>/dev/null)
+VERSION=$(jq -r '.version' "{{mefisto:package-root}}/mefisto-manifest.json" 2>/dev/null)
 if [ -z "$VERSION" ] || [ "$VERSION" = "null" ]; then
     VERSION_LABEL="version desconocida"
 else
@@ -209,7 +119,7 @@ Se va a generar el servidor MCP <RootNamespace>.Mcp.{Proposito} con mefisto <VER
     app settings Api__{Dominio}__BaseUrl de los dominios ya scaffoldeados, la identidad interina
     Identidad__TenantIdInterino/Identidad__UserIdInterino (siempre) y Mcp__ResourceUri/
     Mcp__AuthorizationServer (siempre, pero sembrados con un placeholder PENDIENTE-... hasta que
-    corras /mefisto:install-apim)
+    corras {{mefisto:command install-apim}})
   infra/modules/function-app/main.tf: se agrega el output default_hostname si falta
 
   .github/workflows/deploy-mcp-{proposito-kebab}.yml
@@ -234,7 +144,7 @@ La lista canonica y autoritativa de artefactos es el parrafo **Alcance** de
 
 Solo despues de que el guard y las pre-condiciones hayan pasado:
 
-invoca la tool `Task` con el agente `mefisto:mcp-scaffolder` y este mensaje: Genera el servidor MCP de proposito <PROPOSITO_PASCAL> (el proposito ya normalizado a PascalCase, por ejemplo ConsultasTurnos). Espera su resultado final y continua con el paso siguiente del comando.
+{{mefisto:launch-agent mcp-scaffolder Genera el servidor MCP de proposito <PROPOSITO_PASCAL> (el proposito ya normalizado a PascalCase, por ejemplo ConsultasTurnos)}}
 
 ### 3. Tras terminar
 
@@ -244,7 +154,7 @@ Responde con:
 Servidor MCP <RootNamespace>.Mcp.{Proposito} generado. Siguiente:
   1. Reemplaza la tool 'Ejemplo/' por las tools reales de tu BC (lenguaje ubicuo, MEF-ADR-0040)
      y actualiza con ellas los asserts pinneados de la suite SmokeTests.
-  2. Revisa y aplica el Terraform generado con /mefisto:infra (el deploy del codigo se encadena solo).
+  2. Revisa y aplica el Terraform generado con {{mefisto:command infra}} (el deploy del codigo se encadena solo).
   3. La suite SmokeTests corre por primera vez en el job 'smoke-tests' de ese primer deploy:
      el scaffold solo la compila (todavia no hay servidor desplegado contra el cual correrla).
   4. Onboarding de un cliente MCP: ver el README.md generado en el proyecto del servidor.
