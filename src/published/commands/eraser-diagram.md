@@ -1,13 +1,16 @@
 ---
-description: "Genera diagramas profesionales con la API de Eraser (sequence, architecture, flowchart, ERD y BPMN) y los renderiza con ERASER_API_TOKEN."
-argument-hint: "<descripcion del diagrama>"
-model: "sonnet"
+{
+  "kind": "command",
+  "id": "eraser-diagram",
+  "description": "Genera diagramas profesionales con la API de Eraser (sequence, architecture, flowchart, ERD y BPMN) y los renderiza con ERASER_API_TOKEN.",
+  "profile": "balanced",
+  "arguments": "<descripcion del diagrama>"
+}
 ---
-<!-- GENERADO por src/published/scripts/generate-published-adapters.sh desde src/published/commands/eraser-diagram.md. No editar a mano. -->
 
 Genera diagramas profesionales usando la API de Eraser. Soporta 5 tipos: sequence, architecture, flowchart, ERD y BPMN.
 
-Antes de continuar, aborta si existe `src/internal/scripts/generate-internal-adapters.sh`: ese directorio es el repositorio de Mefisto, no un consumidor.
+{{mefisto:assert-consumer-repo}}
 
 ## Paso 1 - Determinar el tipo de diagrama
 
