@@ -10,8 +10,9 @@
 #
 #   - Pane "planner":   una sesion de agente corriendo el agente de
 #     Knowledge Crunching -- `--agent mefisto:planner` (Claude) o `--agent
-#     planner` (OpenCode) en un proyecto consumidor, `--agent mefisto-planner` en el propio repo de Mefisto (los
-#     agentes internos llevan prefijo, MEF-ADR-0019).
+#     planner` (OpenCode) en un proyecto consumidor, `--agent mefisto-planner`
+#     en ambos runtimes del propio repo de Mefisto (los agentes internos
+#     llevan prefijo, MEF-ADR-0019).
 #   - Pane "ejecucion": una sesion de agente para despachar issues
 #     (/implement, /tooling, /infra, /sequential). Dentro de herdr, esos
 #     skills abren el tercer pane con el visor en vivo (issue #690).
@@ -37,8 +38,8 @@
 # MEFISTO_MODELS_FILE si esta definida. En consumidores, MEFISTO_RUNTIMES y
 # MEFISTO_RUNTIME no eliminan ninguna fila requerida. Ambas filas abren el
 # planner publicado; si la release OpenCode activa no lo proyecta, ese pane
-# arranca sin `--agent` con un aviso que remite a /mefisto:upgrade. El script nunca
-# fija provider, modelo ni credenciales, ni lee opencode.json o un auth store.
+# arranca sin `--agent` con un aviso que remite a /mefisto:upgrade. El script
+# nunca fija provider, modelo ni credenciales, ni lee opencode.json o un auth store.
 #
 # Los agentes se lanzan con `herdr agent start` bajo nombres unicos por
 # workspace: planner-<slug>-claude, ejecucion-<slug>-claude en un consumidor;
