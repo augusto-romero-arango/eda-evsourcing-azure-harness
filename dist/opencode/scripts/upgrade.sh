@@ -141,7 +141,6 @@ _peer_claude() {
 # 'claude plugin marketplace list' por el slug del repo, sin hardcodear el nombre.
 _claude_marketplace_for_install() {
     local slug out
-    if [ -n "${MEFISTO_CLAUDE_MARKETPLACE:-}" ]; then printf '%s\n' "$MEFISTO_CLAUDE_MARKETPLACE"; return 0; fi
     slug=$(_repo_slug)
     out=$(claude plugin marketplace list 2>/dev/null) || return 1
     printf '%s\n' "$out" | awk -v s="$slug" '
@@ -277,9 +276,13 @@ _align_claude() {
     ver="$PEER_VERSION"
     root="${MEFISTO_CACHE_ROOT:-$HOME/.claude/plugins/cache}/${PEER_MKT:-$mkt}/mefisto/$ver"
     launcher=$(_launcher_path)
-    opencode_root="$(cd "$(dirname "$launcher")/.." 2>/dev/null && pwd -P)"
-    diag="$SCRIPT_DIR/../src/published/scripts/diagnose-installation-identity.sh"
-    [ -f "$diag" ] || diag="$SCRIPT_DIR/diagnose-installation-identity.sh"
+    # Misma raiz fisica que usa update-plugin.sh; el fallback cubre launchers sin package-root.
+    opencode_root=$("$launcher" package-root 2>/dev/null) || opencode_root=""
+    [ -n "$opencode_root" ] && [ -d "$opencode_root" ] ||
+        opencode_root="$(cd "$(dirname "$launcher")/.." 2>/dev/null && pwd -P)"
+    # La release OpenCode empaqueta el diagnostico en su raiz; en el repo vive en src/published.
+    diag="$opencode_root/diagnose-installation-identity.sh"
+    [ -f "$diag" ] || diag="$SCRIPT_DIR/../src/published/scripts/diagnose-installation-identity.sh"
     if [ -f "$diag" ]; then
         echo "Identidad de instalaciones:"
         bash "$diag" --claude-root "$root" --opencode-root "$opencode_root" || true
