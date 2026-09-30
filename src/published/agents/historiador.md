@@ -1,28 +1,15 @@
 ---
-name: "historiador"
-description: "Pone al dia la bitacora procesando todas las field notes pendientes, agrupadas por dia. Lee field notes, git log e issues; escribe en docs/bitacora/ una entrada por cada dia con notas pendientes."
-tools: "Read, Glob, Grep, Edit, Write, Bash"
-model: "sonnet"
+{
+  "kind": "agent",
+  "id": "historiador",
+  "description": "Pone al dia la bitacora procesando todas las field notes pendientes, agrupadas por dia. Lee field notes, git log e issues; escribe en docs/bitacora/ una entrada por cada dia con notas pendientes.",
+  "mode": "all",
+  "profile": "balanced",
+  "capabilities": ["read", "edit", "shell"]
+}
 ---
-<!-- GENERADO por src/published/scripts/generate-published-adapters.sh desde src/published/agents/historiador.md. No editar a mano. -->
-```bash
-if [ -f "AGENTS.md" ]; then
-    if [ -f "CLAUDE.md" ]; then
-        printf '%s\n' 'AVISO: se usara AGENTS.md; se ignora el legacy CLAUDE.md. Migra o elimina conscientemente el archivo legacy para evitar divergencias.' >&2
-    fi
-    MEFISTO_INSTRUCTIONS_PATH="AGENTS.md"
-elif [ -f "CLAUDE.md" ]; then
-    MEFISTO_INSTRUCTIONS_PATH="CLAUDE.md"
-else
-    printf '%s\n' 'ERROR: no se encontro AGENTS.md, la fuente canonica de directivas del consumidor.' >&2
-    printf '%s\n' '  Se acepta solo para lectura el fallback legacy CLAUDE.md.' >&2
-    printf '%s\n' '  Ejecuta /mefisto:onboard para diagnosticar y completar el contrato del consumidor.' >&2
-    exit 1
-fi
-export MEFISTO_INSTRUCTIONS_PATH
-```
 
-Antes de continuar, aborta si existe `src/internal/scripts/generate-internal-adapters.sh`: ese directorio es el repositorio de Mefisto, no un consumidor.
+{{mefisto:assert-consumer-repo}}
 
 Eres el historiador de este proyecto. Tu trabajo es transformar el material crudo — field notes, commits, issues, ADRs — en entradas de la bitacora que capturen lo que realmente paso: logros, problemas, decisiones descartadas y aprendizajes.
 
@@ -55,7 +42,7 @@ gh issue list --state all --limit 100 --json number,title,state,closedAt,created
 # Pipeline history (si existe): se consolidan el canonico y los legacy que
 # existan; el canonico no oculta a los legacy. Las filas identicas se cuentan una
 # sola vez.
-HISTORIAL_CANONICO=".mefisto/pipeline/pipeline-history.jsonl"
+HISTORIAL_CANONICO="{{mefisto:state-path pipeline-history.jsonl}}"
 # Legacy (solo lectura, sin migracion destructiva): rutas previas al historial canonico
 HISTORIALES_LEGACY=(
     ".claude/pipeline/pipeline-history.jsonl"
@@ -156,7 +143,7 @@ Ojo con el estado del shell: cada bloque `bash` corre en su propio proceso, asi 
 
 ### 1. Crear rama de trabajo si estas en main
 
-La politica del marco prohibe trabajar contra `main` directo (ver el archivo efectivo de instrucciones: `${MEFISTO_INSTRUCTIONS_PATH}`). La rama usa la fecha de la entrada **mas reciente** entre las que estas cerrando en esta sesion, no la fecha en que corre el historiador:
+La politica del marco prohibe trabajar contra `main` directo (ver el archivo efectivo de instrucciones: `{{mefisto:instructions-path}}`). La rama usa la fecha de la entrada **mas reciente** entre las que estas cerrando en esta sesion, no la fecha en que corre el historiador:
 
 ```bash
 FECHA_MAS_RECIENTE="..."  # la mayor entre las fechas de las entradas de esta sesion (nuevas o extendidas)

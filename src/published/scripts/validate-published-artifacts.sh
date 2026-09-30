@@ -88,6 +88,8 @@ EOF
             if (id == "apim-gateway-scaffolder" && value ~ /^\$(MCP_TF|PROVIDERS_TF|WORKFLOW)$/) return 1
             if (id == "mcp-scaffolder" && value ~ /^\$(APP_NAME|BASE|CONFIG|EVENTO|FA_MODULE|FIXTURES|GITHUB_ENV|GITHUB_OUTPUT|PRIMER_DOMINIO_KEBAB|PROJ|PR_NUM|REPO_ROOT|RESOURCE_GROUP|RUN_CONCLUSION|RUN_RAMA|SECONDS|TENANCY_STRATEGY|VARS|WORKFLOW|azure_region_short|body|code|dominio_kebab|dominio_pascal|dominio_snake|espera|expected_sha|i|key|mcp_id|nombre|presupuesto|proj|proposito_kebab|tiene_region_seq|timeout_peticion|ultimo_cuerpo)$/) return 1
             if (id == "mcp-scaffolder" && value ~ /^\$\{(APP_NAME|PR_NUM|REPO|RUN_SHA|app_name|azure_region_short|body|code|dominio_kebab|espera|expected_sha|intentos|i|project|proposito_kebab|region_seq_suffix|resource_sequence|startup_logs_url|transcurrido|ultimo_cuerpo)\}$/) return 1
+            if (id == "historiador" && value ~ /^\$(0|BRANCH|DIAS_PENDIENTES|FECHA|HISTORIAL|HISTORIAL_CANONICO|f)$/) return 1
+            if (id == "historiador" && (value == "${FECHA}" || value == "${FECHA_MAS_RECIENTE}")) return 1
             if (id == "apim-gateway-scaffolder" && (value == "${ENV}" || value == "${origin}")) return 1
             return 0
         }
@@ -99,7 +101,7 @@ EOF
         !body { next }
         {
             line=NR; text=$0; lower=tolower(text); runtime_text=lower
-            legacy=(id == "test-writer" || id == "reviewer" || id == "projection-test-writer" || id == "projection-implementer" || id == "domain-scaffolder" || id == "projections-scaffolder")
+            legacy=(id == "test-writer" || id == "reviewer" || id == "projection-test-writer" || id == "projection-implementer" || id == "domain-scaffolder" || id == "projections-scaffolder" || id == "historiador")
             runtime_pattern="claude|opencode|\\.claude|\\.opencode|marketplace|(^|[/[:space:].])cache([/[:space:]]|$)|(^|[^[:alnum:]_-])(model|tools|allowed-tools|permission)[[:space:]]*:"
             if (id == "domain-scaffolder") sub(/azure functions core tools:/, "azure functions core tools", runtime_text)
             if ((id == "runtimes" && lower ~ /\.claude|\.opencode|marketplace|(^|[\/[:space:].])cache([\/[:space:]]|$)|(^|[^[:alnum:]_-])(model|tools|allowed-tools|permission)[[:space:]]*:/) || (legacy && runtime_text ~ /opencode|\.opencode|(^|[^[:alnum:]_-])(model|tools|allowed-tools|permission)[[:space:]]*:/) || (!legacy && id != "runtimes" && lower ~ runtime_pattern)) {
