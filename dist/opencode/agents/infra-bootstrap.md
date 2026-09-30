@@ -46,7 +46,7 @@ Si el usuario no los especificó, pregunta:
 
 Muestra el titulo del issue:
 ```bash
-gh issue view <numero> --json title,body -q '"#\(.number): \(.title)"'
+gh issue view <numero> --json number,title -q '"#\(.number): \(.title)"'
 ```
 
 ### 2. Verificar prerequisitos
@@ -122,7 +122,7 @@ No lances el pipeline IaC del paso 7 sin que el usuario confirme que la infraest
 
 ### 7. Lanzar el pipeline IaC
 
-Lánzalo en segundo plano igual que el comando de infraestructura, sin esperar a que termine:
+Lánzalo en segundo plano igual que /mefisto:infra, sin esperar a que termine:
 
 ```bash
 MEFISTO_RUNTIME=opencode "${MEFISTO_PACKAGE_ROOT}/scripts/tmux-pipeline.sh" --infra <issue>
