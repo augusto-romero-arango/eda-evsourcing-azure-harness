@@ -120,7 +120,7 @@ existente.
 
 Solo despues de que el gate del token haya pasado:
 
-invoca la tool `task` con el agente `projections-scaffolder` y este mensaje: Genera el worker de proyecciones.. Espera su resultado final y continua con el paso siguiente del comando.
+invoca la tool `task` con el agente `projections-scaffolder` y este mensaje: Genera el worker de proyecciones. Espera su resultado final y continua con el paso siguiente del comando.
 
 ### 3. Tras terminar
 

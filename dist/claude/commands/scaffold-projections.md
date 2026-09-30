@@ -121,7 +121,7 @@ existente.
 
 Solo despues de que el gate del token haya pasado:
 
-invoca la tool `Task` con el agente `mefisto:projections-scaffolder` y este mensaje: Genera el worker de proyecciones.. Espera su resultado final y continua con el paso siguiente del comando.
+invoca la tool `Task` con el agente `mefisto:projections-scaffolder` y este mensaje: Genera el worker de proyecciones. Espera su resultado final y continua con el paso siguiente del comando.
 
 ### 3. Tras terminar
 

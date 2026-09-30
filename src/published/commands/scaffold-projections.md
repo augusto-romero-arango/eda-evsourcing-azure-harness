@@ -109,7 +109,7 @@ existente.
 
 Solo despues de que el gate del token haya pasado:
 
-{{mefisto:launch-agent projections-scaffolder Genera el worker de proyecciones.}}
+{{mefisto:launch-agent projections-scaffolder Genera el worker de proyecciones}}
 
 ### 3. Tras terminar
 
