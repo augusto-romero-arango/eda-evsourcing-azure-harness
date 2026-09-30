@@ -1,6 +1,5 @@
 ---
 description: "Genera el worker de proyecciones, ReadModels, el config-test base y el workflow de deploy delegando en projections-scaffolder, solo si projections.enabled esta habilitado."
-model: "haiku"
 ---
 <!-- GENERADO por src/published/scripts/generate-published-adapters.sh desde src/published/commands/scaffold-projections.md. No editar a mano. -->
 ```bash
@@ -121,7 +120,7 @@ existente.
 
 Solo despues de que el gate del token haya pasado:
 
-invoca la tool `Task` con el agente `mefisto:projections-scaffolder` y este mensaje: Genera el worker de proyecciones. Espera su resultado final y continua con el paso siguiente del comando.
+invoca la tool `task` con el agente `projections-scaffolder` y este mensaje: Genera el worker de proyecciones. Espera su resultado final y continua con el paso siguiente del comando.
 
 ### 3. Tras terminar
 
