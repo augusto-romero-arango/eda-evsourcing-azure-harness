@@ -131,5 +131,14 @@ else
     fail "legacy-and-new.jsonl: compatibilidad historica invalida"
 fi
 
+echo "[remind-field-notes] paridad del recordatorio entre runtimes"
+claude_reminder="$(jq -r '.hooks.Stop[].hooks[].command | select(contains("field-notes-reminded"))' "$REPO_ROOT/hooks/hooks.json" | grep -o '\[recordatorio\][^"]*' | head -n 1)"
+opencode_reminder="$(grep -o '\[recordatorio\][^"]*' "$REPO_ROOT/dist/opencode/plugins/mefisto-observability.js" | head -n 1)"
+if [ -n "$claude_reminder" ] && [ "$claude_reminder" = "$opencode_reminder" ] && printf '%s' "$claude_reminder" | grep -qF 'docs/bitacora/field-notes/'; then
+    pass "texto del recordatorio identico en Claude y OpenCode y apunta a docs/bitacora/field-notes/"
+else
+    fail "texto del recordatorio divergente: '$claude_reminder' vs '$opencode_reminder'"
+fi
+
 echo "RESULTADO: $PASS pasaron, $FAIL fallaron"
 [ "$FAIL" -eq 0 ]

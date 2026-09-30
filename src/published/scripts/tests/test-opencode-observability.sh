@@ -24,6 +24,7 @@ TYPES="$REPO_ROOT/.opencode/node_modules/@opencode-ai/plugin/dist/index.d.ts"
 jq -e '.dependencies["@opencode-ai/plugin"] == "1.18.29"' "$REPO_ROOT/.opencode/package.json" >/dev/null &&
   grep -q '"chat.params".*(input' "$TYPES" && grep -q 'model: Model;' "$TYPES" &&
   grep -q '"tool.execute.after".*(input' "$TYPES" && grep -q 'metadata: any;' "$TYPES" &&
+  grep -A3 'type: "session.idle";' "$REPO_ROOT/.opencode/node_modules/@opencode-ai/sdk/dist/gen/types.gen.d.ts" | grep -q 'sessionID: string;' &&
   pass 'prueba anclada a tipos locales de plugin 1.18.29' || fail 'tipos OpenCode fijados divergieron'
 
 printf '%s\n' '[runtime] sesiones, herramientas y degradacion segura'
