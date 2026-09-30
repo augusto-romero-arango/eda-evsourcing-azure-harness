@@ -96,6 +96,7 @@ EOF
             if (id == "historiador" && (value == "${FECHA}" || value == "${FECHA_MAS_RECIENTE}")) return 1
             if (id == "install-apim" && value ~ /^\$(COMMON|CONFIG|CORS_JSON|ESTRATEGIA|HARNESS_CONFIG_PATH|REPO_ROOT|ROOT_NAMESPACE|TENANCY_TOKEN_FLIPPED|TMP|s)$/) return 1
             if (id == "install-apim" && (value == "${ENV}" || value == "${ROOT_NAMESPACE}")) return 1
+            if (id == "onboard" && value ~ /^\$(COMMON|CONFIG|ESTRATEGIA|HARNESS_CONFIG_PATH|REPO_ROOT|TMP|s)$/) return 1
             if (id == "install-auth" && (value == "${ENV}" || value == "${#CORS_ORIGINS[@]}" || value == "$?")) return 1
             if (id == "install-auth" && value ~ /^\$(GH_VAR_RC|GH_SECRET_RC|WORKOS_CLIENT_ID|WORKOS_API_KEY_PRESENTE)$/) return 1
             if (id == "apim-gateway-scaffolder" && (value == "${ENV}" || value == "${origin}")) return 1
@@ -113,6 +114,7 @@ EOF
             runtime_pattern="claude|opencode|\\.claude|\\.opencode|marketplace|(^|[/[:space:].])cache([/[:space:]]|$)|(^|[^[:alnum:]_-])(model|tools|allowed-tools|permission)[[:space:]]*:"
             if (id == "domain-scaffolder") sub(/azure functions core tools:/, "azure functions core tools", runtime_text)
             if (id == "eraser-diagram") sub(/cache hit/, "hit", lower)
+            if (id == "onboard") { gsub(/claude\.md|adaptador claude|usa claude|with-claude-bridge|bajo opencode/, "", lower) }
             if (id == "bug") sub(/`\.claude\/`, /, "", lower)
             if ((id == "runtimes" && lower ~ /\.claude|\.opencode|marketplace|(^|[\/[:space:].])cache([\/[:space:]]|$)|(^|[^[:alnum:]_-])(model|tools|allowed-tools|permission)[[:space:]]*:/) || (legacy && runtime_text ~ /opencode|\.opencode|(^|[^[:alnum:]_-])(model|tools|allowed-tools|permission)[[:space:]]*:/) || (!legacy && id != "runtimes" && lower ~ runtime_pattern)) {
                 print rel ": body: linea " line " referencia un runtime, CLI, cache, directorio o metadata propia de runtime"

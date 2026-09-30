@@ -18,6 +18,7 @@ fail() { printf '  FAIL: %s\n' "$1"; FAIL=$((FAIL + 1)); }
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 export HOME="$WORK/home"
+export MEFISTO_PACKAGE_ROOT="$REPO_ROOT"
 mkdir -p "$HOME"
 
 extract_bash_after_heading() {
