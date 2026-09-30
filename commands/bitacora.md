@@ -99,11 +99,11 @@ Los argumentos estan en: $ARGUMENTS
 
 Si `$ARGUMENTS` no trae una fecha `YYYY-MM-DD`, delega en el backlog completo:
 
-invoca la tool `Task` con el agente `mefisto:historiador` y este mensaje: Pon al dia la bitacora procesando todas las field notes pendientes.. Espera su resultado final y continua con el paso siguiente del comando.
+invoca la tool `Task` con el agente `mefisto:historiador` y este mensaje: Pon al dia la bitacora procesando todas las field notes pendientes. Espera su resultado final y continua con el paso siguiente del comando.
 
 Si `$ARGUMENTS` trae una fecha `YYYY-MM-DD`, delega acotado a ese dia (usa la fecha recibida en lugar de `<fecha>`):
 
-invoca la tool `Task` con el agente `mefisto:historiador` y este mensaje: Pon al dia la bitacora procesando unicamente las field notes del dia <fecha>.. Espera su resultado final y continua con el paso siguiente del comando.
+invoca la tool `Task` con el agente `mefisto:historiador` y este mensaje: Pon al dia la bitacora procesando unicamente las field notes del dia <fecha>. Espera su resultado final y continua con el paso siguiente del comando.
 
 El agente corre de forma autonoma de punta a punta: recopila el backlog, escribe (o extiende) una entrada por cada dia pendiente, mueve todas las field notes del backlog a `procesadas/` y ejecuta el cierre atomico (rama + entradas + PR), todo sin pausas ni confirmaciones intermedias. Por eso la delegacion es **sincronica** -- espera a que el agente termine y devuelva su mensaje final, nunca la lances en segundo plano --: el encadenamiento del merge (pasos 2-4) necesita el numero de PR que el historiador reporta en ese mensaje. Si el runtime no te devuelve el mensaje final del historiador, no adivines el PR: reportalo como un gap del runtime (debe registrarse como `bug` dependiente) y detente. Ese encadenamiento ocurre despues, ya de vuelta en este hilo: un subagente no puede invocar slash commands, y por eso ese eslabon vive en el skill y no dentro del historiador.
 
