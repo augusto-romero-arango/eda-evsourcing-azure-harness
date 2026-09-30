@@ -4,7 +4,7 @@
 #   (b) claude sin CLAUDE.md: FALTA
 #   (c) opencode con CLAUDE.md con secciones duplicadas: sigue reportando la limpieza
 #   (d) migracion bajo opencode no crea CLAUDE.md salvo con --with-claude-bridge
-#   (e) scripts copiados a una clausura tipo dist resuelven _pipeline-common.sh desde ella
+#   (e) los scripts de dist/opencode/scripts/ resuelven _pipeline-common.sh desde dist/
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -90,15 +90,20 @@ grep -Fxq '@AGENTS.md' "$R/CLAUDE.md" 2>/dev/null && pass "(d) --with-claude-bri
 R="$TMP/r2c"; make_repo "$R"; rm "$R/AGENTS.md"; mig "$R" claude --apply >/dev/null
 grep -Fxq '@AGENTS.md' "$R/CLAUDE.md" 2>/dev/null && pass "claude crea el puente sin flag" || fail "claude no creo el puente"
 
-echo "[R-3] clausura tipo dist"
-D="$TMP/dist"; mkdir -p "$D/scripts" "$D/src/runtime"
-cp "$REPO_ROOT"/scripts/_pipeline-common.sh "$REPO_ROOT"/scripts/onboard-diagnose.sh "$REPO_ROOT"/scripts/onboard-migrate-directives.sh "$D/scripts/"
-cp -R "$REPO_ROOT/src/runtime/lib" "$D/src/runtime/lib"
+R="$TMP/r2d"; make_repo "$R"; rm "$R/AGENTS.md"; ln -s AGENTS.md "$R/CLAUDE.md"
+mig "$R" opencode --apply >/dev/null; RC=$?
+if [ "$RC" -eq 0 ] && [ -f "$R/AGENTS.md" ] && [ -L "$R/CLAUDE.md" ]; then pass "(d) opencode ignora un CLAUDE.md enlace sin el flag"; else fail "(d) opencode con CLAUDE.md enlace (rc=$RC)"; fi
+R="$TMP/r2e"; make_repo "$R"; rm "$R/AGENTS.md"
+mig "$R" opencode "--with-claude-bridge --apply" >/dev/null
+grep -Fxq '@AGENTS.md' "$R/CLAUDE.md" 2>/dev/null && pass "(d) el flag se acepta antes del modo" || fail "(d) orden de flags"
+
+echo "[R-3] scripts publicados en dist/opencode/scripts"
+D="$REPO_ROOT/dist/opencode/scripts"
 R="$TMP/r3"; make_repo "$R"; rm "$R/AGENTS.md"
-OUT=$(mig "$R" opencode --apply "$D/scripts"); RC=$?
-if [ "$RC" -eq 0 ] && [ -f "$R/AGENTS.md" ] && [ ! -e "$R/CLAUDE.md" ]; then pass "(e) migracion desde la clausura resuelve _pipeline-common.sh"; else fail "(e) migracion: $OUT"; fi
-OUT=$(diag "$R" opencode "$D/scripts")
-if printf '%s\n' "$OUT" | grep -Fq '[OK           ] config efectivo'; then pass "(e) diagnostico desde la clausura carga la config"; else fail "(e) diagnostico: $OUT"; fi
+OUT=$(mig "$R" opencode --apply "$D"); RC=$?
+if [ "$RC" -eq 0 ] && [ -f "$R/AGENTS.md" ] && [ ! -e "$R/CLAUDE.md" ]; then pass "(e) migracion desde dist resuelve _pipeline-common.sh"; else fail "(e) migracion: $OUT"; fi
+OUT=$(diag "$R" opencode "$D")
+if printf '%s\n' "$OUT" | grep -Fq '[OK           ] config efectivo'; then pass "(e) diagnostico desde dist carga la config"; else fail "(e) diagnostico: $OUT"; fi
 
 echo ""; echo "Resultado: $PASS PASS, $FAIL FAIL"
 [ "$FAIL" -eq 0 ]

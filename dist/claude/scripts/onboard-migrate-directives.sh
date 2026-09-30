@@ -1,18 +1,25 @@
 #!/usr/bin/env bash
 # onboard-migrate-directives.sh --- Migración conservadora de directivas (issue #1080).
-# Uso: onboard-migrate-directives.sh --preview | --apply (cwd = raíz del consumidor).
+# Uso: onboard-migrate-directives.sh --preview | --apply [--with-claude-bridge]
+# (cwd = raíz del consumidor). El puente CLAUDE.md solo se crea o completa bajo
+# el runtime "claude" o con --with-claude-bridge (MEF-ADR-0050/0053).
 
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-MODE="${1:---preview}"
+MODE=""
 WITH_CLAUDE_BRIDGE=0
-if [ "$#" -eq 2 ] && [ "$2" = "--with-claude-bridge" ]; then
-    WITH_CLAUDE_BRIDGE=1
-    set -- "$1"
-fi
+USAGE_ERROR=0
+for arg in "$@"; do
+    case "$arg" in
+        --with-claude-bridge) WITH_CLAUDE_BRIDGE=1 ;;
+        --preview|--apply) [ -z "$MODE" ] && MODE="$arg" || USAGE_ERROR=1 ;;
+        *) USAGE_ERROR=1 ;;
+    esac
+done
+MODE="${MODE:---preview}"
 
-if [ "$#" -gt 1 ] || { [ "$MODE" != "--preview" ] && [ "$MODE" != "--apply" ]; }; then
+if [ "$USAGE_ERROR" -eq 1 ]; then
     echo "Uso: $(basename "$0") --preview | --apply [--with-claude-bridge]" >&2
     exit 2
 fi
@@ -48,8 +55,14 @@ BOUNDED_CONTEXT_DOMAINS=$(jq -r '.boundedContext.domains | join(", ")' "$HARNESS
     exit 1
 }
 
+_onboard_resolve_runtime
+BRIDGE_ENABLED=0
+{ [ "$ONBOARD_RUNTIME" = "claude" ] || [ "$WITH_CLAUDE_BRIDGE" -eq 1 ]; } && BRIDGE_ENABLED=1
+DESTINATIONS=("$AGENTS")
+[ "$BRIDGE_ENABLED" -eq 1 ] && DESTINATIONS+=("$CLAUDE")
+
 # Rechazar enlaces evita que una operación publicada escape del consumidor.
-for destination in "$AGENTS" "$CLAUDE"; do
+for destination in "${DESTINATIONS[@]}"; do
     if [ -L "$destination" ]; then
         echo "ERROR: $(basename "$destination") es un enlace simbólico; no se siguen destinos fuera del consumidor." >&2
         echo "       Reemplázalo conscientemente por un archivo regular y reintenta; no se modificó nada." >&2
@@ -63,10 +76,7 @@ done
 
 # Preflight completo: ningún destino se toca antes de poder ejecutar todas las
 # acciones deterministas. Un AGENTS existente e incompleto no se fusiona.
-_onboard_resolve_runtime
 _check_consumer_directives "$AGENTS" "$CLAUDE" "$ONBOARD_RUNTIME"
-BRIDGE_ENABLED=0
-{ [ "$ONBOARD_RUNTIME" = "claude" ] || [ "$WITH_CLAUDE_BRIDGE" -eq 1 ]; } && BRIDGE_ENABLED=1
 if [ -e "$AGENTS" ]; then
     if [ ! -r "$AGENTS" ]; then
         echo "ERROR: AGENTS.md existe pero no es legible; no se modifico nada." >&2
