@@ -4,6 +4,14 @@ Todo cambio notable a este proyecto se documenta aquí. Sigue [Keep a Changelog]
 
 ## [Unreleased]
 
+## [0.40.1] - 2026-09-30
+
+### Fixed
+
+- `/work-status` refleja el PR y el log de las corridas terminadas: `history[]` expone `pr`, el `detail` combina `env:<ambiente>, PR #N` y el colector resuelve el log de la corrida (`iac-pipeline-*`, `tooling-pipeline-*`, `pipeline-*`, con sufijo de variante) cuando no hay `log` declarado ni reconstruccion por stage (#1730).
+- El runner neutral escribe en `events.log` las lineas `[tool]`, `[archivo]` y `[stage]` en hora local del proceso (respeta `TZ`) en vez de recortar la hora UTC del `ts`, alineandolas con el resto de escritores del log (#1731).
+- Las entradas terminales de `pipeline-history.jsonl` de `iac`, `tdd`, `tooling` y `scaffold` declaran ahora `log` (ruta absoluta del log de la corrida, con sufijo de variante cuando aplica), para que `/work-status` abra el log de una corrida terminada sin reconstruirlo (#1734).
+
 ## [0.40.0] - 2026-09-30
 
 ### Added
@@ -2938,7 +2946,8 @@ Y reemplazar referencias en `CLAUDE.md` del proyecto: `/eda-evsourcing-azure-har
 - Los agentes `reviewer` e `implementer` mantienen el placeholder literal `ADR-XXXX` en sus plantillas de reporte (no es un bug; el agente lo sustituye en tiempo de ejecución por el número real del ADR aplicable).
 - Los ejemplos de código en `test-writer.md`, `implementer.md` y `smoke-test-writer.md` conservan nombres concretos de un proyecto consumidor (`Programacion`, `ControlHoras`) anotados en el "Contrato con el consumidor" de cada agente como ejemplos pedagógicos.
 
-[Unreleased]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.40.0...HEAD
+[Unreleased]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.40.1...HEAD
+[0.40.1]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.40.0...v0.40.1
 [0.40.0]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.39.0...v0.40.0
 [0.39.0]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.38.2...v0.39.0
 [0.38.2]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.38.1...v0.38.2
