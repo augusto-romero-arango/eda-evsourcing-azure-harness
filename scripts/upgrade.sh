@@ -4,7 +4,7 @@
 # Despacha por el runtime activo (MEFISTO_RUNTIME o mefisto_resolve_runtime):
 #   claude    delega en update-plugin.sh (autoridad del lado Claude) y alinea el par OpenCode.
 #   opencode  actualiza OpenCode a la ultima release publicada mediante el launcher activo.
-#             La alineacion del par Claude desde este runtime la cubre un issue hermano.
+#             Con --align-peer alinea tambien la instalacion Claude a la misma version (#1679).
 #
 # Uso:
 #   scripts/upgrade.sh --status                   JSON versionado con el estado del par
@@ -115,6 +115,40 @@ _loaded_opencode() {
     printf '%s' "$json" | jq -r '.activeVersion // empty' 2>/dev/null
 }
 
+# Estado del par Claude. Setea PEER_STATE, PEER_VERSION y PEER_MKT (marketplace de mefisto).
+# Solo consulta 'claude plugin list'; no lee configuracion, providers ni credenciales.
+_peer_claude() {
+    local out rc
+    PEER_STATE=disabled; PEER_VERSION=""; PEER_MKT=""
+    command -v claude >/dev/null 2>&1 || return 0
+    if out=$(claude plugin list 2>&1); then rc=0; else rc=$?; fi
+    if [ "$rc" -ne 0 ]; then PEER_STATE=unavailable; return 0; fi
+    PEER_MKT=$(printf '%s\n' "$out" | sed -n 's/^[^A-Za-z0-9]*mefisto@\([^[:space:]]*\).*/\1/p' | head -1)
+    if [ -n "$PEER_MKT" ]; then
+        PEER_STATE=enabled
+        PEER_VERSION=$(printf '%s\n' "$out" | awk -v k="mefisto@$PEER_MKT" '
+            index($0, k) {f=1; next}
+            f && /^[^A-Za-z0-9]*[A-Za-z0-9._-]+@/ {exit}
+            f && /Version:/ {sub(/^.*Version:[[:space:]]*/, ""); print; exit}')
+    elif printf '%s' "$out" | grep -qiE 'installed plugins|no plugins'; then
+        PEER_STATE=disabled
+    else
+        PEER_STATE=unavailable
+    fi
+}
+
+# Marketplace donde instalar mefisto cuando el par esta disabled: se deriva de
+# 'claude plugin marketplace list' por el slug del repo, sin hardcodear el nombre.
+_claude_marketplace_for_install() {
+    local slug out
+    if [ -n "${MEFISTO_CLAUDE_MARKETPLACE:-}" ]; then printf '%s\n' "$MEFISTO_CLAUDE_MARKETPLACE"; return 0; fi
+    slug=$(_repo_slug)
+    out=$(claude plugin marketplace list 2>/dev/null) || return 1
+    printf '%s\n' "$out" | awk -v s="$slug" '
+        /^[^A-Za-z0-9]*[A-Za-z0-9._-]+[[:space:]]*$/ {n=$0; gsub(/^[^A-Za-z0-9]*|[[:space:]]*$/, "", n)}
+        index($0, s) && n != "" {print n; exit}'
+}
+
 cmd_status() {
     command -v jq >/dev/null 2>&1 || { echo "ERROR: jq es requerido para --status." >&2; return 1; }
     local loaded="" peer_runtime
@@ -125,7 +159,7 @@ cmd_status() {
     else
         peer_runtime=claude
         loaded=$(_loaded_opencode)
-        PEER_STATE=unavailable; PEER_VERSION=""
+        _peer_claude
     fi
     jq -cn --arg rt "$RUNTIME" --arg loaded "$loaded" --arg prt "$peer_runtime" \
         --arg ps "$PEER_STATE" --arg pv "$PEER_VERSION" '
@@ -188,8 +222,10 @@ _update_opencode() {
     if [ -n "$loaded" ] && [ "$loaded" = "$version" ]; then
         echo "Ya estas en la ultima version ($version); no se modifico nada."
         echo "Version destino: $version"
+        TARGET_VERSION="$version"
         return 0
     fi
+    TARGET_VERSION="$version"
 
     echo "Instalando OpenCode v$version con el launcher activo (verifica checksum)..."
     "$launcher" install "$version" || { echo "ERROR: install fallo; las releases existentes se conservan." >&2; return 1; }
@@ -204,8 +240,56 @@ _update_opencode() {
     # Sin --yes y sin TTY el launcher lista y se niega a borrar: se descarta ese rechazo.
     "$launcher" prune --keep "$KEEP" </dev/null 2>&1 | grep -v '^ERROR:' | sed 's/^/  /' || true
     echo "Reinicia OpenCode para descubrir la proyeccion actualizada."
-    if [ "$ALIGN_PEER" = true ]; then
-        echo "AVISO: la alineacion del par Claude desde OpenCode aun no esta disponible."
+}
+
+_align_claude() {
+    local target="$1" mkt root ver diag opencode_root launcher
+    _peer_claude
+    echo ""
+    echo "Par Claude: $PEER_STATE${PEER_VERSION:+ (version $PEER_VERSION)}"
+    case "$PEER_STATE" in
+        unavailable|conflict|operation-in-progress)
+            echo "AVISO: par Claude '$PEER_STATE'; no se muta Claude. OpenCode ya quedo en $target."
+            return 0 ;;
+        disabled)
+            if ! command -v claude >/dev/null 2>&1; then
+                echo "AVISO: el CLI claude no existe; no hay instalacion Claude que alinear."
+                return 0
+            fi
+            mkt=$(_claude_marketplace_for_install) || mkt=""
+            if [ -z "$mkt" ]; then
+                echo "AVISO: no se pudo derivar el marketplace de mefisto; no se instala Claude." >&2
+                return 0
+            fi
+            echo "Instalando mefisto@$mkt en Claude (scope user)..."
+            claude plugin marketplace update "$mkt" || { echo "ERROR: 'claude plugin marketplace update $mkt' fallo." >&2; return 1; }
+            claude plugin install "mefisto@$mkt" --scope user || { echo "ERROR: 'claude plugin install mefisto@$mkt' fallo." >&2; return 1; }
+            ;;
+        enabled)
+            mkt="$PEER_MKT"
+            echo "Actualizando mefisto@$mkt en Claude (scope user)..."
+            claude plugin marketplace update "$mkt" || { echo "ERROR: 'claude plugin marketplace update $mkt' fallo." >&2; return 1; }
+            claude plugin update "mefisto@$mkt" --scope user || { echo "ERROR: 'claude plugin update mefisto@$mkt --scope user' fallo." >&2; return 1; }
+            ;;
+    esac
+
+    _peer_claude
+    ver="$PEER_VERSION"
+    root="${MEFISTO_CACHE_ROOT:-$HOME/.claude/plugins/cache}/${PEER_MKT:-$mkt}/mefisto/$ver"
+    launcher=$(_launcher_path)
+    opencode_root="$(cd "$(dirname "$launcher")/.." 2>/dev/null && pwd -P)"
+    diag="$SCRIPT_DIR/../src/published/scripts/diagnose-installation-identity.sh"
+    [ -f "$diag" ] || diag="$SCRIPT_DIR/diagnose-installation-identity.sh"
+    if [ -f "$diag" ]; then
+        echo "Identidad de instalaciones:"
+        bash "$diag" --claude-root "$root" --opencode-root "$opencode_root" || true
+    else
+        echo "AVISO: no se hallo diagnose-installation-identity.sh; se omite la verificacion de identidad."
+    fi
+    if [ "$ver" != "$target" ]; then
+        echo "DERIVA VISIBLE: Claude quedo en ${ver:-desconocida} y la version destino es $target (el marketplace aun no publico esa version). OpenCode no se revierte."
+    else
+        echo "Claude alineado en $target. Recarga Claude (/reload-plugins o reinicio)."
     fi
 }
 
@@ -238,7 +322,11 @@ main() {
     case "$MODE:$RUNTIME" in
         status:*) cmd_status ;;
         prune:opencode) _prune_opencode ;;
-        *:opencode) _update_opencode ;;
+        *:opencode)
+            TARGET_VERSION=""
+            _update_opencode || return 1
+            [ "$ALIGN_PEER" = true ] && { _align_claude "$TARGET_VERSION" || return 1; }
+            return 0 ;;
         *:claude) _update_claude ;;
     esac
 }
