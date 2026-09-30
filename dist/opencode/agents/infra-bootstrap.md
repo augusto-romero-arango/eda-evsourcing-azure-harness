@@ -1,86 +1,30 @@
 ---
-name: "infra-bootstrap"
 description: "Orquesta la cadena greenfield completa (backend de Terraform, labels, CI hacia Azure, infraestructura base) y lanza el pipeline IaC. Usar cuando el backend de Terraform aun no existe en Azure o cuando se va a provisionar un nuevo ambiente por primera vez."
-tools: "Bash"
-model: "haiku"
+mode: "all"
+permission: {"external_directory":"deny","doom_loop":"deny","lsp":"deny","todowrite":"deny","question":"deny","webfetch":"deny","websearch":"deny","skill":"deny","task":"deny","list":"deny","glob":"deny","grep":"deny","bash":{"*":"deny","git *":"allow","gh *":"allow","jq *":"allow","cat *":"allow","ls":"allow","ls *":"allow","basename *":"allow","find *":"allow","grep *":"allow","sort":"allow","sort *":"allow","bash scripts/*":"allow","sh scripts/*":"allow","scripts/*":"allow","./scripts/*":"allow","${MEFISTO_PACKAGE_ROOT}/scripts/*":"allow","mkdir *":"allow","mktemp":"allow","mktemp *":"allow","rm *":"deny","dotnet *":"allow","func init *":"allow","terraform init -backend=false*":"allow","terraform validate*":"allow","terraform fmt*":"allow","python3 - *":"allow","python3 -m json.tool*":"allow","cd *":"allow","echo *":"allow","date":"allow","date *":"allow","printf *":"allow","test *":"allow","[ *":"allow","touch *":"allow","tr *":"allow","head *":"allow","tail *":"allow","awk *":"allow","sed *":"allow","mv *":"allow","ilspycmd *":"allow","diff *":"allow","rm -f src/*":"allow","rm -rf src/*":"allow","rm -f tests/*":"allow","rm -f \"src/*":"allow","rm -rf \"src/*":"allow","rm -f \"tests/*":"allow","curl *":"deny","ssh *":"deny","scp *":"deny","sudo *":"deny"},"edit":{"*":"deny"},"write":{"*":"deny"},"patch":{"*":"deny"},"read":{"*":"deny"}}
+tools: {"microsoft-learn_*":false,"terraform_*":false}
 ---
 <!-- GENERADO por src/published/scripts/generate-published-adapters.sh desde src/published/agents/infra-bootstrap.md. No editar a mano. -->
 ```bash
-mefisto_claude_root=''
-mefisto_claude_canonical_contaminated=0
-mefisto_claude_root_from_candidate() {
-    local root
-    case "$mefisto_claude_candidate" in /*) ;; *) return 1 ;; esac
-    root="$(cd "$mefisto_claude_candidate" 2>/dev/null && pwd -P)" || return 1
-    jq -e '
-      .name == "mefisto" and
-      (.version | type == "string" and test("^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?(\\+[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?$"))
-    ' "$root/.claude-plugin/plugin.json" >/dev/null 2>&1 || return 1
-    jq -e --arg version "$(jq -er '.version | strings' "$root/.claude-plugin/plugin.json" 2>/dev/null)" '
-      (keys | sort) == ["commit", "runtime", "schemaVersion", "version"] and
-      .schemaVersion == 1 and .runtime == "claude" and .version == $version and
-      (.commit | type == "string" and test("^[0-9a-f]{40}$"))
-    ' "$root/mefisto-manifest.json" >/dev/null 2>&1 || return 1
-    printf '%s\n' "$root"
+mefisto_opencode_data_root() {
+    if [ -n "${XDG_DATA_HOME:-}" ]; then printf '%s/mefisto\n' "$XDG_DATA_HOME"
+    elif [ "$(uname -s)" = Darwin ]; then printf '%s/Library/Application Support/mefisto\n' "$HOME"
+    else printf '%s/.local/share/mefisto\n' "$HOME"; fi
 }
-mefisto_claude_is_opencode_root() {
-    local root
-    case "$mefisto_claude_candidate" in /*) ;; *) return 1 ;; esac
-    root="$(cd "$mefisto_claude_candidate" 2>/dev/null && pwd -P)" || return 1
-    jq -e '
-      (keys | sort) == ["commit", "minimumRuntimeVersion", "runtime", "schemaVersion", "version"] and
-      .schemaVersion == 1 and .runtime == "opencode" and
-      (.version | type == "string" and test("^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?(\\+[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?$")) and
-      (.commit | type == "string" and test("^[0-9a-f]{40}$")) and
-      (.minimumRuntimeVersion | type == "string" and test("^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"))
-    ' "$root/mefisto-manifest.json" >/dev/null 2>&1
+mefisto_opencode_launcher="$(mefisto_opencode_data_root)/active/bin/mefisto-opencode"
+if [ ! -f "$mefisto_opencode_launcher" ] || [ -L "$mefisto_opencode_launcher" ] || [ ! -x "$mefisto_opencode_launcher" ]; then
+    printf '%s\n' 'ERROR OpenCode: no hay una release activa valida; instale o active la release OpenCode.' >&2; exit 1
+fi
+MEFISTO_PACKAGE_ROOT="$("$mefisto_opencode_launcher" package-root)" || {
+    printf '%s\n' 'ERROR OpenCode: no se pudo resolver la release activa; instale o active la release OpenCode.' >&2; exit 1;
 }
-if [ -n "${CLAUDE_PLUGIN_ROOT:-}" ]; then
-    mefisto_claude_candidate="$CLAUDE_PLUGIN_ROOT"
-    mefisto_claude_root="$(mefisto_claude_root_from_candidate)" || {
-        printf '%s\n' 'ERROR Claude: la raiz indicada por CLAUDE_PLUGIN_ROOT es invalida; reabra o reinstale el plugin.' >&2; exit 1;
-    }
-else
-    mefisto_claude_cursor="$PWD"
-    while :; do
-        if [ -f "$mefisto_claude_cursor/.mefisto/pipeline/.plugin-root" ]; then
-            mefisto_claude_candidate="$(< "$mefisto_claude_cursor/.mefisto/pipeline/.plugin-root")"
-            if mefisto_claude_root="$(mefisto_claude_root_from_candidate)"; then break; fi
-            if mefisto_claude_is_opencode_root; then
-                mefisto_claude_canonical_contaminated=1
-                break
-            else
-                printf '%s\n' 'ERROR Claude: metadata del marker canonico invalida; reabra o reinstale el plugin.' >&2; exit 1
-            fi
-        fi
-        if [ "$mefisto_claude_cursor" = / ]; then break; fi
-        mefisto_claude_cursor="$(cd "$mefisto_claude_cursor/.." && pwd -P)"
-    done
-    if [ -z "$mefisto_claude_root" ]; then
-        mefisto_claude_cursor="$PWD"
-        while :; do
-            if [ -f "$mefisto_claude_cursor/.claude/pipeline/.plugin-root" ]; then
-                mefisto_claude_candidate="$(< "$mefisto_claude_cursor/.claude/pipeline/.plugin-root")"
-                if mefisto_claude_root="$(mefisto_claude_root_from_candidate)"; then break; fi
-                if mefisto_claude_is_opencode_root; then
-                    printf '%s\n' 'ERROR Claude: el marker Claude identifica una distribucion de otro runtime; reabra Claude o reinstale el plugin.' >&2; exit 1
-                fi
-                printf '%s\n' 'ERROR Claude: metadata del marker Claude invalida; reabra o reinstale el plugin.' >&2; exit 1
-            fi
-            if [ "$mefisto_claude_cursor" = / ]; then break; fi
-            mefisto_claude_cursor="$(cd "$mefisto_claude_cursor/.." && pwd -P)"
-        done
-    fi
-fi
-if [ -z "$mefisto_claude_root" ]; then
-    if [ "$mefisto_claude_canonical_contaminated" -eq 1 ]; then
-        printf '%s\n' 'ERROR Claude: el marker canonico identifica una distribucion OpenCode y no existe un mirror Claude valido; reabra Claude o reinstale el plugin.' >&2
-    else
-        printf '%s\n' 'ERROR Claude: no se encontro una raiz Claude valida; reabra o reinstale el plugin.' >&2
-    fi
-    exit 1
-fi
-MEFISTO_PACKAGE_ROOT="$mefisto_claude_root"
+case "$MEFISTO_PACKAGE_ROOT" in
+    /*) ;;
+    *) printf '%s\n' 'ERROR OpenCode: la release activa no devolvio una raiz absoluta; reinstale o active la release OpenCode.' >&2; exit 1 ;;
+esac
+MEFISTO_PACKAGE_ROOT="$(cd "$MEFISTO_PACKAGE_ROOT" 2>/dev/null && pwd -P)" || {
+    printf '%s\n' 'ERROR OpenCode: la release activa no existe; reinstale o active la release OpenCode.' >&2; exit 1;
+}
 export MEFISTO_PACKAGE_ROOT
 ```
 
@@ -117,7 +61,7 @@ Si el usuario no tiene estos privilegios, indícale que pida a un admin que ejec
 Obtén la suscripción y el tenant de la sesión activa **por tu cuenta**, sin preguntárselos al usuario:
 
 ```bash
-MEFISTO_RUNTIME=claude "${MEFISTO_PACKAGE_ROOT}/scripts/azure-account-info.sh" 2>&1
+MEFISTO_RUNTIME=opencode "${MEFISTO_PACKAGE_ROOT}/scripts/azure-account-info.sh" 2>&1
 ```
 
 Si el script termina con exit distinto de 0, muestra su mensaje (indica ejecutar `az login` y reintentar) y **detente**.
@@ -129,7 +73,7 @@ Si termina bien, muestra `subscriptionId`, `subscriptionName` y `tenantId` y pid
 `bootstrap-backend.sh` crea de forma idempotente el Resource Group, la Storage Account y el container del tfstate, y escribe `infra/environments/<ambiente>/backend.tf` con el bloque `backend "azurerm"` resuelto. Si no pasas `--location`, lee el campo opcional `azureLocation` del contrato canónico `.mefisto/harness.config.json`.
 
 ```bash
-MEFISTO_RUNTIME=claude "${MEFISTO_PACKAGE_ROOT}/scripts/bootstrap-backend.sh" --subscription <id> --env <env>
+MEFISTO_RUNTIME=opencode "${MEFISTO_PACKAGE_ROOT}/scripts/bootstrap-backend.sh" --subscription <id> --env <env>
 ```
 
 (Añade `--location <region>` solo si el config no tiene `azureLocation`.)
@@ -143,7 +87,7 @@ El bootstrap escribe `infra/environments/<ambiente>/backend.tf` en el working tr
 `setup-github-labels.sh` elimina los labels default de GitHub y crea el esquema dimensional (`tipo:*`, `dom:*`, `estado:*`, `bloqueado`) que el resto del harness asume al gestionar issues (MEF-ADR-0007). Sin este esquema, el planner y los pipelines no pueden clasificar ni filtrar issues.
 
 ```bash
-MEFISTO_RUNTIME=claude "${MEFISTO_PACKAGE_ROOT}/scripts/setup-github-labels.sh" 2>&1
+MEFISTO_RUNTIME=opencode "${MEFISTO_PACKAGE_ROOT}/scripts/setup-github-labels.sh" 2>&1
 ```
 
 El script es **idempotente**: todos los labels del esquema (tipo/dominio/estado/`bloqueado`/`bug`) se crean con `--force` (se sobrescriben sin fallar si ya existen) y los labels default se borran con `2>/dev/null` (no aborta si ya no están). Si reporta labels "no encontrado (ok)" o los recrea sin error, el esquema ya está listo: **continúa al paso 5**. Solo detente si el script termina con exit distinto de 0.
@@ -153,7 +97,7 @@ El script es **idempotente**: todos los labels del esquema (tipo/dominio/estado/
 `setup-github-ci.sh` crea el Service Principal de CI **sin secret** (OIDC / Workload Identity Federation), le asigna `Contributor` y `Role Based Access Control Administrator` (con condición anti-escalación) a nivel suscripción, y `Storage Blob Data Contributor` sobre la Storage Account **real** del tfstate que el paso 3 acaba de crear -- por eso corre **después** del bootstrap del backend, nunca antes: resuelve el nombre final de esa Storage (con su sufijo de unicidad global) leyendo el `backend.tf` recién escrito (MEF-ADR-0022). También añade los federated credentials para `push` a `main` (deploy + apply) y `pull_request` (plan).
 
 ```bash
-MEFISTO_RUNTIME=claude "${MEFISTO_PACKAGE_ROOT}/scripts/setup-github-ci.sh" <id>
+MEFISTO_RUNTIME=opencode "${MEFISTO_PACKAGE_ROOT}/scripts/setup-github-ci.sh" <id>
 ```
 
 (Pasa el mismo `<id>` de suscripción del paso 2. Si el slug `owner/repo` no se resuelve solo vía `gh repo view` o el remote `origin`, pásalo como segundo argumento.)
@@ -181,7 +125,7 @@ No lances el pipeline IaC del paso 7 sin que el usuario confirme que la infraest
 Lánzalo en segundo plano igual que /mefisto:infra, sin esperar a que termine:
 
 ```bash
-MEFISTO_RUNTIME=claude "${MEFISTO_PACKAGE_ROOT}/scripts/tmux-pipeline.sh" --infra <issue>
+MEFISTO_RUNTIME=opencode "${MEFISTO_PACKAGE_ROOT}/scripts/tmux-pipeline.sh" --infra <issue>
 ```
 
 El pipeline corre **sin credenciales de Azure** (MEF-ADR-0021, MEF-ADR-0022): Write (HCL) -> Review (revision estatica: `fmt -check` + `init -backend=false` + `validate`, sin `terraform plan`) -> PR. El PR resultante **no cierra el issue** (no lleva `Closes #N`): el `terraform plan` real corre en el PR y el `terraform apply` real corre en CI al mergear a `main` (workflow `Infra CD`, ver MEF-ADR-0022); ese workflow cierra el issue tras un apply exitoso.
