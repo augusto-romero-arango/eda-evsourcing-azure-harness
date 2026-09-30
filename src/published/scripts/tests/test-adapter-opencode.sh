@@ -109,8 +109,9 @@ else
     fail 'snapshot byte a byte de comando delegado'
 fi
 comando="$(< "$WORK/comando.md")"
-assert_contains "$comando" 'agent: "agent-completo"' 'agent inferido de launch-agent'
-assert_contains "$comando" 'subtask: true' 'subtask del comando delegado'
+assert_not_contains "$comando" 'agent:' 'agent no se infiere de launch-agent'
+assert_not_contains "$comando" 'subtask' 'launch-agent puntual no emite subtask'
+assert_contains "$comando" 'este mensaje: Analiza el estado actual y resume.' 'comando delegado lleva el mensaje explicito'
 assert_not_contains "$comando" 'permission:' 'comando sin campo permission'
 assert_not_contains "$comando" 'model:' 'comando hereda modelo'
 assert_contains "$comando" 'usa la tool nativa `skill` para cargar, en este orden: `mefisto-projections`' 'comando solicita carga nativa del Skill'
@@ -395,7 +396,14 @@ out="$("$MCP_ARTIFACT_VALIDATOR" "$MCP_ROOT/src/published/commands/consulta-mcp.
 write_mcp_command '["microsoft-learn"]' ejecutor-mcp
 printf '%s\n' '---' '{"kind":"agent","id":"ejecutor-mcp","description":"Ejecutor.","mode":"subagent","mcp":["terraform"]}' '---' '{{mefisto:assert-consumer-repo}}' > "$MCP_ROOT/src/published/agents/ejecutor-mcp.md"
 out="$("$MCP_ARTIFACT_VALIDATOR" "$MCP_ROOT/src/published/commands/consulta-mcp.md" 2>&1)"; rc=$?
-[ "$rc" -ne 0 ] && assert_contains "$out" 'no declara todos los ids requeridos' 'comando MCP rechaza subconjunto incumplido' || fail 'subconjunto MCP incumplido debio fallar'
+[ "$rc" -ne 0 ] && assert_contains "$out" 'no declaran todos los ids requeridos' 'comando MCP rechaza subconjunto incumplido' || fail 'subconjunto MCP incumplido debio fallar'
+{ printf '%s\n' '---' '{"kind":"command","id":"consulta-mcp","description":"x","mcp":["microsoft-learn","terraform"]}' '---' '{{mefisto:assert-consumer-repo}}' '{{mefisto:launch-agent ejecutor-mcp Mensaje A}}'; } > "$MCP_ROOT/src/published/commands/consulta-mcp.md"
+printf '%s\n' '---' '{"kind":"agent","id":"otro-mcp","description":"Otro.","mode":"subagent","mcp":["microsoft-learn"]}' '---' '{{mefisto:assert-consumer-repo}}' > "$MCP_ROOT/src/published/agents/otro-mcp.md"
+out="$("$MCP_ARTIFACT_VALIDATOR" "$MCP_ROOT/src/published/commands/consulta-mcp.md" 2>&1)"; rc=$?
+[ "$rc" -ne 0 ] && pass 'MCP con una sola delegacion insuficiente falla' || fail 'MCP con una sola delegacion insuficiente debio fallar'
+{ printf '%s\n' '---' '{"kind":"command","id":"consulta-mcp","description":"x","mcp":["microsoft-learn","terraform"]}' '---' '{{mefisto:assert-consumer-repo}}' '{{mefisto:launch-agent ejecutor-mcp Mensaje A}}' '{{mefisto:launch-agent otro-mcp Mensaje B}}'; } > "$MCP_ROOT/src/published/commands/consulta-mcp.md"
+out="$("$MCP_ARTIFACT_VALIDATOR" "$MCP_ROOT/src/published/commands/consulta-mcp.md" 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && pass 'MCP considera todas las delegaciones del body' || fail "MCP con dos delegaciones debio pasar: $out"
 make_agent directiva '[]'
 printf '%s\n' '{{mefisto:desconocida}}' >> "$WORK/directiva.md"
 out="$(render "$WORK/directiva.md" 2>&1)"; rc=$?
@@ -422,6 +430,25 @@ assert_jq_budget() {
 }
 assert_jq_budget agent-completo
 assert_jq_budget agent-ambos-mcp
+
+printf '%s\n' '[delegacion] completa por frontmatter y puntual en el body'
+mk_cmd() { local n="$1" fm="$2"; shift 2; { printf '%s\n' '---' "$fm" '---' '{{mefisto:assert-consumer-repo}}'; printf '%s\n' "$@"; } > "$WORK/$n.md"; }
+mk_cmd cmd-completo '{"kind":"command","id":"cmd-completo","description":"x","agent":"agent-completo"}' 'Cuerpo.'
+completo_o="$(render "$WORK/cmd-completo.md")"
+assert_contains "$completo_o" 'agent: "agent-completo"' 'frontmatter agent emite agent'
+assert_contains "$completo_o" 'subtask: true' 'frontmatter agent emite subtask'
+mk_cmd cmd-puntual '{"kind":"command","id":"cmd-puntual","description":"x"}' 'Paso 1: pregunta al usuario.' '{{mefisto:launch-agent agent-completo Escribe el ambiente dev y el proposito Facturas}}' 'Paso 3: crea el PR.'
+puntual_o="$(render "$WORK/cmd-puntual.md")"
+assert_not_contains "$puntual_o" 'subtask' 'puntual no convierte el comando en subtask'
+assert_not_contains "$puntual_o" 'agent:' 'puntual no infiere agent'
+assert_contains "$puntual_o" 'invoca la tool `task` con el agente `agent-completo` y este mensaje: Escribe el ambiente dev y el proposito Facturas.' 'puntual invoca task con el mensaje dado'
+assert_not_contains "$puntual_o" 'ARGUMENTS' 'puntual no pasa $ARGUMENTS'
+assert_contains "$puntual_o" 'Paso 3: crea el PR.' 'el comando continua tras la delegacion'
+mk_cmd cmd-alt '{"kind":"command","id":"cmd-alt","description":"x"}' 'Si aplica A: {{mefisto:launch-agent agent-completo Mensaje A}}' 'Si aplica B: {{mefisto:launch-agent agent-completo Mensaje B}}'
+alt_o="$(render "$WORK/cmd-alt.md")"
+assert_contains "$alt_o" 'este mensaje: Mensaje A.' 'alternativa A traducida'
+assert_contains "$alt_o" 'este mensaje: Mensaje B.' 'alternativa B traducida'
+assert_not_contains "$alt_o" 'subtask' 'alternativas no generan subtask'
 
 printf 'RESULTADO: %s pasaron, %s fallaron\n' "$PASS" "$FAIL"
 exit "$FAIL"

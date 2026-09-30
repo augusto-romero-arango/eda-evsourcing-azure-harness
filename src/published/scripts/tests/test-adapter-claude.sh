@@ -278,5 +278,24 @@ else
     fail 'generador propaga el mapping fallido sin reemplazar dist'
 fi
 
+printf '%s\n' '[delegacion] completa por frontmatter y puntual en el body'
+mk_cmd() { local n="$1" fm="$2"; shift 2; { printf '%s\n' '---' "$fm" '---' '{{mefisto:assert-consumer-repo}}'; printf '%s\n' "$@"; } > "$WORK/$n.md"; }
+mk_cmd cmd-completo '{"kind":"command","id":"cmd-completo","description":"x","agent":"agent-completo"}' 'Cuerpo.'
+render "$WORK/cmd-completo.md" > "$WORK/cmd-completo.out"; completo_c="$(< "$WORK/cmd-completo.out")"
+contains "$completo_c" 'agente `mefisto:agent-completo`' 'frontmatter agent delega el comando completo en mefisto:<id>'
+contains "$completo_c" '$ARGUMENTS como mensaje' 'delegacion completa pasa $ARGUMENTS'
+absent "$completo_c" 'Actua como el agente' 'ya no emite Actua como el agente'
+mk_cmd cmd-puntual '{"kind":"command","id":"cmd-puntual","description":"x"}' 'Paso 1: pregunta al usuario.' '{{mefisto:launch-agent agent-completo Escribe el ambiente dev y el proposito Facturas}}' 'Paso 3: crea el PR.'
+render "$WORK/cmd-puntual.md" > "$WORK/cmd-puntual.out"; puntual_c="$(< "$WORK/cmd-puntual.out")"
+contains "$puntual_c" 'invoca la tool `Task` con el agente `mefisto:agent-completo` y este mensaje: Escribe el ambiente dev y el proposito Facturas.' 'puntual invoca Task con el mensaje dado'
+contains "$puntual_c" 'Espera su resultado final' 'puntual espera el resultado'
+contains "$puntual_c" 'Paso 3: crea el PR.' 'el comando continua tras la delegacion'
+absent "$puntual_c" 'Actua como el agente' 'puntual no usa Actua como'
+absent "$puntual_c" 'ARGUMENTS' 'puntual no pasa $ARGUMENTS'
+mk_cmd cmd-alt '{"kind":"command","id":"cmd-alt","description":"x"}' 'Si aplica A: {{mefisto:launch-agent agent-completo Mensaje A}}' 'Si aplica B: {{mefisto:launch-agent agent-completo Mensaje B}}'
+render "$WORK/cmd-alt.md" > "$WORK/cmd-alt.out"; alt_c="$(< "$WORK/cmd-alt.out")"
+contains "$alt_c" 'este mensaje: Mensaje A.' 'alternativa A traducida'
+contains "$alt_c" 'este mensaje: Mensaje B.' 'alternativa B traducida'
+
 printf 'RESULTADO: %s pasaron, %s fallaron\n' "$PASS" "$FAIL"
 exit "$FAIL"

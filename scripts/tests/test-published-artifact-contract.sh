@@ -69,6 +69,9 @@ check_invalid_exact "runtime-variable.md" 'src/published/contract/fixtures/inval
 src/published/contract/fixtures/invalid/runtime-variable.md: body: linea 5 placeholder no permitido: $CLAUDE_PLUGIN_ROOT (solo se admite $ARGUMENTS)'
 check_invalid "guard-outside-body.md" "body: falta {{mefisto:assert-consumer-repo}}"
 check_invalid_exact "partially-malformed-directive.md" "src/published/contract/fixtures/invalid/partially-malformed-directive.md: body: linea 4 directiva mefisto mal formada"
+check_invalid "launch-agent-no-message.md" "directiva mefisto mal formada: {{mefisto:launch-agent bug-investigator}}"
+check_invalid "launch-agent-unknown-agent.md" "launch-agent 'agente-inexistente' no existe en src/published/agents"
+check_invalid "launch-agent-with-agent.md" "un comando con agent no puede usar launch-agent"
 check_invalid "extra-closing-brace.md" "directiva mefisto mal formada"
 check_invalid "prefixed-directive-id.md" "directiva mefisto mal formada"
 check_invalid "skill-root-invalid-id.md" "directiva mefisto mal formada: {{mefisto:skill-root mefisto-projections}}"

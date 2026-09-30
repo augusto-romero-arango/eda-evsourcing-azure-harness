@@ -97,7 +97,7 @@ EOF
             return 0
         }
         function valid_directive(value) {
-            return value ~ /^\{\{mefisto:(launch-agent|command) [a-z0-9]+(-[a-z0-9]+)*\}\}$/ || value ~ /^\{\{mefisto:run [a-z0-9][a-z0-9._\/-]* [^{}]+\}\}$/ || value ~ /^\{\{mefisto:state-path [A-Za-z0-9][A-Za-z0-9._\/-]*\}\}$/
+            return value ~ /^\{\{mefisto:command [a-z0-9]+(-[a-z0-9]+)*\}\}$/ || value ~ /^\{\{mefisto:launch-agent [a-z0-9]+(-[a-z0-9]+)*[ ]+[^{} ][^{}]*\}\}$/ || value ~ /^\{\{mefisto:run [a-z0-9][a-z0-9._\/-]* [^{}]+\}\}$/ || value ~ /^\{\{mefisto:state-path [A-Za-z0-9][A-Za-z0-9._\/-]*\}\}$/
         }
         NR == 1 { next }
         $0 == "---" && !body { body=1; next }
@@ -163,22 +163,40 @@ EOF
     case "$body_validation" in *"$rel: "*) printf '%s\n' "$body_validation" | grep -v '^__MEFISTO_GUARD__$'; status=1 ;; esac
     case "$body_validation" in *'__MEFISTO_GUARD__'*) has_guard=1 ;; esac
     [ "$has_guard" -eq 1 ] || { echo "$rel: body: falta {{mefisto:assert-consumer-repo}}"; status=1; }
+    local launch_ids launch_id declared_agent
+    launch_ids="$(body_lines "$file" | cut -d: -f2- | grep -Eo '\{\{mefisto:launch-agent [a-z0-9]+(-[a-z0-9]+)*[ ]+[^{} ]' | sed -E 's/^\{\{mefisto:launch-agent ([a-z0-9-]+).*/\1/' | sort -u)"
+    declared_agent="$(printf '%s' "$instance_json" | jq -r '.agent // empty')"
+    if [ -n "$launch_ids" ]; then
+        if [ -n "$declared_agent" ]; then
+            echo "$rel: body: un comando con agent no puede usar launch-agent (delegacion completa y puntual son excluyentes)"
+            status=1
+        fi
+        while IFS= read -r launch_id; do
+            [ -f "$REPO_ROOT/src/published/agents/$launch_id.md" ] || { echo "$rel: body: launch-agent '$launch_id' no existe en src/published/agents"; status=1; }
+        done <<< "$launch_ids"
+    fi
     if [[ "$rel" = src/published/commands/*.md ]] && [ "$(printf '%s' "$instance_json" | jq -r '.kind')" = command ] && [ "$(printf '%s' "$instance_json" | jq '[.mcp[]?] | length')" -gt 0 ]; then
-        agent="$(printf '%s' "$instance_json" | jq -r '.agent // empty')"
-        [ -n "$agent" ] || agent="$(body_lines "$file" | cut -d: -f2- | grep -Eo '\{\{mefisto:launch-agent [a-z0-9]+(-[a-z0-9]+)*\}\}' | sed -E 's/.*launch-agent ([a-z0-9-]+).*/\1/' | head -n 1)"
+        agent="$declared_agent"
+        [ -n "$agent" ] || agent="$(printf '%s' "$launch_ids" | paste -sd' ' -)"
         if [ -z "$agent" ]; then
             echo "$rel: mcp: el comando declara MCP pero no delega a un agente neutral"
             status=1
         else
-            agent_file="$REPO_ROOT/src/published/agents/$agent.md"
-            if [ ! -f "$agent_file" ]; then
-                echo "$rel: mcp: el agente delegado '$agent' no existe en src/published/agents"
-                status=1
-            else
+            agent_mcp='[]'; local missing=0 a f one
+            for a in $agent; do
+                f="$REPO_ROOT/src/published/agents/$a.md"
+                if [ ! -f "$f" ]; then
+                    echo "$rel: mcp: el agente delegado '$a' no existe en src/published/agents"
+                    status=1; missing=1
+                else
+                    one="$(extract_frontmatter "$f" | jq -c '.mcp // []' 2>/dev/null)" || one='[]'
+                    agent_mcp="$(jq -cn --argjson x "$agent_mcp" --argjson y "$one" '$x + $y | unique')"
+                fi
+            done
+            if [ "$missing" -eq 0 ]; then
                 command_mcp="$(printf '%s' "$instance_json" | jq -c '.mcp // []')"
-                agent_mcp="$(extract_frontmatter "$agent_file" | jq -c '.mcp // []' 2>/dev/null)" || agent_mcp='[]'
                 if ! jq -en --argjson command "$command_mcp" --argjson agent "$agent_mcp" '$command - $agent | length == 0' >/dev/null; then
-                    echo "$rel: mcp: el agente delegado '$agent' no declara todos los ids requeridos por el comando"
+                    echo "$rel: mcp: los agentes delegados '$agent' no declaran todos los ids requeridos por el comando"
                     status=1
                 fi
             fi
