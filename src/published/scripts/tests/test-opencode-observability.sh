@@ -81,6 +81,16 @@ await blocked.event({ event: { type: "session.created", properties: { info: { id
 const throwing = await malformedPlugin({ directory: "relative", worktree: "", client: { app: { log: async () => { throw new Error("SENTINELA-LOG"); } } } });
 await throwing.event({ event: { type: "session.created", properties: {} } });
 
+const remRoot = `${root}-recordatorio`;
+await fs.mkdir(remRoot);
+const rem = await plugin({ directory: remRoot, worktree: remRoot, client });
+await rem.event({ event: { type: "session.idle", properties: { sessionID: "ro" } } });
+await rem["tool.execute.after"]({ sessionID: "rw", tool: "write", args: { filePath: "a.cs" } }, {});
+await rem.event({ event: { type: "session.idle", properties: { sessionID: "ro" } } });
+await rem.event({ event: { type: "session.idle", properties: { sessionID: "rw" } } });
+await rem.event({ event: { type: "session.idle", properties: { sessionID: "rw" } } });
+await rem.event({ event: { type: "session.idle", properties: { sessionID: "rw" } } });
+
 console.log(JSON.stringify({
   sessions: await fs.readFile(path.join(root, ".mefisto/pipeline/sessions.jsonl"), "utf8"),
   events: await fs.readFile(path.join(root, ".mefisto/pipeline/events.log"), "utf8"),
@@ -99,7 +109,7 @@ EXPECTED_RUNTIME="$(cd "$WORK/runtime" && pwd -P)"
 jq -e '.pluginRoot == $expected' --arg expected "$EXPECTED_RUNTIME" <<< "$result" >/dev/null && [ ! -e "$ROOT/.claude" ] && pass 'plugin-root identifica la release cargada sin mirror legacy' || fail 'identidad de release activa incorrecta'
 jq -e 'all(.degraded,.missing; split("\n") | map(select(length > 0) | fromjson) | .[0].harness_version == null and .[0].harness_commit == null)' <<< "$result" >/dev/null && pass 'manifiesto ausente o malformado degrada identidad a null' || fail 'manifiesto degradado invento identidad'
 case "$result" in *SENTINELA*) fail 'no persiste centinelas sensibles' ;; *) pass 'no persiste centinelas sensibles' ;; esac
-jq -e '([.logs[].body.message | select(contains("plan.completed no soportado"))] | length) == 4 and ([.logs[].body.message | select(contains("manifiesto de release"))] | length) == 2 and ([.logs[].body.message | select(contains("payload de session.created"))] | length) == 1 and ([.logs[].body.message | select(contains("payload de chat.params"))] | length) == 1 and ([.logs[].body.message | select(contains("inicio de sesion"))] | length) == 1' <<< "$result" >/dev/null && pass 'reporta una vez por instancia plan y degradaciones sin propagar fallos' || fail 'diagnosticos de degradacion invalidos'
+jq -e '([.logs[].body.message | select(contains("plan.completed"))] | length) == 0 and ([.logs[].body.message | select(. == "[recordatorio] Si esta sesion tuvo descubrimientos de dominio, decisiones o alternativas descartadas, considera escribir field notes en docs/bitacora/field-notes/ antes de continuar.")] | length) == 1 and ([.logs[].body.message | select(contains("manifiesto de release"))] | length) == 2 and ([.logs[].body.message | select(contains("payload de session.created"))] | length) == 1 and ([.logs[].body.message | select(contains("payload de chat.params"))] | length) == 1 and ([.logs[].body.message | select(contains("inicio de sesion"))] | length) == 1' <<< "$result" >/dev/null && pass 'recordatorio solo con cambios y una vez por sesion; degradaciones sin propagar fallos' || fail 'diagnosticos de degradacion invalidos'
 
 printf 'RESULTADO: %s pasaron, %s fallaron\n' "$PASS" "$FAIL"
 exit "$FAIL"

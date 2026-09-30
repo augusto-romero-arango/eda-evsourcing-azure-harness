@@ -1,1 +1,1 @@
-.bindings[0].signal = "plan.completed"
+.bindings[0].signal = "session.turn-completed"

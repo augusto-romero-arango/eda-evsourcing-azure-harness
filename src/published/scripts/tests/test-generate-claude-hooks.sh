@@ -21,16 +21,16 @@ out=$(bash "$GENERATOR" --check --out "$TMP/vacio" 2>&1); [ $? -ne 0 ] && [ "$ou
 mkdir -p "$TMP/render" && bash "$GENERATOR" --out "$TMP/render" && cmp -s "$HOOKS" "$TMP/render/hooks/hooks.json" && pass "render alternativo coincide byte a byte" || fail "render alternativo divergente"
 printf '%s\n' '{"distinta":true}' > "$TMP/render/hooks/hooks.json"
 out=$(bash "$GENERATOR" --check --out "$TMP/render" 2>&1); [ $? -ne 0 ] && [ "$out" = "hooks/hooks.json: distinta" ] && [ "$(jq -r '.distinta' "$TMP/render/hooks/hooks.json")" = true ] && pass "--check informa diferencia sin escribir" || fail "--check distinta: $out"
-jq -e '(. | keys) == ["hooks"] and (.hooks | keys | sort) == ["PostToolUse","SessionStart","Stop"] and (.hooks.SessionStart | length) == 1 and (.hooks.SessionStart[0] | keys) == ["hooks"] and ([.hooks.SessionStart[0].hooks[]] | length) == 2 and (.hooks.Stop | length) == 1 and ([.hooks.Stop[0].hooks[]] | length) == 1 and ([.hooks.PostToolUse[].matcher] == ["ExitPlanMode", "Write|Edit", "Bash"]) and ([.hooks.PostToolUse[] | .hooks[]] | length) == 4 and ([.hooks.SessionStart[0].hooks[], .hooks.Stop[0].hooks[], .hooks.PostToolUse[].hooks[]] | all(keys == ["command","type"] and .type == "command" and (.command | type) == "string" and (has("async") | not) and (has("timeout") | not)))' "$HOOKS" >/dev/null && pass "estructura completa, sync implicito y timeout omitido" || fail "topologia Claude invalida"
+jq -e '(. | keys) == ["hooks"] and (.hooks | keys | sort) == ["PostToolUse","SessionStart","Stop"] and (.hooks.SessionStart | length) == 1 and (.hooks.SessionStart[0] | keys) == ["hooks"] and ([.hooks.SessionStart[0].hooks[]] | length) == 2 and (.hooks.Stop | length) == 1 and ([.hooks.Stop[0].hooks[]] | length) == 2 and ([.hooks.PostToolUse[].matcher] == ["Write|Edit", "Bash"]) and ([.hooks.PostToolUse[] | .hooks[]] | length) == 3 and ([.hooks.SessionStart[0].hooks[], .hooks.Stop[0].hooks[], .hooks.PostToolUse[].hooks[]] | all(keys == ["command","type"] and .type == "command" and (.command | type) == "string" and (has("async") | not) and (has("timeout") | not)))' "$HOOKS" >/dev/null && pass "estructura completa, sync implicito y timeout omitido" || fail "topologia Claude invalida"
 
 command_at() { jq -r "$1" "$HOOKS"; }
 RELEASE_CMD="$(command_at '.hooks.SessionStart[0].hooks[0].command')"
 SESSION_CMD="$(command_at '.hooks.SessionStart[0].hooks[1].command')"
 MODEL_CMD="$(command_at '.hooks.Stop[0].hooks[0].command')"
-REMINDER_CMD="$(command_at '.hooks.PostToolUse[0].hooks[0].command')"
-FILE_CMD="$(command_at '.hooks.PostToolUse[1].hooks[0].command')"
-TEST_CMD="$(command_at '.hooks.PostToolUse[2].hooks[0].command')"
-TERRAFORM_CMD="$(command_at '.hooks.PostToolUse[2].hooks[1].command')"
+REMINDER_CMD="$(command_at '.hooks.Stop[0].hooks[1].command')"
+FILE_CMD="$(command_at '.hooks.PostToolUse[0].hooks[0].command')"
+TEST_CMD="$(command_at '.hooks.PostToolUse[1].hooks[0].command')"
+TERRAFORM_CMD="$(command_at '.hooks.PostToolUse[1].hooks[1].command')"
 run_fixture() { local dir="$1" cmd="$2" fixture="$3"; mkdir -p "$dir"; (cd "$dir" && /bin/sh -c "$cmd" < "$FIXTURES/$fixture"); }
 
 echo "[comandos] destinos canonicos, filtros y tolerancia"
@@ -63,7 +63,15 @@ if (cd "$SUBDIR" && /bin/sh -c "$MODEL_CMD" <<< "$payload_empty") \
 else
     fail "degradacion Stop propago un fallo"
 fi
-run_fixture "$SUBDIR" "$REMINDER_CMD" empty.json && [ ! -e "$DIR/.mefisto/pipeline/events.log" ] && (cd "$SUBDIR" && /bin/sh -c "$REMINDER_CMD" >&-) && pass "recordatorio no persiste y tolera fallo de salida" || fail "recordatorio persistio o propago un fallo interno"
+REMINDER_TEXT="[recordatorio] Si esta sesion tuvo descubrimientos de dominio, decisiones o alternativas descartadas, considera escribir field notes en docs/bitacora/field-notes/ antes de continuar."
+cp "$FIXTURES/transcript-model-a.jsonl" "$DIR/sin-cambios.jsonl"; cp "$FIXTURES/transcript-edit.jsonl" "$DIR/con-cambios.jsonl"
+p_ro="$(jq -cn --arg t "$DIR/sin-cambios.jsonl" '{session_id:"ro",transcript_path:$t}')"
+p_rw="$(jq -cn --arg t "$DIR/con-cambios.jsonl" '{session_id:"rw",transcript_path:$t}')"
+out_ro="$(cd "$SUBDIR" && /bin/sh -c "$REMINDER_CMD" <<< "$p_ro")"
+[ -z "$out_ro" ] && [ ! -e "$DIR/.mefisto/pipeline/field-notes-reminded-ro" ] && pass "sin cambios de archivo no hay recordatorio" || fail "recordatorio sin cambios: $out_ro"
+out_1="$(cd "$SUBDIR" && /bin/sh -c "$REMINDER_CMD" <<< "$p_rw")"; out_2="$(cd "$SUBDIR" && /bin/sh -c "$REMINDER_CMD" <<< "$p_rw")"; out_3="$(cd "$SUBDIR" && /bin/sh -c "$REMINDER_CMD" <<< "$p_rw")"
+[ "$(jq -r '.systemMessage' <<< "$out_1")" = "$REMINDER_TEXT" ] && [ -z "$out_2" ] && [ -z "$out_3" ] && [ -e "$DIR/.mefisto/pipeline/field-notes-reminded-rw" ] && pass "con cambios un solo recordatorio en varios turnos" || fail "recordatorio unico invalido: $out_1 | $out_2"
+(cd "$SUBDIR" && /bin/sh -c "$REMINDER_CMD" >&- <<< "$p_ro") && pass "recordatorio tolera fallo de salida" || fail "recordatorio propago un fallo"
 run_fixture "$SUBDIR" "$FILE_CMD" file-change.json && run_fixture "$SUBDIR" "$TEST_CMD" dotnet-pass.json && BEFORE_NEGATIVE=$(wc -l < "$DIR/.mefisto/pipeline/events.log" | tr -d ' ') && run_fixture "$SUBDIR" "$TEST_CMD" bash-negative.json && run_fixture "$SUBDIR" "$TERRAFORM_CMD" terraform-error.json && run_fixture "$SUBDIR" "$TERRAFORM_CMD" bash-negative.json && AFTER_NEGATIVE=$(wc -l < "$DIR/.mefisto/pipeline/events.log" | tr -d ' ') && NESTED_STATE="$(find "$DIR" -type d -path '*/.mefisto/pipeline' ! -path "$DIR/.mefisto/pipeline" -print -quit)" && [ "$BEFORE_NEGATIVE" -eq 2 ] && [ "$AFTER_NEGATIVE" -eq 3 ] && grep -q '\[archivo\] /tmp/con espacios.txt' "$DIR/.mefisto/pipeline/events.log" && grep -q '\[test\] PASS' "$DIR/.mefisto/pipeline/events.log" && grep -q '\[terraform\] apply: ERROR' "$DIR/.mefisto/pipeline/events.log" && ! grep -q 'SENTINELA' "$DIR/.mefisto/pipeline/events.log" && [ ! -e "$DIR/.claude/pipeline/events.log" ] && [ -z "$NESTED_STATE" ] && pass "handlers desde subdirectorio anexan solo resumenes en la raiz Git" || fail "handlers filtraron o persistieron datos fuera de la raiz"
 unset CLAUDE_PLUGIN_ROOT
 DIR_EMPTY="$TMP/sin-plugin"

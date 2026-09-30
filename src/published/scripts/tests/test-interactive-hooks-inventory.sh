@@ -28,7 +28,7 @@ trace() {
 trace record-active-release '[.hooks.SessionStart[].hooks[].command | select(contains(".plugin-root"))] | length'
 trace append-session '[.hooks.SessionStart[].hooks[].command | select(contains("sessions.jsonl"))] | length'
 trace append-session-model '[.hooks.Stop[].hooks[].command | select(contains("session.model-observed"))] | length'
-trace remind-field-notes '[.hooks.PostToolUse[] | select(.matcher == "ExitPlanMode") | .hooks[].command] | length'
+trace remind-field-notes '[.hooks.Stop[].hooks[].command | select(contains("field-notes-reminded"))] | length'
 trace append-file-change '[.hooks.PostToolUse[] | select(.matcher == "Write|Edit") | .hooks[].command] | length'
 trace append-dotnet-test-result '[.hooks.PostToolUse[] | select(.matcher == "Bash") | .hooks[].command | select(contains("dotnet test"))] | length'
 trace append-terraform-result '[.hooks.PostToolUse[] | select(.matcher == "Bash") | .hooks[].command | select(contains("terraform (plan|apply|init|validate)"))] | length'

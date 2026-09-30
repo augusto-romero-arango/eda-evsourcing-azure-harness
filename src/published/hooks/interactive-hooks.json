@@ -28,7 +28,7 @@
     },
     {
       "id": "remind-field-notes",
-      "signal": "plan.completed",
+      "signal": "session.turn-completed",
       "action": "remind-field-notes",
       "destinations": ["human-log"],
       "persistedFields": [],

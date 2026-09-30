@@ -1,0 +1,2 @@
+{"type":"user","message":{"content":"hola"}}
+{"type":"assistant","message":{"model":"claude-sonnet-4-6","content":[{"type":"tool_use","name":"Edit","input":{"file_path":"a.cs"}}]}}
