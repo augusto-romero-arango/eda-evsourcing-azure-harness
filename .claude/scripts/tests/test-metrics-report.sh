@@ -93,7 +93,7 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
-REPORT_SCRIPT="$REPO_ROOT/.claude/scripts/mefisto-metrics-report.sh"
+REPORT_SCRIPT="$REPO_ROOT/src/internal/scripts/mefisto-metrics-report.sh"
 COMMON_SCRIPT="$REPO_ROOT/.claude/scripts/_mefisto-common.sh"
 
 PASS=0
@@ -155,7 +155,9 @@ cp "$REPO_ROOT/src/internal/scripts/lib/_mefisto-common.sh" "$FAKE_REPO/src/inte
 cp "$COMMON_SCRIPT" "$FAKE_REPO/.claude/scripts/_mefisto-common.sh"
 cp "$REPO_ROOT/src/internal/scripts/lib/mefisto-state.sh" "$FAKE_REPO/src/internal/scripts/lib/mefisto-state.sh"
 cp "$REPO_ROOT/src/runtime/lib/mefisto-process.sh" "$FAKE_REPO/src/runtime/lib/mefisto-process.sh"
-cp "$REPORT_SCRIPT" "$FAKE_REPO/.claude/scripts/mefisto-metrics-report.sh"
+cp "$REPORT_SCRIPT" "$FAKE_REPO/src/internal/scripts/mefisto-metrics-report.sh"
+cp "$REPO_ROOT/.claude/scripts/mefisto-metrics-report.sh" "$FAKE_REPO/.claude/scripts/mefisto-metrics-report.sh"
+chmod +x "$FAKE_REPO/src/internal/scripts/mefisto-metrics-report.sh"
 chmod +x "$FAKE_REPO/.claude/scripts/mefisto-metrics-report.sh"
 
 run_report() {

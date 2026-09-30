@@ -89,7 +89,7 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
-TARGET="$REPO_ROOT/.claude/scripts/mefisto-stream-watch.sh"
+TARGET="$REPO_ROOT/src/internal/scripts/mefisto-stream-watch.sh"
 
 PASS=0
 FAIL=0

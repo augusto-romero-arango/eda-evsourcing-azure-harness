@@ -48,7 +48,7 @@ igual que el resto de la libreria (`mefisto-state.sh`, `mefisto-runtime.sh`...),
 sin pasar por `.claude/scripts/`. El shim de `_mefisto-common.sh` en
 `.claude/scripts/` es la unica excepcion a la plantilla de `exec` de arriba: es
 un `source` de una linea, para que los scripts que aun viven en `.claude/scripts/`
-(`mefisto-stream-watch.sh`, `mefisto-metrics-report.sh`, `mefisto-scope-hook.sh`)
+(`mefisto-scope-hook.sh`, el hook del adaptador Claude)
 sigan resolviendo la lib por su propio `dirname "${BASH_SOURCE[0]}"` sin cambiar
 una linea, y para que el gate de scope (MEF-ADR-0019 seccion E) siga
 cargandose desde el checkout principal. `mefisto-batch-pipeline.sh` (issue

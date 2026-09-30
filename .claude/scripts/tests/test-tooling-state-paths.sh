@@ -529,6 +529,8 @@ else
     cp "$REPO_ROOT/src/internal/scripts/lib/mefisto-state.sh" "$H_REPO/src/internal/scripts/lib/mefisto-state.sh"
     cp -R "$REPO_ROOT/src/runtime" "$H_REPO/src/runtime"
     cp "$SHIM_LIB" "$H_REPO/.claude/scripts/_mefisto-common.sh"
+    cp "$REPO_ROOT/src/internal/scripts/mefisto-metrics-report.sh" "$H_REPO/src/internal/scripts/mefisto-metrics-report.sh"
+    chmod +x "$H_REPO/src/internal/scripts/mefisto-metrics-report.sh"
     cp "$METRICS_REPORT" "$H_REPO/.claude/scripts/mefisto-metrics-report.sh"
     chmod +x "$H_REPO/.claude/scripts/mefisto-metrics-report.sh"
 
