@@ -9,7 +9,9 @@
 # Uso:
 #   scripts/upgrade.sh --status                   JSON versionado con el estado del par
 #   scripts/upgrade.sh [--align-peer]             actualiza (y alinea el par si se pide)
-#   scripts/upgrade.sh --prune [--keep <n>]       poda (solo tras confirmar en el comando)
+#   scripts/upgrade.sh --prune [--keep <n>] [--loaded <v>]
+#                                                 poda (solo tras confirmar en el comando);
+#                                                 --keep aplica a OpenCode, --loaded a Claude
 #
 # Nunca borra nada fuera de --prune. Refrescar panes, el mensaje de reload y la
 # confirmacion de poda son responsabilidad del comando, no de este script.
@@ -21,7 +23,7 @@ DEFAULT_REPO_SLUG="augusto-romero-arango/eda-evsourcing-azure-harness"
 LEGACY_USAGE='ERROR: uso: mefisto-opencode install <semver> | activate <semver> | prune [--keep <n>] [--yes] | project | deactivate | status | diagnose | package-root'
 
 usage() {
-    echo "Uso: $0 --status | [--align-peer] | --prune [--keep <n>]" >&2
+    echo "Uso: $0 --status | [--align-peer] | --prune [--keep <n>] [--loaded <version>]" >&2
 }
 
 _guard_consumidor() {
@@ -136,11 +138,11 @@ _update_claude() {
     local update="$SCRIPT_DIR/update-plugin.sh" args=()
     [ -f "$update" ] || { echo "ERROR: no se hallo update-plugin.sh junto a upgrade.sh." >&2; return 1; }
     if [ "$MODE" = prune ]; then
+        # .plugin-root no identifica la version cargada tras actualizar (ya apunta a la
+        # nueva): solo se reenvia --loaded explicito; si falta, update-plugin.sh aplica
+        # su propia resolucion (marker .plugin-root.previous y luego inferencia).
         args=(--prune)
-        local loaded
-        loaded=$(_loaded_claude)
-        [ -n "$LOADED_OVERRIDE" ] && loaded="$LOADED_OVERRIDE"
-        [ -n "$loaded" ] && args+=(--loaded "$loaded")
+        [ -n "$LOADED_OVERRIDE" ] && args+=(--loaded "$LOADED_OVERRIDE")
     elif [ "$ALIGN_PEER" = true ]; then
         args=(--align-opencode)
     fi
@@ -199,7 +201,8 @@ _update_opencode() {
     echo ""
     echo "Version destino: $version"
     echo "Versiones OpenCode podables (no se borro nada):"
-    "$launcher" prune --keep "$KEEP" </dev/null 2>&1 | sed 's/^/  /' || true
+    # Sin --yes y sin TTY el launcher lista y se niega a borrar: se descarta ese rechazo.
+    "$launcher" prune --keep "$KEEP" </dev/null 2>&1 | grep -v '^ERROR:' | sed 's/^/  /' || true
     echo "Reinicia OpenCode para descubrir la proyeccion actualizada."
     if [ "$ALIGN_PEER" = true ]; then
         echo "AVISO: la alineacion del par Claude desde OpenCode aun no esta disponible."

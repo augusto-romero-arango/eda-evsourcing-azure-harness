@@ -46,7 +46,8 @@ log() { cat "$STUB_LOG"; }
 echo "[a] claude: delegacion y traduccion de flags"
 MEFISTO_RUNTIME=claude run >/dev/null; [ "$(log)" = "update-plugin " ] && ok "sin flags" || ko "sin flags: $(log)"
 MEFISTO_RUNTIME=claude run --align-peer >/dev/null; has "$(log)" "update-plugin --align-opencode" && ok "--align-peer" || ko "--align-peer"
-MEFISTO_RUNTIME=claude run --prune >/dev/null; has "$(log)" "update-plugin --prune --loaded 1.0.0" && ok "--prune" || ko "--prune: $(log)"
+MEFISTO_RUNTIME=claude run --prune --loaded 0.9.0 >/dev/null; [ "$(log)" = "update-plugin --prune --loaded 0.9.0" ] && ok "--prune --loaded" || ko "--prune --loaded: $(log)"
+MEFISTO_RUNTIME=claude run --prune >/dev/null; [ "$(log)" = "update-plugin --prune" ] && ok "--prune sin --loaded no lo infiere de .plugin-root" || ko "--prune: $(log)"
 
 echo "[b] --status JSON"
 out=$(MEFISTO_RUNTIME=claude run --status)
