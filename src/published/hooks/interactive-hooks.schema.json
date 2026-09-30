@@ -8,7 +8,7 @@
       "required": ["id", "signal", "action", "destinations", "persistedFields", "delivery"],
       "properties": {
         "id": {"type": "string", "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$"},
-        "signal": {"enum": ["session.started", "session.model-observed", "plan.completed", "file.changed", "dotnet-test.completed", "terraform.completed"]},
+        "signal": {"enum": ["session.started", "session.model-observed", "session.turn-completed", "file.changed", "dotnet-test.completed", "terraform.completed"]},
         "action": {"enum": ["record-active-release", "append-session", "append-session-model", "remind-field-notes", "append-file-change", "append-dotnet-test-result", "append-terraform-result"]},
         "destinations": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"enum": ["canonical-state", "session-registry", "human-log", "release-identity", "legacy-release-marker"]}},
         "persistedFields": {"type": "array", "items": {"type": "string"}},
@@ -41,7 +41,7 @@
             {"properties": {"id": {"const": "record-active-release"}, "signal": {"const": "session.started"}, "action": {"const": "record-active-release"}, "destinations": {"const": ["canonical-state", "release-identity", "legacy-release-marker"]}, "persistedFields": {"const": ["release_identity"]}}},
             {"properties": {"id": {"const": "append-session"}, "signal": {"const": "session.started"}, "action": {"const": "append-session"}, "destinations": {"const": ["canonical-state", "session-registry"]}, "persistedFields": {"const": ["record_type", "session_id", "transcript_path", "cwd", "source", "timestamp", "runtime", "model", "harness_version", "harness_commit"]}}},
             {"properties": {"id": {"const": "append-session-model"}, "signal": {"const": "session.model-observed"}, "action": {"const": "append-session-model"}, "destinations": {"const": ["canonical-state", "session-registry"]}, "persistedFields": {"const": ["record_type", "session_id", "timestamp", "runtime", "model", "harness_version", "harness_commit"]}}},
-            {"properties": {"id": {"const": "remind-field-notes"}, "signal": {"const": "plan.completed"}, "action": {"const": "remind-field-notes"}, "destinations": {"const": ["human-log"]}, "persistedFields": {"const": []}}},
+            {"properties": {"id": {"const": "remind-field-notes"}, "signal": {"const": "session.turn-completed"}, "action": {"const": "remind-field-notes"}, "destinations": {"const": ["human-log"]}, "persistedFields": {"const": []}}},
             {"properties": {"id": {"const": "append-file-change"}, "signal": {"const": "file.changed"}, "action": {"const": "append-file-change"}, "destinations": {"const": ["canonical-state", "human-log"]}, "persistedFields": {"const": ["time", "family", "file_path"]}}},
             {"properties": {"id": {"const": "append-dotnet-test-result"}, "signal": {"const": "dotnet-test.completed"}, "action": {"const": "append-dotnet-test-result"}, "destinations": {"const": ["canonical-state", "human-log"]}, "persistedFields": {"const": ["time", "family", "result"]}}},
             {"properties": {"id": {"const": "append-terraform-result"}, "signal": {"const": "terraform.completed"}, "action": {"const": "append-terraform-result"}, "destinations": {"const": ["canonical-state", "human-log"]}, "persistedFields": {"const": ["time", "family", "terraform_subcommand", "result"]}}}

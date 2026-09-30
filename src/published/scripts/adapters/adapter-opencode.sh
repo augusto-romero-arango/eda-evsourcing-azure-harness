@@ -412,11 +412,19 @@ export default async function mefistoObservability(context) {
   const root = rootOf(context);
   const release = await identity(context.client);
   const observations = new Set();
-  let planReported = false;
-  const planUnsupported = async () => { if (!planReported) { planReported = true; await diagnostic(context.client, "Mefisto: plan.completed no soportado por OpenCode."); } };
-  await planUnsupported();
+  const changed = new Set();
+  const reminded = new Set();
+  const reminder = "[recordatorio] Si esta sesion tuvo descubrimientos de dominio, decisiones o alternativas descartadas, considera escribir field notes en docs/bitacora/field-notes/ antes de continuar.";
   return {
     event: async ({ event } = {}) => safe(context.client, "Mefisto: no se pudo registrar el inicio de sesion.", async () => {
+      if (event?.type === "session.idle") {
+        const idle = sessionID(event) ?? event?.properties?.sessionID;
+        if (typeof idle === "string" && changed.has(idle) && !reminded.has(idle)) {
+          reminded.add(idle);
+          try { await context.client?.app?.log?.({ body: { service: "mefisto", level: "info", message: reminder } }); } catch { /* failure: continue */ }
+        }
+        return;
+      }
       if (event?.type !== "session.created") return;
       const id = sessionID(event);
       if (typeof id !== "string" || id.length === 0 || !root) { await diagnostic(context.client, "Mefisto: payload de session.created no representable."); return; }
@@ -438,7 +446,7 @@ export default async function mefistoObservability(context) {
     }),
     "tool.execute.after": async (input, output) => safe(context.client, "Mefisto: no se pudo registrar el resumen de herramienta.", async () => {
       if (!root) return; const tool = toolName(input); const inputArgs = args(input);
-      if (["write", "edit", "patch"].includes(tool)) { const candidate = inputArgs.filePath ?? inputArgs.file_path ?? inputArgs.path; const file = typeof candidate === "string" && candidate.length > 0 ? candidate : "(desconocido)"; await append(root, "events.log", { time: clock(), family: "archivo", file_path: file }); return; }
+      if (["write", "edit", "patch"].includes(tool)) { if (typeof input?.sessionID === "string" && input.sessionID.length > 0) changed.add(input.sessionID); const candidate = inputArgs.filePath ?? inputArgs.file_path ?? inputArgs.path; const file = typeof candidate === "string" && candidate.length > 0 ? candidate : "(desconocido)"; await append(root, "events.log", { time: clock(), family: "archivo", file_path: file }); return; }
       if (!["bash", "shell"].includes(tool)) return;
       const command = typeof inputArgs.command === "string" ? inputArgs.command : "";
       if (/^\s*dotnet\s+test(?:\s|$)/.test(command)) { await append(root, "events.log", { time: clock(), family: "test", result: successful(output) ? "PASS" : "FAIL" }); return; }
