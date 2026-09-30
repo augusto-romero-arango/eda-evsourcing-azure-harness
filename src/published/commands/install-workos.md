@@ -164,7 +164,7 @@ gh secret set WORKOS_API_KEY
 
 ### 8. Invocar el agente de identidad (issue #338)
 
-{{mefisto:launch-agent workos-identity-scaffolder Instala el adapter WorkOS en el dominio <Dominio>. App setting de la API key: WORKOS_API_KEY (fijo, no uses el default WorkOsApiKey).}}
+{{mefisto:launch-agent workos-identity-scaffolder Instala el adapter WorkOS en el dominio <Dominio>. App setting de la API key: WORKOS_API_KEY (fijo, no uses el default WorkOsApiKey)}}
 
 Espera el resultado del agente; luego continua con el paso 9 en esta misma sesion.
 
@@ -172,7 +172,7 @@ El agente es idempotente (verifica que exista antes de escribir) y esta gateado 
 
 ### 9. Custodiar la API key con `{{mefisto:command seed-secret}}` (CA-5)
 
-Reusa el comando existente en vez de reimplementar su logica de cableado Terraform. Lee `{{mefisto:command-doc seed-secret}}` (el documento del comando `{{mefisto:command seed-secret}}` de la distribucion activa) y ejecuta su **Proceso** sin transcribirlo, con estos argumentos exactos: `workos-api-key --domain <Dominio> --env <env> --from-github-secret WORKOS_API_KEY`. La rama ya la creaste en el paso 4, asi que el paso de rama de `{{mefisto:command seed-secret}}` no crea otra.
+Reusa el comando existente en vez de reimplementar su logica de cableado Terraform. Lee `{{mefisto:command-doc seed-secret}}` (el documento del comando `{{mefisto:command seed-secret}}` de la distribucion activa) y ejecuta sus pasos de cableado (5 en adelante) sin transcribirlos aca, con estos argumentos exactos: `workos-api-key --domain <Dominio> --env <env> --from-github-secret WORKOS_API_KEY`. La rama ya la creaste en el paso 4, asi que no ejecutes el paso de rama de `{{mefisto:command seed-secret}}`.
 
 ```bash
 {{mefisto:run seed-secret.sh workos-api-key --domain <Dominio> --env <env> --from-github-secret WORKOS_API_KEY}}
