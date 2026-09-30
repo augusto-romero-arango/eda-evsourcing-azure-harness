@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # test-onboard-migrate-directives.sh -- Casos conservadores de la migración #1080.
 set -uo pipefail
+export MEFISTO_RUNTIME=claude
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 SCRIPT="$REPO_ROOT/scripts/onboard-migrate-directives.sh"
