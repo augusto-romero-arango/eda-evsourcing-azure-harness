@@ -68,6 +68,7 @@ TOOLING_CLOSURE_ASSETS=(
     'scripts/register-harness-secret.sh|0755'
     'scripts/seed-secret.sh|0755'
     'scripts/next-order.sh|0755'
+    'scripts/metrics-report.sh|0755'
     'scripts/validate-dockerfile.sh|0755'
     'scripts/azure-account-info.sh|0755'
     'scripts/bootstrap-backend.sh|0755'
