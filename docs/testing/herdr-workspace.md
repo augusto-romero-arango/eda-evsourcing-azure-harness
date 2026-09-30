@@ -5,9 +5,13 @@ arriba y OpenCode abajo. Sus identidades estables son
 `planner [claude]`/`ejecucion [claude]` y
 `planner [opencode]`/`ejecucion [opencode]`; cada pane hereda su
 `MEFISTO_RUNTIME` y usa el `--kind` correspondiente. Claude conserva
-`--agent mefisto:planner`; OpenCode se inicia sin `--agent`, porque el label
-planner solo describe el rol visual mientras el agente publicado no forme parte
-del corte vertical de tooling de MEF-ADR-0053.
+`--agent mefisto:planner`; OpenCode abre el planner publicado con
+`--agent planner` (nombre con que la proyeccion global expone
+`agents/planner.md`). Si la release OpenCode activa no proyecta ese agente
+(por ejemplo, una anterior a #1640), el pane arranca sin `--agent` y el script
+imprime un aviso `DEGRADACION VISIBLE` con la version activa que remite a
+`/mefisto:upgrade`. En el repo de Mefisto ambas filas usan `mefisto-planner`.
+El script se distribuye en `dist/{claude,opencode}/scripts/`.
 
 Al reenfocar un workspace creado antes de esta convencion, el script detecta
 los labels exactos legacy `planner` y `ejecucion` y los renombra in-place. No

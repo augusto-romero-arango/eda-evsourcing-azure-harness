@@ -525,6 +525,61 @@ assert_no_anchor_protocol L-2
 unset HERDR_STUB_EXISTING_LABEL HERDR_STUB_PANES
 
 echo ""
+echo "[M] Planner real en la fila OpenCode (issue #1681)"
+[ "$(planner_agent_for_repo "$FAKE_MEFISTO" opencode)" = "mefisto-planner" ] \
+    && [ "$(planner_agent_for_repo "$FAKE_CONSUMER" opencode)" = "planner" ] \
+    && [ "$(planner_agent_for_repo "$FAKE_CONSUMER" claude)" = "mefisto:planner" ] \
+    && [ "$(planner_agent_for_repo "$FAKE_CONSUMER")" = "mefisto:planner" ] \
+    && pass "M-0: planner_agent_for_repo resuelve por repo y runtime" \
+    || fail "M-0: nombres de planner inesperados"
+unset HERDR_STUB_EXISTING_LABEL HERDR_STUB_PANES
+write_identity "$FAKE_XDG/mefisto/active" opencode 1.2.3 "$COMMIT_A"
+mkdir -p "$FAKE_XDG/mefisto/active/agents"
+printf 'planner\n' > "$FAKE_XDG/mefisto/active/agents/planner.md"
+export WORKSPACE_TARGET="$FAKE_PACKAGE/scripts/herdr-workspace.sh"
+run_workspace "$FAKE_CONSUMER"
+[ "$LAST_RC" -eq 0 ] \
+    && grep -qxF 'herdr agent start planner-fake-consumer-opencode --kind opencode --pane w1:p2 --timeout 90000 -- --agent planner' "$HERDR_STUB_LOG" \
+    && grep -qxF 'herdr agent start planner-fake-consumer-r-claude --kind claude --pane w1:p1 --timeout 90000 -- --agent mefisto:planner' "$HERDR_STUB_LOG" \
+    && grep -qxF 'herdr agent start ejecucion-fake-consumer-opencode --kind opencode --pane w1:p4 --timeout 90000' "$HERDR_STUB_LOG" \
+    && ! printf '%s\n%s\n' "$LAST_STDOUT" "$LAST_STDERR" | grep -q 'DEGRADACION VISIBLE: la release OpenCode' \
+    && pass "M-1: consumidor, planner OpenCode con --agent planner y sin aviso" \
+    || fail "M-1: planner OpenCode inesperado: $(cat "$HERDR_STUB_LOG") $LAST_STDOUT$LAST_STDERR"
+
+run_workspace "$FAKE_MEFISTO"
+[ "$LAST_RC" -eq 0 ] \
+    && grep -qxF 'herdr agent start planner-fake-mefisto-re-claude --kind claude --pane w1:p1 --timeout 90000 -- --agent mefisto-planner' "$HERDR_STUB_LOG" \
+    && grep -qxF 'herdr agent start planner-fake-mefisto-opencode --kind opencode --pane w1:p2 --timeout 90000 -- --agent mefisto-planner' "$HERDR_STUB_LOG" \
+    && pass "M-2: repo de Mefisto, ambas filas con el planner interno" \
+    || fail "M-2: planner interno inesperado: $(cat "$HERDR_STUB_LOG")"
+
+rm -f "$FAKE_XDG/mefisto/active/agents/planner.md"
+run_workspace "$FAKE_CONSUMER"
+[ "$LAST_RC" -eq 0 ] \
+    && grep -qxF 'herdr agent start planner-fake-consumer-opencode --kind opencode --pane w1:p2 --timeout 90000' "$HERDR_STUB_LOG" \
+    && printf '%s\n%s\n' "$LAST_STDOUT" "$LAST_STDERR" | grep -q 'DEGRADACION VISIBLE: la release OpenCode activa (1.2.3).*sin --agent.*/mefisto:upgrade' \
+    && pass "M-3: sin planner proyectado arranca sin --agent con aviso y version" \
+    || fail "M-3: degradacion inesperada: $(cat "$HERDR_STUB_LOG") $LAST_STDOUT$LAST_STDERR"
+
+printf 'planner\n' > "$FAKE_XDG/mefisto/active/agents/planner.md"
+FAKE_DIST="$TMP/fake dist"
+mkdir -p "$FAKE_DIST/scripts" "$FAKE_DIST/src/published/scripts"
+cp "$REPO_ROOT/dist/opencode/scripts/herdr-workspace.sh" "$FAKE_DIST/scripts/herdr-workspace.sh"
+cp "$FAKE_PACKAGE/src/published/scripts/"diagnose-installation-identity*.sh "$FAKE_DIST/src/published/scripts/"
+write_identity "$FAKE_DIST" claude 1.2.3 "$COMMIT_A"
+export WORKSPACE_TARGET="$FAKE_DIST/scripts/herdr-workspace.sh"
+run_workspace "$FAKE_CONSUMER"
+[ "$LAST_RC" -eq 0 ] \
+    && grep -qxF 'herdr agent start planner-fake-consumer-opencode --kind opencode --pane w1:p2 --timeout 90000 -- --agent planner' "$HERDR_STUB_LOG" \
+    && pass "M-4: el script copiado a dist/opencode/scripts funciona igual" \
+    || fail "M-4: copia de dist inesperada: $(cat "$HERDR_STUB_LOG") $LAST_STDOUT$LAST_STDERR"
+cmp -s "$REPO_ROOT/dist/opencode/scripts/herdr-workspace.sh" "$TARGET" \
+    && cmp -s "$REPO_ROOT/dist/claude/scripts/herdr-workspace.sh" "$TARGET" \
+    && pass "M-5: dist/{claude,opencode} contienen el script fuente" \
+    || fail "M-5: dist diverge del script fuente"
+unset WORKSPACE_TARGET
+
+echo ""
 echo "[Z] Protocolo retirado del script"
 if grep -qE 'mount_second_row|pane close|fila libre' "$TARGET"; then
     fail "Z-1: el script aun contiene referencias al protocolo de ancla"
