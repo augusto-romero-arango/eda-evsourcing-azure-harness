@@ -306,6 +306,14 @@ else
     fail "no existe o esta vacio $HISTORY_A"
 fi
 
+# La entrada completed no se ejercita en runtime aqui (todos los casos abortan):
+# se verifica que su linea de historial declare el log de la corrida (#1734).
+if grep -F '\"state\":\"completed\"' "$PIPELINE_SRC" | grep -qF ',\"log\":\"$LOG_FILE\"}'; then
+    pass "la entrada completed del historial declara log"
+else
+    fail "la entrada completed del historial no declara log"
+fi
+
 if [ -f "$CANON_A/events.log" ] && grep -q "SESSION IAC" "$CANON_A/events.log"; then
     pass "events.log bajo .mefisto/pipeline/ con la cabecera de sesion"
 else
