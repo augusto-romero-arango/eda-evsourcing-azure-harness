@@ -61,7 +61,7 @@ Si cualquiera de los tres falta, detente con el mensaje -- no continues con el r
 ```bash
 if [ ! -f "infra/environments/${ENV}/apim.tf" ] && [ "${#CORS_ORIGINS[@]}" -eq 0 ]; then
   echo "FALTA: es la primera instalacion del gateway APIM en el entorno ${ENV} y no pasaste ningun --cors-origin."
-  echo "       --cors-origin es obligatorio la primera vez (mismo criterio que /install-apim). Reintenta con:"
+  echo "       --cors-origin es obligatorio la primera vez (mismo criterio que {{mefisto:command install-apim}}). Reintenta con:"
   echo "       {{mefisto:command install-auth}} --identity-domain <Dominio> --domain <Dominio> --cors-origin <origin-del-SPA>"
   exit 1
 fi
