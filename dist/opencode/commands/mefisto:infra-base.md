@@ -56,7 +56,9 @@ El generador es idempotente: si ya existen archivos, los respeta y solo crea lo 
 
 ### 3. Lanzar el agente
 
-invoca la tool `task` con el agente `infra-base-scaffolder` y este mensaje: Genera la infraestructura base. Ambiente: <env> (el ambiente ya resuelto y validado en el paso 1).. Espera su resultado final y continua con el paso siguiente del comando.
+Sustituye `<env>` por el ambiente ya resuelto y validado en el paso 1:
+
+invoca la tool `task` con el agente `infra-base-scaffolder` y este mensaje: Genera la infraestructura base. Ambiente: <env>. Espera su resultado final y continua con el paso siguiente del comando.
 
 ### 4. Tras terminar
 

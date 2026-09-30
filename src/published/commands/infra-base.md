@@ -39,7 +39,9 @@ El generador es idempotente: si ya existen archivos, los respeta y solo crea lo 
 
 ### 3. Lanzar el agente
 
-{{mefisto:launch-agent infra-base-scaffolder Genera la infraestructura base. Ambiente: <env> (el ambiente ya resuelto y validado en el paso 1).}}
+Sustituye `<env>` por el ambiente ya resuelto y validado en el paso 1:
+
+{{mefisto:launch-agent infra-base-scaffolder Genera la infraestructura base. Ambiente: <env>}}
 
 ### 4. Tras terminar
 
