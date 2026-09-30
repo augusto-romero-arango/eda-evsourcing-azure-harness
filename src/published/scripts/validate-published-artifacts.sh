@@ -78,6 +78,7 @@ EOF
             if (id == "runtimes" && (value == "$MEFISTO_LIFECYCLE_LAUNCHER" || value == "$MEFISTO_LIFECYCLE_CONFIG_ROOT")) return 1
             if (id == "batch-stop" && value == "$REPO_ROOT") return 1
             if (id == "draft" && value == "$REPO_SLUG") return 1
+            if (id == "eraser-diagram" && value == "${ERASER_API_TOKEN}") return 1
             if (id == "purge-store" && value ~ /^\$(0|ATTEMPT_AHORA|ATTEMPT_PREVIO|CONFIG|DOMAIN_EVENTS_DIR|DOMINIO|DOMINIO_FLAT|DOMINIO_KEBAB|ENV|ESTADO|RUN_ID|flat|i)$/) return 1
             if (id == "purge-store" && value == "${DOMINIO_KEBAB}") return 1
             if (id == "planner" && value ~ /^\$(SESSION_ID|INITIAL_HEAD_SHA|INITIAL_DEFAULT_BRANCH|INITIAL_STATUS|HARNESS_REPO_SLUG|CLOSING_TIMESTAMP|GLOSSARY_PATH|FIELD_NOTE_LOCAL|GLOSSARY_LOCAL|FIELD_NOTE_GLOSSARY_ARGS)$/) return 1
@@ -106,6 +107,7 @@ EOF
             legacy=(id == "test-writer" || id == "reviewer" || id == "projection-test-writer" || id == "projection-implementer" || id == "domain-scaffolder" || id == "projections-scaffolder" || id == "historiador")
             runtime_pattern="claude|opencode|\\.claude|\\.opencode|marketplace|(^|[/[:space:].])cache([/[:space:]]|$)|(^|[^[:alnum:]_-])(model|tools|allowed-tools|permission)[[:space:]]*:"
             if (id == "domain-scaffolder") sub(/azure functions core tools:/, "azure functions core tools", runtime_text)
+            if (id == "eraser-diagram") sub(/cache hit/, "hit", lower)
             if ((id == "runtimes" && lower ~ /\.claude|\.opencode|marketplace|(^|[\/[:space:].])cache([\/[:space:]]|$)|(^|[^[:alnum:]_-])(model|tools|allowed-tools|permission)[[:space:]]*:/) || (legacy && runtime_text ~ /opencode|\.opencode|(^|[^[:alnum:]_-])(model|tools|allowed-tools|permission)[[:space:]]*:/) || (!legacy && id != "runtimes" && lower ~ runtime_pattern)) {
                 print rel ": body: linea " line " referencia un runtime, CLI, cache, directorio o metadata propia de runtime"
             }
