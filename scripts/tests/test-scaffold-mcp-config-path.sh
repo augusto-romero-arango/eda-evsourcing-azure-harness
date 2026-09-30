@@ -92,36 +92,30 @@ else
     fail "ausencia no explica el contrato canonico y el fallback"
 fi
 
-echo "[5] Skill conserva resolucion y fallback explicitos; el agente usa la directiva neutral (#1661)"
-COMMAND_CANONICAL=$(grep -Fc 'CONFIG="$REPO_ROOT/.mefisto/harness.config.json"' "$COMMAND" || true)
-COMMAND_LEGACY=$(grep -Fc 'CONFIG="$REPO_ROOT/.claude/harness.config.json"' "$COMMAND" || true)
-AGENT_USES=$(grep -Fc 'CONFIG="${MEFISTO_CONFIG_PATH}"' "$AGENT" || true)
-if [ "$COMMAND_CANONICAL" -eq 1 ] && [ "$COMMAND_LEGACY" -eq 1 ] && [ "$AGENT_USES" -eq 3 ]; then
-    pass "skill tiene un resolver y agente tres usos del config efectivo"
-else
-    fail "conteos inesperados skill canonico/legacy=$COMMAND_CANONICAL/$COMMAND_LEGACY, agente=$AGENT_USES"
-fi
-if grep -Fq 'Resuelve primero el contrato canonico `.mefisto/harness.config.json`' "$COMMAND" \
-    && grep -Fq 'solo como fallback de lectura' "$COMMAND" \
-    && grep -Fq 'Nunca copies, migres ni escribas ninguno de esos archivos.' "$COMMAND" \
-    && grep -Fq 'Nunca copies, migres ni escribas el archivo de config' "$AGENT"; then
-    pass "la prosa documenta canonico, fallback y prohibicion de escritura"
-else
-    fail "la prosa no documenta completamente el contrato de lectura"
-fi
-if grep -Eq '(^|[;&|[:space:]])(jq|cat)[[:space:]].*\.claude/harness\.config\.json|<[[:space:]]*[^[:space:]]*\.claude/harness\.config\.json' "$COMMAND" "$AGENT"; then
-    fail "reaparecio una lectura directa del config legacy"
-else
-    pass "las lecturas usan exclusivamente CONFIG"
-fi
-if grep -Fq 'jq -r '\''.namespacePrefix // ""'\'' "$CONFIG"' "$COMMAND" \
-    && grep -Fq 'jq -r '\''.solutionFile // ""'\'' "$CONFIG"' "$COMMAND" \
+echo "[5] Skill (preludio renderizado de config-path) y agente usan la ruta efectiva (#1662, #1661)"
+for path in "$COMMAND" "$AGENT"; do
+    name=$(basename "$path")
+    if grep -Fq 'MEFISTO_CONFIG_PATH=".mefisto/harness.config.json"' "$path" \
+        && grep -Fq 'MEFISTO_CONFIG_PATH=".claude/harness.config.json"' "$path" \
+        && grep -Fq "AVISO: se usara el config canonico .mefisto/harness.config.json; se ignora el legacy .claude/harness.config.json." "$path"; then
+        pass "$name resuelve canonico, fallback y AVISO mediante el preludio renderizado"
+    else
+        fail "$name no contiene el resolver requerido"
+    fi
+done
+if grep -Fq 'jq -r '\''.namespacePrefix // ""'\'' "${MEFISTO_CONFIG_PATH}"' "$COMMAND" \
+    && grep -Fq 'jq -r '\''.solutionFile // ""'\'' "${MEFISTO_CONFIG_PATH}"' "$COMMAND" \
     && grep -Fq 'jq -r '\''.boundedContext.domains[0] // ""'\'' "$CONFIG"' "$AGENT" \
     && grep -Fq 'jq -r '\''.tenancy.strategy // "mono-tenant-transitorio"'\'' "$CONFIG"' "$AGENT" \
     && grep -Fq 'jq -r '\''.boundedContext.domains[]'\'' "$CONFIG"' "$AGENT"; then
-    pass "los cuatro tokens se leen desde CONFIG"
+    pass "los tokens se leen desde la ruta efectiva del config"
 else
-    fail "alguno de los cuatro tokens no usa CONFIG"
+    fail "alguno de los tokens no usa la ruta efectiva"
+fi
+if grep -Fq 'Nunca copies, migres ni escribas el archivo de config' "$AGENT"; then
+    pass "el agente prohibe escribir el config"
+else
+    fail "el agente no documenta la prohibicion de escritura"
 fi
 
 echo "----------------------------------------"
