@@ -1,85 +1,27 @@
 ---
 description: "Invoca al historiador para poner al dia la bitacora y encadena merge sobre el PR resultante."
-argument-hint: "[YYYY-MM-DD]"
-model: "haiku"
 ---
 <!-- GENERADO por src/published/scripts/generate-published-adapters.sh desde src/published/commands/bitacora.md. No editar a mano. -->
 ```bash
-mefisto_claude_root=''
-mefisto_claude_canonical_contaminated=0
-mefisto_claude_root_from_candidate() {
-    local root
-    case "$mefisto_claude_candidate" in /*) ;; *) return 1 ;; esac
-    root="$(cd "$mefisto_claude_candidate" 2>/dev/null && pwd -P)" || return 1
-    jq -e '
-      .name == "mefisto" and
-      (.version | type == "string" and test("^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?(\\+[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?$"))
-    ' "$root/.claude-plugin/plugin.json" >/dev/null 2>&1 || return 1
-    jq -e --arg version "$(jq -er '.version | strings' "$root/.claude-plugin/plugin.json" 2>/dev/null)" '
-      (keys | sort) == ["commit", "runtime", "schemaVersion", "version"] and
-      .schemaVersion == 1 and .runtime == "claude" and .version == $version and
-      (.commit | type == "string" and test("^[0-9a-f]{40}$"))
-    ' "$root/mefisto-manifest.json" >/dev/null 2>&1 || return 1
-    printf '%s\n' "$root"
+mefisto_opencode_data_root() {
+    if [ -n "${XDG_DATA_HOME:-}" ]; then printf '%s/mefisto\n' "$XDG_DATA_HOME"
+    elif [ "$(uname -s)" = Darwin ]; then printf '%s/Library/Application Support/mefisto\n' "$HOME"
+    else printf '%s/.local/share/mefisto\n' "$HOME"; fi
 }
-mefisto_claude_is_opencode_root() {
-    local root
-    case "$mefisto_claude_candidate" in /*) ;; *) return 1 ;; esac
-    root="$(cd "$mefisto_claude_candidate" 2>/dev/null && pwd -P)" || return 1
-    jq -e '
-      (keys | sort) == ["commit", "minimumRuntimeVersion", "runtime", "schemaVersion", "version"] and
-      .schemaVersion == 1 and .runtime == "opencode" and
-      (.version | type == "string" and test("^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?(\\+[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?$")) and
-      (.commit | type == "string" and test("^[0-9a-f]{40}$")) and
-      (.minimumRuntimeVersion | type == "string" and test("^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"))
-    ' "$root/mefisto-manifest.json" >/dev/null 2>&1
+mefisto_opencode_launcher="$(mefisto_opencode_data_root)/active/bin/mefisto-opencode"
+if [ ! -f "$mefisto_opencode_launcher" ] || [ -L "$mefisto_opencode_launcher" ] || [ ! -x "$mefisto_opencode_launcher" ]; then
+    printf '%s\n' 'ERROR OpenCode: no hay una release activa valida; instale o active la release OpenCode.' >&2; exit 1
+fi
+MEFISTO_PACKAGE_ROOT="$("$mefisto_opencode_launcher" package-root)" || {
+    printf '%s\n' 'ERROR OpenCode: no se pudo resolver la release activa; instale o active la release OpenCode.' >&2; exit 1;
 }
-if [ -n "${CLAUDE_PLUGIN_ROOT:-}" ]; then
-    mefisto_claude_candidate="$CLAUDE_PLUGIN_ROOT"
-    mefisto_claude_root="$(mefisto_claude_root_from_candidate)" || {
-        printf '%s\n' 'ERROR Claude: la raiz indicada por CLAUDE_PLUGIN_ROOT es invalida; reabra o reinstale el plugin.' >&2; exit 1;
-    }
-else
-    mefisto_claude_cursor="$PWD"
-    while :; do
-        if [ -f "$mefisto_claude_cursor/.mefisto/pipeline/.plugin-root" ]; then
-            mefisto_claude_candidate="$(< "$mefisto_claude_cursor/.mefisto/pipeline/.plugin-root")"
-            if mefisto_claude_root="$(mefisto_claude_root_from_candidate)"; then break; fi
-            if mefisto_claude_is_opencode_root; then
-                mefisto_claude_canonical_contaminated=1
-                break
-            else
-                printf '%s\n' 'ERROR Claude: metadata del marker canonico invalida; reabra o reinstale el plugin.' >&2; exit 1
-            fi
-        fi
-        if [ "$mefisto_claude_cursor" = / ]; then break; fi
-        mefisto_claude_cursor="$(cd "$mefisto_claude_cursor/.." && pwd -P)"
-    done
-    if [ -z "$mefisto_claude_root" ]; then
-        mefisto_claude_cursor="$PWD"
-        while :; do
-            if [ -f "$mefisto_claude_cursor/.claude/pipeline/.plugin-root" ]; then
-                mefisto_claude_candidate="$(< "$mefisto_claude_cursor/.claude/pipeline/.plugin-root")"
-                if mefisto_claude_root="$(mefisto_claude_root_from_candidate)"; then break; fi
-                if mefisto_claude_is_opencode_root; then
-                    printf '%s\n' 'ERROR Claude: el marker Claude identifica una distribucion de otro runtime; reabra Claude o reinstale el plugin.' >&2; exit 1
-                fi
-                printf '%s\n' 'ERROR Claude: metadata del marker Claude invalida; reabra o reinstale el plugin.' >&2; exit 1
-            fi
-            if [ "$mefisto_claude_cursor" = / ]; then break; fi
-            mefisto_claude_cursor="$(cd "$mefisto_claude_cursor/.." && pwd -P)"
-        done
-    fi
-fi
-if [ -z "$mefisto_claude_root" ]; then
-    if [ "$mefisto_claude_canonical_contaminated" -eq 1 ]; then
-        printf '%s\n' 'ERROR Claude: el marker canonico identifica una distribucion OpenCode y no existe un mirror Claude valido; reabra Claude o reinstale el plugin.' >&2
-    else
-        printf '%s\n' 'ERROR Claude: no se encontro una raiz Claude valida; reabra o reinstale el plugin.' >&2
-    fi
-    exit 1
-fi
-MEFISTO_PACKAGE_ROOT="$mefisto_claude_root"
+case "$MEFISTO_PACKAGE_ROOT" in
+    /*) ;;
+    *) printf '%s\n' 'ERROR OpenCode: la release activa no devolvio una raiz absoluta; reinstale o active la release OpenCode.' >&2; exit 1 ;;
+esac
+MEFISTO_PACKAGE_ROOT="$(cd "$MEFISTO_PACKAGE_ROOT" 2>/dev/null && pwd -P)" || {
+    printf '%s\n' 'ERROR OpenCode: la release activa no existe; reinstale o active la release OpenCode.' >&2; exit 1;
+}
 export MEFISTO_PACKAGE_ROOT
 ```
 
@@ -99,11 +41,11 @@ Los argumentos estan en: $ARGUMENTS
 
 Si `$ARGUMENTS` no trae una fecha `YYYY-MM-DD`, delega en el backlog completo:
 
-invoca la tool `Task` con el agente `mefisto:historiador` y este mensaje: Pon al dia la bitacora procesando todas las field notes pendientes.. Espera su resultado final y continua con el paso siguiente del comando.
+invoca la tool `task` con el agente `historiador` y este mensaje: Pon al dia la bitacora procesando todas las field notes pendientes.. Espera su resultado final y continua con el paso siguiente del comando.
 
 Si `$ARGUMENTS` trae una fecha `YYYY-MM-DD`, delega acotado a ese dia (usa la fecha recibida en lugar de `<fecha>`):
 
-invoca la tool `Task` con el agente `mefisto:historiador` y este mensaje: Pon al dia la bitacora procesando unicamente las field notes del dia <fecha>.. Espera su resultado final y continua con el paso siguiente del comando.
+invoca la tool `task` con el agente `historiador` y este mensaje: Pon al dia la bitacora procesando unicamente las field notes del dia <fecha>.. Espera su resultado final y continua con el paso siguiente del comando.
 
 El agente corre de forma autonoma de punta a punta: recopila el backlog, escribe (o extiende) una entrada por cada dia pendiente, mueve todas las field notes del backlog a `procesadas/` y ejecuta el cierre atomico (rama + entradas + PR), todo sin pausas ni confirmaciones intermedias. Por eso la delegacion es **sincronica** -- espera a que el agente termine y devuelva su mensaje final, nunca la lances en segundo plano --: el encadenamiento del merge (pasos 2-4) necesita el numero de PR que el historiador reporta en ese mensaje. Si el runtime no te devuelve el mensaje final del historiador, no adivines el PR: reportalo como un gap del runtime (debe registrarse como `bug` dependiente) y detente. Ese encadenamiento ocurre despues, ya de vuelta en este hilo: un subagente no puede invocar slash commands, y por eso ese eslabon vive en el skill y no dentro del historiador.
 
@@ -124,7 +66,7 @@ El contrato del historiador (CA-6 de #527) es reportar explicitamente el PR en s
 
 ### 3. Encadenar `/mefisto:merge <PR>` (CA-3)
 
-Con el numero de PR verificado, lee `"${MEFISTO_PACKAGE_ROOT}/commands/merge.md"` (el documento del comando `/mefisto:merge` de la distribucion activa) sin transcribirlo aca, y ejecuta integramente su `Proceso` para ese PR.
+Con el numero de PR verificado, lee `"${MEFISTO_PACKAGE_ROOT}/commands/mefisto:merge.md"` (el documento del comando `/mefisto:merge` de la distribucion activa) sin transcribirlo aca, y ejecuta integramente su `Proceso` para ese PR.
 
 Ejecuta su `Proceso` completo (validar el PR, mostrar resumen, invocar `pr-sync.sh --merge`, reportar) tal cual, con el numero de PR del paso 2 como su `$ARGUMENTS` -- su `## Entrada` queda cubierta por ese numero, y su guard de consumidor por el de este skill. No pidas ninguna confirmacion adicional antes de mergear -- el usuario ya autorizo el ciclo completo al escribir `/mefisto:bitacora` explicitamente.
 
