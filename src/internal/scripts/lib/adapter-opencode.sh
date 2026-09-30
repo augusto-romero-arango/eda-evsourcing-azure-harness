@@ -58,8 +58,9 @@ opencode_capability_known() {
 # requeridas de generate-internal-adapters.sh: mejor un motivo legible que un
 # error crudo de jq).
 opencode_permission_json() {
-    local rel_source="$1" capabilities_json="${2:-[]}" mode="$3"
+    local rel_source="$1" capabilities_json="${2:-[]}" mode="$3" skills_json="${4:-[]}"
     [ "$capabilities_json" = "null" ] && capabilities_json="[]"
+    [ "$skills_json" = "null" ] && skills_json="[]"
 
     if [ ! -f "$OPENCODE_PERMISSIONS_MAPPING" ]; then
         echo "$rel_source: no existe el mapping de permisos '$OPENCODE_PERMISSIONS_MAPPING'" >&2
@@ -78,6 +79,7 @@ opencode_permission_json() {
     jq -c -n \
         --slurpfile mapping_arr "$OPENCODE_PERMISSIONS_MAPPING" \
         --argjson capabilities "$capabilities_json" \
+        --argjson skills "$skills_json" \
         --arg mode "$mode" '
         ($mapping_arr[0]) as $m
         | (reduce ($m.always_deny[]) as $k ({}; . + {($k): "deny"}))
@@ -98,6 +100,9 @@ opencode_permission_json() {
                 end) as $obj
              | . + (reduce ($spec.keys[]) as $k ({}; . + {($k): $obj}))
            ))
+        + (if ($capabilities | index("skill")) and ($skills | length > 0)
+           then {"skill": ({"*": "deny"} + (reduce $skills[] as $s ({}; . + {($s): "allow"})))}
+           else {} end)
         '
 }
 
@@ -157,7 +162,7 @@ opencode_extract_launch_agent_id() {
 # traduccion del body falla (el motivo ya se imprimio en stderr).
 opencode_render() {
     local rel_source="$1" instance_json="$2" marker_line="$3" body="$4"
-    local kind translated_body
+    local kind translated_body skill_preamble=""
     kind="$(printf '%s' "$instance_json" | jq -r '.kind')"
 
     translated_body="$(opencode_translate_body "$rel_source" "$body")" || return 1
@@ -169,9 +174,20 @@ opencode_render() {
         mode="$(printf '%s' "$instance_json" | jq -r '.mode')"
         fm_lines+=("mode: $(printf '%s' "$instance_json" | jq -r '.mode | @json')")
 
-        local permission_json
-        permission_json="$(opencode_permission_json "$rel_source" "$(printf '%s' "$instance_json" | jq -c '.capabilities')" "$mode")" || return 1
+        local capabilities_json skills_json permission_json
+        capabilities_json="$(printf '%s' "$instance_json" | jq -c '.capabilities')"
+        skills_json="$(printf '%s' "$instance_json" | jq -c '.skills // []')"
+        # Sin la capacidad `skill` el permiso queda cerrado y `skills` se omite
+        # (comportamiento previo a #1685): no se inventa un permiso que la
+        # fuente no pidio.
+        if ! printf '%s' "$capabilities_json" | jq -e 'index("skill") != null' >/dev/null 2>&1; then
+            skills_json="[]"
+        fi
+        permission_json="$(opencode_permission_json "$rel_source" "$capabilities_json" "$mode" "$skills_json")" || return 1
         fm_lines+=("permission: $permission_json")
+        if [ "$skills_json" != "[]" ]; then
+            skill_preamble="Antes de ejecutar este body, usa la tool nativa \`skill\` para cargar, en este orden: $(printf '%s' "$skills_json" | jq -r 'map("`\(.)`") | join(", ")'). Si una carga es denegada o falla, detén la ejecución."
+        fi
     else
         local agent_id
         agent_id="$(printf '%s' "$instance_json" | jq -r 'if (.agent != null) then .agent else empty end')"
@@ -188,5 +204,6 @@ opencode_render() {
     printf '%s\n' "${fm_lines[@]}"
     printf '%s\n' "---"
     printf '%s\n' "$marker_line"
+    [ -z "$skill_preamble" ] || printf '%s\n' "$skill_preamble"
     printf '%s\n' "$translated_body"
 }

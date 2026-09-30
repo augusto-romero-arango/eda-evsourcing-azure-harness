@@ -2,7 +2,6 @@
 name: agent-skill-authoring
 description: Notas operativas para definir o modificar agentes y comandos -- fuente neutral `src/internal/{agents,commands}/*.md` regenerada con `generate-internal-adapters.sh` para el lado interno, `agents/*.md`/`commands/*.md` de Claude Code para el lado publicado -- y Agent Skills (`skills/<nombre>/SKILL.md`, `.claude/skills/<nombre>/SKILL.md`) del propio plugin Mefisto: el frontmatter portable obligatorio de todo `SKILL.md` (`allowed-tools` prohibido), la declaracion de tools MCP en allowlists Claude Code y su prefijo scoped cuando el servidor lo provee un plugin, el mapeo `capabilities`/`profile` del contrato neutral hacia cada adaptador (Claude Code, OpenCode), y el checklist para agregar el adaptador de un runtime nuevo sin tocar la fuente neutral (MEF-ADR-0050). Usar al crear o editar un agente, un comando o un Skill de este repo.
 ---
-<!-- GENERADO por src/internal/scripts/generate-internal-adapters.sh desde src/internal/skills/agent-skill-authoring/SKILL.md. No editar a mano. -->
 
 # Notas para definir agentes y skills
 

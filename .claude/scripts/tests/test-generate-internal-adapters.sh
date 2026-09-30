@@ -26,6 +26,8 @@
 #         lista de fuentes esta vacia hoy, y expandir un array vacio bajo
 #         `set -u` aborta con "unbound variable" hasta bash 4.4.
 #   [check-no-write] CA-5: --check no crea ni el directorio de salida.
+#   [skills]/[skills-opencode] Issue #1685: generacion y --check de Agent Skills
+#         internos, validacion de su frontmatter y mapping de `skills` a OpenCode.
 #
 # Uso: .claude/scripts/tests/test-generate-internal-adapters.sh
 # Exit code: 0 si todos los checks pasan, 1 si alguno falla.
@@ -502,6 +504,85 @@ if [ ! -e "$NEVER_DIR" ]; then
 else
     fail "creo '$NEVER_DIR' pese a --check (CA-5: no escribe nada)"
 fi
+
+echo ""
+echo "[skills] Issue #1685: Agent Skills internos (fuente neutral -> .claude/skills/)"
+SK_ROOT="$WORKDIR/skills-tree"
+mkdir -p "$SK_ROOT/src/internal/skills/mefisto-fx-skill"
+printf -- '---\nname: mefisto-fx-skill\ndescription: Skill de fixture\n---\n\n# Titulo\n' > "$SK_ROOT/src/internal/skills/mefisto-fx-skill/SKILL.md"
+printf 'recurso\n' > "$SK_ROOT/src/internal/skills/mefisto-fx-skill/nivel3.txt"
+SK_SRC="$SK_ROOT/src/internal/skills/mefisto-fx-skill/SKILL.md"
+SK_RES="$SK_ROOT/src/internal/skills/mefisto-fx-skill/nivel3.txt"
+SK_OUT="$WORKDIR/skills-out"
+"$GENERATOR" --out "$SK_OUT" "$SK_SRC" "$SK_RES" >/dev/null 2>&1
+RC=$?
+assert_eq "0" "$RC" "genera un Skill con su recurso (exit 0)"
+if [ -f "$SK_OUT/.claude/skills/mefisto-fx-skill/SKILL.md" ] && [ -f "$SK_OUT/.claude/skills/mefisto-fx-skill/nivel3.txt" ]; then
+    pass "genera .claude/skills/<id>/ con SKILL.md y recurso"
+else
+    fail "no genero .claude/skills/<id>/"
+fi
+if [ ! -e "$SK_OUT/.opencode/skills" ]; then
+    pass "no emite .opencode/skills/ (OpenCode ya descubre .claude/skills/)"
+else
+    fail "emitio .opencode/skills/ y duplicaria el Skill"
+fi
+assert_eq "$(printf -- '---\nname: mefisto-fx-skill\ndescription: Skill de fixture\n---\n<!-- GENERADO por src/internal/scripts/generate-internal-adapters.sh desde %s. No editar a mano. -->\n\n# Titulo' "$SK_SRC")" "$(cat "$SK_OUT/.claude/skills/mefisto-fx-skill/SKILL.md")" "SKILL.md generado: frontmatter verbatim + marcador + body"
+"$GENERATOR" --check --out "$SK_OUT" "$SK_SRC" "$SK_RES" >/dev/null 2>&1
+assert_eq "0" "$?" "--check al dia con Skills"
+rm "$SK_OUT/.claude/skills/mefisto-fx-skill/nivel3.txt"
+OUT=$("$GENERATOR" --check --out "$SK_OUT" "$SK_SRC" "$SK_RES" 2>&1)
+printf '%s' "$OUT" | grep -qF ".claude/skills/mefisto-fx-skill/nivel3.txt: faltante" && pass "--check: Skill faltante" || fail "--check no reporto faltante: $OUT"
+"$GENERATOR" --out "$SK_OUT" "$SK_SRC" "$SK_RES" >/dev/null 2>&1
+printf 'x\n' >> "$SK_OUT/.claude/skills/mefisto-fx-skill/nivel3.txt"
+OUT=$("$GENERATOR" --check --out "$SK_OUT" "$SK_SRC" "$SK_RES" 2>&1)
+printf '%s' "$OUT" | grep -qF "nivel3.txt: distinta" && pass "--check: Skill distinto" || fail "--check no reporto distinta: $OUT"
+"$GENERATOR" --out "$SK_OUT" "$SK_SRC" "$SK_RES" >/dev/null 2>&1
+mkdir -p "$SK_OUT/.claude/skills/otro"
+printf -- '---\nname: otro\ndescription: x\n---\ncuerpo\n' > "$SK_OUT/.claude/skills/otro/SKILL.md"
+OUT=$("$GENERATOR" --check --out "$SK_OUT" "$SK_SRC" "$SK_RES" 2>&1)
+printf '%s' "$OUT" | grep -qF ".claude/skills/otro/SKILL.md: sin marcador" && pass "--check: SKILL.md sin marcador" || fail "--check no reporto sin marcador: $OUT"
+printf -- '---\nname: otro\ndescription: x\n---\n<!-- GENERADO por src/internal/scripts/generate-internal-adapters.sh desde x. No editar a mano. -->\ncuerpo\n' > "$SK_OUT/.claude/skills/otro/SKILL.md"
+OUT=$("$GENERATOR" --check --out "$SK_OUT" "$SK_SRC" "$SK_RES" 2>&1)
+printf '%s' "$OUT" | grep -qF ".claude/skills/otro/SKILL.md: huerfana" && pass "--check: Skill huerfano" || fail "--check no reporto huerfana: $OUT"
+
+VALIDATOR="$REPO_ROOT/src/internal/scripts/validate-internal-artifacts.sh"
+BAD="$SK_ROOT/src/internal/skills/mefisto-bad-skill"
+mkdir -p "$BAD"
+printf -- '---\nname: otro-nombre\ndescription: x\nallowed-tools: Read\n---\ncuerpo\n' > "$BAD/SKILL.md"
+OUT=$("$VALIDATOR" "$BAD/SKILL.md" 2>&1)
+if printf '%s' "$OUT" | grep -q "name:" && printf '%s' "$OUT" | grep -q "allowed-tools"; then
+    pass "validador rechaza name distinto del directorio y allowed-tools"
+else
+    fail "validador no rechazo el Skill invalido: $OUT"
+fi
+printf -- '---\nname: mefisto-bad-skill\n---\ncuerpo\n' > "$BAD/SKILL.md"
+OUT=$("$VALIDATOR" "$BAD/SKILL.md" 2>&1)
+printf '%s' "$OUT" | grep -q "description:" && pass "validador rechaza description ausente" || fail "validador no rechazo description ausente: $OUT"
+
+echo ""
+echo "[skills-opencode] CA-4: agente con skills -> permiso skill acotado + instruccion de carga"
+SA="$WORKDIR/skill-agent.md"
+cat > "$SA" <<'FXEOF'
+---
+{"kind":"agent","id":"skill-agent","description":"Agente con skills","mode":"subagent","capabilities":["read","skill"],"skills":["mefisto-fx-skill"]}
+---
+
+Cuerpo.
+FXEOF
+SA="$WORKDIR/mefisto-fx-skill-agent.md"
+sed 's/"id":"skill-agent"/"id":"mefisto-fx-skill-agent"/' "$WORKDIR/skill-agent.md" > "$SA"
+"$GENERATOR" --out "$WORKDIR/skill-agent-out" "$SA" >/dev/null 2>&1
+OC="$WORKDIR/skill-agent-out/.opencode/agents/mefisto-fx-skill-agent.md"
+PERM="$(grep '^permission: ' "$OC" | sed 's/^permission: //')"
+assert_eq '{"*":"deny","mefisto-fx-skill":"allow"}' "$(printf '%s' "$PERM" | jq -c '.skill')" "permiso skill acotado al id declarado"
+grep -qF 'usa la tool nativa `skill` para cargar, en este orden: `mefisto-fx-skill`' "$OC" && pass "instruccion de carga on-demand en el body" || fail "falta la instruccion de carga"
+grep -q '^skills:' "$WORKDIR/skill-agent-out/.claude/agents/mefisto-fx-skill-agent.md" && pass "adaptador Claude conserva skills:" || fail "Claude perdio skills:"
+sed -i.bak 's/"capabilities":\["read","skill"\]/"capabilities":["read"]/' "$SA"
+"$GENERATOR" --out "$WORKDIR/skill-agent-out2" "$SA" >/dev/null 2>&1
+OC2="$WORKDIR/skill-agent-out2/.opencode/agents/mefisto-fx-skill-agent.md"
+assert_eq '"deny"' "$(grep '^permission: ' "$OC2" | sed 's/^permission: //' | jq -c '.skill')" "sin capacidad skill el permiso queda cerrado"
+grep -qF 'tool nativa `skill`' "$OC2" && fail "emitio instruccion de carga sin capacidad skill" || pass "sin capacidad skill no hay instruccion de carga"
 
 echo ""
 echo "RESULTADO: $PASS pasaron, $FAIL fallaron"

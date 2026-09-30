@@ -57,7 +57,7 @@ Mapeo principal:
 | `description` | `description` | `description` |
 | `mode` | se omite | `mode` |
 | `capabilities` | `tools` / `allowed-tools` | `permission` en agentes |
-| `skills` | `skills` | se omite |
+| `skills` | `skills` | permiso `skill` acotado a esos ids + instruccion de carga on-demand (requiere la capacidad `skill`) |
 | `agent` de comando | directiva de body | `agent` + `subtask: true` |
 | `arguments` | `argument-hint` | se omite |
 | `profile` | modelo por tabla fija | se omite; el usuario configura el modelo interactivo |
@@ -66,6 +66,36 @@ El mapping de modelos en ejecucion headless vive en los adaptadores y en
 `mefisto-models.sh`; el generador no lee `.mefisto/models.json`, porque eso
 haria no determinista su `--check`. Una resolucion vacia significa heredar y
 el caller omite el flag de modelo.
+
+## Agent Skills internos
+
+La fuente canonica es `src/internal/skills/<id>/` (`SKILL.md` con frontmatter
+YAML portable de MEF-ADR-0033, mas recursos de Nivel 3). El generador copia el
+directorio a `.claude/skills/<id>/`; en `SKILL.md` inserta el marcador de
+generado justo despues del frontmatter (que se conserva verbatim) y los demas
+archivos se copian tal cual. No emite `.opencode/skills/`: OpenCode ya descubre
+`.claude/skills/` (verificacion abajo) y duplicarlo cargaria el Skill dos veces.
+`--check` reporta Skills faltantes, distintos, huerfanos o sin marcador bajo
+`.claude/skills/`. `validate-internal-artifacts.sh` exige en cada `SKILL.md`:
+`name` igual al directorio, `description` presente y ningun `allowed-tools`.
+Los Skills no pasan por la regla de neutralidad de body de agentes/comandos
+(documentan ambos runtimes), pero si por el gate de neutralidad de texto.
+
+### Verificacion de descubrimiento en OpenCode (issue #1685, CA-1)
+
+- **Fecha**: 2026-09-29. **Version**: 1.18.32 (binario instalado; el adaptador
+  se escribio contra 1.18.29 y el repo no fija otra version en un manifiesto
+  propio, no existe `.opencode/package.json`). **Fuente**: evidencia empirica
+  mas documentacion oficial (<https://opencode.ai/docs/skills/>, verificada
+  2026-09-06 en el Skill `agent-skill-authoring`).
+- **Resultado**: `debug skill` ejecutado en la raiz del repo lista
+  `agent-skill-authoring` y `harness-config-contract` con `location` bajo
+  `.claude/skills/<id>/SKILL.md`. Descubre esa ruta y las carga bajo demanda
+  con la tool nativa `skill`, con el `name` del frontmatter (igual al
+  directorio) como nombre. Consecuencia: no se genera `.opencode/skills/`, y
+  el permiso `skill` de un agente usa esos mismos ids.
+- **Re-verificar** al subir la version de OpenCode: repetir `debug skill`
+  redirigiendo la salida a un archivo (por tuberia se trunca).
 
 Las directivas de body son el unico escape neutral y una directiva desconocida
 aborta la generacion:
@@ -90,7 +120,7 @@ esa lista interna.
 src/internal/scripts/validate-internal-artifacts.sh [archivo...]
 ```
 
-Sin argumentos valida `src/internal/{agents,commands}/*.md`. Extrae el
+Sin argumentos valida `src/internal/{agents,commands}/*.md` y `src/internal/skills/*/SKILL.md` (ver arriba). Extrae el
 frontmatter, aplica `internal-artifact.schema.json`, compara `id` con el nombre
 del archivo y comprueba la neutralidad del body. Usa
 `src/internal/scripts/lib/jsonschema-lite.jq`, sin un validador externo. Los
