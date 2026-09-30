@@ -100,6 +100,24 @@ else
     if run_flip "$R2" "$WORK/r2.out"; then fail 'no aborto con solo el legacy'; elif grep -qF 'todavía es legacy' "$WORK/r2.out" && [ "$before" = "$(cat "$R2/.claude/harness.config.json")" ] && [ ! -e "$R2/.mefisto/harness.config.json" ]; then pass 'aborta con solo el legacy sin modificarlo ni crear el canonico'; else fail "manejo incorrecto del legacy: $(cat "$WORK/r2.out")"; fi
 fi
 
+for rt in claude opencode; do
+    out="$CLAUDE"; [ "$rt" = opencode ] && out="$OPENCODE"
+    n="$(grep -cF 'export MEFISTO_INSTRUCTIONS_PATH' "$out")"
+    [ "$n" -eq 1 ] && pass "$rt resuelve instrucciones solo en el preambulo generado" || fail "$rt resuelve instrucciones $n veces"
+done
+
+echo '[paso 2b] deteccion de servidores MCP desde instructions-path'
+MCP_BLOCK="$(awk '
+    index($0, "### 2b. Detectar los servidores MCP del BC") == 1 { found=1; next }
+    found && /^```bash$/ { inside=1; next }
+    found && /^```$/ && inside { exit }
+    inside { print }
+' "$OPENCODE")"
+R3="$WORK/mcp"; mkdir -p "$R3/src/Ejemplo.Principal.Mcp.Reportes"
+printf 'RootNamespace: Ejemplo.Principal\n' > "$R3/AGENTS.md"
+out="$(cd "$R3" && MEFISTO_INSTRUCTIONS_PATH=AGENTS.md bash -c "$MCP_BLOCK"$'\n''printf "%s|%s" "$ROOT_NAMESPACE" "$SERVIDORES_MCP"' 2>&1)"
+[ "$out" = 'Ejemplo.Principal|Reportes' ] && pass 'detecta los servidores MCP con el RootNamespace de instructions-path' || fail "deteccion MCP inesperada: $out"
+
 if "$GENERATOR" --check >/dev/null; then pass 'generate-published-adapters --check esta al dia'; else fail 'generate-published-adapters --check detecto divergencias'; fi
 
 printf 'RESULTADO: %s pasaron, %s fallaron\n' "$PASS" "$FAIL"
