@@ -133,6 +133,7 @@ CLAUDE_ROOT_MIRRORS=(
     'src/published/agents/infra-writer.md|agents/infra-writer.md'
     'src/published/agents/infra-reviewer.md|agents/infra-reviewer.md'
     'src/published/agents/pr-sync.md|agents/pr-sync.md'
+    'src/published/agents/infra-bootstrap.md|agents/infra-bootstrap.md'
     'src/published/agents/planner.md|agents/planner.md'
     'src/published/agents/infra-base-scaffolder.md|agents/infra-base-scaffolder.md'
     'src/published/agents/projections-scaffolder.md|agents/projections-scaffolder.md'
