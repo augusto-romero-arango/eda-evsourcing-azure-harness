@@ -26,6 +26,7 @@
 # Exit code: 0 si todos los chequeos pasan, 1 si alguno falla.
 
 set -uo pipefail
+export MEFISTO_RUNTIME=claude
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
