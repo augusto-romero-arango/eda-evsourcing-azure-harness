@@ -108,14 +108,7 @@
       "rules": [
         "R3"
       ],
-      "motivo": "Hook PostToolUse de scope temprano (issue #523): Claude Code lo lanza por la ruta fija de .claude/settings.json y documenta (nunca compone) la ruta ignorada por git .claude/pipeline/** que debe callar para mantener paridad con validate_mefisto_scope_changes -- el estado legacy que MEF-ADR-0049 seccion 3 deja sin migrar. Excepcion nombrada por el padre #873."
-    },
-    {
-      "path": ".claude/scripts/mefisto-metrics-report.sh",
-      "rules": [
-        "R3"
-      ],
-      "motivo": "Reporte agregado de metricas del pipeline interno (issue #427), declarado not_migrated: documenta (nunca compone) la lectura dual de .mefisto/pipeline/ (canonico) y .claude/pipeline/ (legacy sin migrar, MEF-ADR-0049 seccion 3) que mefisto_state_read_paths resuelve (issue #869) -- prosa que explica por que agrega dos ubicaciones, no una invocacion ni una ruta compuesta a mano (issue #913)."
+      "motivo": "Hook PostToolUse de scope temprano (issue #523): Claude Code lo lanza por la ruta fija de .claude/settings.json y documenta (nunca compone) la ruta ignorada por git .claude/pipeline/** que debe callar para mantener paridad con validate_mefisto_scope_changes -- el estado legacy que MEF-ADR-0049 seccion 3 deja sin migrar. Excepcion nombrada por el padre #873. Artefacto del adaptador Claude por naturaleza (MEF-ADR-0050): su equivalente en OpenCode es la politica de permisos edit/write/patch generada desde is_path_in_mefisto_scope (src/internal/contract/opencode-permissions.json), que deniega antes de escribir; la paridad la verifica test-scope-parity.sh."
     },
     {
       "path": ".claude/agents/**",
@@ -169,18 +162,8 @@
   ],
   "not_migrated": [
     {
-      "path": ".claude/scripts/mefisto-metrics-report.sh",
-      "motivo": "Reporte agregado de metricas del pipeline interno (issue #427): script sustancial que todavia no se traslado al layout canonico src/internal/scripts/ con su shim de tres lineas.",
-      "issue": null
-    },
-    {
-      "path": ".claude/scripts/mefisto-stream-watch.sh",
-      "motivo": "Visor en vivo del flujo de eventos de un stage (issue #878): todavia no trasladado al layout canonico con shim.",
-      "issue": null
-    },
-    {
       "path": ".claude/scripts/mefisto-scope-hook.sh",
-      "motivo": "Hook PostToolUse de scope temprano (issue #523): Claude Code lo invoca por ruta fija desde .claude/settings.json y MEF-ADR-0019 seccion E exige que el gate de scope se siga cargando desde el checkout principal; migrarlo a un shim queda pendiente.",
+      "motivo": "Hook PostToolUse de scope temprano (issue #523), artefacto del adaptador Claude: Claude Code lo invoca por ruta fija desde .claude/settings.json y MEF-ADR-0019 seccion E exige que el gate de scope se siga cargando desde el checkout principal. Su equivalente OpenCode es la politica de permisos edit/write/patch generada desde is_path_in_mefisto_scope (opencode-permissions.json, #862); no se traslada a src/internal/scripts/.",
       "issue": null
     }
   ]

@@ -343,6 +343,8 @@ EOF
     cp "$REPO_ROOT/.claude/scripts/_mefisto-common.sh" "$FAKE_REPO/.claude/scripts/_mefisto-common.sh"
     cp "$REPO_ROOT/src/internal/scripts/lib/mefisto-state.sh" "$FAKE_REPO/src/internal/scripts/lib/mefisto-state.sh"
     cp "$REPO_ROOT/src/runtime/lib/mefisto-process.sh" "$FAKE_REPO/src/runtime/lib/mefisto-process.sh"
+    cp "$REPO_ROOT/src/internal/scripts/mefisto-metrics-report.sh" "$FAKE_REPO/src/internal/scripts/mefisto-metrics-report.sh"
+    chmod +x "$FAKE_REPO/src/internal/scripts/mefisto-metrics-report.sh"
     cp "$REPO_ROOT/.claude/scripts/mefisto-metrics-report.sh" "$FAKE_REPO/.claude/scripts/mefisto-metrics-report.sh"
     chmod +x "$FAKE_REPO/.claude/scripts/mefisto-metrics-report.sh"
 
