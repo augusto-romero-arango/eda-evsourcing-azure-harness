@@ -39,7 +39,7 @@ y `Verificación de fuentes` en el `AGENTS.md` del consumidor, el puente mínimo
 | Skill | Propósito |
 |---|---|
 | `/onboard` | Diagnostica el onboarding del consumidor (config, labels, CI) y reporta un checklist; provisión opt-in bajo confirmación |
-| `/upgrade` | Actualiza Mefisto desde Claude: consulta la adhesión estructurada OpenCode; alinea automáticamente `enabled`/`stale`, ofrece habilitar `disabled` con una confirmación y deja `conflict` sin mutar; evidencia versiones, proyección e identidad, y poda solo el cache Claude bajo confirmación (nunca la versión cargada) |
+| `/upgrade` | Actualiza Mefisto desde el runtime activo (Claude Code u OpenCode) con `upgrade.sh`: consulta el estado del par de adaptadores; alinea automáticamente `enabled`/`stale`, ofrece habilitar `disabled` con una confirmación y deja `conflict` sin mutar; evidencia versiones e identidad, y poda solo el runtime activo bajo confirmación (nunca la versión cargada ni el par) |
 | `/runtimes` | Consulta y administra la proyección de adaptadores instalados: estado, habilitación y deshabilitación sin descargar, actualizar ni seleccionar una release |
 | `/draft` | Captura una idea como issue `estado:borrador` |
 | `/implement` | Pipeline TDD para un issue `estado:listo` |
