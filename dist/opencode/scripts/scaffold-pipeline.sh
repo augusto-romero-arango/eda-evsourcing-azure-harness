@@ -551,7 +551,7 @@ if [ -n "$ISSUE_NUM" ]; then
 fi
 
 # Append al historial
-echo "{\"pipeline\":\"scaffold\",\"runtime\":${MEFISTO_RUNTIME_JSON:-null},\"domain\":\"$DOMAIN_NAME\",\"issue\":\"${ISSUE_NUM:-}\",\"started\":\"$TIMESTAMP\",\"finished\":\"$(date +%Y-%m-%dT%H:%M:%S)\",\"state\":\"completed\",\"duration\":$scaffold_elapsed,\"pr\":\"${PR_URL:-}\"}" \
+echo "{\"pipeline\":\"scaffold\",\"runtime\":${MEFISTO_RUNTIME_JSON:-null},\"domain\":\"$DOMAIN_NAME\",\"issue\":\"${ISSUE_NUM:-}\",\"started\":\"$TIMESTAMP\",\"finished\":\"$(date +%Y-%m-%dT%H:%M:%S)\",\"state\":\"completed\",\"duration\":$scaffold_elapsed,\"pr\":\"${PR_URL:-}\",\"log\":\"$LOG_FILE\"}" \
     >> "$HISTORY_FILE"
 
 # --- Cleanup ---

@@ -81,8 +81,9 @@ fi
 run_case explicit-abort 'update_status setup running; abort "error especifico"'
 if [ "$CASE_RC" -eq 1 ] && jq -e '.state == "failed" and (.last_error | startswith("error especifico"))' "$CASE_DIR/state/pipeline-status-tooling-1286.json" >/dev/null \
    && [ "$(wc -l < "$CASE_DIR/state/pipeline-history.jsonl" | tr -d ' ')" = 1 ] \
-   && jq -e '.error | startswith("error especifico")' "$CASE_DIR/state/pipeline-history.jsonl" >/dev/null; then
-    pass 'abort explicito conserva su error, codigo y una sola historia'
+   && jq -e '.error | startswith("error especifico")' "$CASE_DIR/state/pipeline-history.jsonl" >/dev/null \
+   && jq -e --arg l "$CASE_DIR/state/logs/tooling.log" '.log == $l' "$CASE_DIR/state/pipeline-history.jsonl" >/dev/null; then
+    pass 'abort explicito conserva su error, codigo, una sola historia y declara log (#1734)'
 else
     fail "abort explicito fue sobrescrito o duplicado (rc=$CASE_RC): $CASE_OUTPUT"
 fi

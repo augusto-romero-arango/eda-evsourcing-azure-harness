@@ -441,6 +441,14 @@ else
     fail "el historial no cablea variant en sus dos desenlaces (args=$HISTORY_VARIANT_ARGS, fields=$HISTORY_VARIANT_FIELDS)"
 fi
 
+LOG_HIST_ARGS=$(grep -cF -- '--arg log "' "$PIPE")
+LOG_HIST_FIELDS=$(grep -cF ',log:' "$PIPE")
+if [ "$LOG_HIST_ARGS" -ge 2 ] && [ "$LOG_HIST_FIELDS" -ge 2 ]; then
+    pass "las entradas completed/failed declaran log en pipeline-history.jsonl (#1734)"
+else
+    fail "faltan --arg log / log: en las entradas terminales del historial"
+fi
+
 echo ""
 echo "----------------------------------------"
 echo "  Resumen: $PASS pass, $FAIL fail"
