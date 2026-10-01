@@ -2,6 +2,8 @@
 # Corre la regresion completa en TODOS los PRs contra main, sin filtro 'paths:':
 # un workflow saltado por 'paths:' deja el check requerido en "Pending" y bloquea el merge.
 # El nombre del job ("tests") es el check estable que exige el ruleset de main: no renombrar.
+# Corre en macOS (arm64, runner pinneado, nunca 'macos-latest'): Mefisto se opera en macOS con
+# /bin/bash 3.2 y coreutils BSD; un CI en Linux daba rojos/verdes que no dicen nada del sistema real.
 # Neutral a runtime (MEF-ADR-0050): solo bash, coreutils, git y jq; sin CLIs de agente ni secretos.
 name: CI
 
@@ -16,13 +18,27 @@ permissions:
 jobs:
   tests:
     name: tests
-    runs-on: ubuntu-latest
+    runs-on: macos-26
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
 
+      - name: Entorno del runner
+        run: |
+          uname -sm
+          sw_vers -productVersion
+          /bin/bash --version | head -n 1
+
+      - name: Instalar jq si falta
+        run: command -v jq >/dev/null 2>&1 || brew install jq
+
       - name: Verificar herramientas
-        run: jq --version
+        run: |
+          if ! command -v jq >/dev/null 2>&1; then
+            echo "::error::jq no esta disponible en el runner" >&2
+            exit 1
+          fi
+          jq --version
 
       - name: Adaptadores internos sincronizados
         run: src/internal/scripts/generate-internal-adapters.sh --check
