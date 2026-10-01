@@ -279,7 +279,7 @@ echo "[E] is_path_in_consumer_blocklist clasifica correctamente"
     # (MEF-ADR-0030 decision #4) -- solo docs/adr/mef-adr-* es del marco
     # mefisto-manifest.json es una entrada exacta: vecinos, prefijos, sufijos,
     # subdirectorios y separadores alternativos siguen siendo rutas del consumidor.
-    for allowed in "src/Foo.cs" "src/publication/foo.md" "src/runtime-local/foo.sh" "distribution/foo.txt" "tests/Bar.cs" ".github/workflows/deploy.yml" ".claude/settings.json" "docs/bitacora/notes.md" "docs/testing/mefisto-certification/fixture.md" "docs/adr/0028-x.md" "docs/adr/ca-adr-0009-x.md" ".opencode/agents/foo.md" "AGENTS.md" "opencode.json" "sub/mefisto-manifest.json" "mefisto-manifest.json.bak" "foo-mefisto-manifest.json" "mefisto-manifest.json/foo" "mefisto-manifest.json\\foo"; do
+    for allowed in "src/Foo.cs" "src/publication/foo.md" "src/runtime-local/foo.sh" "distribution/foo.txt" "tests/Bar.cs" ".github/workflows/deploy.yml" ".claude/settings.json" "docs/bitacora/notes.md" "docs/testing/mefisto-certification/fixture.md" "docs/adr/0028-x.md" "docs/adr/ca-adr-0009-x.md" ".opencode/agents/foo.md" "AGENTS.md" ".github/workflows/ci.yml" ".github/rulesets/main.json" "opencode.json" "sub/mefisto-manifest.json" "mefisto-manifest.json.bak" "foo-mefisto-manifest.json" "mefisto-manifest.json/foo" "mefisto-manifest.json\\foo"; do
         if is_path_in_consumer_blocklist "$allowed"; then
             echo "  FAIL: '$allowed' detectado como blocklist (deberia estar permitido)"
             exit 1
@@ -358,7 +358,7 @@ echo "[E2] is_path_in_mefisto_scope clasifica correctamente"
     # prefijos, sufijos, separadores alternativos ni subdirectorios (issues #763 y #1135).
     # ".opencode/agent/" (singular), vecinos de src/{published,runtime}/ y dist/,
     # ".mefisto/" y "opencode.json" fuera de la raiz exacta siguen fuera de scope.
-    for invalid in "src/Foo.cs" "src/otro/x.sh" "src/publication/foo.md" "src/runtime-local/foo.sh" "distribution/x" "dist-local/x" "tests/Bar.cs" ".github/workflows/deploy.yml" "infra/main.tf" ".claude/harness.config.json" ".claude/pipeline/events.log" "sub/.mcp.json" "foo.mcp.json" "sub/mefisto-manifest.json" "mefisto-manifest.json.bak" "foo-mefisto-manifest.json" "mefisto-manifest.json/foo" "mefisto-manifest.json\\foo" ".opencode/x.json" ".opencode/agent/x.md" ".mefisto/pipeline/events.log" ".mefisto/models.json" "sub/opencode.json" "foo.opencode.json"; do
+    for invalid in "src/Foo.cs" "src/otro/x.sh" "src/publication/foo.md" "src/runtime-local/foo.sh" "distribution/x" "dist-local/x" "tests/Bar.cs" ".github/CODEOWNERS" ".github/workflows" ".github/rulesets" "infra/main.tf" ".claude/harness.config.json" ".claude/pipeline/events.log" "sub/.mcp.json" "foo.mcp.json" "sub/mefisto-manifest.json" "mefisto-manifest.json.bak" "foo-mefisto-manifest.json" "mefisto-manifest.json/foo" "mefisto-manifest.json\\foo" ".opencode/x.json" ".opencode/agent/x.md" ".mefisto/pipeline/events.log" ".mefisto/models.json" "sub/opencode.json" "foo.opencode.json"; do
         if is_path_in_mefisto_scope "$invalid"; then
             echo "  FAIL: '$invalid' esta en scope (NO deberia)"
             exit 1

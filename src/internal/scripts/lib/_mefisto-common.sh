@@ -279,6 +279,10 @@ get_harness_sha() {
 #                            consumidor (AGENTS.md es su propia doctrina neutral; opencode.json
 #                            su propia config de proyecto OpenCode).
 #   changelog.d/             Fragmentos de CHANGELOG/indice de ADRs (issue #380)
+#   .github/workflows/*, .github/rulesets/*   CI y rulesets del propio repo (issue #1742).
+#                            Registradas antes de poblarlas (MEF-ADR-0019 seccion E); el resto de
+#                            .github/ (p. ej. CODEOWNERS) sigue fuera. NO se replican en
+#                            is_path_in_consumer_blocklist: .github/ es territorio del consumidor.
 #   README.md, CHANGELOG.md, CLAUDE.md, .gitignore   Gobierno del repo
 is_path_in_mefisto_scope() {
     local path="$1"
@@ -294,6 +298,7 @@ is_path_in_mefisto_scope() {
         .mcp.json) return 0 ;;
         README.md|CHANGELOG.md|CLAUDE.md|.gitignore|AGENTS.md|opencode.json|mefisto-manifest.json) return 0 ;;
         changelog.d/*) return 0 ;;
+        .github/workflows/*|.github/rulesets/*) return 0 ;;
         *) return 1 ;;
     esac
 }
@@ -334,7 +339,7 @@ validate_mefisto_scope_changes() {
         echo "Mefisto solo permite cambios en: commands/, skills/, agents/, scripts/," >&2
         echo "hooks/, docs/, .claude-plugin/, .claude/{commands,skills,agents,scripts}/," >&2
         echo ".claude/settings.json, .mcp.json, src/{internal,published,runtime}/, dist/," >&2
-        echo ".opencode/{agents,commands,plugins,skills}/, AGENTS.md, opencode.json," >&2
+        echo ".opencode/{agents,commands,plugins,skills}/, .github/{workflows,rulesets}/, AGENTS.md, opencode.json," >&2
         echo "changelog.d/, README.md, CHANGELOG.md, CLAUDE.md, .gitignore" >&2
         return 1
     fi

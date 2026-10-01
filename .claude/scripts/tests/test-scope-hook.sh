@@ -120,7 +120,7 @@ echo "[B] Ruta FUERA de scope -> exit 2 con stderr accionable"
 # (ver bloque [C]), no por la allowlist. Afirmar aqui exit 2 seria un test que se
 # rompe solo al mergear #856; su clasificacion la cubre test-guards.sh [E2], que
 # ejercita is_path_in_mefisto_scope directamente y es inmune a .gitignore.
-for p in "src/Foo.cs" "src/otro/x.sh" "src/publication/foo.md" "src/runtime-local/foo.sh" "distribution/x" "dist-local/x" "tests/Foo.Tests/FooTests.cs" ".github/workflows/ci.yml" ".claude/harness.config.json" "infra/main.tf" ".opencode/x.json" ".opencode/agent/x.md" "sub/opencode.json" "foo.opencode.json"; do
+for p in "src/Foo.cs" "src/otro/x.sh" "src/publication/foo.md" "src/runtime-local/foo.sh" "distribution/x" "dist-local/x" "tests/Foo.Tests/FooTests.cs" ".github/CODEOWNERS" ".claude/harness.config.json" "infra/main.tf" ".opencode/x.json" ".opencode/agent/x.md" "sub/opencode.json" "foo.opencode.json"; do
     run_hook "$p"
     if [ "$HOOK_EXIT" -eq 2 ]; then
         pass "$p -> exit 2"

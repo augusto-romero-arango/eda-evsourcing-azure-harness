@@ -121,6 +121,8 @@
         { "pattern": "AGENTS.md", "value": "allow" },
         { "pattern": "opencode.json", "value": "allow" },
         { "pattern": "changelog.d/**", "value": "allow" },
+        { "pattern": ".github/workflows/**", "value": "allow" },
+        { "pattern": ".github/rulesets/**", "value": "allow" },
         { "pattern": ".mefisto/pipeline/summaries/**", "value": "allow" },
         { "pattern": ".claude/pipeline/summaries/**", "value": "allow" }
       ]
