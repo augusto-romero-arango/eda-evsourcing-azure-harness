@@ -1,0 +1,41 @@
+# CI interno de Mefisto (issue #1743). No se distribuye al consumidor (MEF-ADR-0019).
+# Corre la regresion completa en TODOS los PRs contra main, sin filtro 'paths:':
+# un workflow saltado por 'paths:' deja el check requerido en "Pending" y bloquea el merge.
+# El nombre del job ("tests") es el check estable que exige el ruleset de main: no renombrar.
+# Neutral a runtime (MEF-ADR-0050): solo bash, coreutils, git y jq; sin CLIs de agente ni secretos.
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    name: tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verificar herramientas
+        run: jq --version
+
+      - name: Adaptadores internos sincronizados
+        run: src/internal/scripts/generate-internal-adapters.sh --check
+
+      - name: Validar artefactos internos
+        run: src/internal/scripts/validate-internal-artifacts.sh
+
+      - name: Suite completa de tests
+        run: src/internal/scripts/mefisto-test-suite.sh --log-dir "$RUNNER_TEMP/test-suite-logs"
+
+      - name: Subir logs de la suite
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-suite-logs
+          path: ${{ runner.temp }}/test-suite-logs
+          if-no-files-found: warn
