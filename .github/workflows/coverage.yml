@@ -24,18 +24,32 @@ jobs:
       - name: Instalar kcov
         run: |
           sudo apt-get update
-          sudo apt-get install -y kcov jq
+          sudo apt-get install -y jq
+          # kcov no siempre esta en los repos apt de la imagen: fallback a compilar la release.
+          if ! sudo apt-get install -y kcov; then
+            sudo apt-get install -y cmake g++ binutils-dev libssl-dev libcurl4-openssl-dev zlib1g-dev libdw-dev libiberty-dev
+            git clone --depth 1 --branch v43 https://github.com/SimonKagstrom/kcov.git "$RUNNER_TEMP/kcov-src"
+            cmake -S "$RUNNER_TEMP/kcov-src" -B "$RUNNER_TEMP/kcov-build"
+            cmake --build "$RUNNER_TEMP/kcov-build" -j"$(nproc)"
+            sudo cmake --install "$RUNNER_TEMP/kcov-build"
+          fi
           kcov --version
 
       - name: Suite completa bajo kcov
         run: |
           start=$(date +%s)
+          # --bash-parse-files-in-dir: los scripts que la suite nunca ejecuta aparecen con 0%
+          # en vez de quedar fuera del reporte (sin eso el porcentaje global se infla).
+          dirs="$PWD/scripts,$PWD/src/internal/scripts,$PWD/src/published/scripts"
+          rc=0
           kcov \
-            --include-path="$PWD/scripts,$PWD/src/internal/scripts,$PWD/src/published/scripts" \
+            --bash-parse-files-in-dir="$dirs" \
+            --include-path="$dirs" \
             --exclude-pattern=/tests/,/fixtures/ \
             "$RUNNER_TEMP/kcov-out" \
-            src/internal/scripts/mefisto-test-suite.sh --log-dir "$RUNNER_TEMP/test-suite-logs"
+            src/internal/scripts/mefisto-test-suite.sh --log-dir "$RUNNER_TEMP/test-suite-logs" || rc=$?
           echo "KCOV_SUITE_SECONDS=$(( $(date +%s) - start ))" >> "$GITHUB_ENV"
+          exit "$rc"
 
       - name: Publicar resumen de coverage
         if: always()
@@ -55,7 +69,7 @@ jobs:
               echo
               echo "| Archivo | % | Cubiertas/Total |"
               echo "|---|---|---|"
-              jq -r '[.files[] | {f: .file, p: (.percent_covered|tonumber), c: .covered_lines, t: .total_lines}]
+              jq -r --arg root "$GITHUB_WORKSPACE/" '[.files[] | {f: (.file | ltrimstr($root)), p: (.percent_covered|tonumber), c: .covered_lines, t: .total_lines}]
                 | sort_by(.p) | .[:20][] | "| `\(.f)` | \(.p) | \(.c)/\(.t) |"' "$json"
             fi
           } >> "$GITHUB_STEP_SUMMARY"
