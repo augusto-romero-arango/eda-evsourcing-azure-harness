@@ -1,0 +1,83 @@
+# Medicion de coverage de los scripts bash con kcov (issue #1745). No se distribuye (MEF-ADR-0019).
+# Solo MIDE: sin gate. Ningun umbral ni condicion por porcentaje hace fallar el job.
+# Workflow separado del CI y no requerido: un fallo de kcov nunca bloquea un PR ni un merge.
+# Su job ("coverage") no es el check "tests" que exige el ruleset de main.
+# Neutral a runtime (MEF-ADR-0050): solo bash, coreutils, jq y kcov; sin CLIs de agente ni secretos.
+name: Coverage
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  coverage:
+    name: coverage
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Instalar kcov
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq
+          # kcov no siempre esta en los repos apt de la imagen: fallback a compilar la release.
+          if ! sudo apt-get install -y kcov; then
+            sudo apt-get install -y cmake g++ binutils-dev libssl-dev libcurl4-openssl-dev zlib1g-dev libdw-dev libiberty-dev
+            git clone --depth 1 --branch v43 https://github.com/SimonKagstrom/kcov.git "$RUNNER_TEMP/kcov-src"
+            cmake -S "$RUNNER_TEMP/kcov-src" -B "$RUNNER_TEMP/kcov-build"
+            cmake --build "$RUNNER_TEMP/kcov-build" -j"$(nproc)"
+            sudo cmake --install "$RUNNER_TEMP/kcov-build"
+          fi
+          kcov --version
+
+      - name: Suite completa bajo kcov
+        run: |
+          start=$(date +%s)
+          # --bash-parse-files-in-dir: los scripts que la suite nunca ejecuta aparecen con 0%
+          # en vez de quedar fuera del reporte (sin eso el porcentaje global se infla).
+          dirs="$PWD/scripts,$PWD/src/internal/scripts,$PWD/src/published/scripts"
+          rc=0
+          kcov \
+            --bash-parse-files-in-dir="$dirs" \
+            --include-path="$dirs" \
+            --exclude-pattern=/tests/,/fixtures/ \
+            "$RUNNER_TEMP/kcov-out" \
+            src/internal/scripts/mefisto-test-suite.sh --log-dir "$RUNNER_TEMP/test-suite-logs" || rc=$?
+          echo "KCOV_SUITE_SECONDS=$(( $(date +%s) - start ))" >> "$GITHUB_ENV"
+          exit "$rc"
+
+      - name: Publicar resumen de coverage
+        if: always()
+        run: |
+          json=$(find "$RUNNER_TEMP/kcov-out" -name coverage.json -path '*kcov-merged*' | head -n1)
+          [ -n "$json" ] || json=$(find "$RUNNER_TEMP/kcov-out" -name coverage.json | head -n1)
+          {
+            echo "## Coverage de scripts bash (kcov, sin gate)"
+            echo
+            if [ -z "$json" ]; then
+              echo "kcov no produjo coverage.json."
+            else
+              echo "- Coverage global: **$(jq -r '.percent_covered' "$json")%** ($(jq -r '.covered_lines' "$json")/$(jq -r '.total_lines' "$json") lineas)"
+              echo "- Duracion de la suite bajo kcov: ${KCOV_SUITE_SECONDS:-n/d} s"
+              echo
+              echo "### 20 archivos de menor cobertura"
+              echo
+              echo "| Archivo | % | Cubiertas/Total |"
+              echo "|---|---|---|"
+              jq -r --arg root "$GITHUB_WORKSPACE/" '[.files[] | {f: (.file | ltrimstr($root)), p: (.percent_covered|tonumber), c: .covered_lines, t: .total_lines}]
+                | sort_by(.p) | .[:20][] | "| `\(.f)` | \(.p) | \(.c)/\(.t) |"' "$json"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Subir reporte HTML de kcov
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kcov-report
+          path: ${{ runner.temp }}/kcov-out
+          if-no-files-found: warn
