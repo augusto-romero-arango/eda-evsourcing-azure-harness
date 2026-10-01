@@ -1202,7 +1202,7 @@ ALCANCE DE ESCRITURA PERMITIDO:
 
 Si el issue requiere escribir en una ruta o tipo de artefacto que NO esta en el listado anterior, verifica antes la allowlist autoritativa: la funcion is_path_in_mefisto_scope de src/internal/scripts/lib/_mefisto-common.sh, tal como esta en main (.claude/scripts/_mefisto-common.sh es solo el shim que la sourcea). Es la que el gate del pipeline evalua, y el listado de arriba puede quedarse corto frente a ella. Si la ruta tampoco esta ahi, NO intentes crear archivos en ella aunque el issue lo describa: primero hace falta un PR que la registre en los gates de scope/changelog (ver MEF-ADR-0019, seccion E -- registrar una ruta y usarla son dos PRs distintos, el de registro va primero y no crea archivos bajo la ruta que registra). Reporta ese bloqueo en tu resumen de stage 1 para que el PR de registro se abra antes de continuar con este issue.
 
-NO MODIFIQUES NADA FUERA DE ESE SCOPE. Mefisto no tiene tests/, infra/, ni .github/workflows/; src/ fuera de internal/, published/ y runtime/ sigue fuera de scope.
+NO MODIFIQUES NADA FUERA DE ESE SCOPE. Mefisto no tiene tests/ ni infra/; src/ fuera de internal/, published/ y runtime/ sigue fuera de scope.
 
 CONTEXTO DE EJECUCION:
 - Modo no-interactivo (print mode). No hay un humano al otro lado.

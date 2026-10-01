@@ -279,7 +279,7 @@ echo "[E] is_path_in_consumer_blocklist clasifica correctamente"
     # (MEF-ADR-0030 decision #4) -- solo docs/adr/mef-adr-* es del marco
     # mefisto-manifest.json es una entrada exacta: vecinos, prefijos, sufijos,
     # subdirectorios y separadores alternativos siguen siendo rutas del consumidor.
-    for allowed in "src/Foo.cs" "src/publication/foo.md" "src/runtime-local/foo.sh" "distribution/foo.txt" "tests/Bar.cs" ".github/workflows/deploy.yml" ".claude/settings.json" "docs/bitacora/notes.md" "docs/testing/mefisto-certification/fixture.md" "docs/adr/0028-x.md" "docs/adr/ca-adr-0009-x.md" ".opencode/agents/foo.md" "AGENTS.md" "opencode.json" "sub/mefisto-manifest.json" "mefisto-manifest.json.bak" "foo-mefisto-manifest.json" "mefisto-manifest.json/foo" "mefisto-manifest.json\\foo"; do
+    for allowed in "src/Foo.cs" "src/publication/foo.md" "src/runtime-local/foo.sh" "distribution/foo.txt" "tests/Bar.cs" ".github/workflows/deploy.yml" ".claude/settings.json" "docs/bitacora/notes.md" "docs/testing/mefisto-certification/fixture.md" "docs/adr/0028-x.md" "docs/adr/ca-adr-0009-x.md" ".opencode/agents/foo.md" "AGENTS.md" ".github/workflows/ci.yml" ".github/rulesets/main.json" "opencode.json" "sub/mefisto-manifest.json" "mefisto-manifest.json.bak" "foo-mefisto-manifest.json" "mefisto-manifest.json/foo" "mefisto-manifest.json\\foo"; do
         if is_path_in_consumer_blocklist "$allowed"; then
             echo "  FAIL: '$allowed' detectado como blocklist (deberia estar permitido)"
             exit 1
@@ -344,7 +344,7 @@ echo "[E2] is_path_in_mefisto_scope clasifica correctamente"
     # mefisto-manifest.json: metadata Claude raiz exacta, registrada antes de que
     # #1132 la pueble. src/{published,runtime}/ y dist/: distribucion publicada multi-runtime
     # registrada antes de poblarla (issue #1043, MEF-ADR-0053).
-    for valid in "commands/foo.md" "skills/projections/SKILL.md" "skills/projections/scripts/check.sh" "agents/bar.md" "scripts/baz.sh" "hooks/hooks.json" "docs/adr/mef-adr-0001-service-bus-topics-por-evento.md" ".claude-plugin/plugin.json" ".claude/commands/mefisto-foo.md" ".claude/skills/mefisto-doctrina/SKILL.md" ".claude/settings.json" ".mcp.json" "mefisto-manifest.json" "changelog.d/380.added.md" "changelog.d/README.md" "README.md" "src/internal/foo.ts" "src/internal/skills/foo/SKILL.md" "src/published/foo.md" "src/runtime/foo.sh" "dist/x" ".opencode/agents/foo.md" ".opencode/commands/foo.md" ".opencode/plugins/foo.js" ".opencode/skills/foo/SKILL.md" "AGENTS.md" "opencode.json"; do
+    for valid in "commands/foo.md" "skills/projections/SKILL.md" "skills/projections/scripts/check.sh" "agents/bar.md" "scripts/baz.sh" "hooks/hooks.json" "docs/adr/mef-adr-0001-service-bus-topics-por-evento.md" ".claude-plugin/plugin.json" ".claude/commands/mefisto-foo.md" ".claude/skills/mefisto-doctrina/SKILL.md" ".claude/settings.json" ".mcp.json" "mefisto-manifest.json" "changelog.d/380.added.md" "changelog.d/README.md" "README.md" "src/internal/foo.ts" "src/internal/skills/foo/SKILL.md" "src/published/foo.md" "src/runtime/foo.sh" "dist/x" ".opencode/agents/foo.md" ".opencode/commands/foo.md" ".opencode/plugins/foo.js" ".opencode/skills/foo/SKILL.md" "AGENTS.md" "opencode.json" ".github/workflows/ci.yml" ".github/rulesets/main.json"; do
         if is_path_in_mefisto_scope "$valid"; then
             echo "  PASS: '$valid' en scope de Mefisto"
         else
@@ -358,7 +358,7 @@ echo "[E2] is_path_in_mefisto_scope clasifica correctamente"
     # prefijos, sufijos, separadores alternativos ni subdirectorios (issues #763 y #1135).
     # ".opencode/agent/" (singular), vecinos de src/{published,runtime}/ y dist/,
     # ".mefisto/" y "opencode.json" fuera de la raiz exacta siguen fuera de scope.
-    for invalid in "src/Foo.cs" "src/otro/x.sh" "src/publication/foo.md" "src/runtime-local/foo.sh" "distribution/x" "dist-local/x" "tests/Bar.cs" ".github/workflows/deploy.yml" "infra/main.tf" ".claude/harness.config.json" ".claude/pipeline/events.log" "sub/.mcp.json" "foo.mcp.json" "sub/mefisto-manifest.json" "mefisto-manifest.json.bak" "foo-mefisto-manifest.json" "mefisto-manifest.json/foo" "mefisto-manifest.json\\foo" ".opencode/x.json" ".opencode/agent/x.md" ".mefisto/pipeline/events.log" ".mefisto/models.json" "sub/opencode.json" "foo.opencode.json"; do
+    for invalid in "src/Foo.cs" "src/otro/x.sh" "src/publication/foo.md" "src/runtime-local/foo.sh" "distribution/x" "dist-local/x" "tests/Bar.cs" ".github/CODEOWNERS" ".github/workflows" ".github/rulesets" "infra/main.tf" ".claude/harness.config.json" ".claude/pipeline/events.log" "sub/.mcp.json" "foo.mcp.json" "sub/mefisto-manifest.json" "mefisto-manifest.json.bak" "foo-mefisto-manifest.json" "mefisto-manifest.json/foo" "mefisto-manifest.json\\foo" ".opencode/x.json" ".opencode/agent/x.md" ".mefisto/pipeline/events.log" ".mefisto/models.json" "sub/opencode.json" "foo.opencode.json"; do
         if is_path_in_mefisto_scope "$invalid"; then
             echo "  FAIL: '$invalid' esta en scope (NO deberia)"
             exit 1
