@@ -698,14 +698,12 @@ for ISSUE_NUM in ${BATCH_QUEUE[@]+"${BATCH_QUEUE[@]}"}; do
     # En Mefisto no usamos pr-sync.sh (es del lado publicado). Mergeamos con
     # gh pr merge directo, con squash + delete-branch (consistente con
     # src/internal/commands/mefisto-merge.md).
-    log "Mergeando PR #$PR_NUM a main (squash + delete-branch)..."
-
     # Espera sincrona del CI en verde (issue #1744): un CI rojo o ausente es un
     # fallo de eslabon igual que un merge fallido (continua o aborta segun
     # --stop-on-error). Sin bypass administrativo ni merge diferido.
     CI_EXIT=0
-    CI_OUT=$(mefisto_wait_pr_checks "$PR_NUM" 2>&1) || CI_EXIT=$?
-    [ -n "$CI_OUT" ] && echo "$CI_OUT" | tee -a "$ISSUE_LOG"
+    log "Esperando el CI en verde del PR #$PR_NUM (check tests)..."
+    mefisto_wait_pr_checks "$PR_NUM" 2>&1 | tee -a "$ISSUE_LOG" || CI_EXIT=$?
     if [ "$CI_EXIT" -ne 0 ]; then
         _strip_ansi < "$ISSUE_LOG" >> "$LOG_FILE_ABS"
         if [ "$CI_EXIT" -eq 1 ]; then
@@ -721,6 +719,7 @@ for ISSUE_NUM in ${BATCH_QUEUE[@]+"${BATCH_QUEUE[@]}"}; do
         continue
     fi
 
+    log "Mergeando PR #$PR_NUM a main (squash + delete-branch)..."
     MERGE_EXIT=0
     gh pr merge "$PR_NUM" --squash --delete-branch 2>&1 | tee -a "$ISSUE_LOG" || MERGE_EXIT=$?
 
