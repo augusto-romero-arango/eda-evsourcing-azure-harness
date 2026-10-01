@@ -700,6 +700,27 @@ for ISSUE_NUM in ${BATCH_QUEUE[@]+"${BATCH_QUEUE[@]}"}; do
     # src/internal/commands/mefisto-merge.md).
     log "Mergeando PR #$PR_NUM a main (squash + delete-branch)..."
 
+    # Espera sincrona del CI en verde (issue #1744): un CI rojo o ausente es un
+    # fallo de eslabon igual que un merge fallido (continua o aborta segun
+    # --stop-on-error). Sin bypass administrativo ni merge diferido.
+    CI_EXIT=0
+    CI_OUT=$(mefisto_wait_pr_checks "$PR_NUM" 2>&1) || CI_EXIT=$?
+    [ -n "$CI_OUT" ] && echo "$CI_OUT" | tee -a "$ISSUE_LOG"
+    if [ "$CI_EXIT" -ne 0 ]; then
+        _strip_ansi < "$ISSUE_LOG" >> "$LOG_FILE_ABS"
+        if [ "$CI_EXIT" -eq 1 ]; then
+            CI_MOTIVO="CI rojo en el PR #$PR_NUM (el check tests fallo o se cancelo); no se mergeo"
+        else
+            CI_MOTIVO="CI sin check tests o timeout de espera en el PR #$PR_NUM (exit $CI_EXIT); no se mergeo"
+        fi
+        fail_issue "$ISSUE_NUM" "$CI_MOTIVO. Log: $ISSUE_LOG$(hold_note_suffix "$ISSUE_HOLD_SECONDS")"
+        FAILED=$((FAILED + 1))
+        if [ "$STOP_ON_ERROR" = true ]; then
+            abort "Detenido por --stop-on-error en issue #$ISSUE_NUM"
+        fi
+        continue
+    fi
+
     MERGE_EXIT=0
     gh pr merge "$PR_NUM" --squash --delete-branch 2>&1 | tee -a "$ISSUE_LOG" || MERGE_EXIT=$?
 
