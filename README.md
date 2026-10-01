@@ -32,12 +32,14 @@ El [veredicto del corte vertical](docs/testing/opencode-consumer-cutover.md#vere
 
 Queda **fuera** de esa certificación —discovery disponible, invocación real no ejercitada por el gate—:
 
-- el resto de slash commands publicados y sus pipelines (`/implement`, `/infra`, `/infra-base`, `/scaffold`, `/scaffold-projections`, `/scaffold-mcp`, `/parallel`, `/sequential`, `/merge` y los demás del catálogo de "Qué incluye");
+- el resto de slash commands publicados y sus pipelines (`/implement`, `/infra-base`, `/scaffold`, `/scaffold-projections`, `/scaffold-mcp`, `/parallel`, `/sequential`, `/merge` y los demás del catálogo de "Qué incluye");
 - todos los agentes fuera de `tooling-writer` y `tooling-reviewer`;
 - la carga real de Agent Skills bajo OpenCode (los agentes del corte declaran solo `read`/`edit`/`shell`);
 - la conexión y el listado real del MCP bundleado `microsoft-learn`, y la traducción de permisos MCP por agente/comando (#1145).
 
 `/mefisto:implement` (rutas write-side y `tipo:projection`) tiene su propio protocolo de certificación en [`docs/testing/tdd-consumer-certification.md`](docs/testing/tdd-consumer-certification.md), y su [veredicto](docs/testing/tdd-consumer-certification.md#veredicto-final-del-corte-tdd-multi-runtime-1487) (#1487) cerró **`PASA`** (2026-09-22, release `v0.38.2`): las cuatro corridas reales write-side/read-side × Claude/OpenCode exigidas por #1435/#1436 se ejecutaron en vivo el 2026-09-21, así que esas dos rutas quedan certificadas bajo ambos runtimes. `--scaffold-domain`, `--from-stage`, `--variant` y la remediación de coverage siguen fuera de esa certificación. El veredicto anterior (#1411, `NO PASA`) queda como antecedente.
+
+`/mefisto:infra` tiene su propio protocolo en [`docs/testing/infra-consumer-certification.md`](docs/testing/infra-consumer-certification.md), y su [veredicto](docs/testing/infra-consumer-certification.md#estado-de-la-certificacion) (#1629) cerró **`PASA`** (2026-09-30, release `v0.40.1`): Claude Code y OpenCode, lanzados desde Herdr y desde `tmux` autónomo, con la invocación directa y la selección automática de modelos por perfil. Mezclar lanzamientos de dos distribuciones o versiones sobre el mismo servidor `tmux` sigue fuera de esa certificación hasta #1740. El intento sobre `v0.40.0` (`NO PASA`, #1730) queda como antecedente.
 
 ## Stack supuesto en el consumidor
 

@@ -14,16 +14,12 @@ prerrequisito y agrega la superficie propia de `/mefisto:infra` -- dos
 agentes (`infra-writer`, `infra-reviewer`), cero credenciales de Azure, PR
 sin `Closes` y la doble matriz runtime x contexto de lanzamiento.
 
-Redactar este documento no ejecuta ninguna corrida ni declara `/mefisto:infra`
-soportado bajo ambos runtimes. Satisface unicamente el CA-1 de #1629 (el
-protocolo en si). Los CA-2 a CA-5 exigen una sesion operada en vivo por un
-humano con acceso a Herdr, a una sesion `tmux` real y a un consumidor
-sintetico -- exactamente el mismo tipo de operacion que
-`tdd-consumer-certification.md` documenta como fuera de alcance de un stage
-de escritura no interactivo en su seccion "Bloqueo estructural de la
-ejecucion automatizada (#1464)". Este documento deja por eso, hasta que esa
-sesion ocurra, las tablas de "Estado de la certificacion" en
-`PENDIENTE DE EJECUCION`.
+Las secciones de protocolo satisfacen el CA-1 de #1629. Los CA-2 a CA-5 exigen
+una sesion operada en vivo con acceso a Herdr, a una sesion `tmux` real y a un
+consumidor sintetico -- el mismo tipo de operacion que
+`tdd-consumer-certification.md` documenta como fuera de alcance de un stage de
+escritura no interactivo ("Bloqueo estructural de la ejecucion automatizada
+(#1464)"). Esa sesion y su veredicto quedan en "Estado de la certificacion".
 
 ## Invariantes y prerrequisitos (CA-1: preflight)
 
@@ -284,35 +280,177 @@ La limpieza es idempotente, igual que en `tdd-consumer-certification.md`.
 
 ## Estado de la certificacion
 
-**PENDIENTE DE EJECUCION.** Este documento cumple el CA-1 de #1629 (define el
-protocolo). Los CA-2 a CA-5 exigen una sesion operada en vivo por un humano
-con Herdr, una sesion `tmux` real y un consumidor sintetico con `terraform`
-instalado -- una operacion que un stage de escritura no interactivo no puede
-producir, por la misma razon documentada en "Bloqueo estructural de la
-ejecucion automatizada (#1464)" de `tdd-consumer-certification.md`: no hay
-credenciales ni alcance sobre un repositorio de consumidor, no se pueden
-operar paneles Herdr/tmux en vivo, y no se puede esperar a que CI resuelva un
-check real.
+**PASA (2026-09-30), release `v0.40.1`.** Las cuatro celdas de la matriz
+(A, B-bis, C y D del intento 2) cumplen integramente CA-2 a CA-5, con identidad
+`aligned`, centinelas en cero y baseline restaurado. `/mefisto:infra` queda
+certificado bajo Claude Code y OpenCode, lanzado desde Herdr y desde `tmux`
+autonomo, en el alcance que fija este protocolo: invocacion directa, sin
+`--models` ni modelo explicito, fixture de modificacion acotada de un modulo
+existente.
 
-Quien opere esa sesion:
+El intento 1 (`v0.40.0`) dio `NO PASA` por el gap de CA-4 que resolvio
+[#1730](https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/issues/1730).
+El intento 2 expuso ademas una fuga de entorno entre distribuciones en
+servidores `tmux` compartidos
+([#1740](https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/issues/1740)).
+Se juzga fuera del veredicto, con el alcance explicado en "Fuga de entorno
+entre distribuciones en tmux (#1740)": la celda B se repitio como B-bis sobre
+un servidor limpio, y la evidencia de la matriz certificada proviene solo de
+la distribucion de cada runtime.
 
-1. Ejecuta el preflight de "Invariantes y prerrequisitos (CA-1)" sobre una
-   release candidata vigente, fijando `<tag-certificable>`, `<version>`,
-   `<commit-fuente>`, `<checksum-opencode>` y `<consumidor-certificable>` con
-   identidad `aligned` verificada.
-2. Crea los cuatro issues fixture de "Fixture minimo `tipo:infra` (CA-1:
-   fixture)" desde el planner publicado del consumidor y lanza las cuatro
-   corridas de la "Matriz de corridas (CA-1: matriz)".
-3. Completa esta seccion con la evidencia real correlacionada por
-   issue/PR/stage/session, siguiendo el mismo formato de tabla "Campo | Valor
-   verificado" que usan "Resultado write-side (#1435)"/"Resultado read-side
-   (#1436)" de `tdd-consumer-certification.md`, y ejecuta la limpieza de
-   "Centinelas y limpieza (CA-5 de #1629)".
-4. Emite el veredicto (`PASA`/`NO PASA`) conforme a "Escala de veredicto y
-   fail-closed" y, si aplica, abre el issue `bug` dependiente.
+### Intento 2 (2026-09-30, run-id `20260930-074511-v0.40.1`)
 
-Hasta que esa sesion ocurra, `README.md` no declara a `/mefisto:infra` bajo
-ningun runtime como parte del alcance certificado.
+| Campo | Valor verificado |
+|---|---|
+| Release e identidad | `v0.40.1` (publicada 2026-09-30T12:19:52Z), version `0.40.1`, commit fuente `eba9773ad106b4e86400b2690340cfd3e8380c45`, digest OpenCode `0580ea32fd8312213365e0ae9f2a32cc7c779f30cd2057ab9bc61ac62d8c2201` validado por el instalador. `diagnose-installation-identity.sh` en `aligned` (Claude y OpenCode, misma version/commit) antes de crear fixtures; historial con `identity` `0.40.1` en las cinco corridas. Incluye #1730, #1731 y #1734. |
+| Instalacion | Claude Code `claude plugin update` (scopes user y project) `0.40.0 -> 0.40.1`; OpenCode `mefisto-opencode install 0.40.1` + `project`. Rollback: `0.40.0` / `d876b9af` en ambos. |
+| Consumidor, herramientas y fixture | Iguales al intento 1: mismo consumidor, `terraform` 1.14.4, Claude Code 2.1.285, OpenCode 1.18.32; mismo `<modulo-certificable>` (`monitoring`) y mismo cambio. |
+| Baseline | `<sha-baseline-inicial>` = `<sha-baseline-final>` = `feb5103dc9b8ce118bddc76cd6b9c63481573abf`, arbol limpio antes y despues. |
+
+| Dimension | A: Claude x Herdr | B-bis: Claude x tmux | C: OpenCode x Herdr | D: OpenCode x tmux |
+|---|---|---|---|---|
+| Issue fixture | [#70](https://github.com/augusto-romero-arango/mefisto-consumer-certification/issues/70) | [#78](https://github.com/augusto-romero-arango/mefisto-consumer-certification/issues/78) | [#72](https://github.com/augusto-romero-arango/mefisto-consumer-certification/issues/72) | [#73](https://github.com/augusto-romero-arango/mefisto-consumer-certification/issues/73) |
+| Lanzamiento | pane Herdr `w9:pE` | sesion `infra-78`, servidor tmux creado por esta corrida | pane Herdr `w9:pF` | sesion `infra-73` |
+| `MODELS:` writer / reviewer | `claude` balanced `sonnet` / deep `opus` | idem A | `opencode` balanced / deep, ambos `openai/gpt-6-sol` | idem C |
+| Stage 1 / Stage 2 | `passed` 22 s / `passed` 30 s | `passed` 22 s (hold aparte) / `passed` 26 s | `passed` 1 m 45 s / `passed` 1 m 33 s | `passed` 1 m 37 s / `passed` 1 m 15 s |
+| PR (sin `Closes`) | [#74](https://github.com/augusto-romero-arango/mefisto-consumer-certification/pull/74) | [#79](https://github.com/augusto-romero-arango/mefisto-consumer-certification/pull/79) | [#75](https://github.com/augusto-romero-arango/mefisto-consumer-certification/pull/75) | [#76](https://github.com/augusto-romero-arango/mefisto-consumer-certification/pull/76) |
+| Diff y summaries | solo `infra/modules/monitoring/main.tf`, una linea identica; `<details>` de writer y reviewer | idem | idem | idem |
+| Job `plan` de CI | `SUCCESS`; `apply` `SKIPPED` | `SUCCESS` | `SUCCESS` | `FAILURE` por `Error acquiring the state lock` (cuatro `plan` concurrentes sobre el mismo `tfstate`); rerun del job tras liberar el lock: `SUCCESS` |
+| Session id (hash sha256, 12) writer / reviewer | `086de7d1cea0` / `e9c766bcdf62` | intento 1 sin sesion (`rate_limit`), intento 2 `911bdf4b4850` / `3a9f58c04692` | `76717e53a63a` / `e1046f02d307` | `ff71b382c28f` / `89e78b738bc8` |
+| Evidencia bajo `.mefisto/pipeline/` | log por stage + stream por intento, `events.log`, historial | idem, mas `attempt-2` del writer | idem A | idem A |
+
+- **CA-4 en curso y hold**: con C en Stage 1, el colector de ambos runtimes trajo
+  la fila `running`, `1-infra-writer`, 30 %. En B-bis, con el mismo wrapper de
+  `rate_limit` y `MEFISTO_HOLD_PROBE_SECONDS=90` del intento 1, el status paso a
+  `state: hold`, `RATE_LIMIT`, `next_probe`, y `/work-status` mostro
+  `EN ESPERA` con causa y proxima sonda. El hold tambien se indujo y se vio en
+  ambos runtimes sobre la B original (#71).
+- **CA-4 terminada**: en ambos runtimes las filas infra muestran
+  `env:dev, PR #N` y `log` resuelto a `iac-pipeline-<started>.log`. El gap del
+  intento 1 queda cerrado.
+- **`events.log`**: todas las lineas, incluidas `[tool]`/`[stage]`, usan hora
+  local. Se cierra el hallazgo #1731 del intento 1.
+- **Ruta legacy**: igual que en el intento 1, solo se refresco el marker
+  `.claude/pipeline/.plugin-root`, sin evidencia.
+- **Centinelas**: 0 coincidencias en los cuatro patrones sobre los logs de las
+  cinco corridas, `events.log`, `pipeline-history.jsonl` y el expediente
+  `.mefisto/pipeline/certification/infra-v0.40.1/`.
+- **Limpieza**: PRs #74-#77 y #79 cerrados sin merge, con sus ramas remotas
+  eliminadas; fixtures #70-#73 y #78 cerrados `not planned`; sin worktrees ni
+  sesiones tmux.
+- **Desviaciones**: las mismas del intento 1 (fixtures con `gh issue create`
+  desde el consumidor, invocacion no interactiva del comando publicado y hold
+  por runner wrapper), mas el rerun del `plan` de D por contencion del lock de
+  estado en CI. Ese lock es del workflow del consumidor, no de
+  `iac-pipeline.sh`.
+
+### Fuga de entorno entre distribuciones en tmux (#1740)
+
+En el intento 2, D (OpenCode) arranco el servidor tmux. `tmux-pipeline.sh` carga
+`mefisto-models.sh`, que exporta `MEFISTO_RUNTIME_LIB_DIR` con `:=`, asi que el
+entorno global del servidor quedo con la raiz de librerias de la release
+OpenCode, junto con `MEFISTO_STATE_DIR` y `MEFISTO_LEGACY_STATE_DIR`. La B
+original (#71, PR #77, lanzada desde Claude sobre ese servidor) heredo ese
+valor y ejecuto las librerias de runtime de la distribucion OpenCode. En
+`0.40.1` ambas copias son identicas (solo difiere `runtime-fake.sh`, de tests),
+y B cumplio todo, pero su evidencia no es de la distribucion Claude. Por eso se
+repitio como B-bis (#78) sobre un servidor tmux arrancado por esa misma
+corrida, con `MEFISTO_RUNTIME_LIB_DIR` en la raiz Claude, y es B-bis la celda
+que entra en la matriz. El intento 1 corrio en el mismo orden (D antes que B)
+y tuvo la misma fuga sin detectarla.
+
+La fuga no invalida el veredicto: la matriz certificada ejecuta cada runtime
+sobre su propia distribucion. Queda como defecto del lanzador en
+[#1740](https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/issues/1740):
+mezclar lanzamientos de dos distribuciones o versiones sobre el mismo servidor
+tmux permanece fuera del alcance certificado hasta que se resuelva.
+
+### Intento 1 (2026-09-30, run-id `20260930-042402-v0.40.0`): NO PASA
+
+| Campo | Valor verificado |
+|---|---|
+| Release e identidad | `v0.40.0` (publicada 2026-09-30T09:21:22Z), version `0.40.0`, commit fuente `d876b9af5e250c695b82031a58346064705e8ffb`, digest OpenCode `281b68f6c5ad4eede9fde9baa22b5a683b046ee135f179c1f0766f1f05b08d19` validado por el instalador contra el `.sha256` publicado. `diagnose-installation-identity.sh` en `aligned` (Claude y OpenCode, misma version/commit) antes de crear fixtures; `pipeline-status-infra-<N>.json` y `pipeline-history.jsonl` registran `identity` `0.40.0/d876b9af` (`identity_state: complete`) en las cuatro corridas. La ruta infra entro por primera vez en una release con `v0.40.0`: `v0.39.0` se publico antes de los merges de #1624-#1628. |
+| Instalacion | Claude Code: marketplace + `claude plugin update` (scopes user y project) `0.39.0 -> 0.40.0`. OpenCode: `mefisto-opencode install 0.40.0` + `project`. Instalacion previa (rollback): `0.39.0` / `e5bff995` en ambos runtimes; se conserva `0.40.0` por ser la release vigente. |
+| Consumidor | `augusto-romero-arango/mefisto-consumer-certification`, 11 modulos bajo `infra/modules/`, `infra-cd.yml` con `plan` en `pull_request` filtrado a `infra/**`. `<modulo-certificable>` = `monitoring`: tag determinista `modulo = "monitoring"` sobre `azurerm_log_analytics_workspace.this`. |
+| Herramientas | `terraform` 1.14.4, Claude Code 2.1.285, OpenCode 1.18.32, tmux y Herdr locales. Sin `az login` ni backend remoto en local. |
+| Baseline | `<sha-baseline-inicial>` = `<sha-baseline-final>` = `feb5103dc9b8ce118bddc76cd6b9c63481573abf`, arbol limpio antes y despues. |
+
+#### Matriz 2x2 (CA-2, CA-3)
+
+| Dimension | A: Claude x Herdr | B: Claude x tmux | C: OpenCode x Herdr | D: OpenCode x tmux |
+|---|---|---|---|---|
+| Issue fixture | [#62](https://github.com/augusto-romero-arango/mefisto-consumer-certification/issues/62) | [#63](https://github.com/augusto-romero-arango/mefisto-consumer-certification/issues/63) | [#64](https://github.com/augusto-romero-arango/mefisto-consumer-certification/issues/64) | [#65](https://github.com/augusto-romero-arango/mefisto-consumer-certification/issues/65) |
+| Lanzamiento | pane Herdr `w9:pC` | sesion `infra-63` | pane Herdr `w9:pD` | sesion `infra-65` |
+| `MODELS:` writer / reviewer | `claude` balanced `sonnet` / deep `opus` | idem A | `opencode` balanced / deep, ambos `openai/gpt-6-sol` | idem C |
+| Stage 1 `infra-writer` | `passed`, 22 s | `passed`, 21 s (hold aparte) | `passed`, 1 m 48 s | `passed`, 1 m 36 s |
+| Stage 2 `infra-reviewer` | `passed`, 24 s | `passed`, 18 s | `passed`, 1 m 23 s | `passed`, 1 m 31 s |
+| PR (sin `Closes`) | [#66](https://github.com/augusto-romero-arango/mefisto-consumer-certification/pull/66) | [#69](https://github.com/augusto-romero-arango/mefisto-consumer-certification/pull/69) | [#67](https://github.com/augusto-romero-arango/mefisto-consumer-certification/pull/67) | [#68](https://github.com/augusto-romero-arango/mefisto-consumer-certification/pull/68) |
+| Diff | solo `infra/modules/monitoring/main.tf`, una linea, identico en las cuatro | idem | idem | idem |
+| Summaries en `<details>` | writer + reviewer | writer + reviewer | writer + reviewer | writer + reviewer |
+| Job `plan` de CI | `SUCCESS` (fmt/init/validate/plan `success`, comentario publicado); `apply` `SKIPPED` | idem | idem | idem |
+| Session id (hash sha256, 12) writer / reviewer | `eeb40e2c27cd` / `8acc929f575a` | intento 1 sin sesion (`rate_limit`), intento 2 `9290789cd785` / `cf4fca8dd827` | `cf6371fd10ed` / `74a7cf7464ec` | `b1af07664386` / `b937d11982b5` |
+| Evidencia bajo `.mefisto/pipeline/` | log por stage + stream `attempt-1` por stage, `events.log`, historial | idem, mas `attempt-2` del writer | idem A | idem A |
+
+Ninguna corrida escribio evidencia bajo `.claude/pipeline/`: el unico archivo
+tocado ahi fue el marker `.plugin-root` que el comando Claude refresca como
+mirror de resolucion de raiz, sin logs, estado ni historial.
+
+#### Visibilidad en `/work-status` (CA-4)
+
+- **En curso**: con C en Stage 1 y luego con D en Stage 2, el colector de
+  ambos runtimes trajo la misma fila (`state: running`, `stage` vigente,
+  `progress_pct` 30/80, `activity.kind = stage`), y los dos `/work-status`
+  la dibujaron con barra de progreso.
+- **Hold inducido (B)**: `MEFISTO_RUN_AGENT_BIN` apunto a un wrapper local
+  que emite un terminal neutral `run.failed` con `error.kind = rate_limit` en
+  el primer intento y delega en `src/runtime/mefisto-run-agent.sh` de la
+  release en los siguientes, con `MEFISTO_HOLD_PROBE_SECONDS=90`.
+  `events.log` registro `FALLO infra-writer: RATE_LIMIT` y la espera. El
+  status paso a `state: hold` con `hold.cause = RATE_LIMIT` y `next_probe`.
+  Ambos `/work-status` mostraron `EN ESPERA`, la causa, la proxima sonda y el
+  techo de 6 h. Tras la sonda, el writer reanudo desde cero en `attempt-2`
+  (no habia `session_id` que reanudar) y la corrida termino `completed`.
+- **Terminada**: las cuatro filas pasan al historial como `completed` en ambos
+  runtimes, pero con `detail = env:dev` y sin PR, a diferencia de las filas
+  TDD, que muestran `PR #N`. `pipeline-history.jsonl` si guarda `pr`; el
+  colector (`work-status-collect.sh`) prioriza `environment` sobre `pr` al
+  calcular `detail` y no expone `pr` en la fila. Las filas infra ademas salen
+  con `log: null`, asi que el drill-down no puede abrir la corrida. **Este es
+  el gap de `NO PASA`** (#1730).
+
+#### Centinelas y limpieza (CA-5)
+
+- Barrido de los cuatro patrones sobre logs por stage, streams por intento,
+  logs del pipeline, `events.log`, `pipeline-history.jsonl` y el expediente
+  (`.mefisto/pipeline/certification/infra-v0.40.0/` en el consumidor, ignorado
+  por Git): **0 coincidencias**.
+- PRs #66-#69 cerrados sin merge (`mergedAt = null`) y ramas remotas
+  eliminadas; fixtures #62-#65 cerrados `not planned` con comentario; sin
+  worktrees `infra-issue-*`; sesiones `infra-63`/`infra-65` cerradas.
+
+#### Desviaciones de la sesion
+
+- **Fixtures**: se crearon con `gh issue create` desde el checkout del
+  consumidor (sin `-R`, sin el planner interno de Mefisto) y con el cuerpo
+  literal del template, mas `## ADRs aplicables` por la misma razon que juzgo
+  #1487. No pasaron por el planner publicado; eso no afecta lo certificado,
+  que empieza en `/mefisto:infra`.
+- **Invocacion**: las cuatro corridas se lanzaron con el comando publicado
+  real en modo no interactivo (`claude -p "/mefisto:infra <N>"`,
+  `opencode run --command mefisto:infra <N>`) desde el checkout del
+  consumidor. A/C heredaron el entorno Herdr del workspace del operador; B/D
+  se lanzaron con las variables `HERDR_*` retiradas, de modo que
+  `tmux-pipeline.sh` abrio sesiones `infra-<N>` autonomas.
+- **Hold**: se indujo con un runner wrapper local, uno de los dos mecanismos
+  que admite "Visibilidad en `/work-status`"; el wrapper no forma parte de la
+  release y solo se inyecto en la sesion tmux de B.
+
+#### Hallazgos no bloqueantes
+
+- `events.log` mezcla zonas horarias: las lineas del pipeline van en hora
+  local y las `[tool]`/`[stage]` del runner en UTC. La correlacion sigue siendo
+  posible (draft
+  [#1731](https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/issues/1731)).
 
 ## Referencias
 
