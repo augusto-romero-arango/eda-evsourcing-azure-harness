@@ -85,6 +85,7 @@ exit 0
 EOF
 cat > "$BIN/gh" <<'EOF'
 #!/usr/bin/env bash
+if [ "${1:-}" = pr ] && [ "${2:-}" = checks ]; then case " $* " in *" --json "*) echo '[{"name":"tests","state":"SUCCESS"}]';; esac; exit 0; fi
 set -eu
 if [ "$1" = pr ] && [ "$2" = merge ]; then
     git -C "$PUBLISHER" pull -q --ff-only origin main

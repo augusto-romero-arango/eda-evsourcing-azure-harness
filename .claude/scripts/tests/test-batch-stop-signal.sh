@@ -224,6 +224,7 @@ setup_fake_gh() {
     local bin_dir="$1"
     cat > "$bin_dir/gh" <<'STUB'
 #!/usr/bin/env bash
+if [ "${1:-}" = pr ] && [ "${2:-}" = checks ]; then case " $* " in *" --json "*) echo '[{"name":"tests","state":"SUCCESS"}]';; esac; exit 0; fi
 if [ "$1" = "pr" ] && [ "$2" = "merge" ]; then
     num="$3"
     git -C "$FAKE_GH_PUBLISHER" pull -q --ff-only origin main >/dev/null 2>&1

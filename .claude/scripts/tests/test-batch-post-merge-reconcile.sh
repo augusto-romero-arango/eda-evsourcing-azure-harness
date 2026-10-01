@@ -66,6 +66,7 @@ exit 0
 EOF
     cat > "$bin/gh" <<'EOF'
 #!/usr/bin/env bash
+if [ "${1:-}" = pr ] && [ "${2:-}" = checks ]; then case " $* " in *" --json "*) echo '[{"name":"tests","state":"SUCCESS"}]';; esac; exit 0; fi
 set -eu
 printf '%s\n' "$*" >> "$GH_LOG"
 if [ "$1" = pr ] && [ "$2" = merge ]; then
