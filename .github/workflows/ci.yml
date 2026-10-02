@@ -20,6 +20,9 @@ jobs:
     name: tests
     runs-on: macos-26
     timeout-minutes: 60
+    env:
+      # Paridad con la ejecucion real: la suite corre dentro de un pipeline que fija el runtime.
+      MEFISTO_RUNTIME: claude
     steps:
       - uses: actions/checkout@v4
 
@@ -29,15 +32,21 @@ jobs:
           sw_vers -productVersion
           /bin/bash --version | head -n 1
 
-      - name: Instalar jq si falta
-        run: command -v jq >/dev/null 2>&1 || brew install jq
+      - name: Instalar herramientas faltantes
+        run: |
+          for tool in jq shellcheck tmux; do
+            command -v "$tool" >/dev/null 2>&1 || brew install "$tool"
+          done
+
+      - name: Paridad de git con macOS local
+        # El git de Apple CLT trae init.defaultBranch=main en su gitconfig de sistema; el git del runner no.
+        run: git config --global init.defaultBranch main
 
       - name: Verificar herramientas
         run: |
-          if ! command -v jq >/dev/null 2>&1; then
-            echo "::error::jq no esta disponible en el runner" >&2
-            exit 1
-          fi
+          for tool in jq shellcheck tmux; do
+            command -v "$tool" >/dev/null 2>&1 || { echo "::error::$tool no esta disponible en el runner" >&2; exit 1; }
+          done
           jq --version
 
       - name: Adaptadores internos sincronizados
