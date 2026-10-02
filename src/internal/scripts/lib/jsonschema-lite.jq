@@ -17,9 +17,9 @@
 # if/then/else, const, not, contains, patternProperties, $schema/meta-validacion.
 #
 # Invocacion (ver validate-internal-artifacts.sh):
-#   jq -n --argjson schema "$(cat internal-artifact.schema.json)"
-#         --argjson instance "$frontmatter_json"
-#         -f jsonschema-lite.jq
+#   jq -n --argjson schema "$(cat internal-artifact.schema.json)" --argjson instance "$frontmatter_json" -f jsonschema-lite.jq
+#   (en una sola linea: jq 1.8 continua en la linea siguiente un comentario que
+#   termina en contrabarra, ver opencode-permission-eval.jq)
 #
 # Salida: un array JSON de strings "<campo>: <motivo>" (vacio si $instance es
 # valida contra $schema). $path usa "." como separador de segmentos; la raiz

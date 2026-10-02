@@ -22,7 +22,9 @@
 # el catch-all "*").
 
 # Portabilidad jq 1.7/1.8: un comentario que termina en contrabarra continua en
-# la linea siguiente en jq 1.8 (se traga el `else`); no terminar comentarios en `\`.
+# la linea siguiente en jq 1.8 (comentarios multilinea estilo Tcl, notas de la
+# release jq 1.8.0, jqlang/jq#2989) y se traga el `else`; jq 1.7 no lo hace.
+# No terminar comentarios en contrabarra.
 def glob_to_regex:
   explode
   | map(
