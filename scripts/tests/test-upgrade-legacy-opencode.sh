@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Verifica la clasificacion estrecha del launcher anterior a projection-status y
-# los contratos de confirmacion y refresco Herdr de commands/upgrade.md
-# (issues #1270 y #1336).
+# Verifica la clasificacion estrecha del launcher anterior a projection-status
+# (via scripts/upgrade.sh --status desde #1712) y los contratos de confirmacion
+# y refresco Herdr de commands/upgrade.md (issues #1270, #1336 y #1787).
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
