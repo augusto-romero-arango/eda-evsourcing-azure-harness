@@ -90,6 +90,50 @@ y se acotaría por prefijo de ruta cuando el matcher lo permita
 (MEF-ADR-0031). La normalización pendiente de los `rm` de
 `domain-scaffolder` se apoya en estos hallazgos (issue #1374).
 
+## Lectura externa de OpenCode (`external_directory`)
+
+El runtime publicado lee fuera del worktree la release de Mefisto y la
+configuración de agentes instalada. Con las capacidades `read` o `shell`,
+`external_directory` es un mapa (`PermissionRuleConfig`, igual que `bash`;
+`@opencode-ai/sdk` 1.18.29, `dist/v2/gen/types.gen.d.ts`) con `"*": "deny"` y
+`allow` solo para esta lista blanca; sin esas capacidades queda en `deny`
+escalar. La reciben los agentes con `read` o `shell` (todos los publicados
+salvo los que declaran ninguna de las dos).
+
+| Ruta permitida (lectura) | Contenido |
+|---|---|
+| `~/Library/Application Support/mefisto/*` (macOS) | raíz de datos: release activa y releases instaladas |
+| `~/.local/share/mefisto/*` (Linux) | ídem |
+| `~/.config/opencode/{agents,commands,skills}/*` | adaptadores instalados |
+
+Sintaxis de patrones ([Permissions de OpenCode
+1.18.29](https://github.com/anomalyco/opencode/blob/v1.18.29/packages/web/src/content/docs/permissions.mdx)):
+el candidato es el directorio padre absoluto del archivo más `/*`, `*` cruza
+`/` (así una raíz con espacios casa sin escapes) y `~`/`$HOME` al inicio del
+patrón se expande al home, por lo que el JSON generado no necesita rutas reales
+y `project-opencode-release.sh` no cambia. La comparación es léxica: no se
+resuelven symlinks, de modo que `active/` (enlace dentro de la raíz permitida)
+funciona, y un enlace dentro de la lista blanca que apunte afuera no se
+contiene por este mecanismo.
+
+Siguen denegados por el `*` del mapa: `~/.config/opencode/opencode.jsonc`
+(puede contener API keys, MEF-ADR-0025), `plugins/`, `node_modules/`,
+`~/.local/share/opencode` (credenciales del runtime) y toda otra ruta externa.
+Las denegaciones de `read` de `.env*`, `auth.json`, `.aws` y `.ssh` se
+conservan y se añaden `**/opencode.jsonc` y `**/.local/share/opencode/**`.
+
+La excepción es solo lectura: `edit`/`write`/`patch` deniegan `../*` (el
+candidato de una ruta externa es relativo al worktree y empieza por `../`) y los
+patrones `~` de la lista blanca; `bash` deniega `touch`, `mv`, `mkdir`, `rm`,
+`cp` y `sed -i` cuyo texto contenga un marcador de ruta de la raíz de datos,
+de la configuración de OpenCode o de `MEFISTO_PACKAGE_ROOT`, evaluado después de
+todos los `allow` (gana la última coincidencia). Límites: `XDG_DATA_HOME` y
+`XDG_CONFIG_HOME` no estándar no se expresan con patrones estáticos y quedan
+denegados (falla cerrado); las redirecciones de shell (`>`) no forman parte del
+candidato de un nodo `command` y no se contienen aquí, igual que antes de este
+cambio. El test de contrato `test-opencode-external-directory.sh` evalúa el
+permiso generado con esta semántica (sin OpenCode real).
+
 `mcp` no es una tool ni un permiso de runtime: es una lista de ids lógicos
 kebab-case. `mcp-servers.json` es la autoridad neutral de esos ids y de su
 provisioning; `published-artifact.schema.json` debe conservar exactamente el
