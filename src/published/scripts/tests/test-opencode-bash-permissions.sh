@@ -89,7 +89,6 @@ def scan(text, out):
             while i < n and text[i] != "\n": i += 1
             continue
         if c == "\n" or c == ";" or c == "|" or (c == "&" and not text.startswith(">&", i - 1) and not (i + 1 < n and text[i+1] == ">")):
-            if c == ">": pass
             if text.startswith("&&", i) or text.startswith("||", i) or text.startswith(";;", i): i += 1
             elif c == "&" and i > 0 and text[i-1] in "<>": buf.append(c); i += 1; continue
             flush(); i += 1; continue
@@ -149,8 +148,7 @@ grep -qi 'cada llamada bash que use' "$ARTIFACT" && pass 'el preambulo declara q
 printf '%s\n' '[contrato] deny por defecto y comandos arbitrarios'
 rules="$(python3 "$PY" rules "$ARTIFACT")"
 [ "$(jq -r 'keys_unsorted[0]' <<< "$rules")" = '*' ] && [ "$(jq -r '.["*"]' <<< "$rules")" = deny ] && pass 'permission.bash abre con "*":"deny"' || fail 'permission.bash no abre con "*":"deny"'
-for forbidden in '*' 'bash *' 'sh *' 'eval *' 'env *'; do
-    if [ "$forbidden" = '*' ]; then continue; fi
+for forbidden in 'bash *' 'sh *' 'eval *' 'env *'; do
     jq -e --arg k "$forbidden" 'has($k) | not' <<< "$rules" >/dev/null && pass "sin regla '$forbidden'" || fail "regla prohibida '$forbidden'"
 done
 for cmd in 'bash -c x' 'eval x' 'curl x' 'rm -rf /' 'sh -c x' 'env x'; do
