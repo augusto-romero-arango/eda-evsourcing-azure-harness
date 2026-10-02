@@ -1,15 +1,21 @@
-# CI interno de Mefisto (issue #1743). No se distribuye al consumidor (MEF-ADR-0019).
-# Corre la regresion completa en TODOS los PRs contra main, sin filtro 'paths:':
-# un workflow saltado por 'paths:' deja el check requerido en "Pending" y bloquea el merge.
-# El nombre del job ("tests") es el check estable que exige el ruleset de main: no renombrar.
+# CI interno de Mefisto (issues #1743, #1766). No se distribuye al consumidor (MEF-ADR-0019).
+# Nightly: la suite completa corre una vez por noche a las 3 AM hora local (UTC-5), es decir
+# 08:00 UTC, porque GitHub programa 'schedule' en UTC. Ningun PR corre tests: este workflow no
+# se dispara en 'pull_request' ni en 'push'; tambien se puede lanzar a mano con 'workflow_dispatch'.
+# Doc oficial de GitHub (events-that-trigger-workflows, evento 'schedule'):
+#   https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#schedule
+#   (a) la ejecucion programada puede retrasarse en periodos de alta carga (p. ej. al inicio de cada hora);
+#   (b) en un repositorio publico, los workflows programados se deshabilitan automaticamente tras
+#       60 dias sin actividad en el repositorio; hay que reactivarlos a mano en la pestana Actions.
+# El fallo de la nightly es visible en Actions (la notificacion automatica es el issue #1770).
 # Corre en macOS (arm64, runner pinneado, nunca 'macos-latest'): Mefisto se opera en macOS con
 # /bin/bash 3.2 y coreutils BSD; un CI en Linux daba rojos/verdes que no dicen nada del sistema real.
 # Neutral a runtime (MEF-ADR-0050): solo bash, coreutils, git y jq; sin CLIs de agente ni secretos.
 name: CI
 
 on:
-  pull_request:
-    branches: [main]
+  schedule:
+    - cron: '0 8 * * *'
   workflow_dispatch:
 
 permissions:
