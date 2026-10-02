@@ -698,7 +698,6 @@ for ISSUE_NUM in ${BATCH_QUEUE[@]+"${BATCH_QUEUE[@]}"}; do
     # En Mefisto no usamos pr-sync.sh (es del lado publicado). Mergeamos con
     # gh pr merge directo, con squash + delete-branch (consistente con
     # src/internal/commands/mefisto-merge.md).
-
     log "Mergeando PR #$PR_NUM a main (squash + delete-branch)..."
     MERGE_EXIT=0
     gh pr merge "$PR_NUM" --squash --delete-branch 2>&1 | tee -a "$ISSUE_LOG" || MERGE_EXIT=$?
