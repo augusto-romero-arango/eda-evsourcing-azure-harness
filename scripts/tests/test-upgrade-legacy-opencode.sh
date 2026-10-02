@@ -16,15 +16,15 @@ assert_eq() { [ "$1" = "$2" ] && pass "$3" || fail "$3 (esperado: $1; obtenido: 
 assert_contains() { case "$1" in *"$2"*) pass "$3" ;; *) fail "$3" ;; esac; }
 assert_not_contains() { case "$1" in *"$2"*) fail "$3" ;; *) pass "$3" ;; esac; }
 
-# Ejecuta exactamente el bloque de discovery publicado contra un launcher fixture.
+# Clasificacion del par OpenCode: la autoridad es `upgrade.sh --status` (#1680/#1712),
+# ejecutado desde un consumidor git fixture contra un launcher fixture.
+UPGRADE="$REPO_ROOT/scripts/upgrade.sh"
+mkdir -p "$WORK/home" "$WORK/consumer"
+git -C "$WORK/consumer" init -q
 discovery_status() {
-    local launcher="$1" output
-    output="$(
-        HOME="$WORK/home" MEFISTO_OPENCODE_LAUNCHER="$launcher" bash -s <<EOF
-$(awk '/^PLUGIN_ROOT=\$\(cat \.claude\/pipeline\/\.plugin-root/{capture=1} capture {if (/^```$/) exit; print}' "$COMMAND")
-EOF
-    )"
-    printf '%s\n' "$output" | awk -F': ' '/^Estado de proyeccion OpenCode:/ { print $2 }'
+    local launcher="$1"
+    (cd "$WORK/consumer" && HOME="$WORK/home" MEFISTO_RUNTIME=claude MEFISTO_OPENCODE_LAUNCHER="$launcher" \
+        bash "$UPGRADE" --status 2>/dev/null) | jq -r '.peer.state // empty' 2>/dev/null
 }
 
 legacy="$WORK/legacy-launcher"
@@ -73,21 +73,20 @@ assert_eq operation-in-progress "$(discovery_status "$in_progress")" 'operacion 
 
 content="$(< "$COMMAND")"
 echo '[decision] confirmacion unica y mutacion condicionada'
-assert_contains "$content" 'Solo si responde exactamente `si`, usa una vez `--align-opencode`' 'legacy exige si exacto y una sola alineacion'
-assert_contains "$content" 'si declina o no responde, actualiza solo Claude y no modifica releases, ledger, enlaces ni configuracion OpenCode' 'declinar legacy no muta OpenCode'
-assert_contains "$content" 'Para `conflict`, `operation-in-progress` o `unavailable`' 'estados fail-closed conservan su rama'
-assert_contains "$content" 'Nunca pases `--align-opencode`; no los reinterpretes como `legacy` ni como consentimiento.' 'estados fail-closed no habilitan alineacion'
+assert_contains "$content" 'Solo si responde exactamente `si`, usa `--align-peer`' 'legacy exige si exacto y alineacion del par'
+assert_contains "$content" 'si declina o no responde, actualiza solo el runtime activo' 'declinar legacy no alinea el par'
+assert_contains "$content" '`conflict` / `operation-in-progress` / `unavailable`' 'estados fail-closed conservan su rama'
+assert_contains "$content" 'Nunca pases `--align-peer`.' 'estados fail-closed no habilitan alineacion'
 
 echo '[Herdr] refresh automatico desde la release destino'
-refresh_section=$(printf '%s\n' "$content" | awk '/^### 4\. Refrescar agentes Herdr/{capture=1} /^### 5\./{capture=0} capture')
-assert_contains "$refresh_section" 'if [ "${HERDR_ENV:-}" = "1" ]; then' 'el refresh solo se ejecuta dentro de Herdr'
-assert_contains "$refresh_section" 'PLUGIN_ROOT=$(cat .claude/pipeline/.plugin-root 2>/dev/null || true)' 'relee best-effort la raiz escrita por el update'
-assert_not_contains "$refresh_section" 'plugins/cache' 'no sustituye la raiz destino por una release inferida del cache'
-assert_contains "$refresh_section" 'HERDR_REFRESH=$("$PLUGIN_SCRIPTS/herdr-pipeline.sh" --refresh-agents 2>/dev/null || true)' 'descarta stderr y tolera fallos del refresh'
+refresh_section=$(printf '%s\n' "$content" | awk '/^### 4\. Refrescar agentes herdr/{capture=1} /^### 5\./{capture=0} capture')
+assert_contains "$refresh_section" 'Solo si `HERDR_ENV=1`' 'el refresh solo se ejecuta dentro de Herdr'
+assert_contains "$refresh_section" 'herdr-pipeline.sh" --refresh-agents' 'invoca el refresh desde la release destino'
+assert_contains "$refresh_section" 'best-effort' 'tolera fallos del refresh'
 assert_contains "$refresh_section" 'Sin panes Herdr que refrescar' 'declara el reporte para una salida vacia'
-assert_contains "$refresh_section" 'Pane`, `Runtime` y `Accion' 'declara la tabla sin reinterpretar acciones'
-assert_contains "$content" 'Si el reporte Herdr incluyo `omitido:working` u `omitido:blocked`' 'los panes ocupados conservan el reload manual diferido'
-assert_contains "$content" 'automatico y best-effort; nunca interrumpe un pane ocupado ni el pane propio' 'las reglas protegen panes ocupados y el propio'
+assert_contains "$refresh_section" '`Pane`, `Runtime` y `Accion`' 'declara la tabla sin reinterpretar acciones'
+assert_contains "$content" 'Si el reporte herdr incluyo `omitido:working` u `omitido:blocked`' 'los panes ocupados conservan el reload manual diferido'
+assert_contains "$content" 'nunca interrumpe un pane ocupado ni el pane propio' 'las reglas protegen panes ocupados y el propio'
 
 printf 'RESULTADO: %s pasaron, %s fallaron\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
