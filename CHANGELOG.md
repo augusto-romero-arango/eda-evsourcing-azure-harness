@@ -4,6 +4,41 @@ Todo cambio notable a este proyecto se documenta aquí. Sigue [Keep a Changelog]
 
 ## [Unreleased]
 
+## [0.40.2] - 2026-10-02
+
+### Added
+
+- Workflow de CI `.github/workflows/ci.yml`: job estable `tests` que corre en cada PR contra `main` el chequeo de adaptadores, la validacion de artefactos internos y `mefisto-test-suite.sh`, y sube los logs como artifact (#1743).
+- Workflow `coverage.yml`: mide con kcov el coverage de los scripts bash al hacer push a `main` o por `workflow_dispatch`, sube el reporte HTML como artifact y publica en el job summary el porcentaje global y los 20 archivos menos cubiertos; sin gate ni umbral (#1745).
+- Ruleset versionado `.github/rulesets/main.json` (+ README con comandos) que protege `main`: PR con 0 aprobaciones, check `tests` requerido sin branches-up-to-date, sin force-push ni borrado, bypass solo rol admin; se aplica a mano (#1746).
+- `infra-base-scaffolder` genera `.github/workflows/nuget-audit.yml` solo en consumidores greenfield nuevos: auditoria NuGet informativa y no bloqueante (directos y transitivos) en el resumen del job, con estado "no verificada" explicito cuando no puede auditar (#1760).
+- CI interno: la nightly abre un issue (`nightly-rojo`, `bug`, `tipo:tooling`) al fallar, comenta si sigue roja y lo cierra al volver a verde (job `notify` en `ci.yml` + `mefisto-nightly-report.sh`) (#1773)
+
+### Changed
+
+- `docs/testing/infra-consumer-certification.md` registra las sesiones reales de la certificacion IaC multi-runtime (matriz Claude/OpenCode x Herdr/tmux). La primera, sobre `v0.40.0`, dio `NO PASA` por el gap de `/work-status` (#1730). La segunda, sobre `v0.40.1`, dio **`PASA`**: `/mefisto:infra` queda certificado bajo ambos runtimes, y `README.md` lo declara en el alcance certificado. La fuga de entorno entre distribuciones en servidores `tmux` compartidos queda fuera del alcance hasta #1740.
+- Registrado `.github/workflows/*` y `.github/rulesets/*` en la allowlist interna de scope (`is_path_in_mefisto_scope`, MEF-ADR-0019 seccion E); el resto de `.github/` sigue fuera y la blocklist del consumidor no cambia (#1742).
+- Los caminos de merge internos (`/mefisto-merge`, `mefisto-batch-pipeline.sh`, `mefisto-release.sh`) esperan el check `tests` en verde (nuevo helper `mefisto_wait_pr_checks`) antes de mergear; un CI rojo o ausente es un fallo de eslabon, sin `--admin` ni `--auto`.
+- El CI interno (`.github/workflows/ci.yml`, job `tests`) corre ahora en el runner pinneado `macos-26` (arm64) en lugar de `ubuntu-latest`, para reflejar el entorno real de operacion (macOS, `/bin/bash` 3.2). Imprime la version de SO/bash y verifica `jq` con mensaje explicito (#1755).
+- El job `tests` del CI instala `shellcheck` y `tmux` si faltan, fija `init.defaultBranch=main` (paridad con el git de Apple CLT) y exporta `MEFISTO_RUNTIME=claude` como lo hace el pipeline real (#1755).
+- La suite de tests deja de correr en los PRs y pasa a una nightly (`ci.yml`, 3 AM UTC-5, `schedule` + `workflow_dispatch`); se retira la espera del CI de los caminos de merge (`/mefisto-merge`, `mefisto-batch-pipeline.sh`, `mefisto-release.sh`) y se elimina el helper de espera de checks con su CLI, shim y test.
+- Sube a 60 s el umbral de la asercion `[perf]` de `test-neutrality-gate.sh` (medido 38 s local, 42 s en runner), con override `MEFISTO_NEUTRALITY_PERF_LIMIT` (#1789).
+
+### Fixed
+
+- El preambulo OpenCode de resolucion de la release activa y el bloque `test -f` de los agentes con `{{mefisto:package-root}}` ahora pasan `permission.bash`: el preambulo ya no usa funciones ni `uname`/`pwd -P`, y el contrato suma reglas exactas `"$mefisto_opencode_launcher" package-root`, `export MEFISTO_PACKAGE_ROOT` y `exit 1`; nuevo test de contrato `test-opencode-bash-permissions.sh` que evalua los comandos del artefacto generado contra el frontmatter (issue #1750).
+- La politica OpenCode publicada abre en `external_directory` una lista blanca de solo lectura (raiz de datos de Mefisto y `~/.config/opencode/{agents,commands,skills}`) en lugar de `deny` escalar, con denegaciones de escritura y test de contrato (#1761, absorbe #1764).
+- El prompt de `tooling-pipeline.sh` (writer y reviewer) declara `.github/dependabot.yml` como ruta de escritura del consumidor, evitando que Stage 1 termine sin cambios (#1782).
+- El evaluador jq de permisos OpenCode (`src/internal/scripts/lib/opencode-permission-eval.jq`) ya no rompe con jq 1.8 ("Cannot index string with number"): un comentario terminaba en contrabarra y jq 1.8.0 lo continua en la linea siguiente (comentarios multilinea estilo Tcl, jqlang/jq#2989), tragandose el `else`. Se quitaron las contrabarras finales de comentarios en los `.jq` del repo; los tests de permisos, paridad de scope y generacion de adaptadores publicados pasan con jq 1.7.1 y 1.8.1, sin fijar version (#1784).
+- Regenerados los fixtures `expected-opencode-tooling-writer.md` y `expected-opencode-tooling-reviewer.md` desde la salida del generador: les faltaban las entradas `bash` del preambulo OpenCode que resuelve la release activa (#1779); `test-tooling-agents.sh` vuelve a pasar (#1783).
+- `test-opencode-observability.sh` ya no lee `.opencode/package.json` (ignorado por git): la version fijada de los tipos vive en el test y la verificacion se omite con mensaje explicito en checkouts limpios (#1786).
+- `test-upgrade-legacy-opencode.sh` actualizado al contrato de #1680/#1712: la clasificacion del par se obtiene de `upgrade.sh --status` (antes parseaba un bloque bash que `commands/upgrade.md` ya no contiene) y las aserciones de texto siguen el comando vigente (`--align-peer`, paso herdr).
+- Corregidas las aserciones obsoletas de `test-refactor-gate.sh` (E4 ahora prueba la salida de `extract_test_count`) y `test-scaffold-text-integrity.sh` (aislado el estado del pipeline en el consumer y localizado el log por la ruta del diagnostico) (#1788).
+
+### Removed
+
+- Se retira el workflow de coverage de la suite de scripts introducido en #1745 (corria en cada `push` a `main`): no aporta valor; la suite ya no corre en PRs (#1766), en Linux esta roja por divergencias de plataforma (el entorno real es macOS, bash 3.2) y medir coverage sobre una suite que no corre en la plataforma real no informa nada (#1757).
+
 ## [0.40.1] - 2026-09-30
 
 ### Fixed
@@ -2946,7 +2981,8 @@ Y reemplazar referencias en `CLAUDE.md` del proyecto: `/eda-evsourcing-azure-har
 - Los agentes `reviewer` e `implementer` mantienen el placeholder literal `ADR-XXXX` en sus plantillas de reporte (no es un bug; el agente lo sustituye en tiempo de ejecución por el número real del ADR aplicable).
 - Los ejemplos de código en `test-writer.md`, `implementer.md` y `smoke-test-writer.md` conservan nombres concretos de un proyecto consumidor (`Programacion`, `ControlHoras`) anotados en el "Contrato con el consumidor" de cada agente como ejemplos pedagógicos.
 
-[Unreleased]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.40.1...HEAD
+[Unreleased]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.40.2...HEAD
+[0.40.2]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.40.1...v0.40.2
 [0.40.1]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.40.0...v0.40.1
 [0.40.0]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.39.0...v0.40.0
 [0.39.0]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.38.2...v0.39.0
