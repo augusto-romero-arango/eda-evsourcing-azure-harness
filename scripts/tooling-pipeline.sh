@@ -646,6 +646,7 @@ Tu tarea: implementa lo descrito en el issue. Esto es una tarea de TOOLING del C
 
 ALCANCE PERMITIDO de escritura:
 - .github/workflows/                         (workflows del consumidor)
+- .github/dependabot.yml                     (configuracion de Dependabot del consumidor; solo este archivo)
 - .mefisto/harness.config.json               (configuracion del consumidor: contrato canonico)
 - .claude/harness.config.json                (solo si ya existe: fallback legacy de lectura, no lo crees)
 - .claude/settings.json                      (configuracion Claude del consumidor)
@@ -768,7 +769,7 @@ $DIFF_NAME_STATUS
 Tu tarea: revisa la calidad del codigo producido por el writer.
 
 ALCANCE PERMITIDO de escritura (igual al del writer):
-.github/workflows/, .mefisto/harness.config.json (o .claude/harness.config.json solo si ya existe, legacy), .claude/settings.json,
+.github/workflows/, .github/dependabot.yml, .mefisto/harness.config.json (o .claude/harness.config.json solo si ya existe, legacy), .claude/settings.json,
 .mefisto/pipeline/, pipeline-state/, scripts/, tests/ (fixtures/helpers),
 docs/** (incluido docs/testing/; salvo docs/adr/mef-adr-*).
 

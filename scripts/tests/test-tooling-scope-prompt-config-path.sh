@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # test-tooling-scope-prompt-config-path.sh -- Contrato de config canonico en los
-# prompts de ALCANCE PERMITIDO de tooling-pipeline.sh (#1512).
+# prompts de ALCANCE PERMITIDO de tooling-pipeline.sh (#1512), y ruta exacta
+# .github/dependabot.yml en ambos prompts sin abrir .github/ completo (#1782).
 #
 # El gate real (is_path_in_consumer_blocklist) no bloquea ninguna de las dos
 # rutas de config: lo que decide que archivo toca el agente es el texto del
@@ -100,6 +101,50 @@ if is_path_in_consumer_blocklist ".claude/harness.config.json"; then
 else
     pass "is_path_in_consumer_blocklist no bloquea .claude/harness.config.json"
 fi
+
+echo "[5] .github/dependabot.yml declarado en writer y reviewer, sin abrir .github/ completo (#1782)"
+W5=$(bloque_desde '^ALCANCE PERMITIDO de escritura:$' 14)
+R5=$(bloque_desde '^ALCANCE PERMITIDO de escritura (igual al del writer):$' 4)
+for quien in W5:writer R5:reviewer; do
+    var="${quien%%:*}"; nombre="${quien##*:}"
+    if printf '%s\n' "${!var}" | grep -Fq '.github/dependabot.yml'; then
+        pass "el $nombre declara .github/dependabot.yml"
+    else
+        fail "el $nombre no declara .github/dependabot.yml"
+    fi
+    if printf '%s\n' "${!var}" | grep -Eq '(^|[ ,-])\.github/($|[ ,(])'; then
+        fail "el $nombre declara .github/ completo"
+    else
+        pass "el $nombre no declara .github/ completo"
+    fi
+done
+
+echo "[6] Gate: dependabot.yml no se bloquea y las rutas del plugin siguen bloqueadas"
+if is_path_in_consumer_blocklist ".github/dependabot.yml"; then
+    fail "el gate bloquea .github/dependabot.yml"
+else
+    pass "el gate no bloquea .github/dependabot.yml"
+fi
+for ruta in commands/x.md agents/x.md hooks/x.sh .claude-plugin/plugin.json; do
+    if is_path_in_consumer_blocklist "$ruta"; then
+        pass "el gate bloquea $ruta"
+    else
+        fail "el gate no bloquea $ruta"
+    fi
+done
+
+echo "[7] Escenario: solo dependabot.yml deja diff reconocible y pasa el gate"
+TMP7=$(mktemp -d)
+(
+    cd "$TMP7" && git init -q && git -c user.email=t@t -c user.name=t commit -q --allow-empty -m base \
+        && mkdir -p .github && printf 'version: 2\n' > .github/dependabot.yml
+)
+if [ -n "$(git -C "$TMP7" status --porcelain)" ] && ! is_path_in_consumer_blocklist "$(git -C "$TMP7" status --porcelain -uall | awk '{print $2}')"; then
+    pass "diff con solo dependabot.yml es visible y no bloqueado"
+else
+    fail "escenario dependabot.yml no reconocido"
+fi
+rm -rf "$TMP7"
 
 echo "----------------------------------------"
 echo "  Resumen: $PASS pass, $FAIL fail"
