@@ -97,8 +97,13 @@ configuración de agentes instalada. Con las capacidades `read` o `shell`,
 `external_directory` es un mapa (`PermissionRuleConfig`, igual que `bash`;
 `@opencode-ai/sdk` 1.18.29, `dist/v2/gen/types.gen.d.ts`) con `"*": "deny"` y
 `allow` solo para esta lista blanca; sin esas capacidades queda en `deny`
-escalar. La reciben los agentes con `read` o `shell` (todos los publicados
-salvo los que declaran ninguna de las dos).
+escalar. La reciben los agentes con `read` o `shell`; hoy son los 22 agentes
+publicados: `apim-gateway-scaffolder`, `bug-investigator`, `domain-scaffolder`,
+`historiador`, `implementer`, `infra-base-scaffolder`, `infra-bootstrap`,
+`infra-reviewer`, `infra-writer`, `mcp-scaffolder`, `planner`, `pr-sync`,
+`projection-implementer`, `projection-test-writer`, `projections-scaffolder`,
+`reviewer`, `smoke-test-writer`, `test-writer`, `tooling-investigator`,
+`tooling-reviewer`, `tooling-writer` y `workos-identity-scaffolder`.
 
 | Ruta permitida (lectura) | Contenido |
 |---|---|
