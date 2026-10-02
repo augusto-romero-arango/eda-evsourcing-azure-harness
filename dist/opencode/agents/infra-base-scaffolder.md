@@ -83,6 +83,15 @@ Si el guard dispara, detente sin escribir nada.
 
 ## Paso 0 - Resolver tokens del consumidor
 
+**Gate greenfield de la auditoria NuGet (issue #1760) -- calcula esto PRIMERO, antes de escribir cualquier archivo**, porque el propio agente crea luego `infra-cd.yml` y `infra/environments/<env>/main.tf`. Es `si` solo si, al comenzar, no existe `.github/workflows/infra-cd.yml` ni ningun `infra/environments/*/main.tf`; recuerda el resultado como `NUGET_AUDIT_GREENFIELD` (`si`/`no`) para el Paso 2b.1 y el Paso 5:
+
+```bash
+NUGET_AUDIT_GREENFIELD=si
+[ -f .github/workflows/infra-cd.yml ] && NUGET_AUDIT_GREENFIELD=no
+for f in infra/environments/*/main.tf; do [ -f "$f" ] && NUGET_AUDIT_GREENFIELD=no; done
+echo "NUGET_AUDIT_GREENFIELD=$NUGET_AUDIT_GREENFIELD"
+```
+
 Lee el contrato de configuracion efectivo del consumidor en `${MEFISTO_CONFIG_PATH}` (MEF-ADR-0053, decision 4); nunca copies, migres ni escribas un archivo legacy. Lee tambien el archivo efectivo de directivas del consumidor, `${MEFISTO_INSTRUCTIONS_PATH}`, para derivar los valores de los `variables.tf` del entorno. **No hardcodees valores de ningun proyecto concreto.**
 
 ```bash
@@ -2385,6 +2394,111 @@ jobs:
 
 ---
 
+## Paso 2b.1 - Generar el workflow de auditoria NuGet (`nuget-audit.yml`, issue #1760)
+
+**Solo en un greenfield real.** Usa el resultado de `NUGET_AUDIT_GREENFIELD` que calculaste al **inicio** del Paso 0 (antes de escribir cualquier archivo). Si fue `no`, **no generes nada**, aunque `nuget-audit.yml` falte: omitirlo en repos ya inicializados es intencional (MEF-ADR-0021), y no propongas migracion ni toques `/mefisto:onboard`. Si fue `si`, crea `.github/workflows/nuget-audit.yml` **solo si no existe** (nunca sobrescribas; MEF-ADR-0021/CA-7). El estado de shell no persiste entre invocaciones de comandos, asi que **sustituye `<si|no>` por el valor literal impreso en el Paso 0** -- nunca lo recalcules aqui, porque a esta altura ya escribiste `infra-cd.yml` y `main.tf`:
+
+```bash
+NUGET_AUDIT_GREENFIELD=<si|no>
+if [ -f .github/workflows/nuget-audit.yml ]; then
+  echo "nuget-audit.yml ya existe; no se sobrescribe (idempotencia, MEF-ADR-0021)."
+elif [ "$NUGET_AUDIT_GREENFIELD" != "si" ]; then
+  echo "Consumidor ya inicializado al comenzar; no se agrega nuget-audit.yml (por diseno)."
+else
+  mkdir -p .github/workflows
+fi
+```
+
+Si debes crearlo, escribe este contenido tal cual. Es **informativo, nunca bloquea**: corre en todo `pull_request` sin filtros de rutas, no usa OIDC ni secretos, no modifica los demas workflows y no despliega (MEF-ADR-0025). Lee el `SolutionFile` efectivo de la seccion "Tokens del harness" de `AGENTS.md` en runtime; no uses `--no-restore` ni eleves `NuGetAuditMode` a error. Una falla de consulta, restore o parseo se reporta como **auditoria no verificada**, jamas como cero vulnerabilidades:
+
+```yaml
+name: NuGet Audit
+
+# Informativo y no bloqueante (issue #1760): publica en el resumen del job los paquetes
+# NuGet con advisories (directos y transitivos). El job siempre termina success; si no
+# puede auditar lo declara "no verificada" y nunca lo confunde con un escaneo limpio.
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  nuget-audit:
+    name: nuget-audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Auditar paquetes NuGet vulnerables
+        shell: bash
+        run: |
+          set -uo pipefail
+          OUT="$RUNNER_TEMP/nuget-audit.json"
+          ERR="$RUNNER_TEMP/nuget-audit.err"
+
+          unverified() {
+            {
+              echo "## Auditoria NuGet no verificada"
+              echo
+              echo "Motivo: $1"
+              echo
+              echo "Esto **no** significa cero vulnerabilidades: la auditoria no pudo ejecutarse."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          }
+
+          SOLUTION=""
+          if [ -f AGENTS.md ]; then
+            SOLUTION=$(sed -n 's/^[-* ]*\*\*SolutionFile\*\*:[[:space:]]*//p' AGENTS.md | head -n 1 | tr -d '\r`' | sed 's/[[:space:]]*$//')
+          fi
+          [ -n "$SOLUTION" ] || unverified "AGENTS.md no declara el token SolutionFile en la seccion Tokens del harness."
+          [ -f "$SOLUTION" ] || unverified "la solucion '$SOLUTION' todavia no existe en este PR."
+
+          if ! dotnet package list --project "$SOLUTION" --vulnerable --include-transitive --format json --output-version 1 > "$OUT" 2> "$ERR"; then
+            unverified "dotnet package list fallo (codigo de salida distinto de cero, restore o consulta de la fuente NuGet)."
+          fi
+          jq -e '.version' "$OUT" > /dev/null 2>&1 || unverified "la salida JSON de dotnet package list no se pudo interpretar."
+          if jq -e '[.problems[]? | select(.level == "error")] | length > 0' "$OUT" > /dev/null 2>&1; then
+            unverified "dotnet package list reporto errores al evaluar la solucion."
+          fi
+
+          ROWS=$(jq -r '
+            def s: tostring | gsub("[^A-Za-z0-9._:/@+ -]"; "_");
+            [ .projects[]? | .frameworks[]? | (.topLevelPackages[]?, .transitivePackages[]?)
+              | . as $p | ($p.vulnerabilities // [])[]
+              | [($p.id | s), ($p.resolvedVersion | s), (.severity | s), (.advisoryurl | s)] ]
+            | unique | .[] | @tsv' "$OUT") || unverified "no se pudo extraer la lista de advisories del JSON."
+
+          if [ -z "$ROWS" ]; then
+            {
+              echo "## Auditoria NuGet"
+              echo
+              echo "Sin advisories en paquetes directos ni transitivos de \`$SOLUTION\`."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          {
+            echo "## Auditoria NuGet: paquetes con advisories"
+            echo
+            echo "Informativo, no bloquea el PR. Solucion: \`$SOLUTION\`."
+            echo
+            echo "| Paquete | Version resuelta | Severidad | Advisory |"
+            echo "|---|---|---|---|"
+            printf '%s\n' "$ROWS" | while IFS=$'\t' read -r id version severity url; do
+              echo "| $id | $version | $severity | $url |"
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit 0
+```
+
+---
+
 ## Paso 2c - Generar el `.gitignore` raiz del repo consumidor
 
 Crea el `.gitignore` **raiz** del repo consumidor -- distinto del `.gitignore` del entorno Terraform (Paso 2.5, que solo cubre `infra/environments/<env>/`) -- **solo si no existe** (idempotencia, mismo patron que `infra-cd.yml`, MEF-ADR-0021/CA-7: protege personalizaciones del consumidor en re-corridas). El determinismo viene de que este agente corre **una sola vez** en greenfield, antes del primer `/scaffold`; el guard "solo si no existe" por si solo no evitaria un add/add si dos ramas paralelas lo vieran ausente a la vez (issue #241).
@@ -2456,7 +2570,9 @@ git add infra/
 # Se incluyen condicionalmente para no fallar si no se generaron en esta corrida:
 [ -f .gitignore ] && git add .gitignore
 [ -f .github/workflows/infra-cd.yml ] && git add .github/workflows/infra-cd.yml
+[ -f .github/workflows/nuget-audit.yml ] && git add .github/workflows/nuget-audit.yml
 git commit -m "infra(<env>): generar infraestructura base (8 modulos + esqueleto del entorno + workflow de CI + .gitignore raiz)"
+# Si generaste nuget-audit.yml (Paso 2b.1), agregalo al mensaje: "... + auditoria NuGet informativa".
 # Si generaste el wiring opt-in del worker de proyecciones (Paso 1.9/2.3b/2.4b), dilo en el
 # mensaje: "... + 3 modulos del worker de proyecciones + su alerta de spike de excepciones".
 ```
@@ -2473,6 +2589,7 @@ Imprime un resumen claro:
 - **Archivos del entorno creados** vs **omitidos** bajo `infra/environments/<env>/` (incluido `.gitignore`, Paso 2.5).
 - **`.gitignore` raiz del repo consumidor** (Paso 2c): creado u omitido (ya existia). Blinda `local.settings.json` desde el primer `/scaffold` (MEF-ADR-0025, issue #241) y el estado operativo `.mefisto/pipeline/` sin ignorar el config versionado `.mefisto/harness.config.json` (MEF-ADR-0053).
 - **Workflow de CI** (`.github/workflows/infra-cd.yml`): creado u omitido (ya existia).
+- **Workflow de auditoria NuGet** (`.github/workflows/nuget-audit.yml`, Paso 2b.1, issue #1760): creado, omitido porque ya existia, u omitido por diseno porque el consumidor ya estaba inicializado al comenzar (`NUGET_AUDIT_GREENFIELD=no`). Informativo y no bloqueante; reporta el motivo.
 - **Registro `harness.config.json > secrets[]`** (Paso 2b.0, issue #256): las entradas registradas o actualizadas (interno de ASB, `marten-connection`, `app-insights-connection`, una por alias de `serviceBus.external[]`). Corre siempre, incluso si el workflow ya existia.
 - **Worker de proyecciones (opt-in, MEF-ADR-0034, Paso 1.9/2.3b/2.4b)**: si `projections.enabled` es `true` en `harness.config.json`, reporta los 3 modulos (`container-registry`, `container-app-environment`, `container-app`) creados u omitidos, y si el wiring de `variables.tf`/`main.tf`/`outputs.tf` ya estaba presente o se acaba de agregar. Si el token no esta en `true`, reporta explicitamente que se omitio por diseno (CA-3), no como un error o una omision accidental. Reporta ademas, por separado (probe propio, issue #679), si la alerta dedicada de spike de excepciones (`projections_exception_spike`, umbral >5) ya estaba presente en `main.tf`, se acaba de agregar, o se **omitio** porque el archivo efectivo de directivas no declara el token `RootNamespace` (Paso 0) -- un entorno que ya tenia el resto del wiring de una corrida anterior a este issue puede tener los 3 modulos sin la alerta, y una alerta omitida por falta del token es lo unico que queda pendiente de una corrida por lo demas completa: dilo como accion para el consumidor (declarar `RootNamespace` en `AGENTS.md`, seccion "Tokens del harness", y volver a invocarte), no como una nota al pie.
 - **Lista canonica de resource providers** (Paso 2.1, MEF-ADR-0021): reporta cual de los tres casos de CA-2 aplico sobre `providers.tf` -- archivo creado con los trece namespaces, namespaces faltantes sumados a una lista parcial existente, o los trece ya presentes (sin cambios) --, y si `resource_provider_registrations` ya existia con un valor distinto de `"none"` (en cuyo caso no se piso, solo se reporta). Advierte que si el SP de CI no tiene `Contributor` a nivel de suscripcion (`scripts/setup-github-ci.sh`), el primer `apply` puede fallar con `AuthorizationFailed` en vez de `409 MissingSubscriptionRegistration`, y que el fix en ese caso es `az provider register --namespace <namespace> --wait` (una sola vez, privilegiado) por cada namespace que la suscripcion aun no tenga registrado.
