@@ -201,7 +201,8 @@ run_case() {
     : > "$GH_STUB_LOG"
     (
         cd "$consumer" || exit 99
-        SCAFFOLD_FIXTURE="$scenario" GH_STUB_LOG="$GH_STUB_LOG" PATH="$bin:$PATH" \
+        MEFISTO_STATE_DIR="$consumer/.mefisto/pipeline" \
+            SCAFFOLD_FIXTURE="$scenario" GH_STUB_LOG="$GH_STUB_LOG" PATH="$bin:$PATH" \
             MEFISTO_RUN_AGENT_BIN="$bin/run-agent-stub.sh" \
             MEFISTO_RUNTIME=fake MEFISTO_FAKE_AVAILABLE=1 \
             "$PIPELINE" --domain prueba
@@ -209,6 +210,12 @@ run_case() {
     LAST_RC=$?
     LAST_CONSUMER="$consumer"
     LAST_GH_LOG="$GH_STUB_LOG"
+}
+
+# El log del scaffold se ubica por la ruta que el abort imprime tras "diagnostico en:", sin
+# asumir el directorio de estado del pipeline.
+scaffold_log_from_out() {
+    sed -n 's/.*diagnostico en: //p' "$1" | tail -1 | sed $'s/\033\\[[0-9;]*m//g' | tr -d '\r'
 }
 
 echo "[1] Output sano: verifica el rango y conserva push/PR (CA-1/CA-2)"
@@ -239,14 +246,14 @@ if [ "$LAST_RC" -ne 0 ]; then pass "trailing whitespace aborta"; else fail "trai
 if ! git -C "$LAST_CONSUMER" ls-remote --exit-code origin refs/heads/scaffold-prueba >/dev/null 2>&1; then pass "trailing whitespace no hace push"; else fail "trailing whitespace publico una rama"; fi
 if ! grep -qF 'gh pr create' "$LAST_GH_LOG"; then pass "trailing whitespace no crea PR"; else fail "trailing whitespace intento crear PR"; fi
 if grep -qF "errores de whitespace detectados por 'git diff --check'" "$TMP_DIR/whitespace.out"; then pass "trailing whitespace muestra una ruta de diagnostico"; else fail "trailing whitespace no muestra diagnostico accionable"; fi
-if grep -qF 'Program.cs:1:' "$LAST_CONSUMER/.claude/pipeline/logs/"scaffold-*.log 2>/dev/null; then pass "trailing whitespace queda en el diagnostico"; else fail "trailing whitespace no quedo en el diagnostico"; fi
+if grep -qF 'Program.cs:1:' "$(scaffold_log_from_out "$TMP_DIR/whitespace.out")" 2>/dev/null; then pass "trailing whitespace queda en el diagnostico"; else fail "trailing whitespace no quedo en el diagnostico"; fi
 
 echo "[5] Finales CRLF: abortan antes de publicar (CA-3)"
 run_case crlf
 if [ "$LAST_RC" -ne 0 ]; then pass "CRLF aborta"; else fail "CRLF no debe completar"; fi
 if ! git -C "$LAST_CONSUMER" ls-remote --exit-code origin refs/heads/scaffold-prueba >/dev/null 2>&1; then pass "CRLF no hace push"; else fail "CRLF publico una rama"; fi
 if ! grep -qF 'gh pr create' "$LAST_GH_LOG"; then pass "CRLF no crea PR"; else fail "CRLF intento crear PR"; fi
-if grep -qF 'Program.cs:1:' "$LAST_CONSUMER/.claude/pipeline/logs/"scaffold-*.log 2>/dev/null; then pass "CRLF queda en el diagnostico"; else fail "CRLF no quedo en el diagnostico"; fi
+if grep -qF 'Program.cs:1:' "$(scaffold_log_from_out "$TMP_DIR/crlf.out")" 2>/dev/null; then pass "CRLF queda en el diagnostico"; else fail "CRLF no quedo en el diagnostico"; fi
 
 echo "[6] Pines OpenTelemetry: el runner rechaza 1.13.1 antes del push (CA-1/CA-3)"
 run_case otel-1131

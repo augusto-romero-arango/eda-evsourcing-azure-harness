@@ -306,9 +306,21 @@ assert_script_contains() { assert_file_contains "$1" "$2" "$TDD_SCRIPT"; }
 assert_script_contains "E1: path nuevo pipeline-state/refactor-signal.md" "pipeline-state/refactor-signal.md"
 assert_script_contains "E2: path legacy .claude/pipeline/refactor-signal.md" ".claude/pipeline/refactor-signal.md"
 assert_script_contains "E3: regex heuristica de log" "refactor.*pur|REFACTOR_ONLY|refactor-signal|refactoring puro"
-# Coherencia de extract_test_count (issue #80): consolidada en _pipeline-common.sh
-# (issue #305). Debe SUMAR con awk y conservar el sentinela "?", no usar `head -1`.
-assert_file_contains "E4: extract_test_count suma con awk (_pipeline-common.sh)" "awk '{ s += \$1 } END { if (NR == 0) print \"?\"; else print s }'" "$COMMON_SCRIPT"
+# Coherencia de extract_test_count (issue #80, #305): se prueba la salida, no el texto del
+# awk. Debe SUMAR los resumenes de todos los proyectos y conservar el sentinela "?".
+_e4_src="$(sed -n '/^extract_test_count()/,/^}/p' "$COMMON_SCRIPT")"
+_e4_out="$(bash -c "$_e4_src"'
+extract_test_count "$1"' _ $'Test summary: total: 5, failed: 0, succeeded: 5\nPassed: 3\nSuperado: 2' 2>/dev/null || true)"
+_e4_none="$(bash -c "$_e4_src"'
+extract_test_count "$1"' _ 'sin marcadores' 2>/dev/null || true)"
+if [ "$_e4_out" = "10" ] && [ "$_e4_none" = "?" ]; then
+    echo "  PASS: E4: extract_test_count suma los resumenes y conserva el sentinela ? (_pipeline-common.sh)"
+    PASS=$((PASS + 1))
+else
+    echo "  FAIL: E4: extract_test_count suma los resumenes y conserva el sentinela ?"
+    echo "    suma='$_e4_out' (esperado 10), sin marcadores='$_e4_none' (esperado ?)"
+    FAIL=$((FAIL + 1))
+fi
 # Coherencia del parseo de REMOVED_TESTS y del calculo allowed_min (issue #294).
 assert_script_contains "E6: parseo de REMOVED_TESTS con default 0" 'REMOVED_TESTS=$(grep "^REMOVED_TESTS=" "$REFACTOR_SIGNAL_PATH" | cut -d= -f2- || echo "0")'
 assert_script_contains "E7: gate calcula allowed_min = baseline - removed" 'ALLOWED_MIN_TEST_COUNT=$((BASELINE_TEST_COUNT - REMOVED_TESTS))'
