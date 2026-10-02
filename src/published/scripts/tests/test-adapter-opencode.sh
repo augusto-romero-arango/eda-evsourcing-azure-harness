@@ -154,7 +154,7 @@ assert_not_contains "$comando" 'MEFISTO_PACKAGE_ROOT' 'body sin directivas de ra
 make_agent raiz-skill '["skill"]' ',"skills":["projections"]'
 printf '%s\n' 'Recursos: {{mefisto:skill-root projections}}/read-apis.md y {{mefisto:skill-root projections}}/recipes.md; paquete {{mefisto:package-root}}; ejecuta {{mefisto:run prueba.sh "$ARGUMENTS con espacios"}}.' >> "$WORK/raiz-skill.md"
 skill_root_rendered="$(render "$WORK/raiz-skill.md")"; rc=$?
-skill_root_preambles="$(printf '%s\n' "$skill_root_rendered" | grep -c 'mefisto_opencode_launcher="$(mefisto_opencode_data_root)/active/bin/mefisto-opencode"')"
+skill_root_preambles="$(printf '%s\n' "$skill_root_rendered" | grep -c 'mefisto_opencode_launcher="\$HOME/.local/share/mefisto/active/bin/mefisto-opencode"')"
 [ "$rc" -eq 0 ] && assert_contains "$skill_root_rendered" '"${MEFISTO_PACKAGE_ROOT}/skills/mefisto-projections"/read-apis.md' 'skill-root OpenCode adapta el layout físico' || fail 'skill-root OpenCode debio renderizar'
 [ "$rc" -eq 0 ] && assert_contains "$skill_root_rendered" 'paquete ${MEFISTO_PACKAGE_ROOT}; ejecuta MEFISTO_RUNTIME=opencode "${MEFISTO_PACKAGE_ROOT}/scripts/prueba.sh" "$ARGUMENTS con espacios"' 'skill-root convive con package-root y run en OpenCode' || fail 'directivas de raiz combinadas no se tradujeron en OpenCode'
 [ "$skill_root_preambles" -eq 1 ] && pass 'varias directivas skill-root emiten un solo preambulo OpenCode' || fail 'skill-root OpenCode duplico el preambulo'
@@ -162,7 +162,7 @@ skill_root_preambles="$(printf '%s\n' "$skill_root_rendered" | grep -c 'mefisto_
 printf '%s\n' '[command-doc] ruta del comando generado'
 printf '%s\n' '---' '{"kind":"command","id":"doc-prueba","description":"Prueba."}' '---' '{{mefisto:assert-consumer-repo}}' 'Lee {{mefisto:command-doc draft}} y luego {{mefisto:command-doc seed-secret}}.' > "$WORK/doc-prueba.md"
 doc_rendered="$(render "$WORK/doc-prueba.md")"; rc=$?
-doc_preambles="$(printf '%s\n' "$doc_rendered" | grep -c 'mefisto_opencode_launcher="$(mefisto_opencode_data_root)/active/bin/mefisto-opencode"')"
+doc_preambles="$(printf '%s\n' "$doc_rendered" | grep -c 'mefisto_opencode_launcher="\$HOME/.local/share/mefisto/active/bin/mefisto-opencode"')"
 [ "$rc" -eq 0 ] && assert_contains "$doc_rendered" 'Lee "${MEFISTO_PACKAGE_ROOT}/commands/mefisto:draft.md" y' 'command-doc OpenCode resuelve la ruta exacta' || fail 'command-doc OpenCode debio renderizar'
 [ "$rc" -eq 0 ] && assert_contains "$doc_rendered" 'luego "${MEFISTO_PACKAGE_ROOT}/commands/mefisto:seed-secret.md".' 'command-doc OpenCode segunda aparicion entre comillas' || fail 'command-doc OpenCode segunda aparicion'
 [ "$doc_preambles" -eq 1 ] && pass 'varias directivas command-doc emiten un solo preambulo OpenCode' || fail 'command-doc OpenCode duplico el preambulo'
