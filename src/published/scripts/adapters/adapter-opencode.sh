@@ -53,7 +53,7 @@ permission_json() {
     # capacidad solicitada tenga contraparte OpenCode (evita un jq por capacidad).
     validation="$(jq -r --argjson capabilities "$capabilities" '
       . as $m |
-      ([$m.always_deny[], "question", $m.capability_scalar[][], $m.capability_map[].keys[]] | unique) as $mapped |
+      ([$m.always_deny[], "external_directory", "question", $m.capability_scalar[][], $m.capability_map[].keys[]] | unique) as $mapped |
       (($m.supported_permissions | length) == 17 and
        ($m.supported_permissions | unique | length) == 17 and
        ($m.supported_permissions | all(. as $key | $mapped | index($key) != null)) and
@@ -73,6 +73,10 @@ permission_json() {
     esac
     jq -cn --slurpfile mapping "$MAPPING" --argjson capabilities "$capabilities" --argjson native_skills "$native_skills" --arg mode "$mode" '
       ($mapping[0]) as $m |
+      ($m.external_directory) as $ext |
+      {external_directory: (if ($capabilities | any(. as $c | $ext.scoped_to | index($c) != null))
+                            then ({"*": $ext.catch_all} + reduce ($ext.allow[]) as $path ({}; . + {($path): "allow"}))
+                            else "deny" end)} +
       (reduce ($m.always_deny[]) as $key ({}; . + {($key): "deny"})) +
       {question: ($m.question[$mode] // "deny")} +
       (reduce ($m.capability_scalar | to_entries[]) as $entry ({};
@@ -82,7 +86,7 @@ permission_json() {
          ($entry.value) as $spec |
          . + (reduce ($spec.keys[]) as $key ({};
            . + {($key): (if $capabilities | index($entry.key)
-                          then ({"*": $spec.catch_all} + reduce ($spec.rules[]) as $rule ({}; . + {($rule.pattern): $rule.value}))
+                          then ({"*": $spec.catch_all} + reduce ($spec.rules + (if $entry.key == "shell" then [$m.release_readonly_guard.bash_write_commands[] as $cmd | $m.release_readonly_guard.path_markers[] as $mk | {pattern: ($cmd + $mk + "*"), value: "deny"}] else [] end))[] as $rule ({}; . + {($rule.pattern): $rule.value}))
                           else {"*": "deny"} end)})))) +
        (if ($capabilities | index("skill")) and ($native_skills | length > 0)
         then {skill: ({"*": "deny"} + reduce $native_skills[] as $skill ({}; . + {($skill): "allow"}))}

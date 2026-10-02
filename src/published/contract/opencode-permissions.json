@@ -1,7 +1,24 @@
 {
   "$comment": "Mapping declarativo de las capacidades publicadas al bloque permission de OpenCode 1.18.29. Las 17 claves soportadas reciben un valor explicito. La politica es sobre el consumidor y sigue su blocklist: nunca importa ni replica el scope interno de Mefisto.",
   "supported_permissions": ["bash", "edit", "write", "patch", "read", "list", "glob", "grep", "question", "skill", "task", "lsp", "todowrite", "websearch", "webfetch", "external_directory", "doom_loop"],
-  "always_deny": ["external_directory", "doom_loop", "lsp", "todowrite"],
+  "always_deny": ["doom_loop", "lsp", "todowrite"],
+  "external_directory": {
+    "$comment": "Lista blanca de lectura fuera del worktree (issue #1761). Con las capacidades read o shell, external_directory es un mapa con catch-all deny y allow solo para estas rutas; sin ellas queda en deny escalar. El candidato de OpenCode es el directorio padre absoluto del archivo mas /*, y el patron * cruza /. Los patrones con ~ se expanden a HOME al cargar la regla. No expresan XDG_DATA_HOME/XDG_CONFIG_HOME no estandar: esas raices personalizadas siguen denegadas (falla cerrado).",
+    "catch_all": "deny",
+    "scoped_to": ["read", "shell"],
+    "allow": [
+      "~/Library/Application Support/mefisto/*",
+      "~/.local/share/mefisto/*",
+      "~/.config/opencode/agents/*",
+      "~/.config/opencode/commands/*",
+      "~/.config/opencode/skills/*"
+    ]
+  },
+  "release_readonly_guard": {
+    "$comment": "La excepcion de external_directory es de solo lectura (issue #1761). Los comandos bash que escriben se deniegan por marcador de ruta, despues de todos los allow (gana la ultima coincidencia). Cada regla es <comando>+<marcador>+*.",
+    "bash_write_commands": ["touch *", "mv *", "mkdir *", "rm *", "cp *", "sed *-i*"],
+    "path_markers": ["Application*Support/mefisto", ".local/share/mefisto", "mefisto/releases", "mefisto/active", ".config/opencode/", "MEFISTO_PACKAGE_ROOT"]
+  },
   "question": {"primary": "allow", "subagent": "deny", "all": "deny"},
   "capability_scalar": {
     "web": ["webfetch", "websearch"],
@@ -81,7 +98,11 @@
         {"pattern": "src/published/**", "value": "deny"},
         {"pattern": "src/runtime/**", "value": "deny"},
         {"pattern": "dist/**", "value": "deny"},
-        {"pattern": "docs/adr/mef-adr-*", "value": "deny"}
+        {"pattern": "docs/adr/mef-adr-*", "value": "deny"},
+        {"pattern": "../*", "value": "deny"},
+        {"pattern": "~/Library/Application Support/mefisto/**", "value": "deny"},
+        {"pattern": "~/.local/share/mefisto/**", "value": "deny"},
+        {"pattern": "~/.config/opencode/**", "value": "deny"}
       ]
     },
     "read": {
@@ -93,6 +114,8 @@
         {"pattern": "**/.env", "value": "deny"},
         {"pattern": "**/.env.*", "value": "deny"},
         {"pattern": "**/auth.json", "value": "deny"},
+        {"pattern": "**/opencode.jsonc", "value": "deny"},
+        {"pattern": "**/.local/share/opencode/**", "value": "deny"},
         {"pattern": "**/.aws/**", "value": "deny"},
         {"pattern": "**/.ssh/**", "value": "deny"}
       ]
