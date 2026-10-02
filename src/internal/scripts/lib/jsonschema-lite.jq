@@ -17,8 +17,8 @@
 # if/then/else, const, not, contains, patternProperties, $schema/meta-validacion.
 #
 # Invocacion (ver validate-internal-artifacts.sh):
-#   jq -n --argjson schema "$(cat internal-artifact.schema.json)" \
-#         --argjson instance "$frontmatter_json" \
+#   jq -n --argjson schema "$(cat internal-artifact.schema.json)"
+#         --argjson instance "$frontmatter_json"
 #         -f jsonschema-lite.jq
 #
 # Salida: un array JSON de strings "<campo>: <motivo>" (vacio si $instance es

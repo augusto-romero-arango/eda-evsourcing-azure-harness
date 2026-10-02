@@ -9,8 +9,7 @@
 # usa.
 #
 # Uso:
-#   jq -n --argjson permission "$PERM_JSON" --arg key <clave> --arg input <candidato> \
-#       -f opencode-permission-eval.jq
+#   jq -n --argjson permission "$PERM_JSON" --arg key <clave> --arg input <candidato> -f opencode-permission-eval.jq
 #
 # <clave> es una clave del vocabulario (bash, edit, read, question, ...).
 # Si permission[<clave>] es un string escalar, se imprime tal cual (no hay
@@ -22,6 +21,8 @@
 # (no deberia ocurrir en la practica: todo mapa de este mapping arranca con
 # el catch-all "*").
 
+# Portabilidad jq 1.7/1.8: un comentario que termina en contrabarra continua en
+# la linea siguiente en jq 1.8 (se traga el `else`); no terminar comentarios en `\`.
 def glob_to_regex:
   explode
   | map(
@@ -29,7 +30,7 @@ def glob_to_regex:
       | if $c == 42 then ".*"                                           # '*'
         elif $c == 63 then "."                                          # '?'
         elif ([46,43,94,36,40,41,123,125,91,93,124,92] | index($c)) then
-          "\\" + ([$c] | implode)                                       # . + ^ $ ( ) { } [ ] | \
+          "\\" + ([$c] | implode)                                       # metacaracteres regex (punto, mas, circunflejo, dolar, parentesis, llaves, corchetes, barra, contrabarra)
         else
           [$c] | implode
         end
