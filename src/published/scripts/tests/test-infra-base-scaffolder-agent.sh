@@ -82,6 +82,26 @@ contains "$body" 'ya inicializado al comenzar' 'omite la auditoria en consumidor
 contains "$body" 'dotnet package list --project "$SOLUTION" --vulnerable --include-transitive --format json --output-version 1' 'usa dotnet package list sobre la solucion'
 absent "$body" '--no-restore --vulnerable' 'no usa --no-restore en la auditoria'
 
+contains "$body" 'NUGET_AUDIT_GREENFIELD=<si|no>' 'Paso 2b.1 sustituye el valor literal del gate (el shell no persiste)'
+
+gate="$(awk '/^\*\*Gate greenfield de la auditoria NuGet/ { s=1 } s && /^```bash$/ { b=1; next } b && /^```$/ { exit } b { print }' "$SOURCE")"
+decide="$(awk '/^## Paso 2b.1/ { s=1 } s && /^```bash$/ { b=1; next } b && /^```$/ { exit } b { print }' "$SOURCE")"
+GTMP="$(mktemp -d)"
+run_gate() { ( cd "$1" && bash -c "$gate" ); }
+run_decide() { ( cd "$1" && bash -c "${decide/<si|no>/$2}" ); }
+mkdir -p "$GTMP/green" "$GTMP/cd/.github/workflows" "$GTMP/env/infra/environments/dev" "$GTMP/idem/.github/workflows"
+: > "$GTMP/cd/.github/workflows/infra-cd.yml"; : > "$GTMP/env/infra/environments/dev/main.tf"; : > "$GTMP/idem/.github/workflows/nuget-audit.yml"
+contains "$(run_gate "$GTMP/green")" 'NUGET_AUDIT_GREENFIELD=si' 'gate: repo vacio es greenfield'
+contains "$(run_gate "$GTMP/cd")" 'NUGET_AUDIT_GREENFIELD=no' 'gate: infra-cd.yml previo marca ya inicializado'
+contains "$(run_gate "$GTMP/env")" 'NUGET_AUDIT_GREENFIELD=no' 'gate: environments/*/main.tf previo marca ya inicializado'
+out="$(run_decide "$GTMP/cd" no)"
+contains "$out" 'ya inicializado al comenzar' 'reejecucion sobre consumidor inicializado sin nuget-audit.yml no lo agrega'
+if [ ! -e "$GTMP/cd/.github/workflows/nuget-audit.yml" ]; then pass 'reejecucion no crea nuget-audit.yml'; else fail 'reejecucion creo nuget-audit.yml'; fi
+contains "$(run_decide "$GTMP/idem" si)" 'no se sobrescribe' 'idempotencia: nuget-audit.yml existente no se sobrescribe'
+run_decide "$GTMP/green" si >/dev/null
+if [ -d "$GTMP/green/.github/workflows" ]; then pass 'greenfield prepara .github/workflows'; else fail 'greenfield no prepara .github/workflows'; fi
+rm -rf "$GTMP"
+
 wf="$(awk '/^## Paso 2b.1/ { s=1 } s && /^```yaml$/ { y=1; next } y && /^```$/ { exit } y { print }' "$SOURCE")"
 contains "$wf" 'pull_request:' 'workflow usa pull_request'
 absent "$wf" 'paths' 'workflow sin filtros de rutas'

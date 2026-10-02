@@ -2454,9 +2454,10 @@ jobs:
 
 ## Paso 2b.1 - Generar el workflow de auditoria NuGet (`nuget-audit.yml`, issue #1760)
 
-**Solo en un greenfield real.** Usa el resultado de `NUGET_AUDIT_GREENFIELD` que calculaste al **inicio** del Paso 0 (antes de escribir cualquier archivo). Si fue `no`, **no generes nada**, aunque `nuget-audit.yml` falte: omitirlo en repos ya inicializados es intencional (MEF-ADR-0021), y no propongas migracion ni toques `/mefisto:onboard`. Si fue `si`, crea `.github/workflows/nuget-audit.yml` **solo si no existe** (nunca sobrescribas; MEF-ADR-0021/CA-7):
+**Solo en un greenfield real.** Usa el resultado de `NUGET_AUDIT_GREENFIELD` que calculaste al **inicio** del Paso 0 (antes de escribir cualquier archivo). Si fue `no`, **no generes nada**, aunque `nuget-audit.yml` falte: omitirlo en repos ya inicializados es intencional (MEF-ADR-0021), y no propongas migracion ni toques `/mefisto:onboard`. Si fue `si`, crea `.github/workflows/nuget-audit.yml` **solo si no existe** (nunca sobrescribas; MEF-ADR-0021/CA-7). El estado de shell no persiste entre invocaciones de comandos, asi que **sustituye `<si|no>` por el valor literal impreso en el Paso 0** -- nunca lo recalcules aqui, porque a esta altura ya escribiste `infra-cd.yml` y `main.tf`:
 
 ```bash
+NUGET_AUDIT_GREENFIELD=<si|no>
 if [ -f .github/workflows/nuget-audit.yml ]; then
   echo "nuget-audit.yml ya existe; no se sobrescribe (idempotencia, MEF-ADR-0021)."
 elif [ "$NUGET_AUDIT_GREENFIELD" != "si" ]; then
@@ -2629,6 +2630,7 @@ git add infra/
 [ -f .github/workflows/infra-cd.yml ] && git add .github/workflows/infra-cd.yml
 [ -f .github/workflows/nuget-audit.yml ] && git add .github/workflows/nuget-audit.yml
 git commit -m "infra(<env>): generar infraestructura base (8 modulos + esqueleto del entorno + workflow de CI + .gitignore raiz)"
+# Si generaste nuget-audit.yml (Paso 2b.1), agregalo al mensaje: "... + auditoria NuGet informativa".
 # Si generaste el wiring opt-in del worker de proyecciones (Paso 1.9/2.3b/2.4b), dilo en el
 # mensaje: "... + 3 modulos del worker de proyecciones + su alerta de spike de excepciones".
 ```
