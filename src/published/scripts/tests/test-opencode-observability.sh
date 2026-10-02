@@ -20,12 +20,21 @@ jq -e '[.assets[] | select(.id == "interactive-observability" and .source == "sr
 [ ! -e "$REPO_ROOT/dist/opencode/mefisto-manifest.json" ] && pass 'el manifiesto sigue perteneciendo al packager' || fail 'el adaptador usurpo el manifiesto del packager'
 
 printf '%s\n' '[API 1.18.29] callbacks y campos fijados'
-TYPES="$REPO_ROOT/.opencode/node_modules/@opencode-ai/plugin/dist/index.d.ts"
-jq -e '.dependencies["@opencode-ai/plugin"] == "1.18.29"' "$REPO_ROOT/.opencode/package.json" >/dev/null &&
-  grep -q '"chat.params".*(input' "$TYPES" && grep -q 'model: Model;' "$TYPES" &&
-  grep -q '"tool.execute.after".*(input' "$TYPES" && grep -q 'metadata: any;' "$TYPES" &&
-  grep -A3 'type: "session.idle";' "$REPO_ROOT/.opencode/node_modules/@opencode-ai/sdk/dist/gen/types.gen.d.ts" | grep -q 'sessionID: string;' &&
-  pass 'prueba anclada a tipos locales de plugin 1.18.29' || fail 'tipos OpenCode fijados divergieron'
+PINNED_API="1.18.29"
+OC_MODULES="$REPO_ROOT/.opencode/node_modules/@opencode-ai"
+TYPES="$OC_MODULES/plugin/dist/index.d.ts"
+SDK_TYPES="$OC_MODULES/sdk/dist/gen/types.gen.d.ts"
+# Los tipos viven en node_modules local (ignorado por git, solo existe donde el runtime los instalo):
+# sin ellos la verificacion se omite de forma explicita; con ellos se exige la version fijada aqui (versionada).
+if [ -f "$TYPES" ] && [ -f "$SDK_TYPES" ] && [ -f "$OC_MODULES/plugin/package.json" ]; then
+  jq -e --arg v "$PINNED_API" '.version == $v' "$OC_MODULES/plugin/package.json" >/dev/null &&
+    grep -q '"chat.params".*(input' "$TYPES" && grep -q 'model: Model;' "$TYPES" &&
+    grep -q '"tool.execute.after".*(input' "$TYPES" && grep -q 'metadata: any;' "$TYPES" &&
+    grep -A3 'type: "session.idle";' "$SDK_TYPES" | grep -q 'sessionID: string;' &&
+    pass "prueba anclada a tipos locales de plugin $PINNED_API" || fail 'tipos OpenCode fijados divergieron'
+else
+  printf '  SKIP: tipos locales de plugin %s ausentes (checkout limpio, sin dependencias locales del runtime)\n' "$PINNED_API"
+fi
 
 printf '%s\n' '[runtime] sesiones, herramientas y degradacion segura'
 mkdir -p "$WORK/runtime/plugins" "$WORK/runtime-malformed/plugins" "$WORK/runtime-missing/plugins"
