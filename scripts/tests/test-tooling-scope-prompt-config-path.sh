@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # test-tooling-scope-prompt-config-path.sh -- Contrato de config canonico en los
-# prompts de ALCANCE PERMITIDO de tooling-pipeline.sh (#1512).
+# prompts de ALCANCE PERMITIDO de tooling-pipeline.sh (#1512), y ruta exacta
+# .github/dependabot.yml en ambos prompts sin abrir .github/ completo (#1782).
 #
 # El gate real (is_path_in_consumer_blocklist) no bloquea ninguna de las dos
 # rutas de config: lo que decide que archivo toca el agente es el texto del
