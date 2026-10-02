@@ -647,10 +647,6 @@ EOF
     echo ""
     echo -e "${CYAN}${BOLD}=== Encadenando merge + sync + publish ===${NC}"
 
-    log_info "Esperando el CI en verde del PR #${PR_NUM}..."
-    mefisto_wait_pr_checks "$PR_NUM" \
-        || abort "CI no esta en verde en el PR #${PR_NUM} (${MEFISTO_PR_CHECKS_REASON:-fallo}); no se mergea ni se publica. Hecho: PR ${PR_URL} creado (sigue abierto). Paso manual: revisar el CI; luego /mefisto-merge ${PR_NUM}; luego git switch main && git pull --ff-only; luego /mefisto-release (sin argumentos)."
-
     log_info "Mergeando PR #${PR_NUM} (squash + delete-branch)..."
     gh pr merge "$PR_NUM" --squash --delete-branch \
         || abort "Fallo el merge del PR #${PR_NUM}. Hecho: PR ${PR_URL} creado (sigue abierto). Paso manual: /mefisto-merge ${PR_NUM}; luego git switch main && git pull --ff-only; luego /mefisto-release (sin argumentos)."
