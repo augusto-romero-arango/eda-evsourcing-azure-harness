@@ -5,6 +5,7 @@
 #
 #   [A] Todos PASS: conteos y sin rutas FAIL.
 #   [B] FAIL en dos carriles: conteos totales/por carril y lista de rutas.
+#   [D] Entradas CANCELLED: se reportan aparte, sin contar como PASS/FAIL.
 #   [C] Directorio sin results.tsv: mensaje explicito de "sin resultados".
 #
 # Uso: .claude/scripts/tests/test-mefisto-nightly-report.sh
@@ -62,6 +63,19 @@ check "[B] carril interno 2/1" "$(contains "$out" "| interno | 2 | 1 |")"
 check "[B] lista rojo-a" "$(contains "$out" "scripts/tests/test-rojo-a.sh")"
 check "[B] lista rojo-b" "$(contains "$out" "test-rojo-b.sh")"
 check "[B] no lista PASS" "$(contains "$out" "test-ok.sh" | grep -q '^0$' && echo 1 || echo 0)"
+
+check "[B] sin CANCELLED no lo menciona" "$(contains "$out" "CANCELLED" | grep -q '^0$' && echo 1 || echo 0)"
+
+mkdir -p "$TMP/d/interno"
+{
+    printf '1%st-rojo.sh%sFAIL%s1%s1%s2%s1%slog\n' "$T" "$T" "$T" "$T" "$T" "$T" "$T"
+    printf '2%st-cortado.sh%sCANCELLED%s-%s-%s-%s-%s-\n' "$T" "$T" "$T" "$T" "$T" "$T" "$T"
+} > "$TMP/d/interno/results.tsv"
+out="$(bash "$REPORT" "$TMP/d" "$URL" "$SHA")"; rc=$?
+check "[D] sale 0" "$rc"
+check "[D] total PASS=0 FAIL=1" "$(contains "$out" "PASS=0 FAIL=1")"
+check "[D] reporta CANCELLED=1" "$(contains "$out" "CANCELLED=1")"
+check "[D] carril interno 0/1" "$(contains "$out" "| interno | 0 | 1 |")"
 
 mkdir -p "$TMP/c"
 out="$(bash "$REPORT" "$TMP/c" "$URL" "$SHA")"; rc=$?

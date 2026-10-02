@@ -77,11 +77,12 @@ jobs:
   #   https://docs.github.com/en/actions/writing-workflows/choosing-what-your-workflow-does/controlling-permissions-for-github_token
   # Notificacion de fallos de workflows programados (va al usuario que creo/edito por ultima vez el cron):
   #   https://docs.github.com/en/actions/monitoring-and-troubleshooting-workflows/notifications-for-workflow-runs
+  # Corre en Linux (pinneado, nunca 'ubuntu-latest'): solo publica con gh, no evalua el sistema real.
   notify:
     name: notify
     needs: tests
     if: ${{ always() && github.event_name == 'schedule' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       contents: read

@@ -7,6 +7,8 @@
 # carril: <log-dir>/<carril>/results.tsv; columnas orden, ruta, estado, exit,
 # inicio, fin, duracion, log) y escribe en stdout el cuerpo markdown: enlace al
 # run, SHA evaluado, conteo PASS/FAIL total y por carril, y rutas con FAIL.
+# Las entradas CANCELLED (interrumpidas o nunca lanzadas, p. ej. por timeout)
+# no cuentan como PASS ni FAIL: se reportan aparte solo si hay alguna.
 # Si no hay ningun results.tsv, el cuerpo lo dice explicitamente. Sale 0 en
 # ambos casos. No invoca gh: la publicacion la hace el workflow.
 # Neutral a runtime (MEF-ADR-0050): solo bash y coreutils.
@@ -41,6 +43,7 @@ fi
 
 total_pass=0
 total_fail=0
+total_cancelled=0
 lane_lines=""
 fail_lines=""
 
@@ -49,6 +52,7 @@ while IFS= read -r file; do
     lane="$(basename "$(dirname "$file")")"
     npass=0
     nfail=0
+    ncancelled=0
     while IFS=$'\t' read -r orden ruta estado _rest; do
         [ -z "$orden" ] && continue
         case "$estado" in
@@ -57,10 +61,12 @@ while IFS= read -r file; do
                 nfail=$((nfail + 1))
                 fail_lines="${fail_lines}- \`${ruta}\` (carril \`${lane}\`)"$'\n'
                 ;;
+            CANCELLED) ncancelled=$((ncancelled + 1)) ;;
         esac
     done < "$file"
     total_pass=$((total_pass + npass))
     total_fail=$((total_fail + nfail))
+    total_cancelled=$((total_cancelled + ncancelled))
     lane_lines="${lane_lines}| ${lane} | ${npass} | ${nfail} |"$'\n'
 done <<EOF
 $files
@@ -69,6 +75,10 @@ EOF
 echo "### Conteo"
 echo
 echo "Total: PASS=$total_pass FAIL=$total_fail"
+if [ "$total_cancelled" -gt 0 ]; then
+    echo
+    echo "CANCELLED=$total_cancelled: entradas interrumpidas o que no llegaron a correr (timeout o cancelacion del job)."
+fi
 echo
 echo "| Carril | PASS | FAIL |"
 echo "|---|---|---|"
