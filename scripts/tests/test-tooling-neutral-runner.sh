@@ -81,21 +81,38 @@ REGRESSION_TMP="$(mktemp -d -t mefisto-tooling-run-agent)"
 REGRESSION_ARGS="$REGRESSION_TMP/runner.args"
 REGRESSION_CALLS="$REGRESSION_TMP/runner.calls"
 REGRESSION_CASE="$REGRESSION_TMP/run-agent-case.sh"
-export REGRESSION_ARGS REGRESSION_CALLS REGRESSION_TMP ROOT
+REGRESSION_WT="$REGRESSION_TMP/worktree"
+mkdir -p "$REGRESSION_WT"
+git -C "$REGRESSION_WT" init -q
+git -C "$REGRESSION_WT" config user.email test@example.invalid
+git -C "$REGRESSION_WT" config user.name Test
+printf 'base\n' > "$REGRESSION_WT/base.txt"
+git -C "$REGRESSION_WT" add base.txt
+git -C "$REGRESSION_WT" commit -qm base
+export REGRESSION_ARGS REGRESSION_CALLS REGRESSION_TMP REGRESSION_WT ROOT
 cat > "$REGRESSION_TMP/run-agent-double" <<'EOF'
 #!/usr/bin/env bash
 printf '%s\n' invoked >> "$REGRESSION_CALLS"
 printf '%s\n' "$@" > "$REGRESSION_ARGS"
 while [ "$#" -gt 0 ]; do
     case "$1" in
-        --event-log) printf '%s\n' '{"type":"run.completed","status":"success","session_id":null,"denials":0,"error":null}' > "$2"; shift 2 ;;
+        --event-log) event_log="$2"; shift 2 ;;
         *) shift ;;
     esac
 done
+case "${REGRESSION_CLAUDE_DENIALS:-default}" in
+    zero) raw='{"type":"result","is_error":false,"subtype":"success","stop_reason":"end_turn","usage":{},"permission_denials":[]}' ;;
+    positive) raw='{"type":"result","is_error":false,"subtype":"success","stop_reason":"end_turn","usage":{},"permission_denials":[{}]}' ;;
+    unknown) raw='{"type":"result","is_error":false,"subtype":"success","stop_reason":"end_turn","usage":{}}' ;;
+    *) printf '%s\n' '{"type":"run.completed","status":"success","session_id":null,"denials":0,"error":null}' > "$event_log"; exit 0 ;;
+esac
+printf '%s\n' "$raw" | jq -R -s --arg runtime claude --arg model_param '' --arg exit_code 0 \
+    --rawfile stderr_text /dev/null -f "$ROOT/src/runtime/lib/runtime-claude.jq" > "$event_log"
 EOF
 chmod +x "$REGRESSION_TMP/run-agent-double"
 {
     printf '%s\n' 'set -eu'
+    printf '%s\n' 'source "$ROOT/scripts/_pipeline-common.sh"'
     # Extrae y ejecuta la funcion publicada real bajo nounset. Los dobles solo
     # reemplazan sus dependencias externas; el argv y las rutas los deriva
     # run_agent por si misma.
@@ -105,7 +122,7 @@ LOG_DIR_ABS="$REGRESSION_TMP/logs"
 TIMESTAMP='20260912-120000'
 ISSUE_LOG_TAG='1283'
 PIPELINE_TMP_DIR="$REGRESSION_TMP/pipeline"
-WORKTREE_PATH="$ROOT"
+WORKTREE_PATH="$REGRESSION_WT"
 RUN_AGENT_BIN="$REGRESSION_TMP/run-agent-double"
 MEFISTO_RUNTIME_RESUELTO='fake'
 MEFISTO_AGENT_TIMEOUT_SECONDS=60
@@ -126,11 +143,11 @@ mefisto_state_path() { mkdir -p "$REGRESSION_TMP/state/$(dirname "$1")"; printf 
 derive_stage_log_from_stream() { :; }
 compute_stage_metrics() { printf '{}'; }
 enrich_tooling_stage_metrics() { printf '%s' "$2"; }
-agent_events_denials() { printf '0'; }
 agent_events_completed_successfully() { return 0; }
 classify_neutral_agent_failure() { printf 'UNKNOWN'; }
 agent_failure_is_holdable() { return 1; }
 run_agent '1' 'writer' 'prompt de regresion'
+printf '%s' "$LAST_AGENT_DENIALS" > "$REGRESSION_TMP/last-denials"
 EOF
 } > "$REGRESSION_CASE"
 EXPECTED_EVENT_LOG="$REGRESSION_TMP/logs/tooling-stage-1-writer-20260912-120000-issue-1283-attempt-1.events.jsonl"
@@ -140,7 +157,7 @@ EXPECTED_ARGS="$REGRESSION_TMP/expected.args"
 printf '%s\n' \
     --runtime fake \
     --agent tooling-writer \
-    --cwd "$ROOT" \
+    --cwd "$REGRESSION_WT" \
     --prompt-file "$EXPECTED_PROMPT" \
     --system-file "$EXPECTED_SYSTEM" \
     --event-log "$EXPECTED_EVENT_LOG" \
@@ -163,6 +180,33 @@ for REGRESSION_BASH in "$DEFAULT_BASH" /bin/bash; do
         fail "run_agent no invoca el runner neutral esperado bajo nounset con $REGRESSION_BASH"
     fi
     [ "$REGRESSION_BASH" != /bin/bash ] || break
+done
+
+echo '[regresion] denials Claude gobiernan el retry real de tooling'
+for denial_case in zero unknown positive; do
+    : > "$REGRESSION_CALLS"
+    : > "$REGRESSION_TMP/events.log"
+    rm -f "$REGRESSION_TMP/last-denials"
+    expected_calls=1
+    expected_denials=0
+    [ "$denial_case" = unknown ] && expected_denials=null
+    [ "$denial_case" = positive ] && { expected_calls=2; expected_denials=1; }
+    case_rc=0
+    REGRESSION_CLAUDE_DENIALS="$denial_case" bash "$REGRESSION_CASE" || case_rc=$?
+    diagnostic_ok=true
+    if [ "$denial_case" = unknown ]; then
+        grep -Fq 'DENIALS writer: no_medidas' "$REGRESSION_TMP/events.log" || diagnostic_ok=false
+    else
+        grep -Fq 'DENIALS writer: no_medidas' "$REGRESSION_TMP/events.log" && diagnostic_ok=false
+    fi
+    if [ "$case_rc" -eq 0 ] \
+        && [ "$(wc -l < "$REGRESSION_CALLS" | tr -d ' ')" -eq "$expected_calls" ] \
+        && [ "$(cat "$REGRESSION_TMP/last-denials")" = "$expected_denials" ] \
+        && [ "$diagnostic_ok" = true ]; then
+        pass "tooling conserva $denial_case y ejecuta $expected_calls intento(s)"
+    else
+        fail "tooling no aplico el contrato nullable para $denial_case"
+    fi
 done
 rm -rf "$REGRESSION_TMP"
 
@@ -284,6 +328,10 @@ printf '%s\n' '{"type":"message","role":"assistant","text":"sin terminal"}' > "$
 [ "$(agent_events_denials "$TMP")" = null ] && pass 'ausencia de terminal devuelve null' || fail 'ausencia de terminal no devuelve null'
 printf '%s\n' '{"type":"run.completed","status":"success","denials":-1}' > "$TMP"
 [ "$(agent_events_denials "$TMP")" = null ] && pass 'contador negativo se degrada a no medido' || fail 'acepto contador negativo'
+printf '%s\n' \
+    '{"type":"run.completed","status":"success","denials":3}' \
+    '{"type":"run.completed","status":"success","denials":null}' > "$TMP"
+[ "$(agent_events_denials "$TMP")" = null ] && pass 'el ultimo terminal desconocido no hereda el conteo anterior' || fail 'heredo denials de un terminal anterior'
 
 TRANSLATE_TMP="$(mktemp -d -t mefisto-tooling-denials)"
 trap 'rm -f "$TMP"; rm -rf "$TRANSLATE_TMP"' EXIT
@@ -302,6 +350,16 @@ if [ "$(translated_denials "$CLAUDE_RESULT_ZERO")" = 0 ] \
     pass 'fixture traducido por Claude conserva cero, positivo y desconocido para tooling'
 else
     fail 'fixture traducido por Claude no conserva denials nullable para tooling'
+fi
+
+printf '%s\n' '{"type":"text","timestamp":1780000000000,"sessionID":"ses-test","part":{"text":"ok"}}' \
+    | jq -R -s -c --arg runtime opencode --arg model_param '' --arg exit_code 0 \
+        --rawfile stderr_text /dev/null --rawfile pricing_catalog_text /dev/null \
+        -f "$ROOT/src/runtime/lib/runtime-opencode.jq" > "$TRANSLATE_TMP/opencode.events.jsonl"
+if [ "$(agent_events_denials "$TRANSLATE_TMP/opencode.events.jsonl")" = null ]; then
+    pass 'fixture traducido por OpenCode conserva denials desconocido'
+else
+    fail 'fixture traducido por OpenCode invento un conteo de denegaciones'
 fi
 
 printf '\nResultado: %s PASS, %s FAIL\n' "$PASS" "$FAIL"
