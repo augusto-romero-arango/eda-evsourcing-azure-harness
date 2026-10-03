@@ -25,9 +25,6 @@ permission_of() {
         case "$line" in 'permission: '*) printf '%s\n' "${line#permission: }"; return 0 ;; esac
     done
 }
-rendered_permission_of() {
-    awk '/^permission: / { print substr($0, 13); exit }' "$1"
-}
 evaluate_bash_permission() {
     local permission="$1" candidate="$2" pattern value verdict=""
     while IFS=$'\t' read -r pattern value; do
@@ -131,10 +128,10 @@ assert_not_contains "$comando" '## Projections' 'comando no copia doctrina del S
 
 render "$FIXTURES/agent-completo.md" > "$WORK/completo.md"; rc=$?
 [ "$rc" -eq 0 ] && pass 'render de capacidades combinadas' || fail 'render de capacidades combinadas'
-if [ "$rc" -eq 0 ] && jq -e '.bash["cut *"] == "allow"' < <(rendered_permission_of "$WORK/completo.md") >/dev/null && cmp -s <(jq -c 'del(.bash["cut *"])' < <(rendered_permission_of "$FIXTURES/expected-agent-completo.md")) <(jq -c 'del(.bash["cut *"])' < <(rendered_permission_of "$WORK/completo.md")) && diff -u <(sed '/^permission: /d' "$FIXTURES/expected-agent-completo.md") <(sed '/^permission: /d' "$WORK/completo.md") >/dev/null; then
-    pass 'snapshot de agente con varios Skills conserva todo salvo la regla cut verificada'
+if [ "$rc" -eq 0 ] && cmp -s "$FIXTURES/expected-agent-completo.md" "$WORK/completo.md"; then
+    pass 'snapshot byte a byte de agente con varios Skills'
 else
-    fail 'snapshot de agente con varios Skills divergio fuera de la regla cut'
+    fail 'snapshot byte a byte de agente con varios Skills'
 fi
 completo="$(< "$WORK/completo.md")"
 assert_contains "$completo" 'description: "Lee, \"edita\" y ejecuta."' 'description queda escapada como YAML valido'
