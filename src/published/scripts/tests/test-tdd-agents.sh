@@ -248,7 +248,7 @@ echo '[conocimiento] test-writer conserva los hallazgos sin escribir la release'
 for artifact in "$REPO_ROOT/src/published/agents/test-writer.md" "$REPO_ROOT/agents/test-writer.md" "$REPO_ROOT/dist/claude/agents/test-writer.md" "$REPO_ROOT/dist/opencode/agents/test-writer.md"; do
     artifact_name="$(basename "$(dirname "$artifact")")"
     if grep -Fq 'La release activa es de **solo lectura**' "$artifact"; then pass "$artifact_name declara la release de solo lectura"; else fail "$artifact_name no declara la release de solo lectura"; fi
-    if grep -Fq 'bajo `### Decisiones de diseno` registra el hallazgo, su evidencia (fuente o package y linea) y la version del package/release activa' "$artifact"; then pass "$artifact_name registra hallazgos con evidencia y version en el summary"; else fail "$artifact_name no conserva el destino del hallazgo en el summary"; fi
+    if grep -Fq 'bajo `### Decisiones de diseno` registra el hallazgo, la evidencia (fuente consultada y linea) y la version del package o de la release activa' "$artifact"; then pass "$artifact_name registra hallazgos con evidencia y version en el summary"; else fail "$artifact_name no conserva el destino del hallazgo en el summary"; fi
     if ! grep -Fq 'Si actualizas el cheatsheet' "$artifact" && ! grep -Fq 'agregalo a "Dudas frecuentes resueltas"' "$artifact" && ! grep -Fq 'modifica el cheatsheet' "$artifact" && ! grep -Fq 'edita el cheatsheet' "$artifact"; then pass "$artifact_name no ordena escribir el cheatsheet de release"; else fail "$artifact_name conserva una orden de escritura del cheatsheet de release"; fi
 done
 

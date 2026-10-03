@@ -232,7 +232,7 @@ Cuando tengas una duda sobre el harness (¿`Given` soporta X? ¿`Then` con un so
    - `TestStore.cs` — reconstruccion de aggregates por reflection
    - `TestPrivateEventSender.cs`, `TestPublicEventSender.cs` — fakes de publicacion
 
-Si descubres un hallazgo nuevo que el cheatsheet no cubre, conserválo en el resumen de etapa: bajo `### Decisiones de diseno` registra el hallazgo, su evidencia (fuente o package y linea) y la version del package/release activa. No modifiques el cheatsheet ni abras un flujo de entrega del harness; planner o tooling-investigator evaluaran despues si corresponde convertirlo en draft.
+Si descubres un hallazgo nuevo que el cheatsheet no cubre, conservalo en el resumen de etapa: bajo `### Decisiones de diseno` registra el hallazgo, la evidencia (fuente consultada y linea) y la version del package o de la release activa. No modifiques el cheatsheet ni abras un flujo de entrega del harness; planner o tooling-investigator evaluaran despues si corresponde convertirlo en draft.
 
 ---
 
