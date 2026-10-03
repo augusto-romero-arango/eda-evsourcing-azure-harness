@@ -292,6 +292,35 @@ for artifact in "$REPO_ROOT/src/published/agents/reviewer.md" "$REPO_ROOT/agents
     if ! grep -Eq "$legacy_pattern" "$artifact"; then pass "$(basename "$(dirname "$artifact")") reviewer no conserva resolucion de runtime legado"; else fail "$(basename "$(dirname "$artifact")") reviewer conserva resolucion de runtime legado"; fi
 done
 
+echo '[temporales] reviewer usa estado del consumidor'
+for artifact in "$REPO_ROOT/src/published/agents/reviewer.md" "$REPO_ROOT/agents/reviewer.md" "$REPO_ROOT/dist/claude/agents/reviewer.md" "$REPO_ROOT/dist/opencode/agents/reviewer.md"; do
+    if [[ "$artifact" = "$REPO_ROOT/src/"* ]]; then temporary='{{mefisto:state-path tmp}}/reviewer-decompiled'; else temporary='.mefisto/pipeline/tmp/reviewer-decompiled'; fi
+    if [ "$(grep -Fc "$temporary" "$artifact")" -eq 3 ]; then pass "$(basename "$(dirname "$artifact")") reviewer prepara y reutiliza su temporal propio"; else fail "$(basename "$(dirname "$artifact")") reviewer no conserva un destino temporal consistente"; fi
+    if ! grep -Fq '/tmp/decompiled-critterstack' "$artifact" && ! grep -Eq '(^|[[:space:]=])/tmp/' "$artifact"; then pass "$(basename "$(dirname "$artifact")") reviewer no abre un temporal global"; else fail "$(basename "$(dirname "$artifact")") reviewer conserva un temporal global"; fi
+done
+
+reviewer_consumer="$WORK/consumidor reviewer con espacios"
+reviewer_mock_bin="$WORK/binarios reviewer simulados"
+mkdir -p "$reviewer_consumer" "$reviewer_mock_bin"
+git -C "$reviewer_consumer" init -q
+printf '%s\n' '.mefisto/' > "$reviewer_consumer/.gitignore"
+printf '%s\n' '#!/usr/bin/env bash' 'set -eu' 'output=' 'while [ $# -gt 0 ]; do' '    case "$1" in' '        -o) output="$2"; shift 2 ;;' '        -p) exit 3 ;;' '        *) shift ;;' '    esac' 'done' '[ -d "$output" ]' 'printf "%s\\n" "AgregarConfiguracionMartenComandos" > "$output/Cosmos.EventSourcing.CritterStack.decompiled.cs"' > "$reviewer_mock_bin/ilspycmd"
+printf '%s\n' '#!/usr/bin/env bash' 'exit 0' > "$reviewer_mock_bin/ls"
+chmod +x "$reviewer_mock_bin/ilspycmd" "$reviewer_mock_bin/ls"
+claude_reviewer_decompilation="$(decompilation_block "$REPO_ROOT/dist/claude/agents/reviewer.md")"
+claude_reviewer_decompilation="${claude_reviewer_decompilation//<version-del-csproj>/version-simulada}"
+if (cd "$reviewer_consumer" && PATH="$reviewer_mock_bin:$PATH" bash -c "$claude_reviewer_decompilation") >/dev/null 2>&1 && \
+    [ -f "$reviewer_consumer/.mefisto/pipeline/tmp/reviewer-decompiled/Cosmos.EventSourcing.CritterStack.decompiled.cs" ]; then
+    pass 'reviewer Claude crea y lee el temporal del consumidor con espacios'
+else
+    fail 'reviewer Claude no conserva su temporal bajo el cwd del consumidor'
+fi
+if git -C "$reviewer_consumer" check-ignore -q .mefisto/pipeline/tmp/reviewer-decompiled/Cosmos.EventSourcing.CritterStack.decompiled.cs; then
+    pass 'el temporal decompilado del reviewer no entra al commit'
+else
+    fail 'el temporal decompilado del reviewer no queda ignorado'
+fi
+
 echo '[conocimiento] projection-implementer usa la release activa y el Skill adaptado'
 for artifact in "$REPO_ROOT/src/published/agents/projection-implementer.md" "$REPO_ROOT/agents/projection-implementer.md" "$REPO_ROOT/dist/claude/agents/projection-implementer.md" "$REPO_ROOT/dist/opencode/agents/projection-implementer.md"; do
     rendered="$(< "$artifact")"
