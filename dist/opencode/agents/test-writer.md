@@ -219,9 +219,10 @@ Cuando tengas una duda sobre el harness (¿`Given` soporta X? ¿`Then` con un so
    # Ruta esperada: /Users/<user>/.nuget/packages/cosmos.eventsourcing.testing.utilities/<version>/
 
    # Si el package shipea DLL (sin .cs), descompilar:
+   mkdir -p ".mefisto/pipeline/tmp/test-writer-decompiled"
     ilspycmd "$(dotnet nuget locals global-packages --list | cut -d' ' -f2-)/cosmos.eventsourcing.testing.utilities/<version>/lib/net10.0/Cosmos.EventSourcing.Testing.Utilities.dll" \
-     -p -o /tmp/cosmos-testing-decompiled
-   ls /tmp/cosmos-testing-decompiled
+     -p -o ".mefisto/pipeline/tmp/test-writer-decompiled"
+   ls ".mefisto/pipeline/tmp/test-writer-decompiled"
    ```
 
    Archivos clave del package (los nombres son estables entre versiones menores):

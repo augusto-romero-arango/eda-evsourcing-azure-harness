@@ -65,6 +65,17 @@ expected_package_root_and_effective_contract_body() {
     expected_effective_contract_body "$runtime" "$source"
 }
 first_bash_block() { awk '/^```bash$/{inside=1; next} /^```$/{if (inside) exit} inside' "$1"; }
+decompilation_block() {
+    awk '
+        /^[[:space:]]*```bash$/ { inside=1; block=""; next }
+        /^[[:space:]]*```$/ {
+            if (inside && block ~ /ilspycmd/) { printf "%s", block; exit }
+            inside=0
+            next
+        }
+        inside { block=block $0 ORS }
+    ' "$1"
+}
 validator_fixture() {
     local agent="$1" extra="$2" destination="$WORK/$agent.md"
     printf '%s\n' '---' > "$destination"
@@ -232,6 +243,35 @@ for artifact in "$REPO_ROOT/src/published/agents/test-writer.md" "$REPO_ROOT/age
     if [[ "$artifact" = "$REPO_ROOT/src/"* ]]; then legacy_pattern='\.claude/pipeline/\.plugin-root|PLUGIN_ROOT=|plugins/cache|\$HOME/.claude'; else legacy_pattern='PLUGIN_ROOT=|plugins/cache|\$HOME/.claude'; fi
     if ! grep -Eq "$legacy_pattern" "$artifact"; then pass "$(basename "$(dirname "$artifact")") no conserva resolver de runtime legado"; else fail "$(basename "$(dirname "$artifact")") conserva resolver de runtime legado"; fi
 done
+
+echo '[temporales] test-writer usa estado del consumidor'
+for artifact in "$REPO_ROOT/src/published/agents/test-writer.md" "$REPO_ROOT/agents/test-writer.md" "$REPO_ROOT/dist/claude/agents/test-writer.md" "$REPO_ROOT/dist/opencode/agents/test-writer.md"; do
+    rendered="$(< "$artifact")"
+    if [[ "$artifact" = "$REPO_ROOT/src/"* ]]; then temporary='{{mefisto:state-path tmp}}/test-writer-decompiled'; else temporary='.mefisto/pipeline/tmp/test-writer-decompiled'; fi
+    if [ "$(grep -Fc "$temporary" "$artifact")" -eq 3 ]; then pass "$(basename "$(dirname "$artifact")") test-writer prepara y reutiliza su temporal propio"; else fail "$(basename "$(dirname "$artifact")") test-writer no conserva un destino temporal consistente"; fi
+    if ! grep -Fq '/tmp/cosmos-testing-decompiled' "$artifact" && ! grep -Eq '(^|[[:space:]=])/tmp/' "$artifact"; then pass "$(basename "$(dirname "$artifact")") test-writer no abre un temporal global"; else fail "$(basename "$(dirname "$artifact")") test-writer conserva un temporal global"; fi
+done
+
+consumer="$WORK/consumidor Claude con espacios"
+mock_bin="$WORK/binarios simulados"
+mkdir -p "$consumer" "$mock_bin"
+git -C "$consumer" init -q
+printf '%s\n' '.mefisto/' > "$consumer/.gitignore"
+printf '%s\n' '#!/usr/bin/env bash' 'printf "%s\\n" "global-packages: /cache"' > "$mock_bin/dotnet"
+printf '%s\n' '#!/usr/bin/env bash' 'set -eu' 'output=' 'while [ $# -gt 0 ]; do' '    case "$1" in' '        -o) output="$2"; shift 2 ;;' '        *) shift ;;' '    esac' 'done' '[ -d "$output" ]' 'printf "%s\\n" "decompilado" > "$output/CommandHandlerTestBase.cs"' > "$mock_bin/ilspycmd"
+chmod +x "$mock_bin/dotnet" "$mock_bin/ilspycmd"
+claude_decompilation="$(decompilation_block "$REPO_ROOT/dist/claude/agents/test-writer.md")"
+if (cd "$consumer" && PATH="$mock_bin:$PATH" bash -c "$claude_decompilation") >/dev/null 2>&1 && \
+    [ -f "$consumer/.mefisto/pipeline/tmp/test-writer-decompiled/CommandHandlerTestBase.cs" ]; then
+    pass 'test-writer Claude crea y lee el temporal del consumidor con espacios'
+else
+    fail 'test-writer Claude no conserva su temporal bajo el cwd del consumidor'
+fi
+if git -C "$consumer" check-ignore -q .mefisto/pipeline/tmp/test-writer-decompiled/CommandHandlerTestBase.cs; then
+    pass 'el temporal decompilado del consumidor no entra al commit'
+else
+    fail 'el temporal decompilado del consumidor no queda ignorado'
+fi
 
 for runtime in claude opencode; do
     package_root="$REPO_ROOT/dist/$runtime"
