@@ -38,6 +38,8 @@ contains 'HOLD_CAUSE_JSON="null"; HOLD_NEXT_PROBE_JSON="null"; HOLD_CEILING_JSON
 contains '"hold": {"cause": $HOLD_CAUSE_JSON, "next_probe": $HOLD_NEXT_PROBE_JSON, "ceiling_seconds": $HOLD_CEILING_JSON, "accumulated_seconds": $HOLD_TOTAL}' 'hold estructurado: update_status incluye el bloque hold (issue #1600)'
 contains 'args+=(--resume-session "$resume_session")' 'sonda reanuda por session_id'
 contains 'agent_events_denials "$events_file"' 'retry unico consume denegaciones neutrales'
+contains 'denegaciones neutrales no medidas; no se reintenta por permisos' 'diagnostica denegaciones desconocidas como no medidas'
+contains '[[ "$denials" =~ ^[0-9]+$ ]] && [ "$denials" -gt 0 ]' 'retry compara solo conteos conocidos positivos'
 contains 'TIMEOUT|KILLED|STREAM_CUT|PROTOCOL_INVALID' 'terminales incompletos excluyen recuperacion'
 contains 'attempt-${attempt}.events.jsonl' 'cada intento conserva eventos propios'
 absent_run_agent 'claude ' 'run_agent no nombra el CLI de Claude'
@@ -153,6 +155,21 @@ case "$SCENARIO:$count" in
     denials:1)
         printf '%s\n' '{"type":"run.completed","status":"success","session_id":null,"denials":2,"error":null}' > "$event"
         exit 0 ;;
+    denials-null:1)
+        printf '%s\n' '{"type":"run.completed","status":"success","session_id":null,"denials":null,"error":null}' > "$event"
+        exit 0 ;;
+    denials-absent:1)
+        printf '%s\n' '{"type":"run.completed","status":"success","session_id":null,"error":null}' > "$event"
+        exit 0 ;;
+    claude-zero:1|claude-unknown:1|claude-positive:1|claude-positive:2)
+        case "$SCENARIO" in
+            claude-zero) raw='{"type":"result","is_error":false,"subtype":"success","stop_reason":"end_turn","usage":{},"permission_denials":[]}' ;;
+            claude-positive) raw='{"type":"result","is_error":false,"subtype":"success","stop_reason":"end_turn","usage":{},"permission_denials":[{},{}]}' ;;
+            *) raw='{"type":"result","is_error":false,"subtype":"success","stop_reason":"end_turn","usage":{}}' ;;
+        esac
+        printf '%s\n' "$raw" | jq -R -s --arg runtime claude --arg model_param '' --arg exit_code 0 \
+            --rawfile stderr_text /dev/null -f "$ROOT/src/runtime/lib/runtime-claude.jq" > "$event"
+        exit 0 ;;
     timeout:1)
         printf 'parcial\n' > "$cwd/src/partial.txt"
         printf '%s\n' '{"type":"run.failed","status":"failed","session_id":"session-timeout","denials":0,"error":{"kind":"timeout"}}' > "$event"
@@ -193,6 +210,7 @@ chmod +x "$TMP/runner"
 
 {
     printf '%s\n' 'set -uo pipefail'
+    printf '%s\n' 'source "$ROOT/scripts/_pipeline-common.sh"'
     run_agent_body
     collect_summary_body
     derive_stage_log_from_stream_body
@@ -222,13 +240,6 @@ update_status(){ printf '{"stage":"%s","state":"%s","hold":{"cause":%s,"next_pro
 compute_stage_metrics(){ printf '{}'; }
 HARNESS_IDENTITY_JSON='null'
 enrich_stage_metrics(){ printf '%s' "${3:-null}"; }
-agent_events_value(){ jq -r -s "$2" "$1" 2>/dev/null || true; }
-agent_events_kind(){ agent_events_value "$1" '[.[] | select(.type == "run.failed" or .type == "run.completed") | .error.kind // empty] | last // empty'; }
-agent_events_resets_at(){ agent_events_value "$1" '[.[] | select(.type == "run.failed" or .type == "run.completed") | .error.resets_at // .resets_at // empty] | last // empty'; }
-agent_events_session_id(){ agent_events_value "$1" '[.[] | select(.type == "run.failed" or .type == "run.completed") | .session_id // empty] | last // empty'; }
-agent_events_denials(){ agent_events_value "$1" '[.[] | select(.type == "run.failed" or .type == "run.completed") | .denials // 0] | last // 0'; }
-agent_events_completed_successfully(){ jq -e -s '[.[] | select(.type == "run.failed" or .type == "run.completed")] | last | .type == "run.completed" and .status == "success"' "$1" >/dev/null 2>&1; }
-classify_neutral_agent_failure(){ case "$1" in 124) printf TIMEOUT;; *) printf '%s' "$(agent_events_kind "$2" | tr '[:lower:]' '[:upper:]')";; esac; }
 agent_failure_is_holdable(){ [ "$1" = RATE_LIMIT ] || [ "$1" = PROVIDER_UNAVAILABLE ]; }
 agent_hold_wait(){ printf 1; }
 runtime_supports_resume(){ return 0; }
@@ -245,6 +256,7 @@ HOLD_CAUSE_JSON="null" HOLD_NEXT_PROBE_JSON="null" HOLD_CEILING_JSON="null" HOLD
 run_agent "$STAGE" "$AGENT" "${PROMPT:-prompt de regresion}"
 collect_summary "$STAGE" "$AGENT" > "$TMP/collected-summary"
 printf '%s\n%s\n%s\n' "$HOLD_CAUSE_JSON" "$HOLD_NEXT_PROBE_JSON" "$HOLD_TOTAL" > "$TMP/hold-after"
+printf '%s' "$LAST_AGENT_DENIALS" > "$TMP/last-denials"
 EOF
 } > "$TMP/case.sh"
 
@@ -337,6 +349,40 @@ if run_case denials && [ "$(cat "$TMP/calls")" = 2 ] \
 else
     fail 'retry por denegaciones no fue unico o intento reanudar'
 fi
+
+reset_case
+if run_case denials-null && [ "$(cat "$TMP/calls")" = 1 ]; then
+    pass 'denials null no provoca error aritmetico ni retry'
+else
+    fail 'denials null fue tratado como cero o activo un retry'
+fi
+
+reset_case
+if run_case denials-absent && [ "$(cat "$TMP/calls")" = 1 ]; then
+    pass 'denials ausente no provoca error aritmetico ni retry'
+else
+    fail 'denials ausente fue tratado como cero o activo un retry'
+fi
+
+for translated_case in claude-zero claude-unknown claude-positive; do
+    reset_case
+    : > "$TMP/events"
+    expected_calls=1
+    expected_denials=0
+    expected_diagnostic=false
+    [ "$translated_case" = claude-unknown ] && { expected_denials=null; expected_diagnostic=true; }
+    [ "$translated_case" = claude-positive ] && expected_calls=2
+    [ "$translated_case" = claude-positive ] && expected_denials=2
+    if run_case "$translated_case" \
+        && [ "$(cat "$TMP/calls")" = "$expected_calls" ] \
+        && [ "$(cat "$TMP/last-denials")" = "$expected_denials" ] \
+        && { [ "$expected_diagnostic" = true ] && grep -Fq 'DENIALS test-writer: no_medidas' "$TMP/events" \
+            || { [ "$expected_diagnostic" = false ] && ! grep -Fq 'DENIALS test-writer: no_medidas' "$TMP/events"; }; }; then
+        pass "TDD consume fixture $translated_case con $expected_calls intento(s)"
+    else
+        fail "TDD no preservo retry nullable para fixture $translated_case"
+    fi
+done
 
 reset_case
 timeout_rc=0

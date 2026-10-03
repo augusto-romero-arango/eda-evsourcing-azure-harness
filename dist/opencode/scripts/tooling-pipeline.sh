@@ -91,7 +91,7 @@ PIPELINE_TESTS=""
 PIPELINE_PR=""
 PIPELINE_ERROR=""
 LAST_AGENT_DURATION=0
-LAST_AGENT_DENIALS=0
+LAST_AGENT_DENIALS="null"
 CURRENT_STAGE="setup"
 HOLD_CAUSE_JSON="null" HOLD_NEXT_PROBE_JSON="null" HOLD_CEILING_JSON="null" HOLD_TOTAL=0
 PIPELINE_TMP_DIR=""
@@ -552,8 +552,11 @@ run_agent() {
         case "$agent" in writer) AGENT_WR_METRICS="$metrics_json" ;; reviewer) AGENT_RV_METRICS="$metrics_json" ;; esac
         local denials
         denials="$(agent_events_denials "$events_file")"
-        case "$denials" in ''|*[!0-9]*) denials=0 ;; esac
         LAST_AGENT_DENIALS="$denials"
+        if [ "$denials" = "null" ]; then
+            warn "$agent: denegaciones neutrales no medidas; no se reintenta por permisos"
+            echo "[$(date +%H:%M:%S)] DENIALS $agent: no_medidas" >> "$EVENTS_LOG_ABS"
+        fi
 
         # El retry publicado por permisos es unico y se decide solo con el
         # contador neutral. Aplica incluso si el CLI termino en success pero
@@ -563,7 +566,7 @@ run_agent() {
             || [ -n "$(git -C "$WORKTREE_PATH" status --porcelain -- . "${PIPELINE_OWN_WRITES[@]}" 2>/dev/null)" ]; then
             attempt_has_work=true
         fi
-        if [ "$denials" -gt 0 ] && [ "$attempt_has_work" = false ] && [ "$denial_retry_used" = false ]; then
+        if [[ "$denials" =~ ^[0-9]+$ ]] && [ "$denials" -gt 0 ] && [ "$attempt_has_work" = false ] && [ "$denial_retry_used" = false ]; then
             denial_retry_used=true
             resume_session=""
             warn "$agent: $denials denegacion(es) neutrales sin trabajo; reintentando una vez desde cero"

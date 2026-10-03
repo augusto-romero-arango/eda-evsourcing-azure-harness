@@ -774,7 +774,16 @@ agent_events_value() {
 agent_events_kind() { agent_events_value "$1" '[.[] | select(.type == "run.failed" or .type == "run.completed") | .error.kind // empty] | last // empty'; }
 agent_events_resets_at() { agent_events_value "$1" '[.[] | select(.type == "run.failed" or .type == "run.completed") | .error.resets_at // .resets_at // empty] | last // empty'; }
 agent_events_session_id() { agent_events_value "$1" '[.[] | select(.type == "run.failed" or .type == "run.completed") | .session_id // empty] | last // empty'; }
-agent_events_denials() { agent_events_value "$1" '[.[] | select(.type == "run.failed" or .type == "run.completed") | .denials // 0] | last // 0'; }
+# agent_events_denials <events-jsonl>
+#
+# Imprime el contador entero no negativo del ULTIMO terminal, o el literal
+# `null` si ese terminal no declara un contador valido o no existe terminal.
+# `null` significa que no se midieron denegaciones; no es evidencia de cero.
+agent_events_denials() {
+    local denials
+    denials="$(agent_events_value "$1" '[.[] | select(.type == "run.failed" or .type == "run.completed")] | last | if (. != null and (.denials | type) == "number" and .denials >= 0 and (.denials | floor) == .denials) then .denials else null end')"
+    printf '%s\n' "${denials:-null}"
+}
 
 agent_events_completed_successfully() {
     local events="$1"
