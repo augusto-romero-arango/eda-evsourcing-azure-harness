@@ -35,6 +35,8 @@ contains 'tooling-writer balanced' 'writer usa id y perfil neutral'
 contains 'tooling-reviewer deep' 'reviewer usa id y perfil neutral'
 contains '--resume-session' 'reanudacion via session_id neutral'
 contains 'agent_events_denials' 'retry por permisos consume denials neutral'
+contains 'denegaciones neutrales no medidas; no se reintenta por permisos' 'diagnostica denegaciones desconocidas como no medidas'
+contains '[[ "$denials" =~ ^[0-9]+$ ]] && [ "$denials" -gt 0 ]' 'retry compara solo conteos conocidos positivos'
 contains 'runtime_supports_resume' 'consulta capability de reanudacion'
 absent 'claude -p' 'no invoca Claude directamente'
 absent 'CLAUDE_CONFIG_DIR' 'no inspecciona stores privados'
@@ -273,6 +275,34 @@ printf '%s\n' '{"type":"run.failed","status":"failed","session_id":"s 1","denial
 if agent_events_completed_successfully "$TMP"; then fail 'un terminal fallido no es exito'; else pass 'rechaza terminal fallido'; fi
 printf '%s\n' '{"type":"run.completed","status":"success","session_id":null,"denials":0,"error":null}' > "$TMP"
 if agent_events_completed_successfully "$TMP"; then pass 'acepta run.completed success'; else fail 'no acepta run.completed success'; fi
+
+printf '%s\n' '{"type":"run.completed","status":"success","denials":null}' > "$TMP"
+[ "$(agent_events_denials "$TMP")" = null ] && pass 'preserva denials null como no medido' || fail 'convirtio denials null en cero'
+printf '%s\n' '{"type":"run.completed","status":"success"}' > "$TMP"
+[ "$(agent_events_denials "$TMP")" = null ] && pass 'preserva denials ausente como no medido' || fail 'convirtio denials ausente en cero'
+printf '%s\n' '{"type":"message","role":"assistant","text":"sin terminal"}' > "$TMP"
+[ "$(agent_events_denials "$TMP")" = null ] && pass 'ausencia de terminal devuelve null' || fail 'ausencia de terminal no devuelve null'
+printf '%s\n' '{"type":"run.completed","status":"success","denials":-1}' > "$TMP"
+[ "$(agent_events_denials "$TMP")" = null ] && pass 'contador negativo se degrada a no medido' || fail 'acepto contador negativo'
+
+TRANSLATE_TMP="$(mktemp -d -t mefisto-tooling-denials)"
+trap 'rm -f "$TMP"; rm -rf "$TRANSLATE_TMP"' EXIT
+: > "$TRANSLATE_TMP/stderr"
+translated_denials() {
+    printf '%s\n' "$1" | jq -R -s --arg runtime claude --arg model_param '' --arg exit_code 0 \
+        --rawfile stderr_text "$TRANSLATE_TMP/stderr" -f "$ROOT/src/runtime/lib/runtime-claude.jq" > "$TRANSLATE_TMP/events.jsonl" \
+        && agent_events_denials "$TRANSLATE_TMP/events.jsonl"
+}
+CLAUDE_RESULT='{"type":"result","is_error":false,"subtype":"success","stop_reason":"end_turn","usage":{}}'
+CLAUDE_RESULT_ZERO='{"type":"result","is_error":false,"subtype":"success","stop_reason":"end_turn","usage":{},"permission_denials":[]}'
+CLAUDE_RESULT_POSITIVE='{"type":"result","is_error":false,"subtype":"success","stop_reason":"end_turn","usage":{},"permission_denials":[{}]}'
+if [ "$(translated_denials "$CLAUDE_RESULT_ZERO")" = 0 ] \
+    && [ "$(translated_denials "$CLAUDE_RESULT_POSITIVE")" = 1 ] \
+    && [ "$(translated_denials "$CLAUDE_RESULT")" = null ]; then
+    pass 'fixture traducido por Claude conserva cero, positivo y desconocido para tooling'
+else
+    fail 'fixture traducido por Claude no conserva denials nullable para tooling'
+fi
 
 printf '\nResultado: %s PASS, %s FAIL\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

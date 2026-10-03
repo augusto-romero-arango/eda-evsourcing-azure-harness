@@ -133,6 +133,7 @@ PIPELINE_PR=""
 HAS_BLOCKAGE=false
 PIPELINE_ERROR=""
 LAST_AGENT_DURATION=0
+LAST_AGENT_DENIALS="null"
 CURRENT_STAGE="setup"
 # Hold estructurado en el status (issue #1600, molde tooling-pipeline.sh l.96):
 # run_agent fija estas variables antes de cada espera (agent_hold_wait) y las
@@ -804,10 +805,14 @@ Al cerrar este stage, deja tu resumen en: $summary_path"
         echo "$metrics_json" > "$(mefisto_state_path "metrics/tdd-${TIMESTAMP}-issue-${ISSUE_LOG_TAG}-stage-${stage}-${agent}.json")" 2>/dev/null || true
         local denials attempt_has_work=false
         denials="$(agent_events_denials "$events_file")"
-        case "$denials" in ''|*[!0-9]*) denials=0 ;; esac
+        LAST_AGENT_DENIALS="$denials"
+        if [ "$denials" = "null" ]; then
+            warn "$agent: denegaciones neutrales no medidas; no se reintenta por permisos"
+            echo "[$(date +%H:%M:%S)] DENIALS $agent: no_medidas" >> "$EVENTS_LOG_ABS"
+        fi
         if ! git -C "$WORKTREE_PATH" diff --quiet "$entry_commit"..HEAD -- . "${PIPELINE_OWN_WRITES[@]}" 2>/dev/null \
             || [ -n "$(git -C "$WORKTREE_PATH" status --porcelain -- tests/ src/ "${PIPELINE_OWN_WRITES[@]}" 2>/dev/null)" ]; then attempt_has_work=true; fi
-        if [ "$denials" -gt 0 ] && [ "$attempt_has_work" = false ] && [ "$denial_retry_used" = false ]; then
+        if [[ "$denials" =~ ^[0-9]+$ ]] && [ "$denials" -gt 0 ] && [ "$attempt_has_work" = false ] && [ "$denial_retry_used" = false ]; then
             denial_retry_used=true
             resume_session=""
             warn "$agent: $denials denegacion(es) neutrales sin trabajo; reintentando una vez desde cero"

@@ -38,6 +38,8 @@ contains 'HOLD_CAUSE_JSON="null"; HOLD_NEXT_PROBE_JSON="null"; HOLD_CEILING_JSON
 contains '"hold": {"cause": $HOLD_CAUSE_JSON, "next_probe": $HOLD_NEXT_PROBE_JSON, "ceiling_seconds": $HOLD_CEILING_JSON, "accumulated_seconds": $HOLD_TOTAL}' 'hold estructurado: update_status incluye el bloque hold (issue #1600)'
 contains 'args+=(--resume-session "$resume_session")' 'sonda reanuda por session_id'
 contains 'agent_events_denials "$events_file"' 'retry unico consume denegaciones neutrales'
+contains 'denegaciones neutrales no medidas; no se reintenta por permisos' 'diagnostica denegaciones desconocidas como no medidas'
+contains '[[ "$denials" =~ ^[0-9]+$ ]] && [ "$denials" -gt 0 ]' 'retry compara solo conteos conocidos positivos'
 contains 'TIMEOUT|KILLED|STREAM_CUT|PROTOCOL_INVALID' 'terminales incompletos excluyen recuperacion'
 contains 'attempt-${attempt}.events.jsonl' 'cada intento conserva eventos propios'
 absent_run_agent 'claude ' 'run_agent no nombra el CLI de Claude'
@@ -84,6 +86,24 @@ git -C "$WT" config user.name Test
 printf 'base\n' > "$WT/tests/base.txt"
 git -C "$WT" add tests/base.txt
 git -C "$WT" commit -qm base
+
+echo '[contrato] denials traducidos por el adaptador Claude'
+: > "$TMP/stderr"
+translated_denials() {
+    printf '%s\n' "$1" | jq -R -s --arg runtime claude --arg model_param '' --arg exit_code 0 \
+        --rawfile stderr_text "$TMP/stderr" -f "$ROOT/src/runtime/lib/runtime-claude.jq" > "$TMP/translated.events.jsonl" \
+        && bash -c 'source "$1"; agent_events_denials "$2"' _ "$COMMON" "$TMP/translated.events.jsonl"
+}
+CLAUDE_RESULT='{"type":"result","is_error":false,"subtype":"success","stop_reason":"end_turn","usage":{}}'
+CLAUDE_RESULT_ZERO='{"type":"result","is_error":false,"subtype":"success","stop_reason":"end_turn","usage":{},"permission_denials":[]}'
+CLAUDE_RESULT_POSITIVE='{"type":"result","is_error":false,"subtype":"success","stop_reason":"end_turn","usage":{},"permission_denials":[{},{}]}'
+if [ "$(translated_denials "$CLAUDE_RESULT_ZERO")" = 0 ] \
+    && [ "$(translated_denials "$CLAUDE_RESULT_POSITIVE")" = 2 ] \
+    && [ "$(translated_denials "$CLAUDE_RESULT")" = null ]; then
+    pass 'traduccion Claude conserva cero, positivo y desconocido de permission_denials'
+else
+    fail 'traduccion Claude no conserva el contrato nullable de denials'
+fi
 
 # El chequeo estatico de los cuatro call sites se complementa con el contrato
 # ejecutable del helper generalizado: evita que el wrapper de tooling siga
@@ -152,6 +172,12 @@ case "$SCENARIO:$count" in
         exit 0 ;;
     denials:1)
         printf '%s\n' '{"type":"run.completed","status":"success","session_id":null,"denials":2,"error":null}' > "$event"
+        exit 0 ;;
+    denials-null:1)
+        printf '%s\n' '{"type":"run.completed","status":"success","session_id":null,"denials":null,"error":null}' > "$event"
+        exit 0 ;;
+    denials-absent:1)
+        printf '%s\n' '{"type":"run.completed","status":"success","session_id":null,"error":null}' > "$event"
         exit 0 ;;
     timeout:1)
         printf 'parcial\n' > "$cwd/src/partial.txt"
@@ -226,7 +252,7 @@ agent_events_value(){ jq -r -s "$2" "$1" 2>/dev/null || true; }
 agent_events_kind(){ agent_events_value "$1" '[.[] | select(.type == "run.failed" or .type == "run.completed") | .error.kind // empty] | last // empty'; }
 agent_events_resets_at(){ agent_events_value "$1" '[.[] | select(.type == "run.failed" or .type == "run.completed") | .error.resets_at // .resets_at // empty] | last // empty'; }
 agent_events_session_id(){ agent_events_value "$1" '[.[] | select(.type == "run.failed" or .type == "run.completed") | .session_id // empty] | last // empty'; }
-agent_events_denials(){ agent_events_value "$1" '[.[] | select(.type == "run.failed" or .type == "run.completed") | .denials // 0] | last // 0'; }
+agent_events_denials(){ local denials; denials="$(agent_events_value "$1" '[.[] | select(.type == "run.failed" or .type == "run.completed")] | last | if (. != null and (.denials | type) == "number" and .denials >= 0 and (.denials | floor) == .denials) then .denials else null end')"; printf '%s\n' "${denials:-null}"; }
 agent_events_completed_successfully(){ jq -e -s '[.[] | select(.type == "run.failed" or .type == "run.completed")] | last | .type == "run.completed" and .status == "success"' "$1" >/dev/null 2>&1; }
 classify_neutral_agent_failure(){ case "$1" in 124) printf TIMEOUT;; *) printf '%s' "$(agent_events_kind "$2" | tr '[:lower:]' '[:upper:]')";; esac; }
 agent_failure_is_holdable(){ [ "$1" = RATE_LIMIT ] || [ "$1" = PROVIDER_UNAVAILABLE ]; }
@@ -336,6 +362,20 @@ if run_case denials && [ "$(cat "$TMP/calls")" = 2 ] \
     pass 'denials sin trabajo reintenta una sola vez desde cero incluso tras success'
 else
     fail 'retry por denegaciones no fue unico o intento reanudar'
+fi
+
+reset_case
+if run_case denials-null && [ "$(cat "$TMP/calls")" = 1 ]; then
+    pass 'denials null no provoca error aritmetico ni retry'
+else
+    fail 'denials null fue tratado como cero o activo un retry'
+fi
+
+reset_case
+if run_case denials-absent && [ "$(cat "$TMP/calls")" = 1 ]; then
+    pass 'denials ausente no provoca error aritmetico ni retry'
+else
+    fail 'denials ausente fue tratado como cero o activo un retry'
 fi
 
 reset_case
