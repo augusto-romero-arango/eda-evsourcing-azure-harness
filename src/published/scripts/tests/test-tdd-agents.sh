@@ -304,7 +304,7 @@ reviewer_mock_bin="$WORK/binarios reviewer simulados"
 mkdir -p "$reviewer_consumer" "$reviewer_mock_bin"
 git -C "$reviewer_consumer" init -q
 printf '%s\n' '.mefisto/' > "$reviewer_consumer/.gitignore"
-printf '%s\n' '#!/usr/bin/env bash' 'set -eu' 'output=' 'while [ $# -gt 0 ]; do' '    case "$1" in' '        -o) output="$2"; shift 2 ;;' '        *) shift ;;' '    esac' 'done' '[ -d "$output" ]' 'printf "%s\\n" "AgregarConfiguracionMartenComandos" > "$output/Cosmos.EventSourcing.CritterStack.decompiled.cs"' > "$reviewer_mock_bin/ilspycmd"
+printf '%s\n' '#!/usr/bin/env bash' 'set -eu' 'output=' 'while [ $# -gt 0 ]; do' '    case "$1" in' '        -o) output="$2"; shift 2 ;;' '        -p) exit 3 ;;' '        *) shift ;;' '    esac' 'done' '[ -d "$output" ]' 'printf "%s\\n" "AgregarConfiguracionMartenComandos" > "$output/Cosmos.EventSourcing.CritterStack.decompiled.cs"' > "$reviewer_mock_bin/ilspycmd"
 printf '%s\n' '#!/usr/bin/env bash' 'exit 0' > "$reviewer_mock_bin/ls"
 chmod +x "$reviewer_mock_bin/ilspycmd" "$reviewer_mock_bin/ls"
 claude_reviewer_decompilation="$(decompilation_block "$REPO_ROOT/dist/claude/agents/reviewer.md")"
