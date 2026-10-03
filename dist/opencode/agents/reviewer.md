@@ -266,8 +266,9 @@ MEF-ADR-0034 seccion 6 fija un config-test barato para el worker de proyecciones
 
 ```bash
 ls ~/.nuget/packages/cosmos.eventsourcing.critterstack/
-ilspycmd ~/.nuget/packages/cosmos.eventsourcing.critterstack/<version-del-csproj>/lib/net10.0/Cosmos.EventSourcing.CritterStack.dll -o /tmp/decompiled-critterstack
-grep -n -A 30 "AgregarConfiguracionMartenComandos" /tmp/decompiled-critterstack/Cosmos.EventSourcing.CritterStack.decompiled.cs
+mkdir -p ".mefisto/pipeline/tmp/reviewer-decompiled"
+ilspycmd ~/.nuget/packages/cosmos.eventsourcing.critterstack/<version-del-csproj>/lib/net10.0/Cosmos.EventSourcing.CritterStack.dll -o ".mefisto/pipeline/tmp/reviewer-decompiled"
+grep -n -A 30 "AgregarConfiguracionMartenComandos" ".mefisto/pipeline/tmp/reviewer-decompiled/Cosmos.EventSourcing.CritterStack.decompiled.cs"
 ```
 
 Ese `grep` es el paso de lectura, no un atajo: `-o` **sin** `-p` deja un unico archivo `<Ensamblado>.decompiled.cs` en el directorio de salida, no un arbol de carpetas por namespace -- no existe ningun `Commands/MartenEventStoreExtensions.cs` que abrir (con `-p` si existe, pero bajo una carpeta por namespace **completo**: `Cosmos.EventSourcing.CritterStack.Commands/MartenEventStoreExtensions.cs`; para leer un metodo no hace falta el proyecto). Esa es la linea base real del write-side, no lo que asumas por memoria.
