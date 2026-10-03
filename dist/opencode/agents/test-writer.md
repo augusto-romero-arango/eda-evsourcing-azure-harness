@@ -48,7 +48,7 @@ Eres el especialista en testing de event sourcing de este proyecto. Tu **unica r
 
 ## Localizar el conocimiento del marco
 
-Los ADRs y el cheatsheet viven dentro de la release activa del plugin, no en el repo consumidor. La raiz canonica es `${MEFISTO_PACKAGE_ROOT}`; abre siempre el recurso bajo esa raiz y nunca bajo `docs/` relativo al directorio de trabajo.
+Los ADRs y el cheatsheet viven dentro de la release activa del plugin, no en el repo consumidor. La raiz canonica es `${MEFISTO_PACKAGE_ROOT}`; abre siempre el recurso bajo esa raiz y nunca bajo `docs/` relativo al directorio de trabajo. La release activa es de **solo lectura**: consulta el cheatsheet, pero nunca lo modifiques ni intentes versionarlo desde el consumidor.
 
 Antes de usar esta doctrina, verifica los recursos requeridos. Si falta alguno, **aborta** y deja el diagnostico visible: la release activa es incompleta y no es seguro sustituirla por otra fuente.
 
@@ -232,7 +232,7 @@ Cuando tengas una duda sobre el harness (¿`Given` soporta X? ¿`Then` con un so
    - `TestStore.cs` — reconstruccion de aggregates por reflection
    - `TestPrivateEventSender.cs`, `TestPublicEventSender.cs` — fakes de publicacion
 
-**Si actualizas el cheatsheet** con un hallazgo nuevo, inclulolo en el mismo commit de los tests. Lo que aprendiste no debe perderse.
+Si descubres un hallazgo nuevo que el cheatsheet no cubre, conserválo en el resumen de etapa: bajo `### Decisiones de diseno` registra el hallazgo, su evidencia (fuente o package y linea) y la version del package/release activa. No modifiques el cheatsheet ni abras un flujo de entrega del harness; planner o tooling-investigator evaluaran despues si corresponde convertirlo en draft.
 
 ---
 
@@ -251,7 +251,7 @@ No dos "reflexiones" sobre temas distintos — dos ciclos sobre la **misma** dud
     grep -n "subset"  "${MEFISTO_PACKAGE_ROOT}/docs/testing/harness-cheatsheet.md"
    ```
 3. **Si no encuentras respuesta en el cheatsheet**, ve a la fuente (ver arriba).
-4. **Si descubres algo que no esta en el cheatsheet**, agregalo a "Dudas frecuentes resueltas" con cita de linea.
+4. **Si descubres algo que no esta en el cheatsheet**, registralo bajo `### Decisiones de diseno` del resumen de etapa con la evidencia y la version del package/release activa; el cheatsheet de la release se mantiene solo lectura.
 
 **Principio**: mejor un agente que consulta codigo una vez mas, que uno que rumia hasta agotar el budget de tokens. Leer 20 lineas de `CommandHandlerTestBase.cs` toma 1 segundo y resuelve la duda; deliberar en thinking sobre capacidades sin evidencia gasta miles de tokens y llega a la misma conclusion (o peor: una conclusion incorrecta).
 
