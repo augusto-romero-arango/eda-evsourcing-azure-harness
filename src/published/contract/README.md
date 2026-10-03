@@ -50,7 +50,7 @@ comandos que meramente menciona. La política vigente permite `git`, `gh`,
 `jq`, `cat`, `ls`, `find`, `grep`, `sort`, los scripts distribuidos, `mkdir` y
 `mktemp`; el toolchain TDD añade `dotnet`, `func init`, `terraform init
 -backend=false` / `validate` / `fmt`, `python3 -` (incluido `-m json.tool`),
-`cd`, `echo`, `test`, `[`, `touch`, `tr`, `head`, `tail`, `awk`, `sed`, `mv` e
+`cd`, `echo`, `test`, `[`, `touch`, `tr`, `cut`, `head`, `tail`, `awk`, `sed`, `mv` e
 `ilspycmd`. Las cuatro últimas utilidades de texto previas a `mv` cubren
 subcomandos reales de tuberías y sustituciones de comando de esa doctrina.
 `terraform plan`/`apply`, `func start` y `az` continúan denegados por el
@@ -59,6 +59,7 @@ sumó `date` y `printf`, ya requeridos por su propia doctrina (marcas de
 tiempo de sesión, cierre documental) y ausentes hasta entonces del registro.
 El agente `projections-scaffolder` (issue #1652) sumó `basename`.
 El agente `bug-investigator` (issue #1667) sumó `diff`, que compara los ensamblados decompilados bajo `{{mefisto:state-path tmp}}` (nunca `/tmp`, bloqueado por `external_directory`); `az` sigue denegado y sus consultas pasan por `appinsights-query.sh` (`plan-sites`/`plan-metrics`).
+El agente `test-writer` (issue #1813) suma `cut` para extraer la ruta del caché global de NuGet en su fallback de decompilación; es una utilidad de lectura de la misma familia que `tr`, `head` y `sort`, no una ampliación del shell genérico.
 
 El issue #1750 sumó tres reglas exactas, sin comodines, porque el preámbulo OpenCode de la release activa se evalúa nodo a nodo contra esta política: `"$mefisto_opencode_launcher" package-root` (el candidato conserva las comillas literales; solo el lanzador resuelto por el preámbulo), `export MEFISTO_PACKAGE_ROOT` (exporta únicamente esa variable) y `exit 1` (aborto con diagnóstico en lugar de una denegación). No se agregan `*`, `bash *`, `sh *`, `eval *` ni `env *`. El preámbulo se reescribió sin funciones, `uname` ni `pwd -P` (usa `OSTYPE`, `cd -P` y `printf`, ya permitidos) y declara que debe repetirse en cada llamada bash que use `${MEFISTO_PACKAGE_ROOT}`, pues no se asume estado de shell persistente entre llamadas. `test-opencode-bash-permissions.sh` extrae los comandos del artefacto generado de `test-writer` y los evalúa con la semántica descrita abajo.
 

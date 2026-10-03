@@ -70,6 +70,7 @@
         {"pattern": "[ *", "value": "allow"},
         {"pattern": "touch *", "value": "allow"},
         {"pattern": "tr *", "value": "allow"},
+        {"pattern": "cut *", "value": "allow"},
         {"pattern": "head *", "value": "allow"},
         {"pattern": "tail *", "value": "allow"},
         {"pattern": "awk *", "value": "allow"},
