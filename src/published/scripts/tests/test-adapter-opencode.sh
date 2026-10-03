@@ -25,6 +25,15 @@ permission_of() {
         case "$line" in 'permission: '*) printf '%s\n' "${line#permission: }"; return 0 ;; esac
     done
 }
+evaluate_bash_permission() {
+    local permission="$1" candidate="$2" pattern value verdict=""
+    while IFS=$'\t' read -r pattern value; do
+        case "$candidate" in
+            $pattern) verdict="$value" ;;
+        esac
+    done < <(jq -r '.bash | to_entries[] | [.key, .value] | @tsv' <<< "$permission")
+    printf '%s\n' "$verdict"
+}
 
 printf '%s\n' '[pre] adaptador, rutas y vocabulario'
 bash -n "$ADAPTER" && bash -n "$REPO_ROOT/src/published/scripts/lib/effective-contract.sh" && pass 'sintaxis Bash valida' || fail 'sintaxis Bash invalida'
@@ -285,7 +294,10 @@ jq -e '.read["*"] == "allow" and .list == "allow" and .glob == "allow" and .grep
 make_agent solo-edit '["edit"]'; edit_permission="$(permission_of "$WORK/solo-edit.md")"
 jq -e '.edit["*"] == "allow" and .write["*"] == "allow" and .patch["*"] == "allow" and .read["*"] == "deny"' <<< "$edit_permission" >/dev/null && pass 'combinacion edit' || fail 'combinacion edit'
 make_agent solo-shell '["shell"]'; shell_permission="$(permission_of "$WORK/solo-shell.md")"
-jq -e '.bash["*"] == "deny" and .bash["${MEFISTO_PACKAGE_ROOT}/scripts/*"] == "allow" and .bash["dotnet *"] == "allow" and .bash["func init *"] == "allow" and .bash["terraform init -backend=false*"] == "allow" and .bash["terraform validate*"] == "allow" and .bash["terraform fmt*"] == "allow" and .bash["python3 - *"] == "allow" and .bash["python3 -m json.tool*"] == "allow" and .bash["cd *"] == "allow" and .bash["echo *"] == "allow" and .bash["test *"] == "allow" and .bash["[ *"] == "allow" and .bash["touch *"] == "allow" and .bash["tr *"] == "allow" and .bash["head *"] == "allow" and .bash["tail *"] == "allow" and .bash["awk *"] == "allow" and .bash["sed *"] == "allow" and .bash["mv *"] == "allow" and .bash["ilspycmd *"] == "allow" and .bash["rm *"] == "deny" and .bash["rm -f src/*"] == "allow" and .bash["rm -rf src/*"] == "allow" and .bash["rm -f tests/*"] == "allow" and .bash["rm -f \"src/*"] == "allow" and .bash["rm -rf \"src/*"] == "allow" and .bash["rm -f \"tests/*"] == "allow" and .bash["curl *"] == "deny" and .bash["ssh *"] == "deny" and .bash["scp *"] == "deny" and .bash["sudo *"] == "deny" and ((.bash | to_entries | map(.key)) as $rules | ($rules | index("rm *")) < ($rules | index("rm -f src/*"))) and .external_directory["*"] == "deny" and .external_directory["~/.local/share/mefisto/*"] == "allow"' <<< "$shell_permission" >/dev/null && pass 'combinacion shell acotada' || fail 'combinacion shell acotada'
+jq -e '.bash["*"] == "deny" and .bash["${MEFISTO_PACKAGE_ROOT}/scripts/*"] == "allow" and .bash["dotnet *"] == "allow" and .bash["func init *"] == "allow" and .bash["terraform init -backend=false*"] == "allow" and .bash["terraform validate*"] == "allow" and .bash["terraform fmt*"] == "allow" and .bash["python3 - *"] == "allow" and .bash["python3 -m json.tool*"] == "allow" and .bash["cd *"] == "allow" and .bash["echo *"] == "allow" and .bash["test *"] == "allow" and .bash["[ *"] == "allow" and .bash["touch *"] == "allow" and .bash["tr *"] == "allow" and .bash["cut *"] == "allow" and .bash["head *"] == "allow" and .bash["tail *"] == "allow" and .bash["awk *"] == "allow" and .bash["sed *"] == "allow" and .bash["mv *"] == "allow" and .bash["ilspycmd *"] == "allow" and .bash["rm *"] == "deny" and .bash["rm -f src/*"] == "allow" and .bash["rm -rf src/*"] == "allow" and .bash["rm -f tests/*"] == "allow" and .bash["rm -f \"src/*"] == "allow" and .bash["rm -rf \"src/*"] == "allow" and .bash["rm -f \"tests/*"] == "allow" and .bash["curl *"] == "deny" and .bash["ssh *"] == "deny" and .bash["scp *"] == "deny" and .bash["sudo *"] == "deny" and ((.bash | to_entries | map(.key)) as $rules | ($rules | index("rm *")) < ($rules | index("rm -f src/*"))) and .external_directory["*"] == "deny" and .external_directory["~/.local/share/mefisto/*"] == "allow"' <<< "$shell_permission" >/dev/null && pass 'combinacion shell acotada' || fail 'combinacion shell acotada'
+[ "$(evaluate_bash_permission "$shell_permission" "cut -d' ' -f2-")" = allow ] && pass 'cut con argumentos reales resuelve a allow para shell' || fail 'cut con argumentos reales no resolvio a allow para shell'
+[ "$(evaluate_bash_permission "$read_permission" "cut -d' ' -f2-")" = deny ] && pass 'cut conserva deny para agente sin shell' || fail 'cut dejo de estar denegado sin shell'
+jq -e '(.bash as $bash | ["bash *", "sh *", "env *", "eval *"] | any(.[]; . as $key | $bash | has($key))) | not' <<< "$shell_permission" >/dev/null && pass 'shell no agrega reglas genericas prohibidas' || fail 'shell agrego una regla generica prohibida'
 keys="$(printf '%s' "$read_permission" | jq -c 'keys | sort')"
 supported="$(jq -c '.supported_permissions | sort' "$MAPPING")"
 [ "$keys" = "$supported" ] && pass 'todo permiso soportado tiene valor explicito' || fail 'faltan o sobran permisos emitidos'

@@ -154,6 +154,7 @@ done
 for cmd in 'bash -c x' 'eval x' 'curl x' 'rm -rf /' 'sh -c x' 'env x'; do
     [ "$(python3 "$PY" eval "$ARTIFACT" "$cmd")" = deny ] && pass "'$cmd' sigue denegado" || fail "'$cmd' dejo de estar denegado"
 done
+[ "$(python3 "$PY" eval "$ARTIFACT" "cut -d' ' -f2-")" = allow ] && pass "'cut -d\u0027 \u0027 -f2-' esta permitido para el fallback NuGet de test-writer" || fail "'cut -d\u0027 \u0027 -f2-' deberia estar permitido para test-writer"
 for keep in 'rm *' 'curl *' 'ssh *' 'scp *' 'sudo *'; do
     jq -e --arg k "$keep" '.[$k] == "deny"' <<< "$rules" >/dev/null && pass "denegacion explicita '$keep' conservada" || fail "falta la denegacion explicita '$keep'"
 done
