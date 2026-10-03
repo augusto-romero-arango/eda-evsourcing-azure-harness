@@ -246,7 +246,6 @@ done
 
 echo '[temporales] test-writer usa estado del consumidor'
 for artifact in "$REPO_ROOT/src/published/agents/test-writer.md" "$REPO_ROOT/agents/test-writer.md" "$REPO_ROOT/dist/claude/agents/test-writer.md" "$REPO_ROOT/dist/opencode/agents/test-writer.md"; do
-    rendered="$(< "$artifact")"
     if [[ "$artifact" = "$REPO_ROOT/src/"* ]]; then temporary='{{mefisto:state-path tmp}}/test-writer-decompiled'; else temporary='.mefisto/pipeline/tmp/test-writer-decompiled'; fi
     if [ "$(grep -Fc "$temporary" "$artifact")" -eq 3 ]; then pass "$(basename "$(dirname "$artifact")") test-writer prepara y reutiliza su temporal propio"; else fail "$(basename "$(dirname "$artifact")") test-writer no conserva un destino temporal consistente"; fi
     if ! grep -Fq '/tmp/cosmos-testing-decompiled' "$artifact" && ! grep -Eq '(^|[[:space:]=])/tmp/' "$artifact"; then pass "$(basename "$(dirname "$artifact")") test-writer no abre un temporal global"; else fail "$(basename "$(dirname "$artifact")") test-writer conserva un temporal global"; fi
