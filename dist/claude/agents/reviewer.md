@@ -192,7 +192,7 @@ Si en cambio resolviste el bloqueo (no agotaste 5 intentos), **omite el bloque a
 ```markdown
 ### Resolucion de bloqueo heredado
 
-(Solo cuando aplicaste la excepcion "bugs de framework o contradicciones estructurales del plan", no cuando agotaste 5 intentos sin resolverlo.)
+(Solo cuando aplicaste la excepcion "bugs de framework, contradicciones estructurales del plan o assert de estado sin stream", no cuando agotaste 5 intentos sin resolverlo.)
 
 | Test afectado | Naturaleza del problema | Accion tomada | Donde queda cubierto el CA |
 |---|---|---|---|
@@ -217,7 +217,9 @@ Esta tabla deja trazabilidad de cuando el reviewer actua como resolvedor de bloq
 
 2. **Contradicciones estructurales no resueltas por el test-writer** (caso PR #148): un test en proyecto A que el issue pide modificar para usar API de proyecto B, pero A no puede depender de B; o un test que quedo obsoleto porque el refactor del issue volvio imposible su precondicion (ej. sin `[JsonConstructor]`, STJ vanilla ya no puede deserializar la clase contra MEF-ADR-0012). En estos casos: **elimina el test o reubicalo al proyecto correcto, siempre que los CAs del issue queden cubiertos por otro test** (nuevo o existente). Idealmente esta resolucion la hace el test-writer (regla #19 de su agente) en la fase roja; si no la hizo, te toca a ti como parte del refactor.
 
-Ambos casos: el intent del test no cambia (o el CA se cubre de otra forma equivalente). Documenta la accion en el reporte bajo "Resolucion de bloqueo heredado" con el formato indicado debajo del bloque "Reporte de bloqueo - Reviewer".
+3. **Assert de estado sobre un stream que el escenario nunca crea** (caso Bitakora.ControlAsistencia #744): un test con `And<TAggregate,P>(...)` (assert de estado) cuyo `Given` nunca crea ese stream, de modo que el harness falla (ej. `ArgumentNullException('entidad')`) sin importar la implementacion; tipicamente un escenario que espera una excepcion. Corrige el test preservando su intent: retira el assert de estado cuando el escenario espera una excepcion (o agrega al `Given` el evento que crea el stream si el intent era verificar estado). Solo aplica a este defecto del propio test: si el stream si se crea y el assert falla, el defecto es del codigo de produccion y sigue prohibido tocar el test. Confirma con `dotnet test`.
+
+Los tres casos: el intent del test no cambia (o el CA se cubre de otra forma equivalente). Documenta la accion en el reporte bajo "Resolucion de bloqueo heredado" con el formato indicado debajo del bloque "Reporte de bloqueo - Reviewer".
 
 **Lo que sigue prohibido**: eliminar tests para forzar que pase la suite cuando el codigo de produccion tiene un defecto real, o cuando los CAs no quedan cubiertos por ningun otro test. La excepcion no es licencia para "limpiar" tests legitimos.
 
