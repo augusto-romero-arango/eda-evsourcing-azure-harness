@@ -154,6 +154,34 @@ interpretar ni migrar una declaración que pudiera contener.
 El digest ata el registro al perfil, pero no prueba identidad humana ni aísla el
 registro de otro proceso con el mismo usuario del host.
 
+### Admisión previa de autonomía (preflight)
+
+`scripts/autonomy-preflight.sh --project-root <raíz-Git> --runtime <id> [--context <ruta>]`
+lee por stdin un único plan JSON `schemaVersion:1` (`launchKind: sequential|parallel|pane`,
+`source: command|direct`, `issues:[{number,pipelineKind}]`, `requestedOperations:[]` cerrado en
+este corte) y responde un único JSON `admissionScope: pre-dispatch` con `status`
+`ready-to-dispatch|legacy|blocked|incomplete`, `projectId`, `profileDigest`, `release`,
+`planDigest`, `resourcesDigest` (o null), `checks:[{code,state,owner,actionCode}]` y
+`diagnostics` sanitizados. Exit 0 para `ready-to-dispatch`/`legacy`, 1 para
+`blocked`/`incomplete`, 2 para protocolo o uso.
+
+Es solo lectura: consulta `autonomy-profile.sh inspect` y `execution-context.sh validate`,
+verifica clausura de scripts y binarios con consultas sin efectos y nunca ejecuta `prepare`,
+`approve`, `project`, `install` ni `restore`, ni escribe logs, config, consentimiento,
+contexto o worktrees. `source:command` exige `--context` (debe vivir en la ruta canónica del
+run del mismo proyecto) con `entryAdmission` ya ligada a la sesión iniciadora; `source:direct`
+no admite contexto y marca la entrada `not-applicable`. Sin perfil y sin contexto, o con
+Claude sin contexto, el resultado es `legacy`; consentimiento revocado, sin aprobar o contexto
+de otro runtime bloquean sin fallback.
+
+`ready-to-dispatch` **no** certifica la sesión futura, permisos remotos ni la finalización de
+una tarea: lo que solo puede probarse después (worktree, actor/modelo/permisos de la etapa,
+fuentes condicionales por rol de la matriz #1822) queda `deferred` con owner
+`run-published-agent.sh/#1858`, y la red/credenciales externas se declaran `remote-unverified`.
+Una fuente condicional sin alternativa disponible ahora jamás es `pass`. El cableado en los
+orquestadores (#1826) es un issue aparte; `onboard-diagnose.sh` conserva su contrato
+informativo independiente.
+
 ```bash
 jq -c -f src/published/contract/autonomy-profile.validate.jq envelope.json
 src/published/scripts/tests/test-autonomy-profile-contract.sh
