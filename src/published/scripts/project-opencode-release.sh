@@ -3,6 +3,7 @@
 # Uso: project-opencode-release.sh project | deactivate | status | projection-status
 set -euo pipefail
 export LC_ALL=C
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 
 error() { printf 'ERROR: %s\n' "$1" >&2; exit 1; }
 data_root() {
@@ -20,6 +21,28 @@ config_root() {
 }
 
 ROOT="$(data_root)"; RELEASES="$ROOT/releases"; ACTIVE="$ROOT/active"; CONFIG="$(config_root)"; STATE="$CONFIG/.mefisto-projection.json"
+release_use_library() {
+    local base
+    for base in "$SCRIPT_DIR" "$SCRIPT_DIR/src/published/scripts"; do
+        if [ -f "$base/lib/release-use-process.sh" ] && [ -f "$base/adapters/lib/opencode-release-use.sh" ]; then source "$base/lib/release-use-process.sh"; source "$base/adapters/lib/opencode-release-use.sh"; return 0; fi
+    done
+    return 1
+}
+lifecycle_mutation_guard_locked() {
+    local inspect request response revision ids
+    release_use_library || return 1
+    inspect="$(RELEASE_USE_LOCK_TOKEN="$LOCK_TOKEN" opencode_release_use_inspect_locked "$ROOT" "$(jq -cn --arg id "inspect-${LOCK_TOKEN}" '{schemaVersion:1,requestId:$id,operation:"inspect",id:null,release:null}')")" || return 1
+    jq -e '.status=="ok"' >/dev/null 2>&1 <<<"$inspect" || return 1
+    revision="$(jq -r .revision <<<"$inspect")"
+    request="$(jq -cn --arg id "reconcile-${LOCK_TOKEN}" --argjson revision "$revision" '{schemaVersion:1,requestId:$id,operation:"reconcile",expectedRevision:$revision}')"
+    response="$(RELEASE_USE_LOCK_TOKEN="$LOCK_TOKEN" opencode_release_use_reconcile_locked "$ROOT" "$request")" || return $?
+    jq -e '.status=="ok"' >/dev/null 2>&1 <<<"$response" || return 1
+    inspect="$(RELEASE_USE_LOCK_TOKEN="$LOCK_TOKEN" opencode_release_use_inspect_locked "$ROOT" "$(jq -cn --arg id "inspect-after-${LOCK_TOKEN}" '{schemaVersion:1,requestId:$id,operation:"inspect",id:null,release:null}')")" || return 1
+    jq -e '.status=="ok" and (.executionBlockers|length==0)' >/dev/null 2>&1 <<<"$inspect" && return 0
+    ids="$(jq -r '[.executionBlockers[]|.id]|join(",")' <<<"$inspect" 2>/dev/null)"
+    printf 'MEFISTO_LIFECYCLE_BUSY: referencias activas (%s); finalice o reconcilie evidencia verificable y reintente.\n' "${ids:-desconocidas}" >&2
+    return 75
+}
 lock_owner_description() {
     local operation pid
     operation="$(command cat "$LOCK/operation" 2>/dev/null || true)"
@@ -175,6 +198,7 @@ project() {
     local release paths rel target parent tmp previous_dirs='[]'
     command -v jq >/dev/null 2>&1 || error 'jq es requerido para proyectar la configuracion'
     acquire_lock project
+    lifecycle_mutation_guard_locked || exit $?
     release="$(active_release)"; paths="$(list_sources "$release")"
     validate_owned
     [ ! -f "$STATE" ] || previous_dirs="$(jq -c '.directories' "$STATE")"
@@ -203,6 +227,7 @@ project() {
 deactivate() {
     command -v jq >/dev/null 2>&1 || error 'jq es requerido para retirar la proyeccion'
     acquire_lock deactivate
+    lifecycle_mutation_guard_locked || exit $?
     { [ -e "$STATE" ] || [ -L "$STATE" ]; } || { printf 'No hay proyeccion Mefisto que retirar en %s.\n' "$CONFIG"; return 0; }
     validate_owned; remove_links; remove_directories; rm -f "$STATE"; rmdir "$CONFIG" 2>/dev/null || true
     printf 'Proyeccion Mefisto retirada; la configuracion ajena permanece intacta.\n'

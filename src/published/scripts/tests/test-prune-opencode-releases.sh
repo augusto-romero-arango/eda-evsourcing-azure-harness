@@ -58,6 +58,12 @@ printf '%s' "$OUT" | grep -q 'ADVERTENCIA: se conserva entrada ajena o invalida:
 prepare_store "$WORK/retencion"
 bash "$INSTALLER" prune --keep 4 --yes >/dev/null 2>&1; assert_rc "$?" 0 'retencion total configurable se aplica'
 [ ! -e "$XDG_DATA_HOME/mefisto/releases/3.0.0" ] && [ -d "$XDG_DATA_HOME/mefisto/releases/4.0.0" ] && [ -d "$XDG_DATA_HOME/mefisto/releases/5.0.0" ] && pass 'retencion cuatro conserva protegidas y las dos mas nuevas' || fail 'retencion cuatro produjo un conjunto incorrecto'
+prepare_store "$WORK/referenciada"
+ROOT="$XDG_DATA_HOME/mefisto"; mkdir -p "$ROOT/runtime-use/v1"; chmod 700 "$ROOT/runtime-use" "$ROOT/runtime-use/v1"
+jq -n --arg root "$ROOT/releases/1.0.0" '{schemaVersion:1,revision:1,leases:[{id:"retain-a",kind:"retain",phase:"active",release:{root:$root,version:"1.0.0",commit:"0123456789abcdef0123456789abcdef01234567"},owner:{schemaVersion:1,hostFingerprint:"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",bootId:"fixture",pid:999999,pgid:999999,startToken:"fixture"},parentId:null,runId:"fixture",projectId:"fixture",coverage:"unknown",bindingDigest:null,finishedReason:null}]}' > "$ROOT/runtime-use/v1/registry.json"
+chmod 600 "$ROOT/runtime-use/v1/registry.json"
+OUT="$(bash "$INSTALLER" prune --keep 0 --yes 2>&1)"; assert_rc "$?" 0 'poda reconcilia referencias sin borrar las de cobertura desconocida'
+[ -d "$ROOT/releases/1.0.0" ] && printf '%s' "$OUT" | grep -q '1.0.0' && pass 'release retenida por corrida no entra en candidatas aunque active sea otra' || fail 'poda candidato una release referenciada'
 HOME="$WORK/semver/home"; XDG_DATA_HOME="$HOME/data"; export HOME XDG_DATA_HOME
 mkdir -p "$XDG_DATA_HOME/mefisto/releases"
 release 1.0.0; release 2.0.0-alpha.2; release 2.0.0-alpha.10; release 2.0.0

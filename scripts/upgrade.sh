@@ -200,7 +200,7 @@ _prune_opencode() {
 }
 
 _update_opencode() {
-    local launcher slug tag version loaded
+    local launcher slug tag version loaded rc
     command -v gh >/dev/null 2>&1 || { echo "ERROR: gh es requerido para resolver la ultima release." >&2; return 1; }
     launcher=$(_launcher_path)
     [ -x "$launcher" ] || {
@@ -227,9 +227,9 @@ _update_opencode() {
     TARGET_VERSION="$version"
 
     echo "Instalando OpenCode v$version con el launcher activo (verifica checksum)..."
-    "$launcher" install "$version" || { echo "ERROR: install fallo; las releases existentes se conservan." >&2; return 1; }
-    "$launcher" activate "$version" || { echo "ERROR: activate fallo; usa el launcher para rollback." >&2; return 1; }
-    "$launcher" project || { echo "ERROR: project fallo o conflicto; corrige y reintenta." >&2; return 1; }
+    "$launcher" install "$version" || { rc=$?; [ "$rc" -eq 75 ] && return 75; echo "ERROR: install fallo; las releases existentes se conservan." >&2; return "$rc"; }
+    "$launcher" activate "$version" || { rc=$?; [ "$rc" -eq 75 ] && return 75; echo "ERROR: activate fallo; usa el launcher para rollback." >&2; return "$rc"; }
+    "$launcher" project || { rc=$?; [ "$rc" -eq 75 ] && return 75; echo "ERROR: project fallo o conflicto; corrige y reintenta." >&2; return "$rc"; }
     "$launcher" status || { echo "ERROR: status reporto una instalacion incompleta." >&2; return 1; }
     "$launcher" projection-status || { echo "ERROR: projection-status no confirmo la proyeccion." >&2; return 1; }
 
