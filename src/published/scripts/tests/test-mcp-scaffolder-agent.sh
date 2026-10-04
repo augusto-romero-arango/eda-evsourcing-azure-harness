@@ -32,21 +32,26 @@ contains "$body" '{{mefisto:command onboard}}' 'remite al contrato via command o
 echo '[fuentes] reverificacion condicional de pines'
 SOURCE_FIXTURE="$HERE/fixtures/mcp-scaffolder-sources/cases.json"
 if jq -e '
-    .schemaVersion == 1 and (.cases | length) == 4 and
+    .schemaVersion == 1 and (.cases | length) == 5 and
     any(.cases[]; .id == "local-pins-intactos" and .expected == "sin-red-extra") and
-    any(.cases[]; .id == "nuget-pin-exacto" and .version == "1.6.0" and .queryTerms == ["Microsoft.Azure.Functions.Worker.Extensions.Mcp","1.6.0"] and .expected == "version-exacta-no-latest") and
-    any(.cases[]; .id == "oauth-versionado" and .queryTerms == ["WorkOS AuthKit","version requerida","OAuth"] and .expected == "fuente-oficial-versionada") and
+    any(.cases[]; .id == "nuget-pin-exacto" and .tool == "WebFetch" and .requiredVersion == "1.6.0" and .latestAbsolute == "1.7.0" and (.fetchedUrl | endswith("/microsoft.azure.functions.worker.extensions.mcp/index.json")) and .expected == "adoptar-1.6.0") and
+    any(.cases[]; .id == "nuget-nuspec-exacto" and .tool == "WebFetch" and .requiredVersion == "1.6.0" and (.fetchedUrl | endswith("/1.6.0/microsoft.azure.functions.worker.extensions.mcp.1.6.0.nuspec")) and .expected == "dependencias-de-1.6.0") and
+    any(.cases[]; .id == "oauth-versionado" and .tool == "WebFetch" and .queryTerms == ["WorkOS AuthKit","v1.2.3","OAuth"] and .requiredVersion == "v1.2.3" and .latestAbsolute == "v2.0.0" and (.fetchedUrl | endswith("/tree/v1.2.3")) and .expected == "adoptar-v1.2.3") and
     any(.cases[]; .id == "fuente-ausente" and .expected == "NO VERIFICADO") and
-    all(.cases[].queryTerms[]; IN("Microsoft.Azure.Functions.Worker.Extensions.Mcp", "1.6.0", "WorkOS AuthKit", "version requerida", "OAuth"))
+    all(.cases[]; all(.queryTerms[]?; IN("WorkOS AuthKit", "v1.2.3", "OAuth"))) and
+    all(.cases[]; ((.queryTerms // []) | join(" ") | test("client_id|secret|key|token|https?://"; "i") | not))
 ' "$SOURCE_FIXTURE" >/dev/null 2>&1; then
-    pass 'fixture separa pines intactos, paquete exacto, OAuth versionado y fuente ausente'
+    pass 'fixture separa flujo local, index, nuspec, OAuth versionado y fuente ausente'
 else
     fail 'fixture de reverificacion de mcp-scaffolder incompleta'
 fi
 for statement in \
     'no consultes red por defecto y conserva el flujo existente' \
     'fuente publica oficial de **esa version requerida**' \
-    'prueban existencia y dependencias de la version exacta, no autorizan adoptar la ultima version absoluta' \
+    'la evidencia la aporta WebFetch sobre la pagina, tag o archivo oficial que identifica esa version' \
+    'para comprobar que contiene el pin exacto' \
+    'para probar las dependencias de esa misma version' \
+    'no de su pagina `latest`' \
     'nunca `client_id`, secretos, keys, URLs privadas, tokens, configuracion ni payloads del BC' \
     'informa **NO VERIFICADO** y deja como propuesta sin aprobar el cambio dependiente' \
     'no sustituyas la consulta con `curl` ni con un MCP generico' \
