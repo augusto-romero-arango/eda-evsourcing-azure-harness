@@ -551,6 +551,33 @@ semántica de raíces requiere revalidación antes de reutilizar este oráculo.
 
 ## Validación
 
+## Matriz de verificación de fuentes
+
+`source-verification.json` declara las vías suficientes para cada uno de los 22
+roles publicados. Sus opciones son alternativas, no grants: una URL citada por
+un issue no añade permisos. El helper puro `scripts/lib/source-verification.jq`
+recibe matriz, registro MCP, frontmatters ya extraídos y los casos condicionales
+que el cambio exige; no lee disco, red, reloj ni credenciales.
+
+```bash
+src/published/scripts/validate-source-verification.sh
+src/published/scripts/validate-source-verification.sh --require planner/non-microsoft-official
+```
+
+La salida por caso es `declared`, `capability-missing`,
+`external-unobserved` o `not-required`. `declared` prueba solo metadata:
+contenido/fuente suficiente, tool descubierta y permiso efectivo de una sesión
+son tres fronteras distintas. Un MCP externo declarado queda
+`external-unobserved`; una tool web o MCP no certifica conexión, discovery ni
+autorización efectiva. El preflight posterior verifica disponibilidad derivada
+del rol y del plan, no certifica una sesión futura al generar este JSON.
+
+Los casos condicionales solo se evalúan cuando el cambio los requiere. La
+ausencia actual de web para `planner` y los scaffolders sigue visible como
+`capability-missing` al requerirlos; los issues #1878, #1879, #1880, #1881,
+#1882 y #1883 resuelven esos gaps. #1827 no puede usar la matriz por sí sola
+como evidencia de conexión MCP/web real.
+
 ```bash
 src/published/scripts/validate-published-artifacts.sh [archivo...]
 ```
