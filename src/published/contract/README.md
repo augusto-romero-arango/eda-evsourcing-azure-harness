@@ -238,6 +238,58 @@ Handoff del operador (el hash no es consentimiento): revisar el Markdown, incorp
 consumidor y, fuera de la etapa del lote, ejecutar `autonomy-profile.sh preview` y `approve`.
 Prueba: `src/published/scripts/tests/test-fix-review-prepare.sh`.
 
+### Recibos de pushes y respuestas de fix-review
+
+`scripts/fix-review-receipts.sh` (issue #1888) registra **solo** las transiciones que la corrida
+aprobada ya ejecuto; no hace push, no publica respuestas, no aprueba ni repara config y no es un
+bypass de revision. Un agente o el comando final lo invocan despues de cada accion remota:
+
+```bash
+printf '%s' "$REQUEST_JSON" | scripts/fix-review-receipts.sh \
+  <record-push|record-reply|record-consumer-issue|record-harness-draft> \
+  --project-root <approved-root> --plan-id <planDigest> [--reference <id>]
+scripts/fix-review-receipts.sh status --project-root <approved-root> --plan-id <planDigest>
+```
+
+- Request JSON `schemaVersion: 1` de claves cerradas, sin bodies: `runId` mas `phase`
+  (`corrections|improvements`), `from`, `to`, `improvementClass?`, `verification?`
+  (`[{command,exitCode}]`) para `record-push`; `replyId` para `record-reply`; `origin`
+  (`comment:<id>|improvement:<id-local>`), `issueNumber`, `repo` para issues/drafts.
+  `--reference` es opcional y debe coincidir con `to`/`replyId`/`issueNumber`.
+- La accion nunca viene del request: se deriva de la operacion y se compara con el plan sellado
+  (#1887) y los grants exactos de `autonomy-profile.sh inspect` (#1886); consentimiento no `ready`,
+  perfil cambiado o `runId` distinto del fijado en la primera transicion es `conflict`.
+- `record-push`: `from` = head inicial o ultimo recibido, `to` = HEAD local = `headRefOid`, misma
+  rama/repo, descendencia sin merges ni symlinks. `corrections` solo toca rutas de los edits
+  exactos del triaje y exige las verificaciones declaradas; `improvements` solo rutas de la clase
+  aprobada y dentro de `limits.localFiles`. Una ruta permitida no prueba semantica: en duda, falla.
+- `record-reply`: GET del review comment nuevo (autor = identidad de la corrida, PR esperado,
+  `in_reply_to_id` entre los comentarios del plan); una respuesta por padre; no abre destinatarios
+  ni resuelve threads.
+- `record-consumer-issue`: solo `comment:<id>` con categoria `investigar` o `improvement:<id>` con
+  `consumerIssues` aprobado, repo consumidor, dentro del cupo y con referencia al PR en el issue.
+  `record-harness-draft`: solo repo Mefisto (`repoSlug` del config o el default), labels
+  `estado:borrador` + `tipo:tooling`, cupo `limits.drafts`.
+- Libro `.mefisto/pipeline/autonomy/fix-review/<planDigest>.receipts.json` (0600, sin symlinks,
+  `mkdir`-lock + temp/rename + CAS por `revision`): `headTransitions`, `replies` (`replyId`,
+  `parentId`) e `issues` (tipo, repo, numero, origen, PR). Nunca bodies, comandos, texto del plan ni
+  secretos.
+- Respuesta `{schemaVersion,status:recorded|conflict|unknown|ok|none,operation,planDigest,runId,
+  code,recovery,revision}`; salida de proceso 0 recorded/ok/none, 1 conflict, 2 uso/entorno,
+  3 unknown. Codigos `conflict` estables: `ACTION_NOT_GRANTED`, `CONSENT_NOT_READY`,
+  `RUN_ID_MISMATCH`, `PROFILE_DIGEST_MISMATCH`, `HEAD_CHAIN_BROKEN`, `REMOTE_HEAD_MISMATCH`,
+  `PATH_NOT_PLANNED`, `PATH_NOT_IN_CLASS`, `CLASS_NOT_APPROVED`, `LOCAL_FILES_QUOTA_EXCEEDED`,
+  `VERIFICATION_NOT_DECLARED`, `DUPLICATE_REPLY`, `REPLY_PARENT_NOT_APPROVED`,
+  `REPLY_AUTHOR_MISMATCH`, `ORIGIN_NOT_INVESTIGAR`, `QUOTA_EXCEEDED`, `DRAFT_LABELS_INVALID`,
+  `RECEIPTS_INSECURE`, `STATE_SYMLINK`, `RECEIPTS_CAS_FAILED`, `LOCK_HELD`.
+- Recuperacion: una API que falla (`unknown`, `REPLY_UNCONFIRMED`/`ISSUE_UNCONFIRMED`) no registra
+  nada y no autoriza repetir el POST: confirma con evidencia **una sola vez** y repite el registro.
+  Ausencia de recibo tras una operacion remota no es consentimiento: `status` solo diagnostica.
+  `LOCK_HELD` persistente: verifica que no haya otro escritor y elimina el directorio `.lock`.
+
+Es un libro de contabilidad local, no un sandbox: un proceso con permisos de shell del mismo
+usuario puede editar el libro. Prueba: `src/published/scripts/tests/test-fix-review-receipts.sh`.
+
 ## Permisos Bash de OpenCode
 
 La capacidad neutral `shell` genera `permission.bash` con `"*": "deny"`.
