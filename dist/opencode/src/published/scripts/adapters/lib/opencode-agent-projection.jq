@@ -167,7 +167,8 @@ include "opencode-entry-permissions";
                  (($o.rules | map(_normalize_rule)) | . as $or | range(0; length) as $i | select($or[$i].value == "allow" and (($or[$i] | norm_rule) as $g | (any($p.rules[]; . == $g) or _grant_proven($p.rules; $g; $home)) | not)) | err("OBSERVED_GRANT_NOT_PROVABLE"; $p.actor.originalId))
                end)
           end ]
-      + [ $obs[] | . as $o | select(any($ps[]; .actor != null and .actor.alias == $o.name) | not) | err("UNEXPECTED_ACTOR"; "observed") ];
+      + [ $obs[] | . as $o | select(any($ps[]; .actor != null and .actor.alias == $o.name) | not) | err("UNEXPECTED_ACTOR"; "observed") ]
+      + (if ($obs | map(.name) | length) != ($obs | map(.name) | unique | length) then [err("OBSERVATION_DUPLICATED"; "observed")] else [] end);
 
   ([ $in.roles[] | project_role(.) ]) as $ps
   | ($ps | map(.diags[])) as $d0

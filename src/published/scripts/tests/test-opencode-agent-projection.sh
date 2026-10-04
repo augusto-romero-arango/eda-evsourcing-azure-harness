@@ -56,7 +56,6 @@ assert 'NuGet solo para roles que lo declaran' --arg n "$NUGET" '[.actors[] | {k
 assert 'shell: solo el prefijo de attach y deny generico, sin prepare/approve/finish' '.actors[0].permission.bash | (to_entries | map(select(.value=="allow")) | length)==1 and (.["*"]=="deny") and (keys[1] | test("execution-context.sh\" attach --shell-pid 4242 --request")) and (tostring | test("prepare|approve|finish") | not)'
 assert 'Task denegado por defecto y sin shell/task/MCP universales' '.actors[0].permission | (.task=={"*":"deny"}) and (.bash["*"]=="deny") and (.["microsoft-learn_*"]=={"*":"deny"})'
 assert 'diagnosticos y salida sin prompts ni patrones crudos' '(tostring | test("sourceDigest|You are|Eres") | not)'
-EOF_PLACEHOLDER=1
 printf '%s\n' '[ownership]'
 run < <(envelope config "$ROLES" '.originals |= map(if .id=="tooling-writer" then .promptHash="0" else . end)')
 assert 'prompt ajeno es conflicto y no emite actores' '.status=="conflict" and .actors==[] and (.diagnostics | any(.code=="PROMPT_OWNERSHIP")) and .projectionDigest==null'
@@ -122,7 +121,7 @@ CFG="$(envelope config "$ROLES" | { "$CLI" 2>/dev/null; })"
 OBS_RULES="$(jq -c '.actors[0] | [.permission | to_entries[] | .key as $p | .value | if type=="object" then to_entries[] | {permission:$p,pattern:.key,value:.value} else {permission:$p,pattern:"*",value:.} end]' <<< "$CFG")"
 verify_env() {
     local rules="$1" extra="${2:-.}"
-    envelope verify '[{"role":"tooling-writer","taskTargets":[],"attach":'"$(attach)"'}]' | jq -c --argjson rules "$rules" --slurpfile m "$MAN" '.observed=[{name:"autonomy-tooling-writer",mode:$m[0].roles[] .mode,promptHash:($m[0].roles[]|select(.id=="tooling-writer")|.sourceDigest),rules:$rules,available:true}]' | jq -c "$extra"
+    envelope verify '[{"role":"tooling-writer","taskTargets":[],"attach":'"$(attach)"'}]' | jq -c --argjson rules "$rules" --slurpfile m "$MAN" '.observed=[{name:"autonomy-tooling-writer",mode:($m[0].roles[]|select(.id=="tooling-writer")|.mode),promptHash:($m[0].roles[]|select(.id=="tooling-writer")|.sourceDigest),rules:$rules,available:true}]' | jq -c "$extra"
 }
 run < <(verify_env "$OBS_RULES")
 assert 'observacion identica a la proyeccion es ready con digest de observacion' '.status=="ready" and .phase=="verify" and (.observations[0].observationDigest|length)==64 and (.projectionDigest|length)==64'
@@ -134,6 +133,8 @@ run < <(verify_env "$(jq -c '. + [{permission:"bash",pattern:"curl *",value:"all
 assert 'ampliacion observada no demostrable es conflicto' '.diagnostics | any(.code=="OBSERVED_GRANT_NOT_PROVABLE" or .code=="OBSERVED_WIDENING")'
 run < <(verify_env "$(jq -c '[.[] | select(.permission != "edit")]' <<< "$OBS_RULES")")
 assert 'operacion requerida ausente en la observacion es conflicto' '.diagnostics | any(.code=="OBSERVED_OPERATION_DENIED")'
+run < <(verify_env "$OBS_RULES" '.observed += [.observed[0] | .rules = []]')
+assert 'observaciones duplicadas del mismo alias son conflicto' '.status=="conflict" and (.diagnostics | any(.code=="OBSERVATION_DUPLICATED"))'
 run < <(verify_env "$OBS_RULES" '.observed=[]')
 assert 'sin actor observado no se acepta la mera presencia del alias' '.diagnostics | any(.code=="ACTOR_NOT_OBSERVED")'
 run < <(verify_env "$OBS_RULES" 'del(.observed)')
