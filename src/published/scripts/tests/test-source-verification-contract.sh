@@ -7,6 +7,7 @@ FILTER="$ROOT/src/published/scripts/lib/source-verification.jq"
 REPORT="$ROOT/src/published/scripts/validate-source-verification.sh"
 FIXTURE="$ROOT/src/published/scripts/tests/fixtures/source-verification/role-metadata.json"
 PINS_FIXTURE="$ROOT/src/published/scripts/tests/fixtures/source-verification/domain-scaffolder-pins.json"
+DOMAIN_AGENT="$ROOT/src/published/agents/domain-scaffolder.md"
 PASS=0 FAIL=0
 pass() { printf '  PASS: %s\n' "$1"; PASS=$((PASS + 1)); }
 fail() { printf '  FAIL: %s\n' "$1"; FAIL=$((FAIL + 1)); }
@@ -21,14 +22,40 @@ else
 fi
 
 if jq -e '
-    (.pins | length) == 3 and
-    any(.pins[]; .id == "Microsoft.Azure.Functions.Worker.OpenTelemetry" and .version == "1.2.0" and .effectiveDependencies == ["Microsoft.Azure.Functions.Worker.Core >= 2.52.0"]) and
-    any(.pins[]; .id == "OpenTelemetry.Extensions.Hosting" and .version == "1.15.3") and
-    any(.pins[]; .id == "FluentValidation.DependencyInjectionExtensions" and .version == "11.12.0" and .latestPublished == "12.0.0" and .requiredMajor == 11)
+    def package($id): .packages[] | select(.id == $id);
+    (.schemaVersion == 1 and (.packages | length) == 3) and
+    (package("Microsoft.Azure.Functions.Worker.OpenTelemetry") as $worker |
+        ($worker.index.versions | index($worker.requiredVersion)) != null and
+        $worker.index.versions[-1] == $worker.requiredVersion and
+        any($worker.nuspec.dependencies[];
+            .id == "Microsoft.Azure.Functions.Worker.Core" and .version == "[2.52.0, )")) and
+    (package("OpenTelemetry.Extensions.Hosting") as $otel |
+        ($otel.index.versions | index($otel.requiredVersion)) != null and
+        $otel.index.versions[-1] == $otel.requiredVersion) and
+    (package("FluentValidation.DependencyInjectionExtensions") as $fluent |
+        ($fluent.index.versions | index($fluent.requiredVersion)) != null and
+        $fluent.index.versions[-1] == "12.0.0" and
+        [$fluent.index.versions[] | select((split(".")[0] | tonumber) == $fluent.requiredMajor)][-1] == $fluent.requiredVersion)
 ' "$PINS_FIXTURE" >/dev/null; then
-    pass 'fixture fija Worker/OTel, dependencia de nuspec y limite major de FluentValidation'
+    pass 'fixture deriva existencia, latest, dependencia de nuspec y limite major de FluentValidation'
 else
     fail 'fixture de pines no distingue existencia, latest y dependencia efectiva'
+fi
+
+domain_policy_ok=1
+for statement in \
+    'No consultes red automaticamente ni sustituyas un pin por `latest`.' \
+    'fuente oficial publica de **la version y linea requeridas** con WebFetch/WebSearch' \
+    'pero no demuestra el grafo del `.nuspec`.' \
+    'informa **NO VERIFICADO**' \
+    'no uses `curl` como sustituto' \
+    'nunca configuracion del consumidor, secretos ni payloads.'; do
+    grep -Fq "$statement" "$DOMAIN_AGENT" || domain_policy_ok=0
+done
+if [ "$domain_policy_ok" -eq 1 ]; then
+    pass 'domain-scaffolder conserva fallback local, fuente oficial, degradacion y consultas sanitizadas'
+else
+    fail 'domain-scaffolder perdio una regla de reverificacion externa'
 fi
 
 actual='[]'

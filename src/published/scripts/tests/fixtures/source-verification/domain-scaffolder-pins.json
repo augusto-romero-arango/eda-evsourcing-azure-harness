@@ -1,24 +1,28 @@
 {
   "schemaVersion": 1,
-  "pins": [
+  "packages": [
     {
       "id": "Microsoft.Azure.Functions.Worker.OpenTelemetry",
-      "version": "1.2.0",
-      "latestPublished": "1.2.0",
-      "effectiveDependencies": ["Microsoft.Azure.Functions.Worker.Core >= 2.52.0"]
+      "requiredVersion": "1.2.0",
+      "index": {"versions": ["1.0.0", "1.1.0", "1.2.0"]},
+      "nuspec": {
+        "dependencies": [
+          {"id": "Microsoft.Azure.Functions.Worker.Core", "version": "[2.52.0, )"}
+        ]
+      }
     },
     {
       "id": "OpenTelemetry.Extensions.Hosting",
-      "version": "1.15.3",
-      "latestPublished": "1.15.3",
-      "effectiveDependencies": []
+      "requiredVersion": "1.15.3",
+      "index": {"versions": ["1.15.1", "1.15.2", "1.15.3"]},
+      "nuspec": {"dependencies": []}
     },
     {
       "id": "FluentValidation.DependencyInjectionExtensions",
-      "version": "11.12.0",
-      "latestPublished": "12.0.0",
-      "effectiveDependencies": [],
-      "requiredMajor": 11
+      "requiredVersion": "11.12.0",
+      "requiredMajor": 11,
+      "index": {"versions": ["11.11.0", "11.12.0", "12.0.0"]},
+      "nuspec": {"dependencies": []}
     }
   ]
 }
