@@ -141,9 +141,11 @@ Todo escritor nuevo escribe solo esas ubicaciones canonicas. Los lectores conser
 El perfil opt-in de autonomia desatendida y su evidencia de admision usan esas
 mismas ubicaciones canonicas: declaracion neutral en
 `.mefisto/harness.config.json` y estado/evidencia por corrida en
-`.mefisto/pipeline/`. MEF-ADR-0055 complementa esta decision sin cambiar la
-lectura legacy, la no mutacion de configuracion global ni la instalacion
-inmutable de releases fijada por esta decision.
+`.mefisto/pipeline/`. La metadata global de usos de una instalación permanece
+en su raíz de datos y no sustituye esos controles por consumidor. MEF-ADR-0055
+complementa esta decision sin cambiar la lectura legacy, la no mutacion de
+configuracion global ni la instalacion inmutable de releases fijada por esta
+decision.
 
 #### Enmienda transitoria: mirror de identidad de release del adaptador Claude (#1099)
 
@@ -249,3 +251,4 @@ Git ni permite comprobar la relacion padre/tag.
 - 2026-09-08: enmienda la decision 4 (issue #1099). Autoriza exclusivamente a `record-active-release` del adaptador publicado Claude a mantener temporalmente el mirror `.claude/pipeline/.plugin-root` y limpiar `.plugin-root.previous`, siempre junto a la escritura canonica primaria; reserva su retiro a un issue posterior con inventario verificable de lectores legacy eliminado.
 - 2026-09-08: enmienda la decision 3 (issue #1126). Define `commit` como el commit fuente de `origin/main` capturado antes de la preparacion mecanica, no como el commit etiquetado; exige que el commit squash del tag tenga ese SHA como padre unico, limita su delta a metadata mecanica y fija manifests comparables sin diagnostico externo. Descarta SHA autorreferencial, solo SemVer, cache, Git o red del consumidor y hash de contenido renombrado como commit. Follow-ups separados: #1135 (registro de raiz transitoria), #1131 (manifiesto Claude), #1134 (alineacion OpenCode), #1132 (release) y la futura raiz Claude autocontenida.
 - 2026-10-03: referencia acotada a MEF-ADR-0055 (issue #1820). El perfil de autonomia desatendida usa `.mefisto/harness.config.json` y `.mefisto/pipeline/` sin modificar precedencia, fallback legacy, configuracion global ni releases inmutables de este ADR.
+- 2026-10-04: referencia acotada a la enmienda de MEF-ADR-0055 (issue #1862). Distingue la metadata global de usos de instalación de la evidencia y autorización por consumidor, sin modificar el contrato canónico ni sus fallbacks.

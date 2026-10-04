@@ -31,7 +31,7 @@ La autorizacion se expresa por funcion y recurso, no como una lista universal de
 | Entrega | Git en ramas de trabajo; PR, revision, merge, observacion y reintentos de CI ya autorizados, sujetos a permisos remotos y politica del repo. |
 | Administracion acotada | Bootstrap, auth, registro/cableado de secretos, mantenimiento y purgas enumerados previamente por operacion, entorno y recurso. Una entrada generica «administrar» no basta. |
 
-Leer la release es capacidad basica: cubre macOS con espacios, Linux y la resolucion de roots XDG/config efectivos para ubicar los recursos autorizados, ademas del cache de paquetes y las salidas del runtime, sin conceder lectura general de esas raices ni de auth stores. Los decompilados son estado propio del consumidor. La release es solo lectura para desarrollo; mantenimiento autorizado puede instalar una release inmutable, cambiar el puntero o podar versiones no usadas, pero nunca editar su contenido ni modificar la release cargada por una corrida.
+Leer la release es capacidad basica: cubre macOS con espacios, Linux y la resolucion de roots XDG/config efectivos para ubicar los recursos autorizados, ademas del cache de paquetes y las salidas del runtime, sin conceder lectura general de esas raices ni de auth stores. Los decompilados son estado propio del consumidor. La release es solo lectura para desarrollo; mantenimiento autorizado puede instalar una release inmutable, cambiar el puntero o podar versiones no usadas, pero nunca editar su contenido. El mantenimiento se coordina entre corridas y no convierte una etapa en mantenimiento.
 
 `tool-output` autoriza lectura de todo el directorio global de resultados del runtime, incluso resultados de otras sesiones o proyectos del mismo usuario. Es un riesgo residual aceptado: ese contenido puede ser sensible. No concede escritura ni lectura de auth stores, logs, bases de sesiones ni el resto de datos/configuracion del runtime. La retencion y aplicacion corresponden a #1846/#1847.
 
@@ -70,6 +70,56 @@ El worker aislado de #1824 es una evolucion posterior: workspace y caches propio
 Sin perfil nuevo, Claude conserva flujo, argumentos, modelos, herramientas/Skills, delegacion, fallbacks y reanudacion; no requiere instalar ni configurar OpenCode ni una migracion silenciosa. Una compensacion exclusiva de OpenCode no altera Claude. Todo cambio neutral declara su delta y exige pruebas en ambos adaptadores: regenerar artefactos no prueba no regresion funcional.
 
 Las implementaciones futuras deben aportar tests deterministas de contratos y regresiones, sin LLM ni red real; un smoke separado y controlado de la release instalada con OpenCode; un control TDD equivalente de Claude hasta verificaciones/PR; y coexistencia sin contaminacion. Los invariantes incluyen consumidor solo Claude, contratos legacy, eventos conocidos y desconocidos, y coexistencia de adaptadores. #1827 registrara plataformas, versiones, casos, evidencia y limitaciones. Este ADR fija la obligacion, no afirma certificacion runtime realizada.
+
+### 7. Enmienda: mantenimiento entre corridas y recuperación conservadora
+
+La instalación distingue tres clases de uso. **Retener** una release cargada e
+idle la protege de la poda, pero no impide actualizar la instalación. **Ejecutar**
+una corrida comprende cola, etapas, hold y reintento: bloquea los cambios
+compartidos mientras exista uso vivo. **Mantener** la instalación se admite solo
+en quiescencia; no es permiso para interrumpir trabajo ni para transformar una
+etapa en mantenimiento. `busy` es una respuesta de coordinación, no éxito ni
+autorización para forzar una operación.
+
+| Evidencia observada | Cambio de `active` o proyección | Poda de su release | Recuperación automática |
+|---|---|---|---|
+| `execute` vivo | `busy` | No | No |
+| `retain` idle | Puede proceder | No | No aplica |
+| Muerte comprobada de propietario y todo descendiente pertinente | Puede proceder tras liberar el uso recuperado | Según las demás retenciones | Sí |
+| Hijo o metadata desconocidos | Retener | No | No |
+| Consentimiento revocado | No admitir una nueva corrida | No otorga excepción | No |
+
+La recuperación automática exige demostrar que el propietario y los
+descendientes pertinentes terminaron. Registra identidad de host y boot,
+identidad estable de cada proceso, relaciones de lanzamiento y cobertura del
+grafo; reobserva esa evidencia antes de recuperar. Un TTL, un PID aislado, el
+PPID actual, una sesión idle o `exit 0` no prueban por sí solos la terminación
+ni la completitud. Ante incertidumbre conserva la retención. La recuperación no
+envía señales a procesos ni poda por su cuenta, y no promete recuperar un mutex
+legado abandonado cuando no haya evidencia suficiente.
+
+El registro global de esos usos es metadata de la **instalación** bajo la raíz
+de datos de Mefisto, no estado de negocio ni consentimiento del consumidor. El
+contexto por proyecto, su evidencia y autorización permanecen bajo
+`.mefisto/pipeline/`; ningún registro global contiene secretos ni permite a una
+etapa escribir sus controles. Este límite no promete aislamiento frente al
+mismo usuario local ni soporte distribuido o sobre NFS.
+
+El guard que aplica este modelo es síncrono y observa al actor que realmente
+ejecuta. En OpenCode, un fallo de configuración puede ignorarse y la CLI puede
+caer a un valor por defecto [3][4]; por ello el modo headless preparado exige un
+handshake de la misma instancia antes del prompt y una revalidación posterior.
+Los parámetros de chat deben observarse en la petición efectiva, no inferirse
+de una configuración deseada [5]. Un servicio local privado no equivale al
+worker aislado de #1824 ni a un sandbox: OpenCode declara que no proporciona
+sandbox [1].
+
+La ausencia de perfil (`NO_PROFILE`) conserva el flujo legacy. Una respuesta
+`CONSENT_REVOKED`, o un contexto controlado inválido, no se convierte en
+fallback para una corrida automática: conserva firma y códigos del validador
+actual y se reporta al caller para que distinga la causa. El lease coordina uso
+de instalación, no reemplaza la autorización administrativa, los modelos o el
+flujo existente del adaptador Claude, ni la administración acotada de este ADR.
 
 ## Alternativas consideradas
 
@@ -115,8 +165,12 @@ Las implementaciones futuras deben aportar tests deterministas de contratos y re
 - MEF-ADR-0053, secciones 2, 4 y 5: releases inmutables, contrato canonico/fallback y paridad distribuida.
 - [1] OpenCode, [Security: No Sandbox](https://github.com/anomalyco/opencode/blob/v1.18.29/SECURITY.md), version 1.18.29; fuente del limite del modo local.
 - [2] OpenCode, [Permissions](https://github.com/anomalyco/opencode/blob/v1.18.29/packages/web/src/content/docs/permissions.mdx), version 1.18.29; fuente del limite de `--auto`.
+- [3] OpenCode, [carga de plugins y disparo de configuración](https://github.com/anomalyco/opencode/blob/v1.18.29/packages/opencode/src/plugin/index.ts), versión 1.18.29; un fallo de configuración no es evidencia de que el guard se aplicó.
+- [4] OpenCode, [fallback de la CLI `run`](https://github.com/anomalyco/opencode/blob/v1.18.29/packages/opencode/src/cli/cmd/run.ts), versión 1.18.29; la instancia efectiva puede diferir del valor preparado.
+- [5] OpenCode, [parámetros efectivos de petición de chat](https://github.com/anomalyco/opencode/blob/v1.18.29/packages/opencode/src/session/llm/request.ts), versión 1.18.29; fundamento para observar la petición de la misma instancia.
 - Issue #1820: origen y decisiones del mantenedor; #1821--#1827: implementacion y certificacion posteriores.
 
 ## Control de cambios
 
 - 2026-10-03: creacion como `aceptado` (issue #1820). Fija perfil opt-in por proyecto, entrada controlada, administracion preautorizada y acotada, ciclo de admision con evidencia, local primero sin promesa de sandbox y compatibilidad/certificacion futura; no implementa permisos ni declara certificacion runtime.
+- 2026-10-04: enmienda (issue #1862). Precisa la convención de mantenimiento entre corridas, la recuperación automática solo con terminación demostrable del grafo pertinente, la separación entre metadata global de instalación y controles del consumidor, el guard síncrono sobre la instancia efectiva y el tratamiento no fallback de `CONSENT_REVOKED`; no implementa ni certifica esos mecanismos.
