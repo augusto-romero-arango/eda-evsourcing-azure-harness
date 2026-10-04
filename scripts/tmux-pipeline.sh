@@ -20,6 +20,15 @@
 
 set -euo pipefail
 
+# --- Frontera de entorno (issue #1740) ---
+# Este wrapper no puede distinguir un override intencional de uno heredado del
+# servidor tmux (que pudo nacer en otra distribucion/consumidor), asi que
+# descarta los overrides de path ANTES de sourcear nada y usa siempre las
+# raices de ESTA distribucion y de ESTE consumidor. Los pipelines invocados
+# directamente conservan sus overrides. Solo garantiza paths y runtime del hijo
+# tmux; el transporte de contextos/leases por pane es de #1861.
+unset MEFISTO_RUNTIME_LIB_DIR MEFISTO_MODELS_VALIDATOR MEFISTO_STATE_DIR MEFISTO_LEGACY_STATE_DIR
+
 # --- Funciones compartidas ---
 source "$(dirname "${BASH_SOURCE[0]}")/_pipeline-common.sh"
 
@@ -30,11 +39,19 @@ source "$(dirname "${BASH_SOURCE[0]}")/_pipeline-common.sh"
 # (mefisto_resolve_runtime) ocurre mas abajo, dentro de main(), despues del
 # punto de delegacion a Herdr y solo en los modos que lanzan un sub-pipeline.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-RUNTIME_LIB_DIR="${MEFISTO_RUNTIME_LIB_DIR:-$(cd "$SCRIPT_DIR/../src/runtime/lib" 2>/dev/null && pwd -P)}"
+RUNTIME_LIB_DIR="$(cd "$SCRIPT_DIR/../src/runtime/lib" 2>/dev/null && pwd -P)" || RUNTIME_LIB_DIR=""
+# Con `|| ...` explicito: bajo `set -e` una sustitucion fallida (falta el
+# directorio contract/) abortaria en silencio, sin la causa del guard de abajo.
+MODELS_VALIDATOR="$(cd "$SCRIPT_DIR/../src/runtime/contract" 2>/dev/null && pwd -P)/models.validate.jq" \
+    || MODELS_VALIDATOR=""
 [ -d "$RUNTIME_LIB_DIR" ] \
     || { echo "ERROR: no se encontro src/runtime/lib junto al paquete publicado" >&2; exit 1; }
 [ -f "$RUNTIME_LIB_DIR/mefisto-runtime.sh" ] \
     || { echo "ERROR: no se encontro mefisto-runtime.sh en la clausura publicada" >&2; exit 1; }
+[ -f "$RUNTIME_LIB_DIR/mefisto-models.sh" ] \
+    || { echo "ERROR: no se encontro mefisto-models.sh en la clausura publicada" >&2; exit 1; }
+[ -f "$MODELS_VALIDATOR" ] \
+    || { echo "ERROR: no se encontro models.validate.jq en la clausura publicada" >&2; exit 1; }
 source "$RUNTIME_LIB_DIR/mefisto-runtime.sh"
 
 # Guard defensivo: este pipeline es del lado publicado y solo aplica al consumidor.
@@ -78,13 +95,37 @@ RESOLVED_RUNTIME=""
 # PROJECT_ROOT: repo objetivo del consumidor (git toplevel del cwd del usuario),
 # donde se crean las sesiones tmux, los logs y events.log. NO se deriva de
 # SCRIPT_DIR porque el plugin ya no vive dentro del repo del consumidor.
-PROJECT_ROOT="$_REPO_TOP"
+PROJECT_ROOT="$(cd "$_REPO_TOP" && pwd -P)"
+# Roots de estado de ESTE consumidor (canonica + legacy solo lectura); nunca las
+# heredadas del servidor tmux.
+export MEFISTO_STATE_DIR="$PROJECT_ROOT/.mefisto/pipeline"
+# La ruta legacy se compone por partes: el test del visor exige que este
+# script no la codifique como literal (solo se lee, nunca se escribe).
+_legacy_dir=".claude"
+export MEFISTO_LEGACY_STATE_DIR="$PROJECT_ROOT/$_legacy_dir/pipeline"
+unset _legacy_dir
 EVENTS_LOG="$(mefisto_state_path 'events.log')"
 EVENTS_LOG_LEGACY="$MEFISTO_LEGACY_STATE_DIR/events.log"
 # CAFF: prefijo "caffeinate -i" (o vacio fuera de macOS), calculado UNA vez
 # por corrida y antepuesto al send-keys que lanza cada sub-pipeline -- issue
 # #800. Evita que el Mac entre en suspension idle durante la corrida.
 CAFF="$(caffeinate_prefix)"
+
+# pipeline_env_prefix
+#
+# Prefijo unico de TODOS los comandos de sub-pipeline enviados con send-keys
+# (issue #1740): descarta con `env -u` los cinco overrides heredables del
+# servidor tmux y asigna runtime resuelto, biblioteca/validador de esta
+# distribucion y las dos roots de estado de este consumidor. Valores quoteados
+# con printf %q; sin eval. No usa `env -i` (conserva HOME/PATH/credenciales).
+pipeline_env_prefix() {
+    printf 'env -u MEFISTO_RUNTIME_LIB_DIR -u MEFISTO_MODELS_VALIDATOR -u MEFISTO_STATE_DIR -u MEFISTO_LEGACY_STATE_DIR -u MEFISTO_RUN_AGENT_BIN'
+    printf ' MEFISTO_RUNTIME=%q' "$RESOLVED_RUNTIME"
+    printf ' MEFISTO_RUNTIME_LIB_DIR=%q' "$RUNTIME_LIB_DIR"
+    printf ' MEFISTO_MODELS_VALIDATOR=%q' "$MODELS_VALIDATOR"
+    printf ' MEFISTO_STATE_DIR=%q' "$MEFISTO_STATE_DIR"
+    printf ' MEFISTO_LEGACY_STATE_DIR=%q' "$MEFISTO_LEGACY_STATE_DIR"
+}
 
 # Normaliza la ruta de sub-script devuelta por resolve_pipeline a una ruta
 # absoluta dentro del plugin, para que el pane tmux la encuentre aunque su cwd
@@ -354,7 +395,7 @@ cmd_single() {
     # por si el plugin esta instalado bajo una ruta con espacios (mismo criterio
     # que '$EVENTS_LOG').
     pipe_pane=$(tmux split-window -h -t "$tail_pane" -c "$PROJECT_ROOT" -P -F '#{pane_id}')
-    tmux send-keys -t "$pipe_pane" "MEFISTO_RUNTIME=$(printf '%q' "$RESOLVED_RUNTIME") $CAFF '$resolved' $issue $extra_args" Enter
+    tmux send-keys -t "$pipe_pane" "$CAFF $(pipeline_env_prefix) '$resolved' $issue $extra_args" Enter
 
     tmux select-layout -t "$session:main" even-horizontal
 
@@ -409,7 +450,7 @@ cmd_batch() {
 
     # Pane derecho: batch pipeline
     pipe_pane=$(tmux split-window -h -t "$tail_pane" -c "$PROJECT_ROOT" -P -F '#{pane_id}')
-    tmux send-keys -t "$pipe_pane" "MEFISTO_RUNTIME=$(printf '%q' "$RESOLVED_RUNTIME") $CAFF '$SCRIPT_DIR/batch-pipeline.sh' $pipeline_flag $issues_str" Enter
+    tmux send-keys -t "$pipe_pane" "$CAFF $(pipeline_env_prefix) '$SCRIPT_DIR/batch-pipeline.sh' $pipeline_flag $issues_str" Enter
 
     tmux select-layout -t "$session:main" even-horizontal
 
@@ -521,7 +562,7 @@ cmd_parallel() {
     local pipe_pane
     for i in "${!resolved_issues[@]}"; do
         pipe_pane=$(tmux split-window -h -t "$session:main" -c "$PROJECT_ROOT" -P -F '#{pane_id}')
-        tmux send-keys -t "$pipe_pane" "MEFISTO_RUNTIME=$(printf '%q' "$RESOLVED_RUNTIME") $CAFF '${resolved_pipelines[$i]}' ${resolved_issues[$i]}" Enter
+        tmux send-keys -t "$pipe_pane" "$CAFF $(pipeline_env_prefix) '${resolved_pipelines[$i]}' ${resolved_issues[$i]}" Enter
         # Escalonar lanzamientos: 30s entre cada uno para evitar que multiples
         # invocaciones de claude -p compitan por recursos de API simultaneamente
         if [ "$i" -lt "$(( ${#resolved_issues[@]} - 1 ))" ]; then
@@ -579,7 +620,7 @@ cmd_tooling() {
     tmux send-keys -t "$tail_pane" "tail -F '$EVENTS_LOG' '$EVENTS_LOG_LEGACY'" Enter
 
     pipe_pane=$(tmux split-window -h -t "$tail_pane" -c "$PROJECT_ROOT" -P -F '#{pane_id}')
-    tmux send-keys -t "$pipe_pane" "MEFISTO_RUNTIME=$(printf '%q' "$RESOLVED_RUNTIME") $CAFF '$SCRIPT_DIR/tooling-pipeline.sh' $issue $extra_args" Enter
+    tmux send-keys -t "$pipe_pane" "$CAFF $(pipeline_env_prefix) '$SCRIPT_DIR/tooling-pipeline.sh' $issue $extra_args" Enter
 
     tmux select-layout -t "$session:main" even-horizontal
 
@@ -612,7 +653,7 @@ cmd_infra() {
     tmux send-keys -t "$tail_pane" "tail -F '$EVENTS_LOG' '$EVENTS_LOG_LEGACY'" Enter
 
     pipe_pane=$(tmux split-window -h -t "$tail_pane" -c "$PROJECT_ROOT" -P -F '#{pane_id}')
-    tmux send-keys -t "$pipe_pane" "MEFISTO_RUNTIME=$(printf '%q' "$RESOLVED_RUNTIME") $CAFF '$SCRIPT_DIR/iac-pipeline.sh' $issue $extra_args" Enter
+    tmux send-keys -t "$pipe_pane" "$CAFF $(pipeline_env_prefix) '$SCRIPT_DIR/iac-pipeline.sh' $issue $extra_args" Enter
 
     tmux select-layout -t "$session:main" even-horizontal
 
@@ -676,7 +717,7 @@ cmd_scaffold() {
     tmux send-keys -t "$tail_pane" "tail -F '$EVENTS_LOG' '$EVENTS_LOG_LEGACY'" Enter
 
     pipe_pane=$(tmux split-window -h -t "$tail_pane" -c "$PROJECT_ROOT" -P -F '#{pane_id}')
-    tmux send-keys -t "$pipe_pane" "MEFISTO_RUNTIME=$(printf '%q' "$RESOLVED_RUNTIME") $CAFF '$SCRIPT_DIR/scaffold-pipeline.sh' $pipeline_args" Enter
+    tmux send-keys -t "$pipe_pane" "$CAFF $(pipeline_env_prefix) '$SCRIPT_DIR/scaffold-pipeline.sh' $pipeline_args" Enter
 
     tmux select-layout -t "$session:main" even-horizontal
 
