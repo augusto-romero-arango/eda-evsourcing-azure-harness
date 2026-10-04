@@ -144,6 +144,9 @@ directorio ajeno a Git, manteniendo siempre `--project-root` explícito.
 Los adaptadores y etapas son lectores: usan exclusivamente `inspect`, cuya salida
 estándar es el JSON neutral del validador. Sus códigos son 0 para `disabled` o
 `ready`, 1 para `needs-approval` o `conflict`, y 2 para errores de uso o ejecución.
+Un caller distingue `disabled` con `NO_PROFILE`, que conserva el flujo legacy,
+de `disabled` con `CONSENT_REVOKED`; este último, así como un contexto controlado
+inválido, no habilita fallback de una corrida automática (MEF-ADR-0055).
 El registro canónico es `.mefisto/pipeline/autonomy/consent.json`; no se lee ni
 escribe configuración legacy, stores de autenticación, secretos o servicios remotos.
 Cuando solo existe la configuración legacy, el lector responde `disabled` sin
