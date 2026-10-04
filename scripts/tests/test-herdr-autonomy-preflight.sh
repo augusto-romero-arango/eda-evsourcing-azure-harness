@@ -98,13 +98,13 @@ for mode in "--pipeline tooling 42" "--tooling 42" "--infra 42" "--scaffold 42 -
     new_case; echo "1 $BLOCKED" > "$PF_DIR/mode.1"
     # shellcheck disable=SC2086
     run -- $mode
-    if [ "$RC" -ne 0 ] && no_herdr_mutation && echo "$OUT" | grep -qF CONSENT_REVOKED && [ ! -d "$CONS/.mefisto/pipeline/dispatch" ]; then
-        pass "[$mode] bloqueado sin tocar herdr"
+    if [ "$RC" -ne 0 ] && no_herdr_mutation && echo "$OUT" | grep -qF CONSENT_REVOKED && [ ! -d "$CONS/.mefisto/pipeline/dispatch" ] \
+        && [ "$(pf_count)" = 1 ]; then
+        pass "[$mode] bloqueado sin tocar herdr (un solo preflight)"
     else
-        fail "[$mode] rc=$RC log=$(cat "$HERDR_STUB_LOG")"
+        fail "[$mode] rc=$RC preflights=$(pf_count) log=$(cat "$HERDR_STUB_LOG")"
     fi
 done
-[ "$(pf_count)" = 1 ] && pass "un solo preflight por corrida" || fail "preflights=$(pf_count)"
 
 echo "[2] CA-1: plan cerrado del routing; --parallel comprueba todos antes del primer split"
 new_case; echo "1 $BLOCKED" > "$PF_DIR/mode.1"
