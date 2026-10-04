@@ -111,7 +111,20 @@ ALL="$(jq -cn --arg d "$PD" '[{command:"fix-review",action:"fix-review-all",envi
 PLAN_DRAFT="$(jq -c '.secondary.harnessDrafts = true | .limits.drafts = 1' "$EXAMPLE")"
 run "$PLAN_DRAFT" "$GOOD" | jq -e '.authorization.missing == ["fix-review-harness-draft"]' >/dev/null && pass 'harness-draft exige su propio grant' || fail 'harness-draft'
 PLAN_LOCAL="$(jq -c '.secondary.localImprovementClasses = ["consumer-adr"] | .limits.localFiles = 2' "$EXAMPLE")"
-run "$PLAN_LOCAL" "$(printf '%s' "$GOOD" | jq -c --argjson g "$(grant fix-review-local-improvement scope:consumer-docs)" '. + [$g]')" | jq -e '.authorization.status == "authorized"' >/dev/null && pass 'local-improvement exige su digest propio' || fail 'local-improvement'
+run "$PLAN_LOCAL" "$(printf '%s' "$GOOD" | jq -c --argjson g "$(grant fix-review-local-improvement scope:consumer-docs)" '. + [$g]')" | jq -e '.authorization.status == "authorized"' >/dev/null && pass 'local-improvement con su grant propio autoriza' || fail 'local-improvement'
+run "$PLAN_LOCAL" "$GOOD" | jq -e '.authorization.missing == ["fix-review-local-improvement"]' >/dev/null && pass 'local-improvement sin su grant no autoriza' || fail 'local-improvement sin grant'
+[ "$(auth "$BASE" "$(printf '%s' "$GOOD" | jq -c 'map(.resources |= join(" "))')")" != 'authorized:' ] && pass 'resources como string no autoriza' || fail 'resources string'
+printf '%s' "$BASE" | jq -c --argjson g "$GOOD" '{plan:.,grants:$g,context:{projectId:"otro"}}' | jq -c -f "$VALIDATOR" | jq -e '.reasonCode == "PROJECT_MISMATCH" and .authorization == null' >/dev/null \
+    && pass 'grants de otro proyecto no autorizan' || fail 'otro proyecto con grants'
+
+printf '[5] empaquetado en ambos adaptadores\n'
+for runtime in claude opencode; do
+    for asset in fix-review-plan.validate.jq fix-review-plan.example.json; do
+        cmp -s "$REPO_ROOT/src/published/contract/$asset" "$REPO_ROOT/dist/$runtime/src/published/contract/$asset" \
+            && jq -e --arg d "src/published/contract/$asset" 'any(.assets[]; .destination == $d)' "$REPO_ROOT/dist/$runtime/.mefisto-generated-assets.json" >/dev/null \
+            && pass "$runtime empaqueta $asset" || fail "$runtime no empaqueta $asset"
+    done
+done
 
 printf '\nPASS=%s FAIL=%s\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

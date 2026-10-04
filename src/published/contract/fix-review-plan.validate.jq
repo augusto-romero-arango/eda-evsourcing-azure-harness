@@ -48,7 +48,7 @@ def normalized:
 def valid_snapshot_row:
   closed(["bodyDigest", "id", "inReplyToId", "line", "originalLine", "path"])
   and (.id | posint) and (.bodyDigest | sha256)
-  and (.path | nullable(code_path or safe_path))
+  and (.path | nullable(safe_path))
   and (.line | nullable(posint)) and (.originalLine | nullable(posint))
   and (.inReplyToId | nullable(posint));
 def valid_edit:
@@ -112,7 +112,7 @@ def granted($plan; $grants; $action):
   | any($grants[]; safe(
       .command == "fix-review" and .action == $action and .environment == "repository"
       and has("planDigest") and .planDigest == $plan.planDigest
-      and (.resources | index($pr)) != null and (.resources | index(action_scope[$action])) != null));
+      and (.resources | type == "array") and (.resources | index($pr)) != null and (.resources | index(action_scope[$action])) != null));
 
 def result($status; $reason; $canonical; $required; $auth):
   {schemaVersion: 1, status: $status, reasonCode: $reason, canonical: $canonical,
