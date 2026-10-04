@@ -134,38 +134,17 @@ Ofrece este paso siempre (a diferencia de labels/CI, no depende de que el diagno
    - Si responde **(B) POC** (o no sabe / prefiere decidir despues): el camino vigente es (a), `mono-tenant-transitorio`. Si el token ya esta ausente o ya vale eso, no hay nada que escribir (CA-2) -- informa y termina el paso sin tocar el archivo.
    - Si responde **(A) crecer**: el camino vigente es (b), `multi-tenant-header`.
 2. **No escribas nada sin confirmar el valor exacto (mismo patron que las provisiones anteriores).** Muestra el valor que vas a escribir/actualizar y la ruta efectiva que resolvió el harness, y pide confirmacion explicita, p. ej.: "Voy a escribir `tenancy.strategy = \"multi-tenant-header\"` en el config canónico `.mefisto/harness.config.json`. ¿Confirmas? [si/no]". Si el usuario no confirma, no toques el archivo: recuerdale que puede editarlo a mano y termina el paso. El comportamiento por defecto de `/mefisto:onboard` sigue siendo solo diagnostico.
-3. **Solo si el usuario confirma**, escribe/actualiza el campo con `jq`, preservando el resto del archivo:
+3. **Solo si el usuario confirma**, ejecuta el setter publicado; valida el contrato, preserva el resto del archivo y devuelve su resultado JSON:
 
 ```bash
-REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || { echo "ERROR: no estas en un repositorio git"; exit 1; }
-COMMON="${MEFISTO_PACKAGE_ROOT}/scripts/_pipeline-common.sh"
-if [ ! -f "$COMMON" ]; then
-  echo "ERROR: no se hallo _pipeline-common.sh en el paquete activo ($COMMON)."
-  exit 1
-fi
-source "$COMMON"
-CONFIG=$(resolve_harness_config_path write "$REPO_ROOT") || exit 1
-ESTRATEGIA="<mono-tenant-transitorio|multi-tenant-header>"  # la que confirmo el usuario en el paso 2
-
-if ! load_harness_config >/dev/null; then
-  echo "ERROR: el config efectivo no es válido. Corrígelo antes de escribir $CONFIG."
-elif [ "$HARNESS_CONFIG_PATH" != "$CONFIG" ]; then
-  echo "ERROR: el config efectivo todavía es legacy ($HARNESS_CONFIG_PATH)."
-  echo "       Migra primero el config a $CONFIG; los escritores nuevos no modifican la ruta legacy."
-elif ! command -v jq >/dev/null 2>&1; then
-  echo "ERROR: jq no esta instalado. Requerido para escribir $CONFIG."
+if SETTER_RESULT=$( MEFISTO_RUNTIME=opencode "${MEFISTO_PACKAGE_ROOT}/scripts/set-harness-tenancy.sh" --strategy <mono-tenant-transitorio|multi-tenant-header> ); then
+  printf '%s\n' "$SETTER_RESULT"
 else
-  TMP=$(mktemp)
-  if jq --arg s "$ESTRATEGIA" '.tenancy = ((.tenancy // {}) + {strategy: $s})' "$CONFIG" > "$TMP" && mv "$TMP" "$CONFIG"; then
-    echo "OK: tenancy.strategy = \"$ESTRATEGIA\" escrito en $CONFIG."
-  else
-    rm -f "$TMP"
-    echo "ERROR: no se pudo escribir $CONFIG (revisa que sea JSON valido)."
-  fi
+  echo "ERROR: no se pudo actualizar tenancy.strategy; continua con los demas pasos independientes de onboard."
 fi
 ```
 
-4. **Reporta el resultado al usuario.** Si escribio el token, recuerdale que `domain-scaffolder` (Paso 0) solo lo lee en el **proximo** dominio que scaffoldee -- no re-scaffoldea dominios ya existentes. Si el proyecto tiene dominios en etapa (a) y acaba de declarar la etapa (b), reemplazar el `ITenantResolver` de esos dominios existentes sigue siendo manual (ver el `// TODO(tenancy etapa b)` que `domain-scaffolder` deja en `TenantResolverMonoTenantPorDefecto.cs`, MEF-ADR-0028). Si el camino elegido fue **(A) crecer**, suma el puntero al orquestador (CA-3): tras `/mefisto:infra-base` y `/mefisto:scaffold <dominio>`, el siguiente paso es correr `/mefisto:install-auth` para instalar WorkOS+APIM (MEF-ADR-0032, issue #342) -- encadena `/mefisto:install-workos` y `/mefisto:install-apim` con el gate humano en medio, sin que tengas que conocer el orden ni invocar cada skill de capa por separado.
+4. **Reporta el resultado al usuario.** El JSON indica `configPath`, `strategy` y si `changed` fue `true`; con `false` informa que ya tenia ese valor. Si escribio el token, recuerdale que `domain-scaffolder` (Paso 0) solo lo lee en el **proximo** dominio que scaffoldee -- no re-scaffoldea dominios ya existentes. Si el proyecto tiene dominios en etapa (a) y acaba de declarar la etapa (b), reemplazar el `ITenantResolver` de esos dominios existentes sigue siendo manual (ver el `// TODO(tenancy etapa b)` que `domain-scaffolder` deja en `TenantResolverMonoTenantPorDefecto.cs`, MEF-ADR-0028). Si el camino elegido fue **(A) crecer**, suma el puntero al orquestador (CA-3): tras `/mefisto:infra-base` y `/mefisto:scaffold <dominio>`, el siguiente paso es correr `/mefisto:install-auth` para instalar WorkOS+APIM (MEF-ADR-0032, issue #342) -- encadena `/mefisto:install-workos` y `/mefisto:install-apim` con el gate humano en medio, sin que tengas que conocer el orden ni invocar cada skill de capa por separado.
 
 ### 7. Worker de proyecciones: provision opt-in encadenando `/mefisto:scaffold-projections`
 
