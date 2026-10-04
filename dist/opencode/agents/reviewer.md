@@ -114,7 +114,7 @@ Si hay tests fallando al inicio, verifica si existe reporte de bloqueo (paso 2b)
 Si hay tests fallando al inicio, verifica si existe `.mefisto/pipeline/blockage-report.md`.
 
 Si el reporte existe:
-1. **Lee el reporte** — entiende que se intento y por que fallo
+1. **Lee el reporte** — entiende que se intento y por que fallo. Si su "Hipotesis" declara **test defectuoso** (camino corto del implementer, seccion 4b de su agente), verifica primero si el test cae en uno de los casos de la "Excepcion" de abajo antes de gastar intentos sobre la implementacion; si no cae en ninguno, sigue con el paso 2
 2. **Intenta resolver los tests rojos** cambiando SOLO codigo de implementacion (nunca tests)
 3. Tienes **5 intentos enfocados** por cada test bloqueado (misma definicion de "intento" que el implementer: un enfoque distinto deliberado, no un test run incidental)
 4. Si despues de 5 intentos no lo resuelves:
@@ -155,7 +155,7 @@ Esta tabla deja trazabilidad de cuando el reviewer actua como resolvedor de bloq
 
 **Importante**: NO modifiques tests para hacerlos pasar. Solo cambia implementaciones.
 
-**Excepcion: bugs de framework o contradicciones estructurales del plan.** Puedes modificar o eliminar tests en estos casos:
+**Excepcion: bugs de framework, contradicciones estructurales del plan o assert de estado sin stream.** Puedes modificar o eliminar tests en estos casos:
 
 1. **Bugs de framework** (caso original): un test usa un overload incorrecto del harness (`Then(evento)` en lugar de `Then(streamId, null, evento)`, o `And<T,P>(selector, valor)` en lugar de `And<T,P>(streamId, selector, valor)`) y el aggregate tiene stream ID compuesto (no GUID). Esto es un **bug en el test**, no una modificacion para hacerlo pasar. Corregir el overload es equivalente a corregir un typo — el intent del test no cambia. En este caso:
    1. Identifica el stream ID correcto (busca `ComputarStreamId` en el aggregate)
