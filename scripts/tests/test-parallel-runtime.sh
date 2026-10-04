@@ -46,6 +46,13 @@ setup_work_repo() {
     cp "$COMMON_LIB" "$dir/scripts/_pipeline-common.sh"
     cp -R "$RUNTIME_DIR_SRC" "$dir/src/runtime"
     chmod +x "$dir/scripts/parallel-pipeline.sh"
+    cat > "$dir/scripts/autonomy-preflight.sh" <<'PF'
+#!/usr/bin/env bash
+# Stub #1870 (issue #1871): sin perfil -> flujo legacy.
+cat >/dev/null
+echo '{"schemaVersion":1,"status":"legacy","diagnostics":[],"checks":[]}'
+PF
+    chmod +x "$dir/scripts/autonomy-preflight.sh"
     cat > "$dir/scripts/tooling-pipeline.sh" <<EOF
 #!/usr/bin/env bash
 echo "\$1" >> "$call_log"
