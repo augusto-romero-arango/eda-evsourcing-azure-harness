@@ -178,6 +178,96 @@ success() { echo -e "${GREEN}${BOLD}✓${NC} $1"; }
 warn()    { echo -e "${YELLOW}⚠${NC} $1"; }
 abort()   { echo -e "\n${RED}${BOLD}✗ $1${NC}" >&2; exit 1; }
 
+# --- Preflight de autonomia (issue #1872, MEF-ADR-0055) ---
+# Gate de CONSULTA antes de crear panes: delega en autonomy-preflight.sh (#1870) un plan
+# cerrado derivado del routing YA resuelto (nunca del texto del issue). No es un segundo
+# evaluador, no reemplaza los gates del hijo (#1826/#1858), no pide aprobacion ni repara
+# perfil/permisos y no persiste reportes. `legacy` sin contexto (sin perfil, runtime sin
+# adopcion) conserva el flujo previo; cualquier otra salida (blocked, incomplete, 75 busy,
+# salida invalida, evaluador ausente) aborta ANTES de new-session/kill-session y nunca se
+# sustituye por legacy. ready-to-dispatch deja sus checks `deferred` al guard del hijo.
+# Los cmd_* fijan TMUX_PLAN_LAUNCH/TMUX_PLAN_ITEMS antes de handle_session_conflict, que
+# invoca el gate solo cuando se va a crear una sesion nueva (nunca en reuse/attach/help).
+TMUX_PLAN_LAUNCH=""
+TMUX_PLAN_ITEMS=()
+TMUX_PREFLIGHT_DONE=0
+# 1 solo para --scaffold: el catalogo de #1870 aun no admite pipelineKind scaffold bajo
+# launchKind pane (el evaluador rechaza el plan con exit 2). Sin contexto transportado ese
+# rechazo de protocolo no bloquea (conserva el flujo previo); con contexto sigue fallando cerrado.
+TMUX_PLAN_SCAFFOLD_GAP=0
+PREFLIGHT_STATUS=""
+PREFLIGHT_DIAG=""
+PREFLIGHT_DEFERRED=""
+
+# tmux_autonomy_preflight <launchKind> <numero:pipelineKind>...
+# 0 = legacy|ready-to-dispatch; 1 = no se puede lanzar (PREFLIGHT_STATUS/DIAG con codigos).
+tmux_autonomy_preflight() {
+    local launch="$1" bin plan out rc=0 src=direct args
+    shift
+    PREFLIGHT_STATUS=""; PREFLIGHT_DIAG=""; PREFLIGHT_DEFERRED=""
+    bin="$SCRIPT_DIR/autonomy-preflight.sh"
+    args=(--project-root "$PROJECT_ROOT" --runtime "$RESOLVED_RUNTIME")
+    if [ -n "${MEFISTO_EXECUTION_CONTEXT:-}" ]; then
+        src=command
+        args+=(--context "$MEFISTO_EXECUTION_CONTEXT")
+    fi
+    if [ ! -f "$bin" ]; then
+        PREFLIGHT_STATUS="unavailable"; PREFLIGHT_DIAG="PREFLIGHT_UNAVAILABLE"
+        return 1
+    fi
+    plan=$(jq -cn --arg s "$src" --arg l "$launch" '{schemaVersion:1,launchKind:$l,source:$s,requestedOperations:[],
+        issues:[$ARGS.positional[] | split(":") | {number:(.[0]|tonumber),pipelineKind:.[1]}]}' --args "$@" 2>/dev/null) \
+        || { PREFLIGHT_STATUS="unavailable"; PREFLIGHT_DIAG="PREFLIGHT_PLAN_INVALID"; return 1; }
+    out=$(printf '%s' "$plan" | bash "$bin" "${args[@]}" 2>/dev/null) || rc=$?
+    PREFLIGHT_STATUS=$(printf '%s' "$out" | jq -r '.status // empty' 2>/dev/null) || PREFLIGHT_STATUS=""
+    PREFLIGHT_DIAG=$(printf '%s' "$out" | jq -r '[.diagnostics[]? | select(type == "string" and test("^[A-Za-z0-9_#:.-]+$"))] | join(",")' 2>/dev/null) || PREFLIGHT_DIAG=""
+    PREFLIGHT_DEFERRED=$(printf '%s' "$out" | jq -r '[.checks[]? | select(.state == "deferred" and (.code|type) == "string" and (.owner|type) == "string") | "\(.code)@\(.owner)"] | map(select(test("^[A-Za-z0-9_#:./@-]+$"))) | join(",")' 2>/dev/null) || PREFLIGHT_DEFERRED=""
+    if [ "$rc" -eq 2 ] && [ -z "$PREFLIGHT_STATUS" ] && [ "$TMUX_PLAN_SCAFFOLD_GAP" = 1 ] && [ "$src" = direct ]; then
+        PREFLIGHT_STATUS="legacy"
+        return 0
+    fi
+    if [ "$rc" -eq 0 ]; then
+        case "$PREFLIGHT_STATUS" in
+            legacy)
+                # Un contexto transportado nunca degrada a legacy.
+                [ "$src" = command ] || return 0
+                PREFLIGHT_STATUS="invalid"; PREFLIGHT_DIAG="PREFLIGHT_LEGACY_WITH_CONTEXT"; return 1 ;;
+            ready-to-dispatch)
+                if printf '%s' "$out" | jq -e '(.checks | type == "array") and all(.checks[];
+                        (.state | IN("pass","deferred","not-applicable"))
+                        and (.state != "deferred" or ((.owner | type) == "string" and (.owner | length) > 0)))' >/dev/null 2>&1; then
+                    return 0
+                fi
+                PREFLIGHT_STATUS="invalid"; PREFLIGHT_DIAG="PREFLIGHT_CHECKS_INCONSISTENT"; return 1 ;;
+        esac
+    fi
+    if [ "$rc" -eq 75 ]; then
+        PREFLIGHT_STATUS="busy"; PREFLIGHT_DIAG="${PREFLIGHT_DIAG:-PREFLIGHT_BUSY}"
+    else
+        case "$PREFLIGHT_STATUS" in
+            blocked|incomplete) ;;
+            *) PREFLIGHT_STATUS="invalid"; PREFLIGHT_DIAG="${PREFLIGHT_DIAG:-PREFLIGHT_RC_$rc}" ;;
+        esac
+    fi
+    return 1
+}
+
+# tmux_preflight_gate: ejecuta el plan fijado por el cmd_* una sola vez; aborta (exit 1)
+# sin tocar tmux si no hay admision. Sin plan fijado no hace nada.
+tmux_preflight_gate() {
+    [ "$TMUX_PREFLIGHT_DONE" = 1 ] && return 0
+    [ ${#TMUX_PLAN_ITEMS[@]} -gt 0 ] || return 0
+    TMUX_PREFLIGHT_DONE=1
+    if tmux_autonomy_preflight "$TMUX_PLAN_LAUNCH" "${TMUX_PLAN_ITEMS[@]}"; then
+        if [ "$PREFLIGHT_STATUS" = "ready-to-dispatch" ]; then
+            log "Preflight de autonomia: $PREFLIGHT_STATUS"
+            [ -z "$PREFLIGHT_DEFERRED" ] || log "Verificaciones diferidas al guard del hijo (no es permiso efectivo futuro): $PREFLIGHT_DEFERRED"
+        fi
+        return 0
+    fi
+    abort "Preflight de autonomia: ${PREFLIGHT_STATUS} [${PREFLIGHT_DIAG:-sin-detalle}]. No se creo ni se altero ninguna sesion tmux ni se inicio ningun pipeline."
+}
+
 # --- Verificaciones previas ---
 check_tmux() {
     if ! command -v tmux &>/dev/null; then
@@ -310,7 +400,10 @@ prompt_session_conflict() {
 # Solo retorna (0) cuando el llamador debe proceder a crear la sesion.
 handle_session_conflict() {
     local session="$1"
-    session_exists "$session" || return 0
+    if ! session_exists "$session"; then
+        tmux_preflight_gate
+        return 0
+    fi
 
     local alive=false
     session_is_alive "$session" && alive=true
@@ -347,6 +440,8 @@ handle_session_conflict() {
             exit 0
             ;;
         replace)
+            # El gate corre ANTES de matar la sesion previa: una no-admision la deja intacta.
+            tmux_preflight_gate
             log "Sesion '$session' se reemplaza ($([ "$alive" = true ] && echo "estaba activa" || echo "estaba terminada"))..."
             tmux kill-session -t "$session" 2>/dev/null || true
             return 0
@@ -412,6 +507,8 @@ cmd_single() {
     check_tmux
     ensure_events_log
 
+    TMUX_PLAN_LAUNCH="pane"
+    TMUX_PLAN_ITEMS=("$issue:$(orchestrator_kind_for_script "$resolved" | sed 's/^$/tdd/')")
     handle_session_conflict "$session"
 
     log "Creando sesion tmux '$session' para issue #$issue ($pipeline_name)..."
@@ -479,6 +576,18 @@ cmd_batch() {
 
     check_tmux
     ensure_events_log
+
+    # Plan del batch que se delegara: mismo routing que usara batch-pipeline.sh.
+    local b_issue b_resolved b_kind
+    TMUX_PLAN_LAUNCH="sequential"
+    TMUX_PLAN_ITEMS=()
+    for b_issue in "${issues[@]}"; do
+        b_resolved=$(resolve_pipeline "$b_issue" "$pipeline_override" 2>/dev/null) || continue
+        [[ "$b_resolved" == SKIP:* ]] && continue
+        b_kind="$(orchestrator_kind_for_script "$b_resolved")"
+        [ -n "$b_kind" ] || continue
+        TMUX_PLAN_ITEMS+=("$b_issue:$b_kind")
+    done
     handle_session_conflict "$session"
 
     log "Creando sesion tmux '$session' para batch: issues ${issues_str}..."
@@ -546,6 +655,7 @@ cmd_parallel() {
     # comportamiento para lotes con 0 o 1 projection.
     local resolved_issues=()
     local resolved_pipelines=()
+    local plan_items=()
     local projection_count=0
     for issue in "${issues[@]}"; do
         local facts rest is_projection resolved
@@ -563,6 +673,7 @@ cmd_parallel() {
         resolved_issues+=("$issue")
         # Ruta absoluta al sub-script del plugin (el pane corre con cwd=consumidor).
         resolved_pipelines+=("$(plugin_script "$resolved")")
+        plan_items+=("$issue:$(orchestrator_kind_for_script "$resolved")")
         [ "$is_projection" = "true" ] && projection_count=$((projection_count + 1))
     done
 
@@ -586,6 +697,9 @@ cmd_parallel() {
     [ -n "$max_parallel" ] && max_flag="--max-parallel $max_parallel"
 
     ensure_events_log
+    # Todos los issues ruteables se comprueban antes del primer split (un fallo deja cero panes).
+    TMUX_PLAN_LAUNCH="pane"
+    TMUX_PLAN_ITEMS=("${plan_items[@]}")
     handle_session_conflict "$session"
 
     log "Creando sesion tmux '$session' para issues paralelos: $issues_str..."
@@ -652,6 +766,8 @@ cmd_tooling() {
     check_tmux
     ensure_events_log
 
+    TMUX_PLAN_LAUNCH="pane"
+    TMUX_PLAN_ITEMS=("$issue:tooling")
     handle_session_conflict "$session"
 
     log "Creando sesion tmux '$session' para tooling issue #$issue..."
@@ -685,6 +801,8 @@ cmd_infra() {
     check_tmux
     ensure_events_log
 
+    TMUX_PLAN_LAUNCH="pane"
+    TMUX_PLAN_ITEMS=("$issue:iac")
     handle_session_conflict "$session"
 
     log "Creando sesion tmux '$session' para infra issue #$issue..."
@@ -745,6 +863,10 @@ cmd_scaffold() {
     check_tmux
     ensure_events_log
 
+    # Sin issue, el plan usa el identificador sintetico 1 (el evaluador solo exige un entero positivo).
+    TMUX_PLAN_LAUNCH="pane"
+    TMUX_PLAN_ITEMS=("${issue:-1}:scaffold")
+    TMUX_PLAN_SCAFFOLD_GAP=1
     handle_session_conflict "$session"
 
     local pipeline_args=""
