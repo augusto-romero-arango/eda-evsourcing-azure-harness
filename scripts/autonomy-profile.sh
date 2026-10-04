@@ -28,7 +28,17 @@ PROJECT_ROOT="$(cd "$PROJECT_ROOT" 2>/dev/null && pwd -P)" || fail 'la raiz de p
 git -C "$PROJECT_ROOT" rev-parse --show-toplevel >/dev/null 2>&1 || fail 'la raiz indicada no es un repositorio Git'
 [ ! -f "$PROJECT_ROOT/.claude-plugin/plugin.json" ] || fail 'autonomy-profile.sh es del plugin publicado y solo aplica al consumidor'
 CONFIG="$PROJECT_ROOT/.mefisto/harness.config.json"
-[ -f "$CONFIG" ] && [ ! -L "$CONFIG" ] || fail 'no existe una declaracion canonica legible en .mefisto/harness.config.json'
+LEGACY_CONFIG="$PROJECT_ROOT/.claude/harness.config.json"
+HAS_CANONICAL=0
+if [ -f "$CONFIG" ] && [ ! -L "$CONFIG" ]; then
+    HAS_CANONICAL=1
+elif [ -f "$LEGACY_CONFIG" ]; then
+    # El fallback legacy se mantiene deshabilitado: no se interpreta ni migra.
+    # Así un consumidor previo puede consultar sin activar un perfil por accidente.
+    :
+else
+    fail 'no existe configuracion de consumidor legible'
+fi
 
 # El git-dir comun identifica el proyecto compartido por sus worktrees. Su hash
 # evita exponer una ruta local y no depende de la rama actualmente checkout.
@@ -36,7 +46,11 @@ COMMON_DIR="$(git -C "$PROJECT_ROOT" rev-parse --path-format=absolute --git-comm
 COMMON_DIR="$(cd "$COMMON_DIR" 2>/dev/null && pwd -P)" || fail 'la identidad Git comun no es accesible'
 PROJECT_ID="project-$(printf '%s' "$COMMON_DIR" | (command -v shasum >/dev/null 2>&1 && shasum -a 256 || sha256sum) | cut -c1-24)"
 
-PROFILE="$(jq -cS '.autonomy // null' "$CONFIG" 2>/dev/null)" || fail 'la declaracion canonica no es JSON valido'
+if [ "$HAS_CANONICAL" -eq 1 ]; then
+    PROFILE="$(jq -cS '.autonomy // null' "$CONFIG" 2>/dev/null)" || fail 'la declaracion canonica no es JSON valido'
+else
+    PROFILE='null'
+fi
 if [ "$PROFILE" = 'null' ]; then
     DIGEST="$(printf 'null' | (command -v shasum >/dev/null 2>&1 && shasum -a 256 || sha256sum) | cut -d ' ' -f 1)"
 else
@@ -77,6 +91,7 @@ case "$OPERATION" in
         ;;
     approve)
         printf '%s' "$EXPECTED_DIGEST" | grep -Eq '^[0-9a-f]{64}$' || fail 'expected-digest invalido'
+        [ "$HAS_CANONICAL" -eq 1 ] && [ "$PROFILE" != null ] || fail 'approve requiere una declaracion canonica de autonomia'
         [ "$EXPECTED_DIGEST" = "$DIGEST" ] || fail 'el perfil cambio desde preview; no se escribio consentimiento'
         [ "$(printf '%s' "$RESULT" | jq -r '.status')" != conflict ] || fail "registro incompatible: $(printf '%s' "$RESULT" | jq -r '.reasonCode')"
         PREVIEW="$(validate null)"

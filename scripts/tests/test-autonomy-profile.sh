@@ -36,7 +36,9 @@ WORKTREE="$TMP/worktree"; git -C "$MAIN" worktree add -q "$WORKTREE" -b prueba-w
 WORKTREE_INSPECT="$(cd "$WORKTREE" && run inspect --project-root "$MAIN")"; WRC=$?
 OTHER="$TMP/other"; make_project "$OTHER"
 OTHER_INSPECT="$(run inspect --project-root "$OTHER")"; ORC=$?
-[ "$WRC" -eq 0 ] && printf '%s' "$WORKTREE_INSPECT" | jq -e '.status == "ready"' >/dev/null && [ "$ORC" -eq 1 ] && printf '%s' "$OTHER_INSPECT" | jq -e '.status == "needs-approval"' >/dev/null && pass 'worktree lee la raiz aprobada compartida y proyecto ajeno no hereda consentimiento' || fail 'aislamiento de proyecto/worktree incorrecto'
+LEGACY="$TMP/legacy"; mkdir -p "$LEGACY/.claude"; printf '{}' > "$LEGACY/.claude/harness.config.json"; git -C "$LEGACY" init -q
+LEGACY_INSPECT="$(run inspect --project-root "$LEGACY")"; LRC=$?
+[ "$WRC" -eq 0 ] && printf '%s' "$WORKTREE_INSPECT" | jq -e '.status == "ready"' >/dev/null && [ "$ORC" -eq 1 ] && printf '%s' "$OTHER_INSPECT" | jq -e '.status == "needs-approval"' >/dev/null && [ "$LRC" -eq 0 ] && printf '%s' "$LEGACY_INSPECT" | jq -e '.status == "disabled" and .reasonCode == "NO_PROFILE"' >/dev/null && pass 'worktree lee la raiz aprobada, proyecto ajeno no hereda y legacy queda deshabilitado' || fail 'aislamiento de proyecto/worktree incorrecto'
 
 echo '[3] Cambios, repetición, revocación y registros incompatibles'
 jq '.autonomy.commands += ["purge-store"]' "$MAIN/.mefisto/harness.config.json" > "$MAIN/.mefisto/harness.config.tmp" && mv "$MAIN/.mefisto/harness.config.tmp" "$MAIN/.mefisto/harness.config.json"

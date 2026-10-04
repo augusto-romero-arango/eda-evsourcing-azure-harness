@@ -140,6 +140,8 @@ estándar es el JSON neutral del validador. Sus códigos son 0 para `disabled` o
 `ready`, 1 para `needs-approval` o `conflict`, y 2 para errores de uso o ejecución.
 El registro canónico es `.mefisto/pipeline/autonomy/consent.json`; no se lee ni
 escribe configuración legacy, stores de autenticación, secretos o servicios remotos.
+Cuando solo existe la configuración legacy, el lector responde `disabled` sin
+interpretar ni migrar una declaración que pudiera contener.
 El digest ata el registro al perfil, pero no prueba identidad humana ni aísla el
 registro de otro proceso con el mismo usuario del host.
 
