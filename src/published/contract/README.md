@@ -459,8 +459,10 @@ resource_path_contains /padre/absoluto /hijo/absoluto
 Las entradas deben ser absolutas, sin controles ni componentes `.` o `..`.
 `resolve` sigue enlaces de directorios existentes; en `planned` conserva sin
 escribir el primer sufijo inexistente bajo un ancestro ya normalizado. `resolve`
-y `relative` retornan JSON y usan 0 para éxito, 1 para filesystem no resoluble y
-2 para uso inválido; `contains` retorna 0 para igualdad/descendencia por
+y `relative` retornan JSON; `relative` y `contains` operan por segmentos sobre
+la forma léxica normalizada y no vuelven a consultar el filesystem. `resolve`
+usa 0 para éxito, 1 para filesystem no resoluble y 2 para uso inválido;
+`contains` retorna 0 para igualdad/descendencia por
 segmentos, 1 para no contención y 2 para entrada inválida. Es una observación
 puntual, no una defensa TOCTOU, un walker seguro de todo el árbol ni una
 autorización de recursos. No recorre contenidos de home, configuración o stores

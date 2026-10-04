@@ -73,7 +73,7 @@ resource_path_resolve() {
 # resource_path_relative <absolute-base> <absolute-target>
 resource_path_relative() {
     resource_path_validate_arguments 2 "$#" || return $?
-    local base target base_rest target_rest base_component target_component common=0 result='' index
+    local base target base_rest target_rest common=0 result='' index
     local -a base_parts target_parts
     base="$(resource_path_normalize_input "$1")" || { resource_path_error INVALID_PATH; return 2; }
     target="$(resource_path_normalize_input "$2")" || { resource_path_error INVALID_PATH; return 2; }
