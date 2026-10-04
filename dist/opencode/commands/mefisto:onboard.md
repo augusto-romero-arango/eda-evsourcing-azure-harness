@@ -1,5 +1,7 @@
 ---
 description: "Diagnostica el onboarding del consumidor (config, directivas, labels, CI, auth, proyecciones) y ofrece provisiones opt-in."
+agent: "command-entry-onboard"
+subtask: false
 ---
 <!-- GENERADO por src/published/scripts/generate-published-adapters.sh desde src/published/commands/onboard.md. No editar a mano. -->
 ```bash

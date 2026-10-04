@@ -1,5 +1,7 @@
 ---
 description: "Lanza el pipeline de tooling del consumidor para un issue de GitHub dentro de una sesion tmux."
+agent: "command-entry-tooling"
+subtask: false
 ---
 <!-- GENERADO por src/published/scripts/generate-published-adapters.sh desde src/published/commands/tooling.md. No editar a mano. -->
 ```bash

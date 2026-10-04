@@ -1,5 +1,7 @@
 ---
 description: "Escribe la senal de parada suave de los orquestadores publicados de Mefisto."
+agent: "command-entry-batch-stop"
+subtask: false
 ---
 <!-- GENERADO por src/published/scripts/generate-published-adapters.sh desde src/published/commands/batch-stop.md. No editar a mano. -->
 

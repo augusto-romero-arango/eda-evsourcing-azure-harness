@@ -1,5 +1,7 @@
 ---
 description: "Lanza pipelines en paralelo para multiples issues, cada uno en su propio pane."
+agent: "command-entry-parallel"
+subtask: false
 ---
 <!-- GENERADO por src/published/scripts/generate-published-adapters.sh desde src/published/commands/parallel.md. No editar a mano. -->
 ```bash

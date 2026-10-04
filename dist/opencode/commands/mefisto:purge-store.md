@@ -1,5 +1,7 @@
 ---
 description: "Diagnostica con evidencia si un dominio en dev tiene datos de era vieja, confirma con el humano, purga el store via purge-store.sh y valida relanzando los smoke tests fallidos."
+agent: "command-entry-purge-store"
+subtask: false
 ---
 <!-- GENERADO por src/published/scripts/generate-published-adapters.sh desde src/published/commands/purge-store.md. No editar a mano. -->
 ```bash

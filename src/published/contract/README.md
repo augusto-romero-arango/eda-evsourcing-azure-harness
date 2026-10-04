@@ -866,3 +866,33 @@ src/published/scripts/validate-published-mcp.sh
 El segundo validador comprueba el schema del registro, sus reglas cruzadas, la
 sincronía del enum MCP y la proyección `.mcp.json`; tampoco realiza llamadas de
 red.
+
+## Binding de entrada OpenCode
+
+El adaptador OpenCode emite `plugins/mefisto-command-entry.js` (asset
+`command-entry-plugin`) y, solo en los comandos distribuidos, las cabeceras
+`agent: command-entry-<id>` y `subtask: false`; los Markdown neutrales no
+declaran `agent` ni `capabilities` y el adaptador Claude no cambia. El plugin
+solo enlaza una proyección ya resuelta por el resolver de la entrada
+(`scripts/resolve-opencode-entry.sh`, invocado por argv con `--phase
+config|command`, `--project-root` y un `--context` JSON acotado con el
+`runtimeContext` capturado en el proceso); no crea perfiles, no aprueba ni
+compila políticas. Responde `admissionScope: entry`, que nunca equivale a
+consentimiento administrativo.
+
+- Hook `config`: instala en memoria los agentes `command-entry-<id>`
+  (`mode: primary`, sin modelo, sin tocar `default_agent`) para todo el
+  catálogo, con `admitted: false`, incluidos los no aprobados con permisos
+  denegados. Solo `NO_PROFILE` inicial sin contexto controlado ni proyección
+  previa restaura la semántica legacy quitando los campos de routing propios;
+  `CONSENT_REVOKED`, `needs-approval`, `conflict`, retiro del perfil en una
+  instancia activada, colisión de ownership, identidad de release distinta de
+  su manifiesto o fallo del resolver producen no-admisión, nunca el agente
+  activo. Aplicación atómica e idempotente; no-op en el repo del harness.
+- Hook `command.execute.before`: solo revalida. Consulta `permission` y
+  `directory` de la sesión (`sessionPolicyKnown`, `sessionProjectMatches`; una
+  consulta fallida no equivale a reglas vacías), reutiliza el resolver en fase
+  `command` y exige `admitted: true` de la fila solicitada y el mismo snapshot.
+  No selecciona agente ni es un sandbox.
+- La certificación con runtime real y el control Claude pertenecen a #1827; las
+  pruebas (`test-opencode-command-entry.sh`) usan dobles de SDK y resolver.

@@ -1,5 +1,7 @@
 ---
 description: "Dashboard de salud del entorno desplegado con semaforos: ultimo apply de infra-cd.yml y consultas de App Insights a 24 horas."
+agent: "command-entry-health-check"
+subtask: false
 ---
 <!-- GENERADO por src/published/scripts/generate-published-adapters.sh desde src/published/commands/health-check.md. No editar a mano. -->
 ```bash

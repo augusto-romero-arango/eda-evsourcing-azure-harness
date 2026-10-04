@@ -1,5 +1,7 @@
 ---
 description: "Lanza el pipeline secuencial para multiples issues dentro de una sesion tmux."
+agent: "command-entry-sequential"
+subtask: false
 ---
 <!-- GENERADO por src/published/scripts/generate-published-adapters.sh desde src/published/commands/sequential.md. No editar a mano. -->
 ```bash

@@ -1,5 +1,7 @@
 ---
 description: "Investiga un sintoma: lo clasifica como bug de tooling local o de entorno desplegado y enruta al agente investigador apropiado."
+agent: "command-entry-bug"
+subtask: false
 ---
 <!-- GENERADO por src/published/scripts/generate-published-adapters.sh desde src/published/commands/bug.md. No editar a mano. -->
 ```bash

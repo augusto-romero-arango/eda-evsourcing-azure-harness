@@ -1,5 +1,7 @@
 ---
 description: "Lanza el pipeline de scaffold para crear un nuevo dominio, opcionalmente asociado a un issue de GitHub."
+agent: "command-entry-scaffold"
+subtask: false
 ---
 <!-- GENERADO por src/published/scripts/generate-published-adapters.sh desde src/published/commands/scaffold.md. No editar a mano. -->
 ```bash

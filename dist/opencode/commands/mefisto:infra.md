@@ -1,5 +1,7 @@
 ---
 description: "Lanza el pipeline IaC para un issue de GitHub dentro de una sesion tmux."
+agent: "command-entry-infra"
+subtask: false
 ---
 <!-- GENERADO por src/published/scripts/generate-published-adapters.sh desde src/published/commands/infra.md. No editar a mano. -->
 ```bash

@@ -1,5 +1,7 @@
 ---
 description: "Genera diagramas profesionales con la API de Eraser (sequence, architecture, flowchart, ERD y BPMN) y los renderiza con ERASER_API_TOKEN."
+agent: "command-entry-eraser-diagram"
+subtask: false
 ---
 <!-- GENERADO por src/published/scripts/generate-published-adapters.sh desde src/published/commands/eraser-diagram.md. No editar a mano. -->
 ```bash
