@@ -496,6 +496,31 @@ La regresión vive en `scripts/tests/test-resource-paths.sh`; compara su corpus
 de relativos con `node:path.relative` solo durante pruebas. Node no es una
 dependencia productiva de la biblioteca.
 
+## Observación de procesos registrados
+
+`src/published/scripts/lib/release-use-process.sh` se carga sin efectos y expone
+`release_use_process_capture <pid>` y `release_use_process_observe`. La captura
+emite una identidad JSON versión 1 local al host: hash de la identidad de host,
+boot, PID, token de inicio y PGID. La observación recibe esa identidad por stdin
+y emite exclusivamente JSON con `state` (`live`, `gone` o `unknown`),
+`groupState` (`live`, `empty` o `unknown`) y una razón estable. Su código 0
+incluye `unknown`; 2 indica uso o protocolo inválido.
+
+En Linux usa `machine-id`, `boot_id` y metadata de `/proc`; en macOS usa el
+identificador de plataforma, `kern.bootsessionuuid` y columnas `uid`, `lstart`
+y `pgid` de `ps` con locale y zona horaria fijos. Nunca consulta argv, entorno,
+comando ni archivos abiertos, no usa TTL, no crea archivos ni envía señales.
+Un host distinto, metadata ausente o ambigua, o un fallo de observación conserva
+`unknown`. Un reboot verificable del mismo host prueba la terminación de los
+procesos del boot anterior. La precisión limitada de `lstart` conserva una
+posible colisión como retención, no como prueba de muerte.
+
+El observador no certifica la completitud del árbol histórico: un proceso que
+creó otra sesión puede sobrevivir aunque el PID original haya terminado y su
+PGID esté vacío. Tampoco libera locks o leases; el caller debe combinar esta
+evidencia con su grafo de referencias, handoffs y cobertura de lanzamientos
+(MEF-ADR-0031, MEF-ADR-0050 y MEF-ADR-0053).
+
 ## Descubrimiento de recursos NuGet
 
 `scripts/resolve-nuget-resources.sh --worktree-root <raíz-absoluta>` consulta
