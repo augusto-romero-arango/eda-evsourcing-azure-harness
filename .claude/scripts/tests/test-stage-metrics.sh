@@ -26,8 +26,9 @@
 #
 # Casos cubiertos:
 #   [pre] Las dos funciones nuevas estan definidas en _mefisto-common.sh.
-#   [A] JSONL neutral completo con varias tool calls -> todos los campos
-#       derivados correctamente, incluido el histograma (CA-1).
+#   [A] JSONL neutral completo con varias tool calls y permission.observed ->
+#       todos los campos derivados correctamente, incluido el histograma; la
+#       observacion parcial no altera metricas ni denials (CA-1).
 #   [B] Sin evento terminal (`run.completed`/`run.failed`) -> "null", no
 #       aborta (CA-5).
 #   [C] Archivo vacio -> "null" (CA-5).
@@ -138,6 +139,7 @@ cat > "$TMP/a-events.jsonl" <<'EOF'
 {"v":1,"type":"tool.completed","ts":"2026-07-27T22:09:35.900Z","tool":"Read","ok":true,"duration_ms":900}
 {"v":1,"type":"tool.started","ts":"2026-07-27T22:09:36.000Z","tool":"Write","input_summary":null}
 {"v":1,"type":"tool.completed","ts":"2026-07-27T22:09:37.000Z","tool":"Write","ok":true,"duration_ms":1000}
+{"v":1,"type":"permission.observed","ts":"2026-07-27T22:09:37.100Z","session_id":null,"tool":"Write","signal":"possible-denial","evidence":"tool-error-text"}
 {"v":1,"type":"run.completed","ts":"2026-07-27T22:09:37.500Z","status":"success","runtime":"claude","model":"claude-sonnet-5","session_id":"sess-abc","duration_ms":9451,"tokens":{"input":1200,"output":340,"cache_read":500,"cache_write":120,"reasoning":80},"estimated_cost_usd":0.0234,"turns":4,"denials":2,"ttft_ms":3797,"api_duration_ms":5289,"error":null}
 EOF
 

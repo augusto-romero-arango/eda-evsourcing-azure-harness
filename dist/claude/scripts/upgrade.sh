@@ -200,7 +200,7 @@ _prune_opencode() {
 }
 
 _update_opencode() {
-    local launcher slug tag version loaded
+    local launcher slug tag version loaded rc
     command -v gh >/dev/null 2>&1 || { echo "ERROR: gh es requerido para resolver la ultima release." >&2; return 1; }
     launcher=$(_launcher_path)
     [ -x "$launcher" ] || {
@@ -227,9 +227,9 @@ _update_opencode() {
     TARGET_VERSION="$version"
 
     echo "Instalando OpenCode v$version con el launcher activo (verifica checksum)..."
-    "$launcher" install "$version" || { echo "ERROR: install fallo; las releases existentes se conservan." >&2; return 1; }
-    "$launcher" activate "$version" || { echo "ERROR: activate fallo; usa el launcher para rollback." >&2; return 1; }
-    "$launcher" project || { echo "ERROR: project fallo o conflicto; corrige y reintenta." >&2; return 1; }
+    "$launcher" install "$version" || { rc=$?; [ "$rc" -eq 75 ] && return 75; echo "ERROR: install fallo; las releases existentes se conservan." >&2; return "$rc"; }
+    "$launcher" activate "$version" || { rc=$?; [ "$rc" -eq 75 ] && return 75; echo "ERROR: activate fallo; usa el launcher para rollback." >&2; return "$rc"; }
+    "$launcher" project || { rc=$?; [ "$rc" -eq 75 ] && return 75; echo "ERROR: project fallo o conflicto; corrige y reintenta." >&2; return "$rc"; }
     "$launcher" status || { echo "ERROR: status reporto una instalacion incompleta." >&2; return 1; }
     "$launcher" projection-status || { echo "ERROR: projection-status no confirmo la proyeccion." >&2; return 1; }
 
@@ -297,6 +297,7 @@ _align_claude() {
 }
 
 main() {
+    local rc
     MODE=update; ALIGN_PEER=false; KEEP=2; LOADED_OVERRIDE=""
     while [ "$#" -gt 0 ]; do
         case "$1" in
@@ -327,7 +328,7 @@ main() {
         prune:opencode) _prune_opencode ;;
         *:opencode)
             TARGET_VERSION=""
-            _update_opencode || return 1
+            _update_opencode || { rc=$?; return "$rc"; }
             [ "$ALIGN_PEER" = true ] && { _align_claude "$TARGET_VERSION" || return 1; }
             return 0 ;;
         *:claude) _update_claude ;;

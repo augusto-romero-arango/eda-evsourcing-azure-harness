@@ -19,7 +19,9 @@
 #       de dos terminales, un conteo de eventos terminales != 1 -- invariante
 #       que el schema por-linea no puede expresar). Incluye la particion del
 #       vocabulario de `status` entre los dos terminales (`run.completed` solo
-#       admite `success`).
+#       admite `success`), las parejas cerradas de permission.observed, su
+#       caracter no terminal y la ausencia de centinelas sensibles en los
+#       diagnosticos de schema.
 #   [D] CA-5/CA-6: runtime-fake.sh recorre cada guion de MEFISTO_FAKE_SCRIPT
 #       invocando el runner real (mefisto-run-agent.sh --runtime fake) y
 #       verifica exit code, que TODAS las lineas de --event-log validen
@@ -94,10 +96,23 @@ echo "prompt de prueba" > "$PROMPT_FILE"
 SYSTEM_FILE="$TMP/system.txt"
 echo "system de prueba" > "$SYSTEM_FILE"
 
+# permission_observed_is_valid <json-line> -- complemento que el validador
+# ligero no puede expresar: union string|null y dependencia signal/evidence.
+permission_observed_is_valid() {
+    printf '%s' "$1" | jq -e '
+        if .type != "permission.observed" then true
+        elif (.ts | type == "string" and length >= 1 and length <= 64)
+          and (.session_id | if . == null then true elif type == "string" then test("^[A-Za-z0-9._:-]{1,256}$") else false end)
+          and (.tool | if . == null then true elif type == "string" then test("^[A-Za-z0-9._:-]{1,128}$") else false end)
+          and (if (.signal == "denied" or .signal == "rejected") then .evidence == "structured-error"
+               elif (.signal == "possible-denial" or .signal == "possible-rejection") then .evidence == "tool-error-text"
+               else false end)
+        then true else false end' >/dev/null 2>&1
+}
+
 # validate_event_line <json-line> -- imprime motivos de rechazo (o nada);
-# retorna 0 si la linea valida contra definitions[.type], 1 si no (incluido
-# ".type" fuera del vocabulario cerrado -- que no tiene entrada en
-# definitions).
+# retorna 0 si la linea valida contra definitions[.type] y sus invariantes
+# complementarias, 1 si no (incluido ".type" fuera del vocabulario cerrado).
 validate_event_line() {
     local line="$1"
     local ev_type
@@ -120,6 +135,12 @@ validate_event_line() {
         return 1
     fi
     case "$ev_type" in
+        permission.observed)
+            if ! permission_observed_is_valid "$line"; then
+                echo "permission.observed no cumple identificadores acotados o pareja signal/evidence"
+                return 1
+            fi
+            ;;
         run.completed|run.failed)
             if ! printf '%s' "$line" | jq -e 'has("estimated_cost_usd") or has("cost_usd")' >/dev/null 2>&1; then
                 echo "terminal sin estimated_cost_usd ni cost_usd"
@@ -338,6 +359,9 @@ check_all_lines_valid "valid-timeout.jsonl" "$FIXTURES_DIR/valid-timeout.jsonl"
 check_all_lines_valid "valid-rate-limit-claude.jsonl" "$FIXTURES_DIR/valid-rate-limit-claude.jsonl"
 check_all_lines_valid "valid-rate-limit-opencode.jsonl" "$FIXTURES_DIR/valid-rate-limit-opencode.jsonl"
 check_all_lines_valid "legacy-cost-usd.jsonl" "$FIXTURES_DIR/legacy-cost-usd.jsonl"
+check_all_lines_valid "valid-permission-observed-structured.jsonl" "$FIXTURES_DIR/valid-permission-observed-structured.jsonl"
+check_all_lines_valid "valid-permission-observed-hint.jsonl" "$FIXTURES_DIR/valid-permission-observed-hint.jsonl"
+check_all_lines_valid "valid-tool-failure-no-permission.jsonl" "$FIXTURES_DIR/valid-tool-failure-no-permission.jsonl"
 
 if jq -e 'select(.type=="run.failed") | .error.kind == "rate_limit" and .resets_at == "2026-05-07T22:40:00Z"' "$FIXTURES_DIR/valid-rate-limit-claude.jsonl" >/dev/null 2>&1; then
     pass "valid-rate-limit-claude.jsonl: error.kind='rate_limit' con resets_at poblado"
@@ -415,6 +439,68 @@ if grep -l '"cost_usd"' "$FIXTURES_DIR"/*.jsonl | grep -qv '/legacy-cost-usd.jso
     fail "fixtures del contrato: solo el fixture legacy puede contener cost_usd"
 else
     pass "fixtures del contrato: los nuevos usan estimated_cost_usd y el nombre legacy esta aislado"
+fi
+
+for PERMISSION_FIXTURE in valid-permission-observed-structured.jsonl valid-permission-observed-hint.jsonl; do
+    PERMISSION_LINE="$(sed -n '2p' "$FIXTURES_DIR/$PERMISSION_FIXTURE")"
+    if permission_observed_is_valid "$PERMISSION_LINE"; then
+        pass "$PERMISSION_FIXTURE: identificadores y pareja signal/evidence permitidos"
+    else
+        fail "$PERMISSION_FIXTURE: identificadores o pareja deberian ser permitidos"
+    fi
+done
+
+BAD_LINE="$(sed -n '2p' "$FIXTURES_DIR/invalid-permission-observed-extra.jsonl")"
+PERMISSION_DIAGNOSTIC="$(validate_event_line "$BAD_LINE" 2>&1)"
+if [ -n "$PERMISSION_DIAGNOSTIC" ] \
+    && ! printf '%s' "$PERMISSION_DIAGNOSTIC" | grep -Eq 'RULESET_SENTINEL|PATTERN_SENTINEL|COMMAND_SENTINEL|TOKEN_SENTINEL'; then
+    pass "invalid-permission-observed-extra.jsonl: forma cerrada rechaza payload sensible sin diagnosticarlo"
+else
+    fail "invalid-permission-observed-extra.jsonl: la forma cerrada o la redaccion del diagnostico fallo"
+fi
+
+BAD_LINE="$(sed -n '2p' "$FIXTURES_DIR/invalid-permission-observed-signal.jsonl")"
+if ! validate_event_line "$BAD_LINE" >/dev/null 2>&1; then
+    pass "invalid-permission-observed-signal.jsonl: signal desconocida se rechaza"
+else
+    fail "invalid-permission-observed-signal.jsonl: signal desconocida fue aceptada"
+fi
+
+BAD_LINE="$(sed -n '2p' "$FIXTURES_DIR/invalid-permission-observed-pair.jsonl")"
+if ! validate_event_line "$BAD_LINE" >/dev/null 2>&1; then
+    pass "invalid-permission-observed-pair.jsonl: el complemento rechaza la pareja invalida"
+else
+    fail "invalid-permission-observed-pair.jsonl: la pareja invalida fue aceptada"
+fi
+
+BAD_LINE="$(sed -n '2p' "$FIXTURES_DIR/invalid-permission-observed-bounds.jsonl")"
+if ! validate_event_line "$BAD_LINE" >/dev/null 2>&1; then
+    pass "invalid-permission-observed-bounds.jsonl: session_id queda acotado"
+else
+    fail "invalid-permission-observed-bounds.jsonl: se acepto un identificador fuera de limites"
+fi
+
+VALID_PERMISSION_LINE="$(sed -n '2p' "$FIXTURES_DIR/valid-permission-observed-structured.jsonl")"
+BAD_TOOL_LINE="$(printf '%s' "$VALID_PERMISSION_LINE" | jq -c '.tool = ("x" * 129)')"
+BAD_TS_LINE="$(printf '%s' "$VALID_PERMISSION_LINE" | jq -c '.ts = ("x" * 65)')"
+if ! validate_event_line "$BAD_TOOL_LINE" >/dev/null 2>&1 && ! validate_event_line "$BAD_TS_LINE" >/dev/null 2>&1; then
+    pass "permission.observed: tool y ts tienen limites verificables"
+else
+    fail "permission.observed: tool o ts quedaron sin limite"
+fi
+
+if ! jq -e 'select(.type == "permission.observed")' "$FIXTURES_DIR/valid-tool-failure-no-permission.jsonl" >/dev/null 2>&1 \
+    && jq -e 'select(.type == "tool.completed") | .ok == false' "$FIXTURES_DIR/valid-tool-failure-no-permission.jsonl" >/dev/null 2>&1 \
+    && jq -e 'select(.type == "run.completed") | .denials == 0' "$FIXTURES_DIR/valid-tool-failure-no-permission.jsonl" >/dev/null 2>&1; then
+    pass "tool.completed{ok:false}: sigue siendo solo un fallo de tool y conserva denials completo"
+else
+    fail "valid-tool-failure-no-permission.jsonl: el fallo de tool altero permisos o denials"
+fi
+
+if [ "$(count_terminals "$FIXTURES_DIR/valid-permission-observed-structured.jsonl")" = "1" ]; then
+    pass "permission.observed: no altera exactamente-un-terminal ni los campos del terminal"
+else
+    fail "permission.observed: fue contado indebidamente como terminal"
 fi
 
 # ============================================================================

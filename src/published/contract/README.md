@@ -144,6 +144,9 @@ directorio ajeno a Git, manteniendo siempre `--project-root` explícito.
 Los adaptadores y etapas son lectores: usan exclusivamente `inspect`, cuya salida
 estándar es el JSON neutral del validador. Sus códigos son 0 para `disabled` o
 `ready`, 1 para `needs-approval` o `conflict`, y 2 para errores de uso o ejecución.
+Un caller distingue `disabled` con `NO_PROFILE`, que conserva el flujo legacy,
+de `disabled` con `CONSENT_REVOKED`; este último, así como un contexto controlado
+inválido, no habilita fallback de una corrida automática (MEF-ADR-0055).
 El registro canónico es `.mefisto/pipeline/autonomy/consent.json`; no se lee ni
 escribe configuración legacy, stores de autenticación, secretos o servicios remotos.
 Cuando solo existe la configuración legacy, el lector responde `disabled` sin
@@ -457,15 +460,25 @@ neutral ni en este contrato.
 ## Matriz de entrada de comandos
 
 `command-entry.json` declara exclusivamente las necesidades directas de los 27
-comandos publicados. `command-entry.jq` comprueba ids, campos cerrados,
-referencias `command-doc` y `launch-agent`, ciclos y calcula la clausura de
-composición. La clausura une necesidades de comandos compuestos; nunca hereda
+comandos publicados. Todas las filas declaran los recursos legibles base
+`project`, `release`, `state` y `runtime-tool-output`; `state` no concede
+escritura, que sigue determinada exclusivamente por `edit` y `writeScope`.
+`fix-review` declara además `nuget-packages`. `command-entry.jq` comprueba ids,
+campos cerrados, referencias `command-doc` y `launch-agent`, ciclos y calcula
+la clausura de composición. También cierra `executionClass`: la ejecución
+ordinaria o los parsers puros y sin evaluación `runtimes-v1` y `upgrade-v1`.
+La clasificación rechaza ids ajenos al inventario y formas no canónicas,
+repetidas, mezcladas o desconocidas. La clausura une necesidades de comandos compuestos; nunca hereda
 las capacidades de un agente delegado ni interpreta
 `{{mefisto:command ...}}` como llamada. Sí enumera los agentes alcanzables para
 que esa topología pueda verificarse sin convertirla en capacidades del padre.
 El adaptador OpenCode emite `command-entry-manifest.json`: hashes SHA-256 del
-contenido Markdown renderizado y recortado por el loader, sin incluir cuerpos.
-Su huella técnica permite revalidar snapshots, no equivale a consentimiento.
+contenido Markdown renderizado y recortado por el loader, sin incluir cuerpos,
+el binding nativo observado y el binding legacy derivado de la semántica
+neutral anterior. Si el renderer no expone el header nativo, su valor es
+`null`; los metadatos se validan separadamente del body. Su huella técnica
+permite revalidar snapshots, no equivale a admisión, certificación ni
+consentimiento.
 
 ## Roles de ejecución controlada
 
@@ -618,11 +631,11 @@ lo alimenta. El entrypoint anterior es una comprobación de mantenimiento del
 checkout fuente: extrae sus frontmatters neutrales; no se empaqueta como si
 pudiera reconstruirlos desde metadata ya adaptada de una instalación.
 
-Los casos condicionales solo se evalúan cuando el cambio los requiere. La
-ausencia actual de web para `planner` y los scaffolders sigue visible como
-`capability-missing` al requerirlos; los issues #1878, #1879, #1880, #1881,
-#1882 y #1883 resuelven esos gaps. #1827 no puede usar la matriz por sí sola
-como evidencia de conexión MCP/web real.
+Los casos condicionales solo se evalúan cuando el cambio los requiere. Los gaps
+que aún no se han resuelto siguen visibles como `capability-missing` al
+requerirlos; los issues #1878, #1879, #1880, #1881, #1882 y #1883 cubren esas
+capacidades por rol. La metadata solo declara rutas y permisos: las tool calls
+efectivas se verifican en #1847 y la conectividad MCP/web real en #1827.
 
 ## Validación
 

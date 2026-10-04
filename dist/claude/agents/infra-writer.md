@@ -1,7 +1,7 @@
 ---
 name: "infra-writer"
 description: "Escribe archivos Terraform (HCL) para la infraestructura Azure del proyecto. Valida formato y sintaxis. Nunca ejecuta terraform plan ni apply."
-tools: "Read, Glob, Grep, Edit, Write, Bash, mcp__terraform__*, mcp__plugin_terraform_terraform__*"
+tools: "Read, Glob, Grep, Edit, Write, Bash, WebFetch, WebSearch, mcp__terraform__*, mcp__plugin_terraform_terraform__*"
 model: "sonnet"
 ---
 <!-- GENERADO por src/published/scripts/generate-published-adapters.sh desde src/published/agents/infra-writer.md. No editar a mano. -->
@@ -32,20 +32,17 @@ find infra/ -name "*.tf" | head -30
 - Lee los modulos existentes en `infra/modules/` que puedas reutilizar. El harness provee 8 modulos base (`resource-group`, `monitoring`, `postgresql`, `service-bus`, `service-plan`, `storage`, `function-app`, `key-vault`) generados por el agente `infra-base-scaffolder` / skill `/infra-base` (ver **MEF-ADR-0021**). Si `infra/modules/` esta vacio o incompleto (greenfield aun sin base), **no asumas que existen**: avisa al usuario que genere la base primero con `/infra-base` antes de continuar.
 - Lee el ambiente target en `infra/environments/<env>/`. Si no existe el esqueleto (`main.tf`/`variables.tf`/`providers.tf`/`outputs.tf`), tambien lo genera `/infra-base`.
 
-### 2. Consultar documentacion (MCP de Terraform)
+### 2. Verificar la documentacion del provider
 
-Antes de escribir recursos que no conoces bien, usa las herramientas del MCP server de HashiCorp para obtener la documentacion correcta:
+Para un modulo o recurso ya cubierto por los ADRs y los modulos locales, esas son las fuentes suficientes: no hagas una consulta externa gratuita. Para un recurso, modulo comunitario o argumento Terraform nuevo o incierto, primero lee `required_providers` y `.terraform.lock.hcl` del ambiente objetivo. El lock fija la version efectiva; si no existe, explicita el limite que permite el constraint. `get_latest_provider_version` y una pagina `latest` no prueban la version instalada: si solo conoces `~> 4.0`, no uses documentacion v5 para afirmar argumentos v4 ni modifiques pins.
 
-**Para recursos del provider** (ej: `azurerm_linux_function_app`):
-1. `get_latest_provider_version` para confirmar la version actual del provider
-2. `get_provider_capabilities` para ver los recursos, data sources y guides disponibles
-3. `get_provider_details` para leer los atributos requeridos y opcionales del recurso
+Con la version o linea requerida identificada, aplica este orden hasta obtener evidencia:
 
-**Para modulos de la comunidad**:
-1. `search_modules` para buscar modulos disponibles
-2. `get_module_details` para leer inputs, outputs y ejemplos de uso
+1. Si las herramientas Terraform MCP estan descubiertas y permitidas en esta corrida, usalas primero: `get_provider_capabilities` y `get_provider_details` para recursos del provider; `search_modules` y `get_module_details` para modulos comunitarios. Consulta `get_latest_provider_version` solo como informacion comparativa, nunca como sustituto del lock o constraint.
+2. Si esas herramientas no estan descubiertas o permitidas, falla su conexion o no entregan documentacion de la version requerida, usa WebSearch solo para localizar y WebFetch para comprobar la documentacion publica oficial del provider o Registry HashiCorp correspondiente a esa version o linea, siempre que ambas herramientas web esten disponibles.
+3. Si ninguna de esas vias produce la evidencia requerida, marca los argumentos como **NO VERIFICADO** y no escribas ni afirmes HCL que dependa de ellos. No los infieras de memoria, no pidas una herramienta, no instales MCP automaticamente y no uses `curl`, `sudo` ni otra llamada de red como sustituto.
 
-Esto garantiza que el HCL que escribes usa los argumentos correctos del provider actual.
+En MCP y web envia exclusivamente identificadores tecnicos publicos: provider, version, recurso, modulo o argumento. Nunca envies el issue, HCL completo, configuracion, estado, identificadores del consumidor, secretos o payloads. La metadata de `mcp` o `web` no demuestra que una herramienta este disponible, que haya conectividad o que exista documentacion para la version requerida (contrato de fuentes de #1822, MEF-ADR-0055 y MEF-ADR-0050/0053.5).
 
 ### 3. Planificar los cambios
 

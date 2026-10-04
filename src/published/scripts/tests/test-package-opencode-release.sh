@@ -8,6 +8,9 @@ INSTALLER_SOURCE="$REPO_ROOT/src/published/scripts/install-opencode-release.sh"
 LAUNCHER_SOURCE="$REPO_ROOT/src/published/scripts/mefisto-opencode"
 PROJECTOR_SOURCE="$REPO_ROOT/src/published/scripts/project-opencode-release.sh"
 DIAGNOSTIC_SOURCE="$REPO_ROOT/src/published/scripts/diagnose-installation-identity.sh"
+RELEASE_USE_SOURCE="$REPO_ROOT/src/published/scripts/opencode-release-use.sh"
+RELEASE_USE_PROCESS_SOURCE="$REPO_ROOT/src/published/scripts/lib/release-use-process.sh"
+RELEASE_USE_LIB_SOURCE="$REPO_ROOT/src/published/scripts/adapters/lib/opencode-release-use.sh"
 CLAUDE_ADAPTER_SOURCE="$REPO_ROOT/src/published/scripts/adapters/adapter-claude.sh"
 CLAUDE_LIB_SOURCE="$REPO_ROOT/src/published/scripts/lib/adapter-claude.sh"
 EFFECTIVE_CONTRACT_SOURCE="$REPO_ROOT/src/published/scripts/lib/effective-contract.sh"
@@ -21,17 +24,21 @@ file_mode() { stat -f '%Lp' "$1" 2>/dev/null || stat -c '%a' "$1"; }
 
 setup_repo() {
     TEST_REPO="$WORK/repo-$1"
-    mkdir -p "$TEST_REPO/src/published/scripts/adapters" "$TEST_REPO/src/published/scripts/lib" "$TEST_REPO/dist/opencode/comandos" "$TEST_REPO/dist/opencode/skills/mefisto-projections" "$TEST_REPO/dist/opencode/skills/mefisto-comment-cleanup" "$TEST_REPO/.claude-plugin" "$TEST_REPO/bin"
+    mkdir -p "$TEST_REPO/src/published/scripts/adapters/lib" "$TEST_REPO/src/published/scripts/lib" "$TEST_REPO/dist/opencode/comandos" "$TEST_REPO/dist/opencode/skills/mefisto-projections" "$TEST_REPO/dist/opencode/skills/mefisto-comment-cleanup" "$TEST_REPO/.claude-plugin" "$TEST_REPO/bin"
     cp "$SOURCE" "$TEST_REPO/src/published/scripts/package-opencode-release.sh"
     cp "$INSTALLER_SOURCE" "$TEST_REPO/src/published/scripts/install-opencode-release.sh"
     cp "$LAUNCHER_SOURCE" "$TEST_REPO/src/published/scripts/mefisto-opencode"
     cp "$PROJECTOR_SOURCE" "$TEST_REPO/src/published/scripts/project-opencode-release.sh"
     cp "$DIAGNOSTIC_SOURCE" "$TEST_REPO/src/published/scripts/diagnose-installation-identity.sh"
+    cp "$RELEASE_USE_SOURCE" "$TEST_REPO/src/published/scripts/opencode-release-use.sh"
+    cp "$RELEASE_USE_PROCESS_SOURCE" "$TEST_REPO/src/published/scripts/lib/release-use-process.sh"
+    cp "$RELEASE_USE_LIB_SOURCE" "$TEST_REPO/src/published/scripts/adapters/lib/opencode-release-use.sh"
     cp "$CLAUDE_ADAPTER_SOURCE" "$TEST_REPO/src/published/scripts/adapters/adapter-claude.sh"
     cp "$CLAUDE_LIB_SOURCE" "$TEST_REPO/src/published/scripts/lib/adapter-claude.sh"
     cp "$EFFECTIVE_CONTRACT_SOURCE" "$TEST_REPO/src/published/scripts/lib/effective-contract.sh"
-    chmod +x "$TEST_REPO/src/published/scripts/package-opencode-release.sh" "$TEST_REPO/src/published/scripts/project-opencode-release.sh" "$TEST_REPO/src/published/scripts/diagnose-installation-identity.sh"
+    chmod +x "$TEST_REPO/src/published/scripts/package-opencode-release.sh" "$TEST_REPO/src/published/scripts/project-opencode-release.sh" "$TEST_REPO/src/published/scripts/diagnose-installation-identity.sh" "$TEST_REPO/src/published/scripts/opencode-release-use.sh"
     chmod +x "$TEST_REPO/src/published/scripts/install-opencode-release.sh" "$TEST_REPO/src/published/scripts/mefisto-opencode"
+    chmod +x "$TEST_REPO/src/published/scripts/lib/release-use-process.sh" "$TEST_REPO/src/published/scripts/adapters/lib/opencode-release-use.sh"
     printf '{"version":"1.2.3"}\n' > "$TEST_REPO/.claude-plugin/plugin.json"
     cp "$FIXTURES/valid.json" "$TEST_REPO/src/published/release-identity.json"
     cat > "$TEST_REPO/src/published/scripts/generate-published-adapters.sh" <<'EOF'
@@ -58,6 +65,10 @@ EOF
         printf '#!/usr/bin/env bash\n' > "$TEST_REPO/dist/opencode/$source"
         chmod 0755 "$TEST_REPO/dist/opencode/$source"
     done
+    mkdir -p "$TEST_REPO/dist/opencode/src/published/scripts/lib" "$TEST_REPO/dist/opencode/src/published/scripts/adapters/lib"
+    cp "$RELEASE_USE_PROCESS_SOURCE" "$TEST_REPO/dist/opencode/src/published/scripts/lib/release-use-process.sh"
+    cp "$RELEASE_USE_LIB_SOURCE" "$TEST_REPO/dist/opencode/src/published/scripts/adapters/lib/opencode-release-use.sh"
+    chmod 0755 "$TEST_REPO/dist/opencode/src/published/scripts/lib/release-use-process.sh" "$TEST_REPO/dist/opencode/src/published/scripts/adapters/lib/opencode-release-use.sh"
     for source in \
         src/runtime/lib/mefisto-models.sh src/runtime/lib/runtime-claude.jq src/runtime/lib/runtime-opencode.jq \
         src/runtime/contract/models.validate.jq; do
@@ -106,8 +117,11 @@ SHA_DIGEST="${SHA_VALUE%%  *}"; SHA_FILE="${SHA_VALUE#*  }"
 [ "${#SHA_DIGEST}" -eq 64 ] && [ -z "${SHA_DIGEST//[0123456789abcdef]/}" ] && [ "$SHA_FILE" = 'mefisto-opencode-v1.2.3.tar.gz' ] && pass 'formato sha256 canonico y no interactivo' || fail 'formato sha256 invalido'
 
 EXTRACT="$WORK/extract"; mkdir "$EXTRACT"; tar -xzf "$TAR" -C "$EXTRACT"
-[ -f "$EXTRACT/mefisto-manifest.json" ] && [ -x "$EXTRACT/comandos/run.sh" ] && [ -x "$EXTRACT/install.sh" ] && [ -x "$EXTRACT/project-opencode-release.sh" ] && [ -x "$EXTRACT/diagnose-installation-identity.sh" ] && [ -x "$EXTRACT/bin/mefisto-opencode" ] && [ -d "$EXTRACT/directorio-vacio" ] && pass 'extrae instalador, proyector, diagnostico y contenido sin envolvente' || fail 'layout o permisos incorrectos'
+[ -f "$EXTRACT/mefisto-manifest.json" ] && [ -x "$EXTRACT/comandos/run.sh" ] && [ -x "$EXTRACT/install.sh" ] && [ -x "$EXTRACT/project-opencode-release.sh" ] && [ -x "$EXTRACT/diagnose-installation-identity.sh" ] && [ -x "$EXTRACT/release-use.sh" ] && [ -x "$EXTRACT/bin/mefisto-opencode" ] && [ -d "$EXTRACT/directorio-vacio" ] && pass 'extrae instalador, proyector, API de uso y contenido sin envolvente' || fail 'layout o permisos incorrectos'
 [ "$(file_mode "$EXTRACT/mefisto-manifest.json")" = 644 ] && pass 'manifiesto tiene modo 0644' || fail 'modo del manifiesto invalido'
+COPIED_DATA="$WORK/copied-data"; mkdir -p "$COPIED_DATA/releases"
+COPIED_INSPECT="$(jq -cn '{schemaVersion:1,requestId:"copied-inspect",operation:"inspect"}' | bash "$EXTRACT/release-use.sh" inspect --data-root "$COPIED_DATA")"; COPIED_RC=$?
+[ "$COPIED_RC" -eq 0 ] && jq -e '.status=="ok" and .revision==0 and .capabilities.protocol=="release-use-v1"' >/dev/null <<<"$COPIED_INSPECT" && pass 'API empaquetada funciona sin checkout fuente' || fail 'API empaquetada depende del checkout fuente'
 closure_ok=true
 for source in \
     scripts/_pipeline-common.sh scripts/tmux-pipeline.sh scripts/herdr-pipeline.sh scripts/stream-watch.sh scripts/tooling-pipeline.sh scripts/tdd-pipeline.sh \

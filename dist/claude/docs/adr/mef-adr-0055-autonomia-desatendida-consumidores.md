@@ -14,7 +14,7 @@ Este ADR documenta decisiones acordadas. No implementa permisos, preflight, work
 
 ### 1. Perfil por proyecto y entrada controlada
 
-La autonomia se activa **explicitamente por proyecto**, no por tool call ni por lote. El perfil neutral vive en `.mefisto/harness.config.json` y declara capacidades, recursos y operaciones, sin secretos. La evidencia y el estado de autorizacion/ejecucion viven en `.mefisto/pipeline/`. El schema y el formato del registro se materializaran en los issues de implementacion.
+La autonomia se activa **explicitamente por proyecto**, no por tool call ni por lote. El perfil neutral vive en `.mefisto/harness.config.json` y declara capacidades, recursos y operaciones, sin secretos. La evidencia y el estado de autorizacion/ejecucion viven en `.mefisto/pipeline/`. Los schemas y formatos operativos pertenecen a los artefactos contractuales correspondientes; este ADR fija sus invariantes sin reproducirlos.
 
 La declaracion versionada no es consentimiento por si sola: antes de la etapa se captura una autorizacion aprobada y su revision. No sirven como autorizacion nueva una edicion del worktree, texto de issue ni una respuesta del agente. La configuracion efectiva se comprueba con la precedencia real del runtime; una restriccion ajena explicita en conflicto se diagnostica y no se sobreescribe.
 
@@ -31,7 +31,7 @@ La autorizacion se expresa por funcion y recurso, no como una lista universal de
 | Entrega | Git en ramas de trabajo; PR, revision, merge, observacion y reintentos de CI ya autorizados, sujetos a permisos remotos y politica del repo. |
 | Administracion acotada | Bootstrap, auth, registro/cableado de secretos, mantenimiento y purgas enumerados previamente por operacion, entorno y recurso. Una entrada generica «administrar» no basta. |
 
-Leer la release es capacidad basica: cubre macOS con espacios, Linux y la resolucion de roots XDG/config efectivos para ubicar los recursos autorizados, ademas del cache de paquetes y las salidas del runtime, sin conceder lectura general de esas raices ni de auth stores. Los decompilados son estado propio del consumidor. La release es solo lectura para desarrollo; mantenimiento autorizado puede instalar una release inmutable, cambiar el puntero o podar versiones no usadas, pero nunca editar su contenido ni modificar la release cargada por una corrida.
+Leer la release es capacidad basica: cubre macOS con espacios, Linux y la resolucion de roots XDG/config efectivos para ubicar los recursos autorizados, ademas del cache de paquetes y las salidas del runtime, sin conceder lectura general de esas raices ni de auth stores. Los decompilados son estado propio del consumidor. La release es solo lectura para desarrollo; mantenimiento autorizado puede instalar una release inmutable, cambiar el puntero o podar versiones no usadas, pero nunca editar su contenido. El mantenimiento se coordina entre corridas y no convierte una etapa en mantenimiento.
 
 `tool-output` autoriza lectura de todo el directorio global de resultados del runtime, incluso resultados de otras sesiones o proyectos del mismo usuario. Es un riesgo residual aceptado: ese contenido puede ser sensible. No concede escritura ni lectura de auth stores, logs, bases de sesiones ni el resto de datos/configuracion del runtime. La retencion y aplicacion corresponden a #1846/#1847.
 
@@ -47,7 +47,7 @@ Los actores que custodian credenciales continuan usandolas sin revelar valores a
 
 La secuencia es: **activar/autorizar perfil -> resolver identidad y recursos -> verificar capacidades/requisitos -> admitir -> ejecutar/observar -> verificar resultado**. La admision captura snapshot de repo, runtime/version, release cargada, revision de perfil/autorizacion, recursos, toolchain y agentes. Una corrida conserva una identidad de release coherente y no toma la ultima version del cache en cada paso.
 
-Invariante de una corrida admitida: **cero prompts y cero denegaciones de capacidades requeridas**. No se omite una lectura o comprobacion obligatoria para aparentar continuidad. Un cambio externo o una operacion fuera del alcance falla o no se admite explícitamente, de forma recuperable, sin autoampliacion, espera interactiva silenciosa ni reintento ciego. Esto no promete eliminar fallos de red, proveedor, credenciales expiradas o autorizacion externa cambiante. La politica existente del orquestador sigue gobernando cola, dependencias y reanudacion.
+Invariante y objetivo operacional de una corrida admitida: **cero prompts y cero denegaciones de capacidades requeridas**. No se omite una lectura o comprobacion obligatoria para aparentar continuidad. Un cambio externo o una operacion fuera del alcance falla o no se admite explícitamente, de forma recuperable, sin autoampliacion, espera interactiva silenciosa ni reintento ciego. Esto no promete eliminar fallos de red, proveedor, credenciales expiradas o autorizacion externa cambiante. La politica existente del orquestador sigue gobernando cola, dependencias y reanudacion. El objetivo no convierte una telemetria incompleta en una afirmacion demostrada; el alcance de certificacion se precisa en la seccion 8.
 
 Cada corrida/etapa deja evidencia sanitizada de identidad, comprobaciones, solicitudes o denegaciones observadas y resultados requeridos. Desconocido no equivale a cero; exit 0 no demuestra por si solo tarea completa.
 
@@ -57,7 +57,8 @@ Cada corrida/etapa deja evidencia sanitizada de identidad, comprobaciones, solic
 | Bootstrap exacto, entorno y recurso incluidos en autorizacion vigente | **Permitir** tras admision; la etapa no pide aprobacion. |
 | Purga sin consentimiento especifico | **No admitir**, con causa de autorizacion faltante. |
 | Operacion cambia a entorno o recurso no aprobado | **No admitir/fallar** con causa; no autoampliar permisos. |
-| Denegacion observada o conteo de solicitudes desconocido durante etapa | **Completitud no demostrada**; fallar con evidencia, sin ocultarlo como exito. |
+| Denegacion o hint observados en una operacion requerida durante la etapa | **Caso no aprobado** hasta investigar la señal; exit 0 no permite ocultarla como exito. |
+| Sin señales observadas y conteos desconocidos durante la etapa | **Solo outcomes ejercidos verificables**; documentar los limites de observabilidad, sin afirmar conteos cero ni cobertura universal. |
 
 ### 5. Local primero; aislamiento despues
 
@@ -70,6 +71,100 @@ El worker aislado de #1824 es una evolucion posterior: workspace y caches propio
 Sin perfil nuevo, Claude conserva flujo, argumentos, modelos, herramientas/Skills, delegacion, fallbacks y reanudacion; no requiere instalar ni configurar OpenCode ni una migracion silenciosa. Una compensacion exclusiva de OpenCode no altera Claude. Todo cambio neutral declara su delta y exige pruebas en ambos adaptadores: regenerar artefactos no prueba no regresion funcional.
 
 Las implementaciones futuras deben aportar tests deterministas de contratos y regresiones, sin LLM ni red real; un smoke separado y controlado de la release instalada con OpenCode; un control TDD equivalente de Claude hasta verificaciones/PR; y coexistencia sin contaminacion. Los invariantes incluyen consumidor solo Claude, contratos legacy, eventos conocidos y desconocidos, y coexistencia de adaptadores. #1827 registrara plataformas, versiones, casos, evidencia y limitaciones. Este ADR fija la obligacion, no afirma certificacion runtime realizada.
+
+### 7. Enmienda: mantenimiento entre corridas y recuperación conservadora
+
+La instalación distingue tres clases de uso. **Retener** una release cargada e
+idle la protege de la poda, pero no impide actualizar la instalación. **Ejecutar**
+una corrida comprende cola, etapas, hold y reintento: bloquea los cambios
+compartidos mientras exista uso vivo. **Mantener** la instalación se admite solo
+en quiescencia; no es permiso para interrumpir trabajo ni para transformar una
+etapa en mantenimiento. `busy` es una respuesta de coordinación, no éxito ni
+autorización para forzar una operación.
+
+| Evidencia observada | Cambio de `active` o proyección | Poda de su release | Recuperación automática | Admisión de corrida |
+|---|---|---|---|---|
+| `execute` vivo | `busy` | No | No | Sin cambio |
+| `retain` idle | Puede proceder | No | No aplica | Sin cambio |
+| Muerte comprobada de propietario y todo descendiente pertinente | Puede proceder tras liberar el uso recuperado | Según las demás retenciones | Sí | Sin cambio |
+| Hijo o metadata desconocidos | Retener | No | No | Sin cambio |
+| Consentimiento revocado | No lo bloquea por sí solo | Según los usos registrados | No | No admitir una nueva corrida |
+
+La recuperación automática exige demostrar que el propietario y los
+descendientes pertinentes terminaron. Registra identidad de host y boot,
+identidad estable de cada proceso, relaciones de lanzamiento y cobertura del
+grafo; reobserva esa evidencia antes de recuperar. Un TTL, un PID aislado, el
+PPID actual, una sesión idle o `exit 0` no prueban por sí solos la terminación
+ni la completitud: POSIX limita la señal 0 a comprobar existencia y permiso
+sobre un PID, y `wait` a observar hijos del proceso llamador [6][7]. Ante
+incertidumbre conserva la retención. La recuperación no
+envía señales a procesos ni poda por su cuenta, y no promete recuperar un mutex
+legado abandonado cuando no haya evidencia suficiente.
+
+El registro global de esos usos es metadata de la **instalación** bajo la raíz
+de datos de Mefisto, no estado de negocio ni consentimiento del consumidor. El
+contexto por proyecto, su evidencia y autorización permanecen bajo
+`.mefisto/pipeline/`; ningún registro global contiene secretos ni permite a una
+etapa escribir sus controles. Este límite no promete aislamiento frente al
+mismo usuario local ni soporte distribuido o sobre NFS.
+
+El guard que aplica este modelo es síncrono y observa al actor que realmente
+ejecuta. En OpenCode, un fallo de configuración puede ignorarse y la CLI puede
+caer a un valor por defecto [3][4]; por ello el modo headless preparado exige un
+handshake de la misma instancia antes del prompt y una revalidación posterior.
+Los parámetros de chat deben observarse en la petición efectiva, no inferirse
+de una configuración deseada [5]. Un servicio local privado no equivale al
+worker aislado de #1824 ni a un sandbox: OpenCode declara que no proporciona
+sandbox [1].
+
+La ausencia de perfil (`NO_PROFILE`) conserva el flujo legacy. Una respuesta
+`CONSENT_REVOKED`, o un contexto controlado inválido, no se convierte en
+fallback para una corrida automática: conserva firma y códigos del validador
+actual y se reporta al caller para que distinga la causa. El lease coordina uso
+de instalación, no reemplaza la autorización administrativa, los modelos o el
+flujo existente del adaptador Claude, ni la administración acotada de este ADR.
+
+### 8. Enmienda: certificación con evidencia parcial observable
+
+La certificación preserva el objetivo operacional de la sección 4, pero separa
+lo que se desea evitar de lo que el wire realmente demuestra. En OpenCode
+v1.18.29, `run --format json` no exporta el ciclo completo de permisos:
+`denials:null` es **desconocido**, nunca cero; las solicitudes autoaprobadas por
+`--auto` pueden no aparecer en el JSON; y una denegación de tool puede llegar
+solo como texto. El mantenedor acepta esta evidencia parcial para el smoke de
+#1827, con límites visibles, en vez de falsear un contador global de cero.
+
+Las señales positivas estructuradas permiten rechazar o escalar un caso. Un
+error de tool expresado como texto es un *hint*, no una decisión tipada, pero
+también impide aprobar el caso hasta investigarlo. La ausencia de ambas señales
+no prueba que no existieron eventos que el runtime no emitió, ni `--auto`
+demuestra autonomía. El smoke verifica outcomes concretos
+de los escenarios ejercidos, incluidos sus entregables y prompts visibles; no
+certifica universalmente `denials == 0` ni `asks == 0`.
+
+| Situación observada | Qué puede afirmarse | Qué no puede afirmarse |
+|---|---|---|
+| Hint o denegación observada en una operación requerida, incluso con exit 0 | El caso no se aprueba hasta investigarla o clasificarla; texto final y exit 0 no sustituyen esa investigación. | Que la operación fue autónoma o que el resultado terminal prueba completitud. |
+| Stream sin observaciones y `denials:null` | Los escenarios ejecutados terminaron sin prompts visibles ni señales observadas, si sus outcomes concretos se verificaron. | Que no hubo denegaciones o solicitudes no emitidas, ni cero bloqueos en todo el catálogo. |
+| Permiso autoaprobado que no se emitió en el stream | La ausencia de señal es compatible con la cobertura parcial conocida del wire. | Que `--auto` prueba autonomía, ausencia de solicitudes o un conteo cero. |
+| Fuente completa que informa explícitamente cero | Cero para el alcance, versión y superficie que esa fuente cubre. | Cero fuera de esa cobertura o una garantía permanente ante cambios externos. |
+
+#1827 puede cerrarse manualmente cuando conserve evidencia reproducible y
+sanitizada de escenarios concretos, sus outcomes y una sección visible de
+limitaciones: versión, superficies probadas, `denials:null`, solicitudes no
+observables y cambios externos. Ese cierre certifica dichos escenarios; no
+declara una garantía de cero bloqueos para todas las etapas ni para todo el
+catálogo. Fallos externos no relacionados se clasifican aparte y no se usan
+para ocultar una señal de permiso de una operación requerida. Un preflight en
+estado `ready` y una suite simulada son controles útiles, pero no sustituyen la
+telemetría real ni acreditan por sí solos todas las etapas.
+
+Esta limitación no rebaja la evidencia de Claude por una paridad aparente:
+cuando su versión emite `permission_denials`, el adaptador conserva ese dato
+real y no lo transforma en `null`. Cuando una versión o API ofrezca una señal
+completa para el otro adaptador, se revalidará el objetivo mediante un issue
+específico, con nueva caracterización de la fuente. No se introduce un fork
+silencioso del runtime ni se presenta un test simulado como telemetría real.
 
 ## Alternativas consideradas
 
@@ -102,7 +197,7 @@ Las implementaciones futuras deben aportar tests deterministas de contratos y re
 - El acceso a `tool-output` global conserva el riesgo residual de contenido sensible de otras sesiones.
 - Local primero no proporciona aislamiento frente al host.
 - Una corrida admitida puede fallar por condiciones externas; el contrato exige evidencia y recuperabilidad, no exito artificial.
-- Los mecanismos ejecutables y la certificacion quedan deliberadamente pendientes de los issues dependientes.
+- Esta enmienda no acredita la implementacion del lease, el guard o la recuperacion, ni la certificacion integral; esos resultados requieren evidencia en sus issues de entrega.
 
 ## Referencias
 
@@ -113,10 +208,20 @@ Las implementaciones futuras deben aportar tests deterministas de contratos y re
 - MEF-ADR-0049, seccion 5: `--auto` no elimina denegaciones y su politica interna no cambia aqui.
 - MEF-ADR-0050: intenciones neutrales y bindings por adaptador.
 - MEF-ADR-0053, secciones 2, 4 y 5: releases inmutables, contrato canonico/fallback y paridad distribuida.
+- MEF-ADR-0053, secciones 5 y 6: paridad entre adaptadores y certificación de la release instalada.
 - [1] OpenCode, [Security: No Sandbox](https://github.com/anomalyco/opencode/blob/v1.18.29/SECURITY.md), version 1.18.29; fuente del limite del modo local.
 - [2] OpenCode, [Permissions](https://github.com/anomalyco/opencode/blob/v1.18.29/packages/web/src/content/docs/permissions.mdx), version 1.18.29; fuente del limite de `--auto`.
+- [3] OpenCode, [carga de plugins y disparo de configuración](https://github.com/anomalyco/opencode/blob/v1.18.29/packages/opencode/src/plugin/index.ts), versión 1.18.29; un fallo de configuración no es evidencia de que el guard se aplicó.
+- [4] OpenCode, [fallback de la CLI `run`](https://github.com/anomalyco/opencode/blob/v1.18.29/packages/opencode/src/cli/cmd/run.ts), versión 1.18.29; la instancia efectiva puede diferir del valor preparado.
+- [5] OpenCode, [parámetros efectivos de petición de chat](https://github.com/anomalyco/opencode/blob/v1.18.29/packages/opencode/src/session/llm/request.ts), versión 1.18.29; fundamento para observar la petición de la misma instancia.
+- [6] The Open Group, POSIX.1-2024, [`kill`](https://pubs.opengroup.org/onlinepubs/9799919799/functions/kill.html); la señal 0 comprueba el PID y los permisos sin enviar una señal.
+- [7] The Open Group, POSIX.1-2024, [`wait`](https://pubs.opengroup.org/onlinepubs/9799919799/functions/wait.html); su alcance son procesos hijo del proceso llamador, no un grafo arbitrario.
+- [8] OpenCode, [`run --format json`](https://github.com/anomalyco/opencode/blob/v1.18.29/packages/opencode/src/cli/cmd/run.ts), versión 1.18.29; el stream no exporta el ciclo completo de permisos y `--auto` puede responder sin emitir la solicitud.
+- [9] OpenCode, [permission/index.ts](https://github.com/anomalyco/opencode/blob/v1.18.29/packages/opencode/src/permission/index.ts) y [SessionProcessor](https://github.com/anomalyco/opencode/blob/v1.18.29/packages/opencode/src/session/processor.ts), versión 1.18.29; una denegación puede no conservar tipo al representarse como texto.
 - Issue #1820: origen y decisiones del mantenedor; #1821--#1827: implementacion y certificacion posteriores.
 
 ## Control de cambios
 
 - 2026-10-03: creacion como `aceptado` (issue #1820). Fija perfil opt-in por proyecto, entrada controlada, administracion preautorizada y acotada, ciclo de admision con evidencia, local primero sin promesa de sandbox y compatibilidad/certificacion futura; no implementa permisos ni declara certificacion runtime.
+- 2026-10-04: enmienda (issue #1862). Precisa la convención de mantenimiento entre corridas, la recuperación automática solo con terminación demostrable del grafo pertinente, la separación entre metadata global de instalación y controles del consumidor, el guard síncrono sobre la instancia efectiva y el tratamiento no fallback de `CONSENT_REVOKED`; no implementa ni certifica esos mecanismos.
+- 2026-10-04: enmienda (issue #1875). Distingue el objetivo de cero prompts/denegaciones de la certificación limitada por el wire de OpenCode v1.18.29: `denials:null` permanece desconocido, las señales positivas rechazan el caso y #1827 solo puede cerrar manualmente escenarios reproducibles con sus límites visibles; no implementa traductores ni declara una garantía global.

@@ -155,8 +155,33 @@ trimmed_sha256() {
     printf '%s' "$content" | shasum -a 256 | awk '{print $1}'
 }
 
+native_command_binding() {
+    awk '
+        NR == 1 { next }
+        $0 == "---" { exit }
+        /^command-entry-id:/ {
+            entry_count++
+            if (match($0, /^command-entry-id: "[a-z0-9]+(-[a-z0-9]+)*"$/)) {
+                entry_id=$0
+                sub(/^command-entry-id: "/, "", entry_id)
+                sub(/"$/, "", entry_id)
+            }
+        }
+        /^subtask:/ {
+            subtask_count++
+            if ($0 == "subtask: false") subtask="false"
+        }
+        END {
+            if (entry_count == 0 && subtask_count == 0) print "null"
+            else if (entry_count == 1 && subtask_count == 1 && entry_id != "" && subtask == "false")
+                printf "{\"commandEntryId\":\"%s\",\"subtask\":false}\n", entry_id
+            else exit 2
+        }
+    '
+}
+
 render_command_entry_manifest() {
-    local catalog source rel marker rendered hash templates='[]' delegated='[]' command agent
+    local catalog source rel marker rendered hash native_binding legacy_binding templates='[]' delegated='[]' command agent
     catalog="$(command_entry_catalog)" || return 1
     while IFS= read -r command; do
         source="$REPO_ROOT/src/published/commands/$command.md"
@@ -164,7 +189,9 @@ render_command_entry_manifest() {
         marker="<!-- GENERADO por src/published/scripts/generate-published-adapters.sh desde $rel. No editar a mano. -->"
         rendered="$(render "$source" "$marker")" || return 1
         hash="$(printf '%s' "$rendered" | body /dev/stdin | trimmed_sha256)" || return 1
-        templates="$(jq -cn --argjson prior "$templates" --arg id "$command" --arg sha256 "$hash" '$prior + [{kind:"command",id:$id,sha256:$sha256}]')" || return 1
+        native_binding="$(printf '%s\n' "$rendered" | native_command_binding)" || return 1
+        legacy_binding="$(jq -cn --arg id "$command" '{commandEntryId:$id,subtask:false}')" || return 1
+        templates="$(jq -cn --argjson prior "$templates" --arg id "$command" --arg sha256 "$hash" --argjson nativeBinding "$native_binding" --argjson legacyBinding "$legacy_binding" '$prior + [{kind:"command",id:$id,sha256:$sha256,nativeBinding:$nativeBinding,legacyBinding:$legacyBinding}]')" || return 1
         while IFS= read -r agent; do
             [ -n "$agent" ] || continue
             source="$REPO_ROOT/src/published/agents/$agent.md"
@@ -492,7 +519,14 @@ validate_interactive_hooks() {
 }
 
 render_observability_plugin() {
+    local observation_identity
     validate_interactive_hooks || return 1
+    observation_identity="$(jq -ce '
+      select(type == "object" and (keys | sort) == ["commit", "schemaVersion", "version"] and .schemaVersion == 1) |
+      select(.version | type == "string" and test("^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?(\\+[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?$")) |
+      select(.commit | type == "string" and test("^[0-9a-f]{40}$")) |
+      [.version, .commit]
+    ' "$REPO_ROOT/src/published/release-identity.json")" || { error 'observability: release-identity.json invalida'; return 1; }
     cat <<'EOF'
 // GENERADO por src/published/scripts/adapters/adapter-opencode.sh desde src/published/hooks/interactive-hooks.json. No editar a mano.
 import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
@@ -524,6 +558,25 @@ const toolName = (input) => String(input?.tool ?? input?.toolName ?? "").toLower
 const args = (input) => input?.args && typeof input.args === "object" ? input.args : {};
 const successful = (output) => Number.isInteger(output?.metadata?.exitCode) && output.metadata.exitCode === 0;
 const modelComponent = (value) => typeof value === "string" && value.length > 0 && value.length <= 256 && !/[\/\u0000-\u001f\u007f]/.test(value);
+EOF
+    printf 'const observationIdentity = %s;\n' "$observation_identity"
+    cat <<'EOF'
+const observationMarker = Symbol.for("mefisto.original-tool-observation.v1");
+const observationKey = (context, input) => JSON.stringify([observationIdentity[0], observationIdentity[1], context?.project?.id, context?.directory, sessionID(input), input?.callID]);
+const classifiedObservation = (value) => value === null || (value && typeof value === "object" && !Array.isArray(value) && Object.keys(value).length === 2 && (value.family === "test" && value.subcommand === "test" || value.family === "terraform" && ["plan", "apply", "init", "validate"].includes(value.subcommand)));
+const consumeOriginalObservation = (context, input) => {
+  const store = globalThis[observationMarker];
+  if (!(store instanceof Map)) return { found: false };
+  const key = observationKey(context, input);
+  if (!store.has(key)) return { found: false };
+  const value = store.get(key); store.delete(key);
+  return classifiedObservation(value) ? { found: true, value } : { found: false };
+};
+const classifyLegacyCommand = (command) => {
+  if (/^\s*dotnet\s+test(?:\s|$)/.test(command)) return { family: "test", subcommand: "test" };
+  const match = /^\s*terraform\s+(plan|apply|init|validate)(?:\s|$)/.exec(command);
+  return match ? { family: "terraform", subcommand: match[1] } : null;
+};
 
 export default async function mefistoObservability(context) {
   const root = rootOf(context);
@@ -562,13 +615,16 @@ export default async function mefistoObservability(context) {
       } catch (error) { observations.delete(key); throw error; }
     }),
     "tool.execute.after": async (input, output) => safe(context.client, "Mefisto: no se pudo registrar el resumen de herramienta.", async () => {
-      if (!root) return; const tool = toolName(input); const inputArgs = args(input);
-      if (["write", "edit", "patch"].includes(tool)) { if (typeof input?.sessionID === "string" && input.sessionID.length > 0) changed.add(input.sessionID); const candidate = inputArgs.filePath ?? inputArgs.file_path ?? inputArgs.path; const file = typeof candidate === "string" && candidate.length > 0 ? candidate : "(desconocido)"; await append(root, "events.log", { time: clock(), family: "archivo", file_path: file }); return; }
+      const tool = toolName(input); const inputArgs = args(input);
+      if (["write", "edit", "patch"].includes(tool)) { if (!root) return; if (typeof input?.sessionID === "string" && input.sessionID.length > 0) changed.add(input.sessionID); const candidate = inputArgs.filePath ?? inputArgs.file_path ?? inputArgs.path; const file = typeof candidate === "string" && candidate.length > 0 ? candidate : "(desconocido)"; await append(root, "events.log", { time: clock(), family: "archivo", file_path: file }); return; }
       if (!["bash", "shell"].includes(tool)) return;
       const command = typeof inputArgs.command === "string" ? inputArgs.command : "";
-      if (/^\s*dotnet\s+test(?:\s|$)/.test(command)) { await append(root, "events.log", { time: clock(), family: "test", result: successful(output) ? "PASS" : "FAIL" }); return; }
-      const match = /^\s*terraform\s+(plan|apply|init|validate)(?:\s|$)/.exec(command);
-      if (match) await append(root, "events.log", { time: clock(), family: "terraform", terraform_subcommand: match[1], result: successful(output) ? "OK" : "ERROR" });
+      const observed = consumeOriginalObservation(context, input);
+      if (!root) return;
+      const classified = observed.found ? observed.value : classifyLegacyCommand(command);
+      if (!classified) return;
+      if (classified.family === "test") { await append(root, "events.log", { time: clock(), family: "test", result: successful(output) ? "PASS" : "FAIL" }); return; }
+      await append(root, "events.log", { time: clock(), family: "terraform", terraform_subcommand: classified.subcommand, result: successful(output) ? "OK" : "ERROR" });
     }),
   };
 }
@@ -678,7 +734,7 @@ if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
         path)
             case "${2:-}" in src/published/agents/*.md) printf 'agents/%s\n' "$(basename "$2")" ;; src/published/commands/*.md) printf 'commands/mefisto:%s\n' "$(basename "$2")" ;; *) error "$2: path: fuente publicada desconocida" ;; esac ;;
         render) [ "$#" -eq 3 ] || error 'render: se esperaban fuente y marcador'; render "$2" "$3" ;;
-        assets) validate_interactive_hooks && validate_published_mcp && command_entry_catalog >/dev/null && agent_execution_catalog >/dev/null && { skill_assets | jq '. + [{id:"interactive-observability",source:"src/published/hooks/interactive-hooks.json",destination:"plugins/mefisto-observability.js",mode:"0644"},{id:"mcp-config",source:"src/published/contract/mcp-servers.json",destination:"plugins/mefisto-mcp.js",mode:"0644"},{id:"command-entry-manifest",source:"src/published/contract/command-entry.json",destination:"command-entry-manifest.json",mode:"0644"},{id:"agent-execution-manifest",source:"src/published/contract/agent-execution.json",destination:"agent-execution-manifest.json",mode:"0644"}]'; } ;;
+        assets) validate_interactive_hooks && validate_published_mcp && command_entry_catalog >/dev/null && agent_execution_catalog >/dev/null && { skill_assets | jq '. + [{id:"interactive-observability",source:"src/published/hooks/interactive-hooks.json",destination:"plugins/mefisto-observability.js",mode:"0644"},{id:"mcp-config",source:"src/published/contract/mcp-servers.json",destination:"plugins/mefisto-mcp.js",mode:"0644"},{id:"command-entry-manifest",source:"src/published/contract/command-entry.json",destination:"command-entry-manifest.json",mode:"0644"},{id:"agent-execution-manifest",source:"src/published/contract/agent-execution.json",destination:"agent-execution-manifest.json",mode:"0644"},{id:"release-use",source:"src/published/scripts/opencode-release-use.sh",destination:"release-use.sh",mode:"0755"}]'; } ;;
         render-asset)
             [ "$#" -eq 3 ] || error 'render-asset: se esperaban id y fuente'
             case "$2" in interactive-observability) render_observability_plugin ;; mcp-config) render_mcp_plugin "$3" ;; command-entry-manifest) render_command_entry_manifest ;; agent-execution-manifest) render_agent_execution_manifest ;; *) render_skill_asset "$2" "$3" ;; esac ;;

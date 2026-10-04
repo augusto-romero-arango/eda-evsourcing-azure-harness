@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "cases": [
+    {"id":"adr-local","subject":"ADR o Skill local","expected":"local-artifact"},
+    {"id":"microsoft-bundleado","subject":"Azure, .NET o C# con MCP disponible","expected":"bundled-mcp"},
+    {"id":"marten-wolverine-workos","subject":"Marten, Wolverine o WorkOS","expected":"web"},
+    {"id":"mcp-y-web-ausentes","subject":"claim que requiere fuente externa sin MCP ni web efectivos","expected":"NO VERIFICADO"}
+  ]
+}

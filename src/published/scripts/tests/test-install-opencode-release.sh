@@ -8,6 +8,9 @@ INSTALLER="$REPO_ROOT/src/published/scripts/install-opencode-release.sh"
 LAUNCHER="$REPO_ROOT/src/published/scripts/mefisto-opencode"
 PROJECTOR="$REPO_ROOT/src/published/scripts/project-opencode-release.sh"
 DIAGNOSTIC="$REPO_ROOT/src/published/scripts/diagnose-installation-identity.sh"
+RELEASE_USE="$REPO_ROOT/src/published/scripts/opencode-release-use.sh"
+RELEASE_USE_PROCESS="$REPO_ROOT/src/published/scripts/lib/release-use-process.sh"
+RELEASE_USE_LIBRARY="$REPO_ROOT/src/published/scripts/adapters/lib/opencode-release-use.sh"
 WORK="$(mktemp -d)"; trap 'chmod -R u+w "$WORK" 2>/dev/null || true; rm -rf "$WORK"' EXIT
 PASS=0; FAIL=0
 pass() { printf '  PASS: %s\n' "$1"; PASS=$((PASS + 1)); }
@@ -32,9 +35,10 @@ wait_for_lock() {
 make_release() {
     local version="$1" commit="$2" root asset
     root="$WORK/release-$version"; asset="mefisto-opencode-v$version.tar.gz"
-    mkdir -p "$root/bin" "$WORK/assets/v$version"
-    cp "$INSTALLER" "$root/install.sh"; cp "$LAUNCHER" "$root/bin/mefisto-opencode"; cp "$PROJECTOR" "$root/project-opencode-release.sh"; cp "$DIAGNOSTIC" "$root/diagnose-installation-identity.sh"
-    chmod +x "$root/install.sh" "$root/bin/mefisto-opencode" "$root/project-opencode-release.sh" "$root/diagnose-installation-identity.sh"
+    mkdir -p "$root/bin" "$root/src/published/scripts/lib" "$root/src/published/scripts/adapters/lib" "$WORK/assets/v$version"
+    cp "$INSTALLER" "$root/install.sh"; cp "$LAUNCHER" "$root/bin/mefisto-opencode"; cp "$PROJECTOR" "$root/project-opencode-release.sh"; cp "$DIAGNOSTIC" "$root/diagnose-installation-identity.sh"; cp "$RELEASE_USE" "$root/release-use.sh"
+    chmod +x "$root/install.sh" "$root/bin/mefisto-opencode" "$root/project-opencode-release.sh" "$root/diagnose-installation-identity.sh" "$root/release-use.sh"
+    cp "$RELEASE_USE_PROCESS" "$root/src/published/scripts/lib/release-use-process.sh"; cp "$RELEASE_USE_LIBRARY" "$root/src/published/scripts/adapters/lib/opencode-release-use.sh"
     printf 'fixture %s\n' "$version" > "$root/contenido con espacios.txt"
     jq -n --arg version "$version" --arg commit "$commit" '{schemaVersion: 1, runtime: "opencode", version: $version, commit: $commit, minimumRuntimeVersion: "1.18.29"}' > "$root/mefisto-manifest.json"
     (cd "$root" && tar -czf "$WORK/assets/v$version/$asset" .) || exit 1
@@ -44,9 +48,10 @@ make_release() {
 make_link_release() {
     local version="$1" root asset
     root="$WORK/release-$version"; asset="mefisto-opencode-v$version.tar.gz"
-    mkdir -p "$root/bin" "$WORK/assets/v$version"
-    cp "$INSTALLER" "$root/install.sh"; cp "$LAUNCHER" "$root/bin/mefisto-opencode"; cp "$PROJECTOR" "$root/project-opencode-release.sh"; cp "$DIAGNOSTIC" "$root/diagnose-installation-identity.sh"
-    chmod +x "$root/install.sh" "$root/bin/mefisto-opencode" "$root/project-opencode-release.sh" "$root/diagnose-installation-identity.sh"
+    mkdir -p "$root/bin" "$root/src/published/scripts/lib" "$root/src/published/scripts/adapters/lib" "$WORK/assets/v$version"
+    cp "$INSTALLER" "$root/install.sh"; cp "$LAUNCHER" "$root/bin/mefisto-opencode"; cp "$PROJECTOR" "$root/project-opencode-release.sh"; cp "$DIAGNOSTIC" "$root/diagnose-installation-identity.sh"; cp "$RELEASE_USE" "$root/release-use.sh"
+    chmod +x "$root/install.sh" "$root/bin/mefisto-opencode" "$root/project-opencode-release.sh" "$root/diagnose-installation-identity.sh" "$root/release-use.sh"
+    cp "$RELEASE_USE_PROCESS" "$root/src/published/scripts/lib/release-use-process.sh"; cp "$RELEASE_USE_LIBRARY" "$root/src/published/scripts/adapters/lib/opencode-release-use.sh"
     ln -s /tmp "$root/enlace"
     jq -n --arg version "$version" '{schemaVersion: 1, runtime: "opencode", version: $version, commit: "3333333333333333333333333333333333333333", minimumRuntimeVersion: "1.18.29"}' > "$root/mefisto-manifest.json"
     (cd "$root" && tar -czf "$WORK/assets/v$version/$asset" .) || exit 1
@@ -64,7 +69,7 @@ make_divergent_manifest_release() {
 }
 
 printf '[pre] sintaxis y ejecutables\n'
-bash -n "$INSTALLER" && bash -n "$LAUNCHER" && bash -n "$PROJECTOR" && bash -n "$DIAGNOSTIC" && pass 'instalador, proyector, diagnostico y launcher Bash validos' || fail 'instalador, proyector, diagnostico o launcher invalido'
+bash -n "$INSTALLER" && bash -n "$LAUNCHER" && bash -n "$PROJECTOR" && bash -n "$DIAGNOSTIC" && bash -n "$RELEASE_USE" && pass 'instalador, proyector, diagnostico, lifecycle y launcher Bash validos' || fail 'un ejecutable de la release es invalido'
 
 make_release 1.2.3 0123456789abcdef0123456789abcdef01234567
 make_release 2.0.0 abcdef0123456789abcdef0123456789abcdef01
@@ -81,6 +86,14 @@ assert_active 1.2.3 'primera instalacion activa la version inicial'
 [ -f "$XDG_DATA_HOME/mefisto/releases/1.2.3/contenido con espacios.txt" ] && pass 'release inmutable conserva paths con espacios' || fail 'release no conserva paths con espacios'
 [ -z "$(find "$XDG_DATA_HOME/mefisto/releases/1.2.3" \( -perm -0200 -o -perm -0020 -o -perm -0002 \) -print -quit)" ] && pass 'release instalada queda sin permisos de escritura' || fail 'release instalada conserva permisos de escritura'
 assert_only_data_root 'bootstrap solo escribe bajo la raiz de datos'
+
+ROOT="$XDG_DATA_HOME/mefisto"; mkdir -p "$ROOT/runtime-use/v1"; chmod 700 "$ROOT/runtime-use" "$ROOT/runtime-use/v1"
+jq -n --arg root "$ROOT/releases/1.2.3" '{schemaVersion:1,revision:1,leases:[{id:"execute-fixture",kind:"execute",phase:"active",release:{root:$root,version:"1.2.3",commit:"0123456789abcdef0123456789abcdef01234567"},owner:{schemaVersion:1,hostFingerprint:"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",bootId:"fixture",pid:999999,pgid:999999,startToken:"fixture"},parentId:null,runId:"fixture",projectId:"fixture",coverage:"unknown",bindingDigest:null,finishedReason:null}]}' > "$ROOT/runtime-use/v1/registry.json"; chmod 600 "$ROOT/runtime-use/v1/registry.json"
+OUTPUT="$("$XDG_DATA_HOME/mefisto/active/bin/mefisto-opencode" activate 1.2.3 2>&1)"; assert_rc "$?" 75 'activate ocupado devuelve el codigo de lifecycle'
+printf '%s' "$OUTPUT" | grep -q 'MEFISTO_LIFECYCLE_BUSY.*execute-fixture' && assert_active 1.2.3 'activate ocupado diagnostica la referencia y no cambia active' || fail 'activate ocupado no conserva el estado ni explica el reintento'
+rm -rf "$ROOT/runtime-use"
+"$XDG_DATA_HOME/mefisto/active/bin/mefisto-opencode" activate 1.2.3 >/dev/null; assert_rc "$?" 0 'activate en quiescencia adquiere maintenance'
+jq -e 'any(.leases[]; .kind=="maintenance" and .phase=="finished") and ([.leases[]|select(.kind=="maintenance" and .phase!="finished")]|length)==0' "$ROOT/runtime-use/v1/registry.json" >/dev/null && pass 'activate finaliza su permit maintenance propio' || fail 'activate dejo maintenance activo'
 
 MEFISTO_OPENCODE_TEST_HOLD_LOCK_SECONDS=5 "$EXTRACT/install.sh" install 1.2.3 >/dev/null 2>&1 & HOLDER=$!
 wait_for_lock install && pass 'install adquiere el lock global antes de cambiar active' || fail 'install no adquirio el lock global'

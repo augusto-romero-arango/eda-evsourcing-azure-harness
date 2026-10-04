@@ -462,6 +462,29 @@ else
     fail "D-6: se esperaba OK + el error.kind 'killed': $OUT_D2"
 fi
 
+# -------- Bloque D3: observacion parcial no altera el cierre ---------------
+
+echo ""
+echo "[D3] permission.observed es no terminal y no altera metricas (issue #1876)"
+
+reset_stage_state
+STREAM_D3="$TMP/d3-stream.jsonl"
+printf '%s\n' \
+  '{"v":1,"type":"permission.observed","ts":"2026-10-04T10:00:00Z","session_id":null,"tool":null,"signal":"possible-denial","evidence":"tool-error-text"}' \
+  '{"v":1,"type":"run.completed","ts":"2026-10-04T10:00:01Z","status":"success","runtime":"fake","model":null,"session_id":null,"duration_ms":1000,"tokens":{"input":2,"output":1},"estimated_cost_usd":0.01,"turns":1,"denials":null,"ttft_ms":10,"api_duration_ms":900,"error":null}' \
+  > "$STREAM_D3"
+
+run_process_new_lines "$STREAM_D3" "$TMP/d3-out.txt"
+OUT_D3=$(cat "$TMP/d3-out.txt")
+
+if printf '%s' "$OUT_D3" | grep -q "duracion=1.0s (api=0.9s, no-api=0.1s)" \
+    && printf '%s' "$OUT_D3" | grep -q "tokens: in=2 out=1  ttft=10ms  denials=n/d" \
+    && printf '%s' "$OUT_D3" | grep -q "eventos ignorados: 0"; then
+    pass "D3-1: permission.observed no es terminal ni altera duration, costo, tokens, denials o ignorados"
+else
+    fail "D3-1: la observacion parcial altero el cierre: $OUT_D3"
+fi
+
 # -------- Bloque E: JSON valido no-objeto y type desconocido -- CA-4 --------
 
 echo ""

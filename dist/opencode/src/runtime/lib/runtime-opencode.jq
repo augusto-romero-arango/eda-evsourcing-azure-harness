@@ -45,11 +45,10 @@
 #     trae.
 #   - `error`: evento de fallo a nivel de proceso (observado con un `-m`
 #     invalido: `{"type":"error","error":{"name":...,"data":{"message":...}}}`,
-#     exit 1, SIN nada por stderr). Deliberadamente NO se usa para clasificar
-#     ni para `error.detail` (CA-3 de #860 solo autoriza stderr como fuente de
-#     detalle): mezclar dos fuentes de verdad para el mismo campo haria el
-#     detalle dependiente del orden en que a alguien se le ocurra mirarlas.
-#     Se cuenta igual que cualquier tipo no traducido (ver `$raw_ignored`).
+#     exit 1, SIN nada por stderr). No se usa para `error.detail` ni para
+#     cambiar el veredicto (CA-3 de #860 solo autoriza stderr como fuente de
+#     detalle). Desde #1817, tres nombres estructurados exactos producen una
+#     observacion parcial y sanitizada de permiso; los demas no se traducen.
 #
 # Ningun evento trae un id de modelo (ni init, ni el mensaje, ni el step):
 # a diferencia de runtime-claude.jq, `model` del terminal SIEMPRE degrada a
@@ -123,6 +122,34 @@ def clip: if . == null then null else (tostring | .[0:300]) end;
 def opencode_input_summary($tool; $input):
     if ($tool == "edit" or $tool == "write" or $tool == "read") then ($input.filePath // null)
     elif ($tool == "bash") then (($input.command // null) | if . == null then null else (tostring | .[0:80]) end)
+    else null end;
+
+# Observaciones parciales de permisos (issue #1817). OpenCode 1.18.29 solo
+# deja evidencia estructurada en ciertos eventos `error`; el error de una tool
+# llega como texto y solo admite los prefijos exactos fijados abajo. Nunca se
+# inspeccionan mensajes genericos, stderr, input, data, feedback o reglas.
+# Los identificadores se acotan antes de cruzar la frontera neutral: un valor
+# no representable se omite, no se copia ni se normaliza.
+def opencode_safe_id($value; $max):
+    if ($value | type) == "string"
+       and ($value | length) > 0
+       and ($value | length) <= $max
+       and ($value | test("^[A-Za-z0-9._:-]+$"))
+    then $value else null end;
+
+def opencode_structured_permission_signal($name):
+    if $name == "PermissionDeniedError" then "denied"
+    elif ($name == "PermissionRejectedError" or $name == "PermissionCorrectedError") then "rejected"
+    else null end;
+
+# Prefijos literales completos de los mensajes de DeniedError, RejectedError y
+# CorrectedError de OpenCode 1.18.29. Son hints porque SessionProcessor reduce
+# la excepcion a texto; una coincidencia no prueba una decision estructurada.
+def opencode_tool_permission_signal($error):
+    if ($error | type) == "string" then
+      if ($error | startswith("The user has specified a rule which prevents you from using this specific tool call. Here are some of the relevant rules ")) then "possible-denial"
+      elif (($error | startswith("The user rejected permission to use this specific tool call with the following feedback: ")) or ($error | startswith("The user rejected permission to use this specific tool call."))) then "possible-rejection"
+      else null end
     else null end;
 
 # --- Estimacion de costo equivalente API (issue #1324, MEF-ADR-0054) --------
@@ -316,20 +343,34 @@ def opencode_step_cost($rates; $tok):
           | select($txt != "")
           | {v: 1, type: "message", ts: (($ev.timestamp | ms_to_iso) // $fallback_ts), role: "assistant", text: $txt}
       elif ($ev.type == "tool_use") then
-          ($ev.part.tool // "?") as $tool
-          | ($ev.part.state.status // "") as $status
-          | ($ev.part.state.input // {}) as $input
-          | ($ev.part.state.time.start) as $start_raw
-          | ($ev.part.state.time.end) as $end_raw
-          | ($ev.timestamp | ms_to_iso) as $ev_ts
-          | (
-              {
+           ($ev.part.tool // "?") as $tool
+           | ($ev.part.state.status // "") as $status
+           | ($ev.part.state.input // {}) as $input
+           | ($ev.part.state.error // null) as $tool_error
+           | ($ev.part.state.time.start) as $start_raw
+           | ($ev.part.state.time.end) as $end_raw
+           | ($ev.timestamp | ms_to_iso) as $ev_ts
+           | (opencode_tool_permission_signal($tool_error)) as $permission_signal
+           | (
+               {
                 v: 1, type: "tool.started",
                 ts: (($start_raw | ms_to_iso) // $ev_ts // $fallback_ts),
-                tool: $tool, input_summary: (opencode_input_summary($tool; $input))
-              },
-              (
-                if ($status == "completed" or $status == "error") then
+                 tool: $tool, input_summary: (opencode_input_summary($tool; $input))
+               },
+               (
+                 if ($status == "error" and $permission_signal != null) then
+                   {
+                     v: 1, type: "permission.observed",
+                     ts: ($ev_ts // $fallback_ts),
+                     session_id: (opencode_safe_id($ev.sessionID; 256)),
+                     tool: (opencode_safe_id($tool; 128)),
+                     signal: $permission_signal,
+                     evidence: "tool-error-text"
+                   }
+                 else empty end
+               ),
+               (
+                 if ($status == "completed" or $status == "error") then
                     {
                       v: 1, type: "tool.completed",
                       ts: (($end_raw | ms_to_iso) // $ev_ts // $fallback_ts),
@@ -340,6 +381,18 @@ def opencode_step_cost($rates; $tok):
                 else empty end
               )
             )
+      elif ($ev.type == "error") then
+          (opencode_structured_permission_signal(try $ev.error.name catch null)) as $permission_signal
+          | if $permission_signal != null then
+              {
+                v: 1, type: "permission.observed",
+                ts: (($ev.timestamp | ms_to_iso) // $fallback_ts),
+                session_id: (opencode_safe_id($ev.sessionID; 256)),
+                tool: null,
+                signal: $permission_signal,
+                evidence: "structured-error"
+              }
+            else empty end
       else empty end
   ] as $translated_events
 
