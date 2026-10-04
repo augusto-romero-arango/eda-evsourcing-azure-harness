@@ -71,6 +71,16 @@ setup_consumer() {
     mkdir -p "$d/scripts" "$d/src/published" "$d/.mefisto"
     cp "$REPO_ROOT"/scripts/{_pipeline-common.sh,_execution-context.sh,batch-pipeline.sh,parallel-pipeline.sh} "$d/scripts/"
     cp -R "$REPO_ROOT/src/runtime" "$d/src/runtime"
+    # Stub #1870 (issue #1826): con contexto transportado -> ready-to-dispatch; sin el -> legacy.
+    cat > "$d/scripts/autonomy-preflight.sh" <<'PF'
+#!/usr/bin/env bash
+cat >/dev/null
+case " $* " in
+    *" --context "*) echo '{"schemaVersion":1,"status":"ready-to-dispatch","diagnostics":[],"checks":[{"code":"STAGE_ACTOR_GUARD","state":"deferred","owner":"run-published-agent.sh/#1858","actionCode":"ACTOR_AND_PERMISSIONS_AT_STAGE"}]}' ;;
+    *) echo '{"schemaVersion":1,"status":"legacy","diagnostics":[],"checks":[]}' ;;
+esac
+PF
+    chmod +x "$d/scripts/autonomy-preflight.sh"
     cp -R "$REPO_ROOT/src/published/contract" "$d/src/published/contract"
     echo '{}' > "$d/.mefisto/harness.config.json"
     cat > "$d/scripts/tooling-pipeline.sh" <<'STUB'
