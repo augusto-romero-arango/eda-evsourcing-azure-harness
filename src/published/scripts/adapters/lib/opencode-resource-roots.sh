@@ -2,7 +2,6 @@
 # Descubrimiento puntual de roots OpenCode. Cargar esta biblioteca no escribe,
 # no toma locks y no concede acceso a los recursos que describe.
 
-_opencode_roots_diag='[]'
 _opencode_roots_add_diag() {
     _opencode_roots_diag="$(jq -c --arg code "$1" '. + [{code:$code}]' <<< "$_opencode_roots_diag")"
 }
@@ -139,7 +138,8 @@ opencode_resource_roots() {
         if [ -e "$state" ] || [ -L "$state" ]; then
             if [ ! -f "$state" ] || [ -L "$state" ] || ! jq -e '
                 (keys | sort) == ["directories","paths","release","schemaVersion"] and .schemaVersion == 1 and
-                (.release | type == "string") and (.paths | type == "array" and all(.[]; type == "string") and length == (unique | length)) and
+                (.release | type == "string" and test("^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?(\\+[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?$")) and
+                (.paths | type == "array" and all(.[]; type == "string") and length == (unique | length)) and
                 (.directories | type == "array" and all(.[]; type == "string") and length == (unique | length))
               ' "$state" >/dev/null 2>&1; then
                 _opencode_roots_add_diag INVALID_PROJECTION_LEDGER; projection='{"status":"conflict","ledgerDigest":null}'
@@ -149,6 +149,10 @@ opencode_resource_roots() {
                     _opencode_roots_add_diag PROJECTION_RELEASE_DRIFT; projection="$(jq -cn --arg digest "$(_opencode_roots_digest "$state")" '{status:"drift",ledgerDigest:$digest}')"
                 else
                     while IFS= read -r rel; do
+                        [ "$rel" = . ] || _opencode_roots_safe_relative "$rel/x" || { _opencode_roots_add_diag INVALID_PROJECTION_DIRECTORY; projection="$(jq -cn --arg digest "$(_opencode_roots_digest "$state")" '{status:"conflict",ledgerDigest:$digest}')"; break; }
+                    done < <(jq -r '.directories[]' "$state")
+                    while IFS= read -r rel; do
+                        [ "$(jq -r .status <<< "$projection")" = conflict ] && break
                         _opencode_roots_safe_relative "$rel" || { _opencode_roots_add_diag INVALID_PROJECTION_PATH; projection="$(jq -cn --arg digest "$(_opencode_roots_digest "$state")" '{status:"conflict",ledgerDigest:$digest}')"; break; }
                         target="$config_logical/$rel"; expected_target="$loaded_physical/$rel"
                         [ -L "$target" ] || { _opencode_roots_add_diag PROJECTION_LINK_MISSING; projection="$(jq -cn --arg digest "$(_opencode_roots_digest "$state")" '{status:"conflict",ledgerDigest:$digest}')"; break; }
@@ -160,6 +164,7 @@ opencode_resource_roots() {
             fi
         fi
     fi
+    [ "$(jq -r .status <<< "$projection")" != conflict ] || status='conflict'
     _opencode_roots_emit "$status" "$release" "$paths" "$projection"
     [ "$status" = resolved ] || return 1
 }
