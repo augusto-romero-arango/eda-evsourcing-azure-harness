@@ -32,14 +32,15 @@ contains "$body" '{{mefisto:run validate-dockerfile.sh src/<RootNamespace>.Proje
 echo '[fuentes] reverificacion condicional de pines'
 SOURCE_FIXTURE="$HERE/fixtures/projections-scaffolder-sources/cases.json"
 if jq -e '
-    .schemaVersion == 1 and (.cases | length) == 8 and
+    .schemaVersion == 1 and (.cases | length) == 9 and
     any(.cases[]; .id == "local-pines-intactos" and .expected == "sin-red-extra" and .localEvidence == ["adr","csproj","build","config-tests"]) and
     all(.cases[] | select(.id | startswith("nuget-index-")); .tool == "WebFetch" and .proof == "publicacion" and .requiredVersion != .latestAbsolute and (.fetchedUrl | endswith("/index.json"))) and
-    all(.cases[] | select(.id | startswith("nuget-nuspec-")); .tool == "WebFetch" and .proof == "dependencias-y-firma" and (.fetchedUrl | endswith(".nuspec")) and .buildProof == "requisitos-y-firma") and
+    all(.cases[] | select(.id | startswith("nuget-nuspec-")); .tool == "WebFetch" and .proof == "dependencias" and (.fetchedUrl | endswith(".nuspec")) and .buildProof == "requisitos-y-firma" and .proof != .buildProof) and
     ([.cases[] | select(.packageId == "Microsoft.Extensions.Hosting") | .requiredVersion] | unique) == ["10.0.10"] and
     ([.cases[] | select(.packageId == "Azure.Monitor.OpenTelemetry.Exporter") | .requiredVersion] | unique) == ["1.8.3"] and
     ([.cases[] | select(.packageId == "OpenTelemetry.Exporter.InMemory") | .requiredVersion] | unique) == ["1.17.0"] and
-    any(.cases[]; .id == "fuente-web-ausente-pin-nuevo" and .expected == "NO VERIFICADO" and .localRunContinues == true) and
+    ([.cases[] | select(.id | startswith("fuente-web-")) | .webOutcome] | sort) == ["ausente","fallida"] and
+    all(.cases[] | select(.id | startswith("fuente-web-")); .expected == "NO VERIFICADO" and .localRunContinues == true) and
     all(.cases[]; ((.queryTerms // []) | join(" ") | test("https?://|secret|credential|token|curl"; "i") | not))
 ' "$SOURCE_FIXTURE" >/dev/null 2>&1; then
     pass 'fixture separa evidencia local, publicacion index, nuspec exacto y NO VERIFICADO'
@@ -49,7 +50,7 @@ fi
 for statement in \
     'no consultes red por defecto ni elijas `latest`' \
     'la **version y linea exactas**' \
-    'El indice o `latest` solo prueban publicacion' \
+    'el indice o `latest` solo prueban publicacion, la `.nuspec` prueba dependencias y el build/config-test prueba que la receta usa la firma requerida' \
     'informa **NO VERIFICADO**' \
     'No uses `curl` ni shell como sustituto' \
     'ni modifiques el DoR o tests para ocultar el faltante'; do

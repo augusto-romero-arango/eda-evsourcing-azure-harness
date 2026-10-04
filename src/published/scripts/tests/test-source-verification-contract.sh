@@ -197,7 +197,7 @@ fi
 if jq -e '
     .roles[] | select(.id == "projections-scaffolder") |
     any(.cases[]; .caseId == "nuget-version" and (.subject | contains("exacta") and contains("no la ultima absoluta")) and .onMissing == "not-verified" and (.options | map(.kind) | sort) == ["package-cli","web"]) and
-    any(.cases[]; .caseId == "nuget-api" and (.subject | contains("Marten")) and .onMissing == "not-verified" and .options == [{"kind":"web","reference":".nuspec versionado de NuGet o documentacion/codigo oficial Marten de la misma linea"}])
+    any(.cases[]; .caseId == "nuget-api" and (.subject | contains("Marten")) and .onMissing == "not-verified" and .options == [{"kind":"web","reference":".nuspec versionado para dependencias o documentacion/codigo oficial de la misma version o linea para firmas y Marten"}])
 ' "$MATRIX" >/dev/null; then
     pass 'projections-scaffolder distingue pin exacto, nuspec y limite Marten sin adoptar latest'
 else
