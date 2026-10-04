@@ -191,11 +191,18 @@ agent_execution_catalog() {
       ($catalog[0]) as $c |
       ($c.roles | map(.id)) as $declared |
       ($agents | map(.id)) as $actual |
+      ["project","release","state","runtime-tool-output"] as $base_resources |
+      ["bug-investigator","domain-scaffolder","implementer","mcp-scaffolder","projection-implementer","projection-test-writer","projections-scaffolder","reviewer","smoke-test-writer","test-writer","workos-identity-scaffolder"] as $nuget_roles |
       def unique_ids: length == (unique | length);
       if ($c | keys | sort) != ["pipelines","roles","roots","schemaVersion"] or $c.schemaVersion != 1 then error("schema")
       elif ($c.roles | type) != "array" or ($c.roles | length) != 22 or ($declared | unique_ids | not) then error("roles")
       elif ($actual | unique_ids | not) or (($declared | sort) != ($actual | sort)) then error("inventory")
-      elif any($c.roles[]; (keys | sort) != ["id","resources","writeScope"] or (.writeScope != "project" and .writeScope != "none") or (.resources[0:4] != ["project","release","state","runtime-tool-output"]) or (.resources | unique_ids | not)) then error("role shape")
+      elif any($c.roles[]; .id as $id |
+        (keys | sort) != ["id","resources","writeScope"] or
+        (.id | type) != "string" or (.id | test("^[a-z0-9]+(-[a-z0-9]+)*$") | not) or
+        (.writeScope != "project" and .writeScope != "none") or
+        (.resources | type) != "array" or (.resources | unique_ids | not) or
+        .resources != ($base_resources + (if $nuget_roles | index($id) then ["nuget-packages"] else [] end))) then error("role shape")
       elif any($agents[]; (.capabilities | index("task")) != null) then error("task")
       elif any($agents[] as $agent | $c.roles[] | select(.id == $agent.id) | {writeScope,capabilities:$agent.capabilities}; (.writeScope == "project") != (.capabilities | index("edit") != null)) then error("write scope")
       elif ($c.pipelines | keys | sort) != ["iac","scaffold","tdd","tooling"] or ($c.roots | keys | sort) != ["implement","infra","parallel","scaffold","sequential","tooling"] then error("ownership tables")
@@ -206,17 +213,36 @@ agent_execution_catalog() {
 }
 
 validate_agent_execution_callers() {
-    local tdd="$REPO_ROOT/scripts/tdd-pipeline.sh" tooling="$REPO_ROOT/scripts/tooling-pipeline.sh" iac="$REPO_ROOT/scripts/iac-pipeline.sh" scaffold="$REPO_ROOT/scripts/scaffold-pipeline.sh"
-    grep -Fq 'STAGE1_AGENT="test-writer"' "$tdd" && grep -Fq 'STAGE1_AGENT="projection-test-writer"' "$tdd" && grep -Fq 'run_agent "2b" "smoke-test-writer"' "$tdd" && grep -Fq 'run_agent "3" "reviewer"' "$tdd" && grep -Fq 'invoke_agent_once "domain-scaffolder"' "$tdd" && grep -Fq 'invoke_agent_once "$STAGE1_AGENT"' "$tdd" && grep -Fq 'invoke_agent_once "$STAGE2_AGENT"' "$tdd" || { error 'agent-execution: callers TDD divergentes'; return 1; }
-    grep -Fq 'agent_id="tooling-reviewer"' "$tooling" && grep -Fq 'agent_id="tooling-writer"' "$tooling" || { error 'agent-execution: callers tooling divergentes'; return 1; }
-    grep -Fq 'run_agent "1" "infra-writer"' "$iac" && grep -Fq 'run_agent "2" "infra-reviewer"' "$iac" || { error 'agent-execution: callers iac divergentes'; return 1; }
-    grep -Fq -- '--agent domain-scaffolder --cwd "$WORKTREE_PATH"' "$scaffold" || { error 'agent-execution: caller scaffold divergente'; return 1; }
+    local catalog="$1" tdd="$REPO_ROOT/scripts/tdd-pipeline.sh" tooling="$REPO_ROOT/scripts/tooling-pipeline.sh" iac="$REPO_ROOT/scripts/iac-pipeline.sh" scaffold="$REPO_ROOT/scripts/scaffold-pipeline.sh"
+    local tdd_ids tooling_ids iac_ids scaffold_ids actual token
+    tdd_ids="$({
+        sed -nE 's/^[[:space:]]*STAGE[12]_AGENT="([a-z0-9-]+)".*/\1/p' "$tdd"
+        sed -nE 's/^[[:space:]]*run_agent[[:space:]]+"[^"]+"[[:space:]]+"([a-z0-9-]+)".*/\1/p' "$tdd"
+        sed -nE 's/^[[:space:]]*invoke_agent_once[[:space:]]+"([a-z0-9-]+)".*/\1/p' "$tdd"
+    } | LC_ALL=C sort -u | jq -Rsc 'split("\n") | map(select(length > 0))')" || return 1
+    tooling_ids="$(grep -oE 'agent_id="[a-z0-9-]+"' "$tooling" | sed -E 's/^agent_id="([a-z0-9-]+)"$/\1/' | LC_ALL=C sort -u | jq -Rsc 'split("\n") | map(select(length > 0))')" || return 1
+    iac_ids="$(sed -nE 's/^[[:space:]]*run_agent[[:space:]]+"[^"]+"[[:space:]]+"([a-z0-9-]+)".*/\1/p' "$iac" | LC_ALL=C sort -u | jq -Rsc 'split("\n") | map(select(length > 0))')" || return 1
+    scaffold_ids="$(sed -nE 's/.*--agent[[:space:]]+([a-z0-9-]+)[[:space:]]+--cwd.*/\1/p' "$scaffold" | LC_ALL=C sort -u | jq -Rsc 'split("\n") | map(select(length > 0))')" || return 1
+    actual="$(jq -cn --argjson tdd "$tdd_ids" --argjson tooling "$tooling_ids" --argjson iac "$iac_ids" --argjson scaffold "$scaffold_ids" '{tdd:$tdd,tooling:$tooling,iac:$iac,scaffold:$scaffold}')" || return 1
+    jq -en --argjson catalog "$catalog" --argjson actual "$actual" '
+      all($catalog.pipelines | to_entries[]; (.value | sort) == ($actual[.key] | sort))
+    ' >/dev/null || { error 'agent-execution: los emisores reales del runner divergen de pipelines'; return 1; }
+    while IFS= read -r token; do
+        case "$token" in
+            '"$STAGE1_AGENT"'|'"$STAGE2_AGENT"'|\"[a-z0-9-]*\") ;;
+            *) error "agent-execution: emisor TDD no resoluble: $token"; return 1 ;;
+        esac
+    done < <({
+        sed -nE 's/^[[:space:]]*run_agent[[:space:]]+"[^"]+"[[:space:]]+([^[:space:]]+).*/\1/p' "$tdd"
+        sed -nE 's/^[[:space:]]*invoke_agent_once[[:space:]]+([^[:space:]]+).*/\1/p' "$tdd"
+    })
+    grep -Fq 'invoke_agent_once "$STAGE1_AGENT"' "$tdd" && grep -Fq 'invoke_agent_once "$STAGE2_AGENT"' "$tdd" || { error 'agent-execution: patches de coverage TDD divergentes'; return 1; }
 }
 
 render_agent_execution_manifest() {
     local catalog role source rel marker rendered metadata source_metadata rendered_frontmatter rendered_mode rendered_tools rendered_permission digest roles='[]' fingerprint
     catalog="$(agent_execution_catalog)" || { error 'agent-execution: no se pudo leer el catalogo'; return 1; }
-    validate_agent_execution_callers || { error 'agent-execution: callers invalidos'; return 1; }
+    validate_agent_execution_callers "$(printf '%s' "$catalog" | jq -c '.catalog')" || { error 'agent-execution: callers invalidos'; return 1; }
     fingerprint="$(printf '%s' "$catalog" | jq -c '.catalog' | shasum -a 256 | awk '{print $1}')" || { error 'agent-execution: no se pudo calcular la huella'; return 1; }
     while IFS= read -r role; do
         source="$REPO_ROOT/src/published/agents/$role.md"; rel="${source#"$REPO_ROOT/"}"
