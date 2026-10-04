@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+set -uo pipefail
+export LC_ALL=C
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"; REPO_ROOT="$(cd "$HERE/../../../.." && pwd -P)"
+LIB="$REPO_ROOT/src/published/scripts/adapters/lib/opencode-resource-roots.sh"; PATHS="$REPO_ROOT/src/published/scripts/lib/resource-paths.sh"
+WORK="$(mktemp -d)"; trap 'rm -rf "$WORK"' EXIT; PASS=0; FAIL=0
+pass() { printf '  PASS: %s\n' "$1"; PASS=$((PASS + 1)); }; fail() { printf '  FAIL: %s\n' "$1"; FAIL=$((FAIL + 1)); }
+source "$PATHS"; source "$LIB"
+make_release() { local v="$1" base="$2" root; root="$base/releases/$v"; mkdir -p "$root/commands"; printf x > "$root/commands/mefisto:fixture.md"; jq -n --arg v "$v" '{schemaVersion:1,runtime:"opencode",version:$v,commit:"0123456789abcdef0123456789abcdef01234567",minimumRuntimeVersion:"1.18.29"}' > "$root/mefisto-manifest.json"; }
+call() { printf '%s' "$1" | opencode_resource_roots "$2"; }
+BASE="$WORK/home con espacios"; DATA="$BASE/datos xdg"; CONFIG="$BASE/config xdg"; mkdir -p "$BASE"; make_release 1.2.3 "$DATA/mefisto"; ln -s releases/1.2.3 "$DATA/mefisto/active"
+INPUT="$(jq -n --arg home "$WORK/no-usar" --arg os "$BASE" --arg data "$DATA" --arg config "$CONFIG" '{schemaVersion:1,platform:"darwin",osHome:$os,home:$home,xdgDataHome:$data,xdgConfigHome:$config,opencodeConfigDir:null}')"
+OUT="$(call "$INPUT" "$DATA/mefisto/releases/1.2.3")"; RC=$?
+[ "$RC" -eq 0 ] && jq -e --arg mef "$DATA/mefisto" --arg runtime "$DATA/opencode" '.status == "resolved" and .paths.mefistoDataRoot.logicalRoot == $mef and .paths.runtimeDataRoot.logicalRoot == $runtime and .paths.toolOutputRoot.logicalRoot == ($runtime + "/tool-output") and .projection.status == "absent" and .release.version == "1.2.3"' <<< "$OUT" >/dev/null && pass 'resuelve XDG, espacios y datos OpenCode independientes de macOS' || fail 'roots XDG invalidos'
+[ ! -e "$DATA/opencode/tool-output" ] && pass 'tool-output planned no crea directorios' || fail 'tool-output fue creado'
+OVERRIDE="$WORK/config override"; INPUT_OVERRIDE="$(jq --arg override "$OVERRIDE" '.opencodeConfigDir=$override' <<< "$INPUT")"; OUT="$(call "$INPUT_OVERRIDE" "$DATA/mefisto/releases/1.2.3")"; [ "$?" -eq 0 ] && jq -e --arg root "$OVERRIDE" '.paths.configRoot.logicalRoot == $root' <<< "$OUT" >/dev/null && pass 'override de config prevalece' || fail 'override de config invalido'
+EMPTY="$(jq '.opencodeConfigDir=""' <<< "$INPUT")"; OUT="$(call "$EMPTY" "$DATA/mefisto/releases/1.2.3")"; [ "$?" -eq 1 ] && jq -e '.status == "conflict" and (.diagnostics | any(.code == "EMPTY_OPENCODE_CONFIG_DIR"))' <<< "$OUT" >/dev/null && pass 'override vacio es conflicto sanitizado' || fail 'override vacio no es conflicto'
+RELATIVE="$(jq '.opencodeConfigDir="relativo"' <<< "$INPUT")"; OUT="$(call "$RELATIVE" "$DATA/mefisto/releases/1.2.3")"; [ "$?" -eq 1 ] && jq -e '(.diagnostics | any(.code == "RELATIVE_OPENCODE_CONFIG_DIR"))' <<< "$OUT" >/dev/null && pass 'override relativo no se interpreta contra cwd' || fail 'override relativo aceptado'
+make_release 2.0.0 "$DATA/mefisto"; rm "$DATA/mefisto/active"; ln -s releases/2.0.0 "$DATA/mefisto/active"; OUT="$(call "$INPUT" "$DATA/mefisto/releases/1.2.3")"; [ "$?" -eq 0 ] && jq -e '.release.version == "1.2.3" and (.diagnostics | any(.code == "ACTIVE_RELEASE_DRIFT"))' <<< "$OUT" >/dev/null && pass 'release cargada prevalece sobre active' || fail 'active sustituyo la release cargada'
+mkdir -p "$CONFIG/opencode/commands"; ln -s "$DATA/mefisto/releases/1.2.3/commands/mefisto:fixture.md" "$CONFIG/opencode/commands/mefisto:fixture.md"; jq -n '{schemaVersion:1,release:"1.2.3",paths:["commands/mefisto:fixture.md"],directories:[".","commands"]}' > "$CONFIG/opencode/.mefisto-projection.json"; OUT="$(call "$INPUT" "$DATA/mefisto/releases/1.2.3")"; [ "$?" -eq 0 ] && jq -e '.projection.status == "aligned" and (.projection.ledgerDigest | type == "string")' <<< "$OUT" >/dev/null && pass 'ledger propio y metadata del enlace quedan aligned' || fail 'ledger aligned invalido'
+rm "$CONFIG/opencode/commands/mefisto:fixture.md"; ln -s "$DATA/mefisto/releases/2.0.0/commands/mefisto:fixture.md" "$CONFIG/opencode/commands/mefisto:fixture.md"; OUT="$(call "$INPUT" "$DATA/mefisto/releases/1.2.3")"; [ "$?" -eq 0 ] && jq -e '.projection.status == "conflict" and (.diagnostics | any(.code == "PROJECTION_LINK_TARGET_DRIFT"))' <<< "$OUT" >/dev/null && pass 'target cambiado no se repara y es conflicto' || fail 'target cambiado no es conflicto'
+SOURCE="$(command cat "$LIB")"; printf '%s' "$SOURCE" | grep -Eq 'project-opencode-release|opencode\.json|auth|provider' && fail 'biblioteca inspecciona recursos prohibidos' || pass 'biblioteca no usa proyector ni configuracion sensible'
+printf '\nResultado: %s PASS, %s FAIL\n' "$PASS" "$FAIL"; exit "$FAIL"
