@@ -83,15 +83,16 @@ export default async function mefistoObservability(context) {
       } catch (error) { observations.delete(key); throw error; }
     }),
     "tool.execute.after": async (input, output) => safe(context.client, "Mefisto: no se pudo registrar el resumen de herramienta.", async () => {
-      if (!root) return; const tool = toolName(input); const inputArgs = args(input);
-      if (["write", "edit", "patch"].includes(tool)) { if (typeof input?.sessionID === "string" && input.sessionID.length > 0) changed.add(input.sessionID); const candidate = inputArgs.filePath ?? inputArgs.file_path ?? inputArgs.path; const file = typeof candidate === "string" && candidate.length > 0 ? candidate : "(desconocido)"; await append(root, "events.log", { time: clock(), family: "archivo", file_path: file }); return; }
-       if (!["bash", "shell"].includes(tool)) return;
-       const command = typeof inputArgs.command === "string" ? inputArgs.command : "";
-       const observed = consumeOriginalObservation(context, input);
-       const classified = observed.found ? observed.value : classifyLegacyCommand(command);
-       if (!classified) return;
-       if (classified.family === "test") { await append(root, "events.log", { time: clock(), family: "test", result: successful(output) ? "PASS" : "FAIL" }); return; }
-       await append(root, "events.log", { time: clock(), family: "terraform", terraform_subcommand: classified.subcommand, result: successful(output) ? "OK" : "ERROR" });
+      const tool = toolName(input); const inputArgs = args(input);
+      if (["write", "edit", "patch"].includes(tool)) { if (!root) return; if (typeof input?.sessionID === "string" && input.sessionID.length > 0) changed.add(input.sessionID); const candidate = inputArgs.filePath ?? inputArgs.file_path ?? inputArgs.path; const file = typeof candidate === "string" && candidate.length > 0 ? candidate : "(desconocido)"; await append(root, "events.log", { time: clock(), family: "archivo", file_path: file }); return; }
+      if (!["bash", "shell"].includes(tool)) return;
+      const command = typeof inputArgs.command === "string" ? inputArgs.command : "";
+      const observed = consumeOriginalObservation(context, input);
+      if (!root) return;
+      const classified = observed.found ? observed.value : classifyLegacyCommand(command);
+      if (!classified) return;
+      if (classified.family === "test") { await append(root, "events.log", { time: clock(), family: "test", result: successful(output) ? "PASS" : "FAIL" }); return; }
+      await append(root, "events.log", { time: clock(), family: "terraform", terraform_subcommand: classified.subcommand, result: successful(output) ? "OK" : "ERROR" });
     }),
   };
 }

@@ -494,7 +494,12 @@ validate_interactive_hooks() {
 render_observability_plugin() {
     local observation_identity
     validate_interactive_hooks || return 1
-    observation_identity="$(jq -ce '[.version, .commit] | select((.[0] | type == "string") and (.[1] | type == "string"))' "$REPO_ROOT/src/published/release-identity.json")" || { error 'observability: release-identity.json invalida'; return 1; }
+    observation_identity="$(jq -ce '
+      select(type == "object" and (keys | sort) == ["commit", "schemaVersion", "version"] and .schemaVersion == 1) |
+      select(.version | type == "string" and test("^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?(\\+[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?$")) |
+      select(.commit | type == "string" and test("^[0-9a-f]{40}$")) |
+      [.version, .commit]
+    ' "$REPO_ROOT/src/published/release-identity.json")" || { error 'observability: release-identity.json invalida'; return 1; }
     cat <<'EOF'
 // GENERADO por src/published/scripts/adapters/adapter-opencode.sh desde src/published/hooks/interactive-hooks.json. No editar a mano.
 import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
@@ -583,15 +588,16 @@ export default async function mefistoObservability(context) {
       } catch (error) { observations.delete(key); throw error; }
     }),
     "tool.execute.after": async (input, output) => safe(context.client, "Mefisto: no se pudo registrar el resumen de herramienta.", async () => {
-      if (!root) return; const tool = toolName(input); const inputArgs = args(input);
-      if (["write", "edit", "patch"].includes(tool)) { if (typeof input?.sessionID === "string" && input.sessionID.length > 0) changed.add(input.sessionID); const candidate = inputArgs.filePath ?? inputArgs.file_path ?? inputArgs.path; const file = typeof candidate === "string" && candidate.length > 0 ? candidate : "(desconocido)"; await append(root, "events.log", { time: clock(), family: "archivo", file_path: file }); return; }
-       if (!["bash", "shell"].includes(tool)) return;
-       const command = typeof inputArgs.command === "string" ? inputArgs.command : "";
-       const observed = consumeOriginalObservation(context, input);
-       const classified = observed.found ? observed.value : classifyLegacyCommand(command);
-       if (!classified) return;
-       if (classified.family === "test") { await append(root, "events.log", { time: clock(), family: "test", result: successful(output) ? "PASS" : "FAIL" }); return; }
-       await append(root, "events.log", { time: clock(), family: "terraform", terraform_subcommand: classified.subcommand, result: successful(output) ? "OK" : "ERROR" });
+      const tool = toolName(input); const inputArgs = args(input);
+      if (["write", "edit", "patch"].includes(tool)) { if (!root) return; if (typeof input?.sessionID === "string" && input.sessionID.length > 0) changed.add(input.sessionID); const candidate = inputArgs.filePath ?? inputArgs.file_path ?? inputArgs.path; const file = typeof candidate === "string" && candidate.length > 0 ? candidate : "(desconocido)"; await append(root, "events.log", { time: clock(), family: "archivo", file_path: file }); return; }
+      if (!["bash", "shell"].includes(tool)) return;
+      const command = typeof inputArgs.command === "string" ? inputArgs.command : "";
+      const observed = consumeOriginalObservation(context, input);
+      if (!root) return;
+      const classified = observed.found ? observed.value : classifyLegacyCommand(command);
+      if (!classified) return;
+      if (classified.family === "test") { await append(root, "events.log", { time: clock(), family: "test", result: successful(output) ? "PASS" : "FAIL" }); return; }
+      await append(root, "events.log", { time: clock(), family: "terraform", terraform_subcommand: classified.subcommand, result: successful(output) ? "OK" : "ERROR" });
     }),
   };
 }

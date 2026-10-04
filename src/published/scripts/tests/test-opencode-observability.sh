@@ -56,7 +56,8 @@ const observationIdentity = JSON.parse(process.env.OBSERVATION_IDENTITY);
 const markerFixture = JSON.parse(process.env.OBSERVATION_FIXTURE);
 const observations = new Map();
 globalThis[Symbol.for("mefisto.original-tool-observation.v1")] = observations;
-const mark = (context, input, value, identity = observationIdentity) => observations.set(JSON.stringify([identity[0], identity[1], context.project?.id, context.directory, input.sessionID, input.callID]), value);
+const observationKey = (context, input, identity = observationIdentity) => JSON.stringify([identity[0], identity[1], context.project?.id, context.directory, input.sessionID, input.callID]);
+const mark = (context, input, value, identity = observationIdentity) => observations.set(observationKey(context, input, identity), value);
 const hooks = await plugin({ worktree: "", directory: root, client });
 await hooks.event({ event: { type: "project.updated", properties: { value: "SENTINELA-EVENTO" } } });
 await hooks.event({ event: { type: "session.created", properties: { info: { id: "s" } } } });
@@ -97,6 +98,11 @@ await observedA["tool.execute.after"](repeated, { metadata: { exitCode: 1 } });
 await observedA["tool.execute.after"](repeated, { metadata: { exitCode: 0 } });
 const otherRelease = ["SENTINELA-OTRA-RELEASE", observationIdentity[1]];
 mark(projectA, repeated, { family: "terraform", subcommand: "plan" }, otherRelease);
+const rootlessContext = { directory: "relative", project: { id: "project-rootless" }, client };
+const rootlessHooks = await plugin(rootlessContext);
+const rootlessCall = { sessionID: "rootless-session", callID: "rootless-call", tool: "bash", args: { command: markerFixture.test.command } };
+mark(rootlessContext, rootlessCall, markerFixture.test.marker);
+await rootlessHooks["tool.execute.after"](rootlessCall, { metadata: { exitCode: 0 } });
 await hooks.event({ event: { type: "session.created", properties: {} } });
 
 const degradedRoot = `${root}-manifest-degradado`;
@@ -133,16 +139,18 @@ console.log(JSON.stringify({
   events: await fs.readFile(path.join(root, ".mefisto/pipeline/events.log"), "utf8"),
   pluginRoot: await fs.readFile(path.join(root, ".mefisto/pipeline/.plugin-root"), "utf8"),
   degraded: await fs.readFile(path.join(degradedRoot, ".mefisto/pipeline/sessions.jsonl"), "utf8"),
-   missing: await fs.readFile(path.join(missingRoot, ".mefisto/pipeline/sessions.jsonl"), "utf8"),
-   otherReleaseMarkerRemains: observations.has(JSON.stringify([otherRelease[0], otherRelease[1], projectA.project.id, projectA.directory, repeated.sessionID, repeated.callID])),
-   logs,
+  missing: await fs.readFile(path.join(missingRoot, ".mefisto/pipeline/sessions.jsonl"), "utf8"),
+  consumedMarkers: [testCall, unclassified, invalid, repeated].every((input) => !observations.has(observationKey(projectA, input))) && !observations.has(observationKey(projectB, terraformCall)) && !observations.has(observationKey(rootlessContext, rootlessCall)),
+  otherReleaseMarkerRemains: observations.has(observationKey(projectA, repeated, otherRelease)),
+  logs,
 }));
 EOF
 ROOT="$WORK/repo sin git y con espacios"; mkdir -p "$ROOT"
 result="$(OBSERVATION_IDENTITY="$(jq -c '[.version, .commit]' "$REPO_ROOT/src/published/release-identity.json")" OBSERVATION_FIXTURE="$(jq -c . "$HERE/fixtures/opencode-observability/original-tool-observations.json")" node "$WORK/probe.mjs" "$ROOT")"; rc=$?
 [ "$rc" -eq 0 ] && pass 'callbacks toleran repo no Git y paths con espacios' || fail 'callbacks fallaron'
 jq -e '.sessions | split("\n") | map(select(length > 0) | fromjson) | length == 3 and .[0] == {record_type:"session.started",session_id:"s",transcript_path:null,cwd:$root,source:null,timestamp:.[0].timestamp,runtime:"opencode",model:null,harness_version:.[0].harness_version,harness_commit:.[0].harness_commit} and [.[].model] == [null,"azure/a","azure/b"] and all(.[].timestamp; test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"))' --arg root "$ROOT" <<< "$result" >/dev/null && pass 'inicio null y modelos concurrente/repetido/cambiado respetan la allowlist' || fail 'sesiones o deduplicacion invalidas'
-jq -e '.events | split("\n") | map(select(length > 0) | fromjson) | length == 10 and .[0].file_path == "src/con espacios.cs" and .[1].file_path == "(desconocido)" and .[2].result == "PASS" and .[3].result == "FAIL" and .[4] == {time:.[4].time,family:"terraform",terraform_subcommand:"apply",result:"ERROR"} and .[5].terraform_subcommand == "plan" and .[5].result == "OK" and .[6].terraform_subcommand == "validate" and .[6].result == "ERROR" and .[7] == {time:.[7].time,family:"test",result:"FAIL"} and .[8] == {time:.[8].time,family:"terraform",terraform_subcommand:"init",result:"OK"} and .[9] == {time:.[9].time,family:"terraform",terraform_subcommand:"apply",result:"ERROR"}' <<< "$result" >/dev/null && pass 'marcadores preservan familia, resultado y consumo unico sin inspeccionar el prefijo' || fail 'resumen de herramientas invalido'
+jq -e '.events | split("\n") | map(select(length > 0) | fromjson) | length == 11 and .[0].file_path == "src/con espacios.cs" and .[1].file_path == "(desconocido)" and .[2].result == "PASS" and .[3].result == "FAIL" and .[4] == {time:.[4].time,family:"terraform",terraform_subcommand:"apply",result:"ERROR"} and .[5].terraform_subcommand == "plan" and .[5].result == "OK" and .[6].terraform_subcommand == "validate" and .[6].result == "ERROR" and .[7] == {time:.[7].time,family:"test",result:"FAIL"} and .[8] == {time:.[8].time,family:"terraform",terraform_subcommand:"init",result:"OK"} and .[9] == {time:.[9].time,family:"terraform",terraform_subcommand:"apply",result:"OK"} and .[10] == {time:.[10].time,family:"terraform",terraform_subcommand:"apply",result:"ERROR"}' <<< "$result" >/dev/null && pass 'marcadores validos preservan familia y resultado; los invalidos degradan al clasificador legacy' || fail 'resumen de herramientas invalido'
+jq -e '.consumedMarkers == true' <<< "$result" >/dev/null && pass 'marcadores validos, nulos e invalidos se consumen una sola vez aun sin raiz observable' || fail 'quedaron marcadores ya observados'
 jq -e '.otherReleaseMarkerRemains == true' <<< "$result" >/dev/null && pass 'claves de release y proyecto no mezclan marcadores iguales' || fail 'marcadores de identidad se mezclaron'
 EXPECTED_RUNTIME="$(cd "$WORK/runtime" && pwd -P)"
 jq -e '.pluginRoot == $expected' --arg expected "$EXPECTED_RUNTIME" <<< "$result" >/dev/null && [ ! -e "$ROOT/.claude" ] && pass 'plugin-root identifica la release cargada sin mirror legacy' || fail 'identidad de release activa incorrecta'
