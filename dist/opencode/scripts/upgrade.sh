@@ -297,6 +297,7 @@ _align_claude() {
 }
 
 main() {
+    local rc
     MODE=update; ALIGN_PEER=false; KEEP=2; LOADED_OVERRIDE=""
     while [ "$#" -gt 0 ]; do
         case "$1" in
@@ -327,7 +328,7 @@ main() {
         prune:opencode) _prune_opencode ;;
         *:opencode)
             TARGET_VERSION=""
-            _update_opencode || return 1
+            _update_opencode || { rc=$?; return "$rc"; }
             [ "$ALIGN_PEER" = true ] && { _align_claude "$TARGET_VERSION" || return 1; }
             return 0 ;;
         *:claude) _update_claude ;;
