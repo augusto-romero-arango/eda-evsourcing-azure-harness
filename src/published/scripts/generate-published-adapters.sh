@@ -87,6 +87,7 @@ TOOLING_CLOSURE_ASSETS=(
     'scripts/fix-review-admission.sh|0755'
     'scripts/execution-context.sh|0755'
     'scripts/_execution-context.sh|0755'
+    'scripts/run-published-agent.sh|0755'
     'scripts/render-eraser-diagram.sh|0755'
     'scripts/resolve-nuget-resources.sh|0755'
     'src/published/scripts/lib/resource-paths.sh|0755'
