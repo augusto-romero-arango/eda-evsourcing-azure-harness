@@ -459,6 +459,7 @@ finish)
     [ "$(digest_of_contract "$DOC")" = "$(ctx_field .contractDigest)" ] && [ "$DIGEST" = "$(ctx_field .contractDigest)" ] || conflict CONTRACT_TAMPERED
     if [ "$(ctx_field .state.status)" = finished ]; then ctx_response finished FINISHED 0; fi
     # Cierre del controlador, no prueba de cumplimiento de CAs. No toca hijos: se reporta cuantos siguen vivos.
+    # Un hold conserva la referencia del parent-run para el reintento: nunca reporta el lease liberado.
     LIVE=0
     for c in $(printf '%s' "$DOC" | jq -r '.state.children[]?.contextId'); do
         cf="$(ctx_file "$RUN_ID" "$c")"
@@ -467,6 +468,6 @@ finish)
     NEW="$(bump '.state.status = "finished" | .state.outcome = $o | .state.finishedAt = $now | (if .state.reservation != null and .state.reservation.status == "reserved" then .state.reservation.status = "retired" else . end)' --arg o "$OUTCOME")"
     commit_ctx "$RUN_ID" "$CTX_ID" "$NEW"
     DOC="$NEW"
-    emit finished FINISHED 0 "$(printf '%s' "$DOC" | jq -c --argjson live "$LIVE" '{contextId:.contract.contextId,digest:.contractDigest,state:.state.status,revision:.state.revision,liveChildren:$live,leaseReleased:($live == 0),recovery:(if ([.state.handoffs[]? | select(.descendantCoverage != "complete")] | length) > 0 then "unknown" else "verified" end)}')"
+    emit finished FINISHED 0 "$(printf '%s' "$DOC" | jq -c --argjson live "$LIVE" '{contextId:.contract.contextId,digest:.contractDigest,state:.state.status,revision:.state.revision,liveChildren:$live,leaseReleased:($live == 0 and .state.outcome != "held"),recovery:(if ([.state.handoffs[]? | select(.descendantCoverage != "complete")] | length) > 0 then "unknown" else "verified" end)}')"
     ;;
 esac

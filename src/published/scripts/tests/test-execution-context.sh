@@ -124,6 +124,8 @@ call refresh-observations "$(rq rE cE "$DE" "$(jq -cn --arg n "$NE" --arg i "$IM
 call refresh-observations "$(rq rE cE "$DE" "$(jq -cn --arg n "$NE" '{controllerNonce:$n,observations:{resourcesDigest:"c",permissionBase:"b",permissionImageDigest:"z",projection:"p2"}}')")"; eq "$(j .reasonCode)" "READMISSION_REQUIRED" "otra politica exige nueva admision"
 call validate "$(rq rE cE "$DE")"; eq "$RC" "0" "refresh no cambia contrato"
 call finish "$(rq rE cE "$DE" '{"outcome":"failed"}')"; eq "$(j .recovery)" "unknown" "cobertura de descendencia sin probar queda unknown"
+call prepare "$(prep rE cHo tooling tooling tooling-writer s)"; DHO="$(j .digest)"
+call finish "$(rq rE cHo "$DHO" '{"outcome":"held"}')"; eq "$(printf "%s" "$OUT" | jq -r .leaseReleased)/$RC" "false/0" "hold conserva la referencia del parent-run"
 mkdir "$runs_dir/rE/contexts/cE.json.lock"; call finish "$(rq rE cE "$DE" '{"outcome":"failed"}')"; eq "$RC" "0" "finish repetido es idempotente"
 call prepare "$(prep rE cL tooling tooling tooling-writer s)"; DL="$(j .digest)"
 mkdir "$runs_dir/rE/contexts/cL.json.lock"
