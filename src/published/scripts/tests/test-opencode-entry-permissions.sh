@@ -34,7 +34,7 @@ assert 'ultima coincidencia permite despues de deny general' '[.decisions[].deci
 assert 'ultima coincidencia deniega despues de allow general' '.decisions[0].decision == "deny"' '{"action":"evaluate","policy":{"rules":[{"permission":"bash","pattern":"*","value":"allow"},{"permission":"bash","pattern":"git *","value":"deny"}]},"candidates":[{"permission":"bash","candidate":"git status"}]}'
 assert 'write se evalua mediante el control edit' '.decisions[0].permission == "edit" and .decisions[0].decision == "deny"' '{"action":"evaluate","policy":{"rules":[{"permission":"edit","pattern":"*","value":"deny"}]},"candidates":[{"permission":"write","candidate":"x"}]}'
 
-assert 'literal que no casa con un glob es disjunto y no ambiguo' '.conflicts == [] and ([.policy.rules[] | select(.permission == "bash")] | length) == 1' '{"action":"compose","managed":{"permission":{"bash":{"run exact":"allow"}}},"global":{"permission":{"bash":{"*":"allow","rm *":"deny"}}}}'
+assert 'literal que no casa con un glob es disjunto y no ambiguo' '.conflicts == [] and ([.policy.rules[] | select(.permission == "bash" and .pattern == "run exact" and .value == "allow")] | length) == 2' '{"action":"compose","managed":{"permission":{"bash":{"run exact":"allow"}}},"global":{"permission":{"bash":{"*":"allow","rm *":"deny"}}}}'
 printf '%s\n' '[composicion sin ampliacion]'
 compose='{"action":"compose","home":"/h","managed":{"permission":{"edit":{"safe/*":"allow","blocked/*":"deny"}}},"global":{"permission":{"edit":{"*":"deny","safe/ok":"allow"},"read":{"*":"allow"}}}}'
 assert 'deny global y excepcion posterior se materializan en orden' '.conflicts == [] and [.policy.rules[] | select(.permission == "edit") | .value] == ["allow","deny","allow","deny"]' "$compose"
