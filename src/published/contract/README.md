@@ -1002,8 +1002,10 @@ incompleto como `unknown`, sin habilitar recuperación automática.
 ## Binding OpenCode del snapshot de recursos (#1847)
 
 `plugins/mefisto-command-entry.js` es el unico propietario del binding. Con
-contexto de ejecucion (`MEFISTO_EXECUTION_CONTEXT=<runId>:<contextId>` y
-`MEFISTO_EXECUTION_DIGEST`, definidos antes de cargar el plugin) instala los
+contexto de ejecucion (`MEFISTO_EXECUTION_CONTEXT` con la ruta del contexto y
+`MEFISTO_EXECUTION_DIGEST`, el mismo contrato que `_execution-context.sh`,
+definidos antes de cargar el plugin; el broker se invoca con la raiz aprobada
+que contiene esa ruta) instala los
 alias `autonomy-<id>`, escribe `runtime-ready.json` (junto al contexto, en
 `<contextId>/`) y activa los hooks `chat.params`, `chat.message`,
 `tool.execute.before` y `shell.env`. Sin contexto conserva el flujo legacy. El

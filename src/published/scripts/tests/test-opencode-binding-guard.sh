@@ -77,7 +77,7 @@ if (scenario === "ready") {
   out.noCoverage = await tryHook("chat.params", { sessionID: "s1", agent: "reviewer" }, {});
   const env = { OPENCODE_SERVER_PASSWORD: "x", PATH: "/bin" }; await hooks["shell.env"]({}, { env });
   out.pin = env.MEFISTO_LOADED_RELEASE_ROOT === root.replace(/^\/private/, "") || env.MEFISTO_LOADED_RELEASE_ROOT.endsWith(root.split("/").pop());
-  out.envCtx = env.MEFISTO_EXECUTION_CONTEXT === "run1:ctx1" && env.MEFISTO_EXECUTION_DIGEST === process.env.MEFISTO_EXECUTION_DIGEST;
+  out.envCtx = env.MEFISTO_EXECUTION_CONTEXT === process.env.MEFISTO_EXECUTION_CONTEXT && env.MEFISTO_EXECUTION_DIGEST === process.env.MEFISTO_EXECUTION_DIGEST;
   out.noSecret = !("OPENCODE_SERVER_PASSWORD" in env);
   const bash = { args: { command: "dotnet test --filter 'a b' $(echo hi)" } };
   const r1 = await tryHook("tool.execute.before", { tool: "bash", sessionID: "s1", callID: "call_1" }, bash);
@@ -119,7 +119,8 @@ if (scenario === "admission") {
 console.log(JSON.stringify(out));
 EOF
 CATALOG_FILE="$WORK/catalog.json"; jq -c '[.commands[].id]' "$SOURCE" > "$CATALOG_FILE"
-run() { MEFISTO_EXECUTION_CONTEXT="run1:ctx1" MEFISTO_EXECUTION_DIGEST="$DIGEST" CATALOG="$CATALOG_FILE" node "$WORK/run.mjs" "$1" "$WORK/project" "$2" 2>/dev/null; }
+CTX_PATH="$WORK/project/.mefisto/pipeline/autonomy/runs/run1/contexts/ctx1.json"
+run() { MEFISTO_EXECUTION_CONTEXT="${CTX_PATH}" MEFISTO_EXECUTION_DIGEST="$DIGEST" CATALOG="$CATALOG_FILE" node "$WORK/run.mjs" "$1" "$WORK/project" "$2" 2>/dev/null; }
 
 R="$WORK/r-ready"; make_release "$R"
 out="$(run "$R" ready)"
@@ -134,6 +135,10 @@ check 'hijo: ancestry desconocida rechazada, hijo de sesion conocida se une y ex
 R="$WORK/r-failed"; make_release "$R"; printf 'no-json' > "$R/fake/config.json"
 out="$(run "$R" failed)"
 check 'config fallido: sin ready, guard cerrado, sin pin y sin Bash' "$out" '(.ready|not) and (.params|startswith("mefisto_entry_not_admitted:")) and .noPin and (.bash|startswith("mefisto_entry_not_admitted:"))'
+
+R="$WORK/r-badref"; make_release "$R"
+out="$(CTX_PATH="run1:ctx1" run "$R" failed)"
+check 'contexto que no es ruta bajo la raiz aprobada: sin ready ni pin, guard cerrado' "$out" '(.ready|not) and (.params|startswith("mefisto_entry_not_admitted:")) and .noPin'
 
 R="$WORK/r-reserve"; make_release "$R"
 jq -n '{schemaVersion:1,status:"conflict",reasonCode:"PARENT_NOT_LIVE"}' > "$R/fake/op-reserve-child.json"
@@ -158,9 +163,9 @@ check 'registro de admision fallido: la entrada no se admite' "$out" '.entry|end
 PRE="$(awk '/^```bash$/{i=1;next} /^```$/{if(i)exit} i' "$REPO_ROOT/dist/opencode/commands/mefisto:bitacora.md")"
 if [ -n "$PRE" ]; then
   mkdir -p "$WORK/pin"; jq -n '{}' > "$WORK/pin/mefisto-manifest.json"
-  (MEFISTO_EXECUTION_CONTEXT=run1:ctx1 bash -c "$PRE" >/dev/null 2>&1) && fail 'contexto sin pin debio abortar' || pass 'contexto sin pin aborta sin elegir active'
-  (MEFISTO_EXECUTION_CONTEXT=run1:ctx1 MEFISTO_LOADED_RELEASE_ROOT="$WORK/pin" bash -c "$PRE"' ; [ "$MEFISTO_PACKAGE_ROOT" = "'"$(cd "$WORK/pin" && pwd -P)"'" ]' >/dev/null 2>&1) && pass 'contexto con pin valido usa la release pineada' || fail 'pin valido no se uso'
-  (MEFISTO_EXECUTION_CONTEXT=run1:ctx1 MEFISTO_LOADED_RELEASE_ROOT="$WORK/inexistente" bash -c "$PRE" >/dev/null 2>&1) && fail 'pin invalido debio abortar' || pass 'pin invalido aborta'
+  (MEFISTO_EXECUTION_CONTEXT="$CTX_PATH" bash -c "$PRE" >/dev/null 2>&1) && fail 'contexto sin pin debio abortar' || pass 'contexto sin pin aborta sin elegir active'
+  (MEFISTO_EXECUTION_CONTEXT="$CTX_PATH" MEFISTO_LOADED_RELEASE_ROOT="$WORK/pin" bash -c "$PRE"' ; [ "$MEFISTO_PACKAGE_ROOT" = "'"$(cd "$WORK/pin" && pwd -P)"'" ]' >/dev/null 2>&1) && pass 'contexto con pin valido usa la release pineada' || fail 'pin valido no se uso'
+  (MEFISTO_EXECUTION_CONTEXT="$CTX_PATH" MEFISTO_LOADED_RELEASE_ROOT="$WORK/inexistente" bash -c "$PRE" >/dev/null 2>&1) && fail 'pin invalido debio abortar' || pass 'pin invalido aborta'
 else
   fail 'no se pudo extraer el preambulo OpenCode'
 fi

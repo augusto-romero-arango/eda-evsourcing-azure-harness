@@ -43,7 +43,8 @@ const runtimeContext = (input) => {
 
 // Pin fisico fijado al cargar el modulo: releer un symlink movido despues no cambia la release declarada.
 const LOADED_ROOT = (() => { try { return realpathSync(join(dirname(fileURLToPath(import.meta.url)), "..")); } catch { return null; } })();
-const CTX_RE = /^([A-Za-z0-9][A-Za-z0-9._-]{0,63})[:/]([A-Za-z0-9][A-Za-z0-9._-]{0,63})$/;
+// Mismo contrato que _execution-context.sh (#1855): ruta del contexto bajo la raiz aprobada, no un id libre.
+const CTX_RE = /^(\/.*)\/\.mefisto\/pipeline\/autonomy\/runs\/([A-Za-z0-9][A-Za-z0-9._-]{0,63})\/contexts\/([A-Za-z0-9][A-Za-z0-9._-]{0,63})\.json$/;
 const DIGEST_RE = /^[0-9a-f]{64}$/;
 const ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 const sq = (value) => "'" + String(value).replaceAll("'", "'\\''") + "'";
@@ -53,7 +54,7 @@ const readContextRef = () => {
   if (ref === undefined && digest === undefined) return null;
   const match = typeof ref === "string" ? CTX_RE.exec(ref) : null;
   if (!match || typeof digest !== "string" || !DIGEST_RE.test(digest)) return { invalid: true, raw: ref ?? "", digest: digest ?? "" };
-  return { runId: match[1], contextId: match[2], digest, raw: ref };
+  return { base: match[1], runId: match[2], contextId: match[3], digest, raw: ref };
 };
 const runContextOp = (root, op, request) => new Promise((resolve) => {
   const child = execFile(join(root, "scripts/execution-context.sh"), [op], { timeout: 30000, maxBuffer: 1048576, windowsHide: true }, (error, stdout) => {
@@ -90,7 +91,7 @@ export default async function mefistoCommandEntry(input = {}) {
   const getSession = async (id) => {
     try { const r = await client.session.get({ path: { id } }); return !r?.error && plain(r?.data) ? r.data : null; } catch { return null; }
   };
-  const ctxBase = () => ({ projectRoot: directory, runId: state.ctx.runId, contextId: state.ctx.contextId, digest: state.ctx.digest });
+  const ctxBase = () => ({ projectRoot: state.ctx.base, runId: state.ctx.runId, contextId: state.ctx.contextId, digest: state.ctx.digest });
   const expectedActor = () => state.actor?.alias ?? state.actor?.original ?? null;
   const establish = async () => {
     const c = state.ctx;
@@ -296,7 +297,7 @@ export default async function mefistoCommandEntry(input = {}) {
       if (typeof command !== "string" || !ID_RE.test(child) || LOADED_ROOT === null) throw deny("TOOL_CALL_INVALID");
       const reserved = await runContextOp(root, "reserve-child", { ...ctxBase(), childContextId: child, reservationId: ("rs-" + call).slice(0, 64), callId: call, executionRoot: directory });
       if (!reserved || reserved.status !== "ready" || typeof reserved.digest !== "string") throw deny(code(reserved?.reasonCode, "RESERVE_FAILED"));
-      const request = JSON.stringify({ schemaVersion: 1, projectRoot: directory, runId: state.ctx.runId, contextId: child, digest: reserved.digest, handoffId: child });
+      const request = JSON.stringify({ schemaVersion: 1, projectRoot: state.ctx.base, runId: state.ctx.runId, contextId: child, digest: reserved.digest, handoffId: child });
       // Prefijo acotado: el comando original queda integro y visible; si attach falla el cuerpo no corre.
       args.command = sq(join(LOADED_ROOT, "scripts/execution-context.sh")) + ' attach --owner-pid "$$" <<\'MEFISTO_ATTACH_REQUEST\' >/dev/null || exit 1\n' + request + "\nMEFISTO_ATTACH_REQUEST\n" + command;
     }
