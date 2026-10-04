@@ -82,6 +82,7 @@ TOOLING_CLOSURE_ASSETS=(
     'scripts/update-plugin.sh|0755'
     'scripts/upgrade.sh|0755'
     'scripts/autonomy-profile.sh|0755'
+    'scripts/autonomy-preflight.sh|0755'
     'scripts/fix-review-prepare.sh|0755'
     'scripts/fix-review-receipts.sh|0755'
     'scripts/fix-review-admission.sh|0755'
