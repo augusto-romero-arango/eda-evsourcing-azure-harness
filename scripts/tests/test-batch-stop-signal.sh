@@ -255,6 +255,14 @@ setup_work_repo() {
     mkdir -p "$dir/scripts"
     cp "$COMMON_LIB" "$dir/scripts/_pipeline-common.sh"
     cp "$BATCH_SCRIPT" "$dir/scripts/batch-pipeline.sh"
+cat > "$dir/scripts/autonomy-preflight.sh" <<'PF'
+#!/usr/bin/env bash
+# Stub #1870 (issue #1826): sin perfil -> flujo legacy.
+cat >/dev/null
+echo '{"schemaVersion":1,"status":"legacy","diagnostics":[],"checks":[]}'
+exit 0
+PF
+chmod +x "$dir/scripts/autonomy-preflight.sh"
     cp "$PARALLEL_SCRIPT" "$dir/scripts/parallel-pipeline.sh"
     chmod +x "$dir/scripts/batch-pipeline.sh" "$dir/scripts/parallel-pipeline.sh"
     # batch-pipeline.sh (issue #1591) resuelve el runtime activo contra

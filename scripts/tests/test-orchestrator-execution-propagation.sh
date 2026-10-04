@@ -71,6 +71,8 @@ setup_consumer() {
     mkdir -p "$d/scripts" "$d/src/published" "$d/.mefisto"
     cp "$REPO_ROOT"/scripts/{_pipeline-common.sh,_execution-context.sh,batch-pipeline.sh,parallel-pipeline.sh} "$d/scripts/"
     cp -R "$REPO_ROOT/src/runtime" "$d/src/runtime"
+    printf '%s\n' '#!/usr/bin/env bash' 'cat >/dev/null' "echo '{\"schemaVersion\":1,\"status\":\"legacy\",\"diagnostics\":[],\"checks\":[]}'" > "$d/scripts/autonomy-preflight.sh"
+    chmod +x "$d/scripts/autonomy-preflight.sh"
     cp -R "$REPO_ROOT/src/published/contract" "$d/src/published/contract"
     echo '{}' > "$d/.mefisto/harness.config.json"
     cat > "$d/scripts/tooling-pipeline.sh" <<'STUB'
