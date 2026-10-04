@@ -1,0 +1,48 @@
+{
+  "$comment": "Corpus cerrado del recolector ShellTool de OpenCode v1.18.29. La caracterizacion estatica sigue tree-sitter-bash v0.25.0 y web-tree-sitter v0.25.10; no ejecuta Bash ni descarga un parser.",
+  "runtime": {"opencode": "1.18.29", "treeSitterBash": "0.25.0", "webTreeSitter": "0.25.10"},
+  "scriptCalls": [
+    {"artifact":"commands/next-order.md","candidate":"MEFISTO_RUNTIME=opencode \"${MEFISTO_PACKAGE_ROOT}/scripts/next-order.sh\" --launch-command \"/mefisto:sequential\"","source":"next-order run"},
+    {"artifact":"commands/upgrade.md","candidate":"MEFISTO_RUNTIME=opencode \"${MEFISTO_PACKAGE_ROOT}/scripts/upgrade.sh\" --status","source":"upgrade status"},
+    {"artifact":"commands/upgrade.md","candidate":"MEFISTO_RUNTIME=opencode \"${MEFISTO_PACKAGE_ROOT}/scripts/herdr-pipeline.sh\" --refresh-agents","source":"upgrade refresh"},
+    {"artifact":"commands/install-workos.md","candidate":"MEFISTO_RUNTIME=opencode \"${MEFISTO_PACKAGE_ROOT}/scripts/seed-secret.sh\" workos-api-key","source":"install-workos"},
+    {"artifact":"commands/eraser-diagram.md","candidate":"MEFISTO_RUNTIME=opencode \"${MEFISTO_PACKAGE_ROOT}/scripts/render-eraser-diagram.sh\" --payload-file .mefisto/pipeline/tmp/eraser-diagram-payload.json","source":"eraser"},
+    {"artifact":"commands/merge.md","candidate":"MEFISTO_RUNTIME=opencode \"${MEFISTO_PACKAGE_ROOT}/scripts/pr-sync.sh\" <PRs> --merge","source":"merge"},
+    {"artifact":"commands/merge.md","candidate":"MEFISTO_RUNTIME=opencode \"${MEFISTO_PACKAGE_ROOT}/scripts/herdr-pipeline.sh\" --collapse-panes 2>/dev/null","source":"merge substitution redirected_statement"},
+    {"artifact":"commands/onboard.md","candidate":"MEFISTO_RUNTIME=opencode \"${MEFISTO_PACKAGE_ROOT}/scripts/onboard-diagnose.sh\" 2>&1","source":"onboard diagnostics"},
+    {"artifact":"commands/onboard.md","candidate":"MEFISTO_RUNTIME=opencode \"${MEFISTO_PACKAGE_ROOT}/scripts/onboard-migrate-directives.sh\" --preview","source":"onboard migration"},
+    {"artifact":"commands/onboard.md","candidate":"MEFISTO_RUNTIME=opencode \"${MEFISTO_PACKAGE_ROOT}/scripts/set-harness-tenancy.sh\" --strategy <mono-tenant-transitorio|multi-tenant-header>","source":"onboard tenancy substitution"},
+    {"artifact":"commands/work-status.md","candidate":"MEFISTO_RUNTIME=opencode \"${MEFISTO_PACKAGE_ROOT}/scripts/work-status-collect.sh\" --json","source":"work-status"},
+    {"artifact":"commands/health-check.md","candidate":"MEFISTO_RUNTIME=opencode \"${MEFISTO_PACKAGE_ROOT}/scripts/appinsights-query.sh\" health-summary --hours 24","source":"health query"},
+    {"artifact":"commands/parallel.md","candidate":"MEFISTO_RUNTIME=opencode \"${MEFISTO_PACKAGE_ROOT}/scripts/tmux-pipeline.sh\" --parallel $ARGUMENTS","source":"parallel"},
+    {"artifact":"commands/purge-store.md","candidate":"MEFISTO_RUNTIME=opencode \"${MEFISTO_PACKAGE_ROOT}/scripts/purge-store.sh\" --domain \"$DOMINIO_KEBAB\" --env \"$ENV\" --dry-run","source":"purge dry run"},
+    {"artifact":"agents/infra-bootstrap.md","candidate":"MEFISTO_RUNTIME=opencode \"${MEFISTO_PACKAGE_ROOT}/scripts/azure-account-info.sh\" 2>&1","source":"infra bootstrap diagnostics"},
+    {"artifact":"agents/infra-bootstrap.md","candidate":"MEFISTO_RUNTIME=opencode \"${MEFISTO_PACKAGE_ROOT}/scripts/bootstrap-backend.sh\" --subscription <id> --env <env>","source":"infra bootstrap backend"},
+    {"artifact":"agents/infra-bootstrap.md","candidate":"MEFISTO_RUNTIME=opencode \"${MEFISTO_PACKAGE_ROOT}/scripts/setup-github-labels.sh\" 2>&1","source":"infra bootstrap labels"},
+    {"artifact":"agents/infra-bootstrap.md","candidate":"MEFISTO_RUNTIME=opencode \"${MEFISTO_PACKAGE_ROOT}/scripts/setup-github-ci.sh\" <id>","source":"infra bootstrap CI"},
+    {"artifact":"agents/planner.md","candidate":"MEFISTO_RUNTIME=opencode \"${MEFISTO_PACKAGE_ROOT}/scripts/field-note.sh\" --session-id \"$SESSION_ID\"","source":"planner field note"},
+    {"artifact":"agents/test-writer.md","candidate":"MEFISTO_RUNTIME=opencode \"${MEFISTO_PACKAGE_ROOT}/scripts/resolve-nuget-resources.sh\" --worktree-root \"$WORKTREE_ROOT\"","source":"NuGet substitution"},
+    {"artifact":"agents/projections-scaffolder.md","candidate":"MEFISTO_RUNTIME=opencode \"${MEFISTO_PACKAGE_ROOT}/scripts/validate-dockerfile.sh\" src/<RootNamespace>.Projections/Dockerfile","source":"docker validation"},
+    {"artifact":"agents/infra-base-scaffolder.md","candidate":"MEFISTO_RUNTIME=opencode \"${MEFISTO_PACKAGE_ROOT}/scripts/register-harness-secret.sh\" \"marten-connection\" \"composite\" \"marten-connection\"","source":"secret registration"}
+  ],
+  "candidates": [
+    {"snippet":"MEFISTO_RUNTIME=opencode \"${MEFISTO_PACKAGE_ROOT}/scripts/next-order.sh\" --launch-command \"/mefisto:sequential\"","node":"command","candidate":"MEFISTO_RUNTIME=opencode \"${MEFISTO_PACKAGE_ROOT}/scripts/next-order.sh\" --launch-command \"/mefisto:sequential\"","expected":"allow","source":"run canonical"},
+    {"snippet":"CLOSED=$(MEFISTO_RUNTIME=opencode \"${MEFISTO_PACKAGE_ROOT}/scripts/herdr-pipeline.sh\" --collapse-panes 2>/dev/null || true)","node":"redirected_statement > command","candidate":"MEFISTO_RUNTIME=opencode \"${MEFISTO_PACKAGE_ROOT}/scripts/herdr-pipeline.sh\" --collapse-panes 2>/dev/null","expected":"allow","source":"merge list/substitution"},
+    {"snippet":"\"$mefisto_opencode_launcher\" package-root","node":"command","candidate":"\"$mefisto_opencode_launcher\" package-root","expected":"allow","source":"package-root preamble"},
+    {"snippet":"\"$MEFISTO_LIFECYCLE_LAUNCHER\" projection-status","node":"command","candidate":"\"$MEFISTO_LIFECYCLE_LAUNCHER\" projection-status","expected":"allow","source":"runtimes lifecycle"},
+    {"snippet":"pgrep -f \"[s]cripts/batch-pipeline\\.sh\" >/dev/null 2>&1","node":"redirected_statement > command","candidate":"pgrep -f \"[s]cripts/batch-pipeline\\.sh\" >/dev/null 2>&1","expected":"allow","source":"batch-stop"},
+    {"snippet":"sleep 15","node":"command","candidate":"sleep 15","expected":"allow","source":"purge-store polling"},
+    {"snippet":"terraform init -backend=false -input=false","node":"command","candidate":"terraform init -backend=false -input=false","expected":"allow","source":"Terraform local"},
+    {"snippet":"terraform init -backend=false -backend=true","node":"command","candidate":"terraform init -backend=false -backend=true","expected":"deny","source":"negative Terraform"},
+    {"snippet":"MEFISTO_RUNTIME=claude \"${MEFISTO_PACKAGE_ROOT}/scripts/next-order.sh\"","node":"command","candidate":"MEFISTO_RUNTIME=claude \"${MEFISTO_PACKAGE_ROOT}/scripts/next-order.sh\"","expected":"deny","source":"negative runtime"},
+    {"snippet":"MEFISTO_RUNTIME=opencode \"${MEFISTO_PACKAGE_ROOT}/scripts/autonomy-profile.sh\" approve","node":"command","candidate":"MEFISTO_RUNTIME=opencode \"${MEFISTO_PACKAGE_ROOT}/scripts/autonomy-profile.sh\" approve","expected":"deny","source":"unregistered release script"}
+  ],
+  "nonCandidates": [
+    {"snippet":"MEFISTO_CONFIG_PATH=valor","node":"variable_assignment","source":"assignment without command"},
+    {"snippet":"export VALUE=$(printf x)","node":"declaration_command; nested command is printf x","source":"declaration with substitution"},
+    {"snippet":"[ -f archivo ] && printf x","node":"test_command; nested command is printf x","source":"bracket test"},
+    {"snippet":"cd dir; printf x | sort","node":"commands are cd dir, printf x and sort","source":"cwd and pipe"},
+    {"snippet":"literal='$(curl ejemplo)'","node":"variable_assignment; no command substitution under single quotes","source":"single quoted literal"},
+    {"snippet":"f() { printf x; }; f","node":"function_definition contains printf x; invocation f is command","source":"function static traversal"}
+  ]
+}

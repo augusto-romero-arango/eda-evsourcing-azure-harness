@@ -24,28 +24,20 @@ Antes de ejecutar cualquier bloque, compara la entrada completa, sin evaluarla c
 Despues de validar la entrada, resuelve el launcher y la raiz efectiva:
 
 ```bash
-mefisto_lifecycle_data_root() {
-    if [ -n "${XDG_DATA_HOME:-}" ]; then printf '%s/mefisto\n' "$XDG_DATA_HOME"
-    elif [ "$(uname -s)" = Darwin ]; then printf '%s/Library/Application Support/mefisto\n' "$HOME"
-    else printf '%s/.local/share/mefisto\n' "$HOME"; fi
-}
-mefisto_lifecycle_config_root() {
-    if [ "${OPENCODE_CONFIG_DIR+x}" = x ]; then
-        [ -n "$OPENCODE_CONFIG_DIR" ] || return 1
-        printf '%s\n' "$OPENCODE_CONFIG_DIR"
+if [ -n "${XDG_DATA_HOME:-}" ]; then MEFISTO_LIFECYCLE_DATA_ROOT="$XDG_DATA_HOME/mefisto"
+elif [ "${OSTYPE%%[0-9.]*}" = darwin ]; then MEFISTO_LIFECYCLE_DATA_ROOT="$HOME/Library/Application Support/mefisto"
+else MEFISTO_LIFECYCLE_DATA_ROOT="$HOME/.local/share/mefisto"; fi
+if [ "${OPENCODE_CONFIG_DIR+x}" = x ]; then
+    if [ -n "$OPENCODE_CONFIG_DIR" ]; then MEFISTO_LIFECYCLE_CONFIG_ROOT="$OPENCODE_CONFIG_DIR"
     else
-        printf '%s/opencode\n' "${XDG_CONFIG_HOME:-$HOME/.config}"
+        printf '%s\n' 'Estado OpenCode: unavailable (OPENCODE_CONFIG_DIR esta definido pero vacio).' >&2
+        MEFISTO_LIFECYCLE_CONFIG_ROOT='unavailable'
     fi
-}
-MEFISTO_LIFECYCLE_LAUNCHER="$(mefisto_lifecycle_data_root)/active/bin/mefisto-opencode"
-MEFISTO_LIFECYCLE_CONFIG_ROOT="$(mefisto_lifecycle_config_root)" || {
-    printf '%s\n' 'Estado OpenCode: unavailable (OPENCODE_CONFIG_DIR esta definido pero vacio).' >&2
-    MEFISTO_LIFECYCLE_CONFIG_ROOT='unavailable'
-}
+else MEFISTO_LIFECYCLE_CONFIG_ROOT="${XDG_CONFIG_HOME:-$HOME/.config}/opencode"; fi
+MEFISTO_LIFECYCLE_LAUNCHER="$MEFISTO_LIFECYCLE_DATA_ROOT/active/bin/mefisto-opencode"
 if [ ! -f "$MEFISTO_LIFECYCLE_LAUNCHER" ] || [ -L "$MEFISTO_LIFECYCLE_LAUNCHER" ] || [ ! -x "$MEFISTO_LIFECYCLE_LAUNCHER" ]; then
     printf 'Estado OpenCode: unavailable (no hay launcher estable disponible). Raiz efectiva: %s\n' "$MEFISTO_LIFECYCLE_CONFIG_ROOT" >&2
 fi
-export MEFISTO_LIFECYCLE_LAUNCHER MEFISTO_LIFECYCLE_CONFIG_ROOT
 ```
 
 ## Estado

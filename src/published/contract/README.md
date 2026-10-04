@@ -162,10 +162,10 @@ La capacidad neutral `shell` genera `permission.bash` con `"*": "deny"`.
 Solo se amplía para comandos que una doctrina publicada ejecuta, no para
 comandos que meramente menciona. La política vigente permite `git`, `gh`,
 `jq`, `cat`, `ls`, `find`, `grep`, `sort`, los scripts distribuidos, `mkdir` y
-`mktemp`; el toolchain TDD añade `dotnet`, `func init`, `terraform init
--backend=false` / `validate` / `fmt`, `python3 -` (incluido `-m json.tool`),
-`cd`, `echo`, `test`, `[`, `touch`, `tr`, `cut`, `head`, `tail`, `awk`, `sed`, `mv` e
-`ilspycmd`. Las cuatro últimas utilidades de texto previas a `mv` cubren
+`mktemp`; el toolchain TDD añade `dotnet`, `func init`, las formas locales
+enumeradas de `terraform init -backend=false`, `validate` y `fmt`, `python3 -`
+(incluido `-m json.tool`), `cd`, `echo`, `test`, `touch`, `tr`, `cut`, `head`,
+`tail`, `awk`, `sed`, `mv` e `ilspycmd`. Las cuatro últimas utilidades de texto previas a `mv` cubren
 subcomandos reales de tuberías y sustituciones de comando de esa doctrina.
 `terraform plan`/`apply`, `func start` y `az` continúan denegados por el
 default (MEF-ADR-0049 y MEF-ADR-0053). El agente `planner` (issue #1640)
@@ -175,7 +175,31 @@ El agente `projections-scaffolder` (issue #1652) sumó `basename`.
 El agente `bug-investigator` (issue #1667) sumó `diff`, que compara los ensamblados decompilados bajo `{{mefisto:state-path tmp}}` (nunca `/tmp`, bloqueado por `external_directory`); `az` sigue denegado y sus consultas pasan por `appinsights-query.sh` (`plan-sites`/`plan-metrics`).
 El agente `test-writer` (issue #1813) suma `cut` para extraer la ruta del caché global de NuGet en su fallback de decompilación; es una utilidad de lectura de la misma familia que `tr`, `head` y `sort`, no una ampliación del shell genérico.
 
-El issue #1750 sumó tres reglas exactas, sin comodines, porque el preámbulo OpenCode de la release activa se evalúa nodo a nodo contra esta política: `"$mefisto_opencode_launcher" package-root` (el candidato conserva las comillas literales; solo el lanzador resuelto por el preámbulo), `export MEFISTO_PACKAGE_ROOT` (exporta únicamente esa variable) y `exit 1` (aborto con diagnóstico en lugar de una denegación). No se agregan `*`, `bash *`, `sh *`, `eval *` ni `env *`. El preámbulo se reescribió sin funciones, `uname` ni `pwd -P` (usa `OSTYPE`, `cd -P` y `printf`, ya permitidos) y declara que debe repetirse en cada llamada bash que use `${MEFISTO_PACKAGE_ROOT}`, pues no se asume estado de shell persistente entre llamadas. `test-opencode-bash-permissions.sh` extrae los comandos del artefacto generado de `test-writer` y los evalúa con la semántica descrita abajo.
+El contrato de candidatos está pinneado a OpenCode 1.18.29,
+tree-sitter-bash 0.25.0 y web-tree-sitter 0.25.10. El recolector visita nodos
+`command`; cuando su padre inmediato es `redirected_statement`, evalúa los
+bytes de ese padre, y en otro caso los bytes del `command`, tras recortar solo
+los extremos. Por tanto preserva asignaciones inline, comillas, espacios y
+redirecciones. `declaration_command`, asignaciones aisladas, tests bracket y
+definiciones de función no son candidatos por sí mismos; sus comandos hijos,
+incluidas sustituciones ejecutables, sí se recorren.
+
+Cada `run` publicado se emite como una regla por script concreto con el prefijo
+literal `MEFISTO_RUNTIME=opencode` y la ruta entre comillas. No existe una
+regla genérica para `${MEFISTO_PACKAGE_ROOT}/scripts/*`, ni se insertan
+comodines entre la asignación y el ejecutable. El preámbulo de package-root
+permite solamente su consulta de launcher y diagnósticos necesarios. El de
+lifecycle está aplanado a asignaciones, `if` y `OSTYPE`; sus únicas llamadas
+permitidas son `projection-status`, `project` y `deactivate`. Cada llamada que
+usa variables resueltas incluye su propio preámbulo.
+
+`test-opencode-bash-permissions.sh` consume el corpus versionado
+`scripts/tests/fixtures/bash-candidates/opencode-1.18.29.json`, verifica bytes
+en los artefactos generados y evalúa los candidatos mediante la biblioteca
+`opencode-entry-permissions.jq` (#1838). No es un parser Bash, no descarga
+dependencias ni ejecuta OpenCode. El corpus cubre asignaciones, declaraciones,
+bracket tests, `cd`, pipes/listas, redirecciones, sustituciones y funciones;
+un cambio de forma requiere caracterización explícita.
 
 `docker *` continúa denegado: la política `permission.bash` es global y no
 admite overrides por agente, y `docker build` ejecuta los `RUN` del Dockerfile,
@@ -194,12 +218,12 @@ de #1374. `rm -rf tests/` y los candidatos que comienzan por una ruta fuera de
 esos árboles siguen denegados; además, `external_directory: deny` contiene el
 acceso fuera del worktree.
 
-La comprobación empírica contra OpenCode 1.18.29 (2026-09-15) estableció que
-el patrón `*` cruza `/`, que el candidato preserva las comillas literales y
-que se evalúa un candidato por cada nodo `command` del árbol de Bash (también
-en listas compuestas). Las reglas se resuelven por última coincidencia, por lo
-que el deny general de `rm` aparece antes de las excepciones acotadas que lo
-sobrescriben. Este orden y las variantes entre comillas son deliberados.
+El matcher conserva que `*` cruza `/` y decide por la última coincidencia. Esto
+es una contención léxica de candidatos caracterizados, no un sandbox ni una
+certificación de todos los efectos de un proceso. Permanecen denegados shell
+genérico, `env`, `eval`, `source` arbitrario, `curl` directo, `sudo`/`ssh`/`scp`,
+Terraform `plan`/`apply`/`destroy` e `init` sin `-backend=false` o con un
+segundo backend.
 
 Al ampliar esta lista, se inventarían primero los comandos realmente
 ejecutados por la doctrina publicada, se conservaría la denegación por defecto
