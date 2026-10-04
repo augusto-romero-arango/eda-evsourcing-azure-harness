@@ -54,6 +54,9 @@ make_dist() {
     mkdir -p "$d/scripts" "$d/src/runtime"
     cp "$REPO_ROOT/scripts/tmux-pipeline.sh" "$REPO_ROOT/scripts/_pipeline-common.sh" "$d/scripts/"
     cp -R "$REPO_ROOT/src/runtime/lib" "$REPO_ROOT/src/runtime/contract" "$d/src/runtime/"
+    # Evaluador de admision (#1872) stub: sin perfil responde legacy; el fixture solo prueba el entorno.
+    printf '%s\n' '#!/usr/bin/env bash' 'cat >/dev/null' "echo '{\"schemaVersion\":1,\"status\":\"legacy\",\"diagnostics\":[],\"checks\":[]}'" > "$d/scripts/autonomy-preflight.sh"
+    chmod +x "$d/scripts/autonomy-preflight.sh"
     for p in tooling tdd iac scaffold batch parallel; do
         cat > "$d/scripts/$p-pipeline.sh" <<'STUB'
 #!/usr/bin/env bash
