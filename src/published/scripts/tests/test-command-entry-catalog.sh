@@ -50,6 +50,12 @@ jq -e '.commands[] | select(.id == "draft") | .closure.commands == ["draft"]' <<
 manifest="$($ADAPTER render-asset command-entry-manifest "$MATRIX")"; rc=$?
 [ "$rc" -eq 0 ] && jq -e '(.templates | length == 27) and (.delegatedPrompts | length > 0) and (.catalogFingerprint | test("^[0-9a-f]{64}$")) and all(.templates[]; .nativeBinding == null and .legacyBinding == {commandEntryId:.id,subtask:false})' <<< "$manifest" >/dev/null && pass 'manifest identifica templates, prompts y binding observado' || fail 'manifest de ownership'
 source "$ADAPTER"
+fixture_root="$ROOT/src/published/scripts/tests/fixtures/command-entry"
+before_binding="$(native_command_binding < "$fixture_root/before-header.md")"
+native_binding="$(native_command_binding < "$fixture_root/native-header.md")"
+override_binding="$(native_command_binding < "$fixture_root/native-header-override.md")"
+[ "$before_binding" = 'null' ] && [ "$native_binding" = '{"commandEntryId":"batch-stop","subtask":false}' ] && [ "$override_binding" = '{"commandEntryId":"batch-stop-override","subtask":false}' ] && pass 'binding nativo observa headers y override sinteticos' || fail 'binding nativo sintetico'
+[ "$(body "$fixture_root/native-header.md" | trimmed_sha256)" = "$(body "$fixture_root/native-header-override.md" | trimmed_sha256)" ] && [ "$native_binding" != "$override_binding" ] && pass 'metadata distinta conserva identidad del body' || fail 'ownership de metadata y body'
 expected="$(printf 'uno\r\ndos' | shasum -a 256 | awk '{print $1}')"
 actual="$(printf ' \r\nuno\r\ndos\r\n ' | trimmed_sha256)"
 [ "$actual" = "$expected" ] && pass 'hash reproduce trim y preserva CRLF interior' || fail 'semantica trim/CRLF'
