@@ -57,7 +57,7 @@ if [ "$rc" -eq 0 ] && jq -e '
     any(.cases[]; .id == "planner" and .caseId == "microsoft-platform" and .status == "declared") and
     any(.cases[]; .id == "planner" and .caseId == "non-microsoft-official" and .status == "declared") and
     any(.cases[]; .id == "domain-scaffolder" and .caseId == "nuget-version" and .status == "declared") and
-    any(.cases[]; .id == "domain-scaffolder" and .caseId == "nuget-api" and .status == "capability-missing") and
+    any(.cases[]; .id == "domain-scaffolder" and .caseId == "nuget-api" and .status == "declared") and
     any(.cases[]; .id == "infra-writer" and .caseId == "provider-pin" and .status == "external-unobserved") and
     any(.cases[]; .id == "infra-reviewer" and .caseId == "provider-argument" and .status == "capability-missing") and
     any(.cases[]; .id == "apim-gateway-scaffolder" and .caseId == "workos-discovery" and .status == "declared") and
@@ -99,11 +99,22 @@ else
 fi
 
 if jq -e '
-    [.roles[] | select(.id == "domain-scaffolder" or .id == "mcp-scaffolder" or .id == "projections-scaffolder") | .cases[] | select(.caseId == "nuget-version")] as $pins |
-    ($pins | length) == 3 and all($pins[]; (.subject | contains("pin") and contains("no la ultima absoluta")) and (.options == [{"kind":"package-cli","reference":"dotnet package search --exact-match para el id y el pin requeridos"}]))' "$MATRIX" >/dev/null; then
-    pass 'NuGet consulta id y pin exactos sin convertir latest absoluto en criterio'
+    .roles[] | select(.id == "domain-scaffolder") |
+    any(.cases[]; .caseId == "nuget-version" and (.subject | contains("exacta") and contains("no la ultima absoluta")) and .onMissing == "not-verified" and (.options | map(.kind) | sort) == ["package-cli","web"]) and
+    any(.cases[]; .caseId == "nuget-api" and (.subject | contains("dependencia efectiva")) and .onMissing == "not-verified" and .options == [{"kind":"web","reference":".nuspec versionado de NuGet o documentacion/codigo oficial del SDK"}])
+' "$MATRIX" >/dev/null; then
+    pass 'domain-scaffolder distingue existencia, latest y dependencia efectiva del pin exacto'
 else
-    fail 'casos NuGet no conservan pin exacto frente a latest absoluto'
+    fail 'casos NuGet de domain-scaffolder no conservan la politica de reverificacion'
+fi
+
+domain_without_web="$(jq -c '(.roles[] | select(.id == "domain-scaffolder")).capabilities -= ["web"] | .requiredCases += ["domain-scaffolder/nuget-api"]' <<< "$envelope")"
+domain_local_status="$(printf '%s' "$domain_without_web" | jq -r -f "$FILTER" | jq -r '.cases[] | select(.id == "domain-scaffolder" and .caseId == "local-scaffold") | .status')"
+domain_nuspec_status="$(printf '%s' "$domain_without_web" | jq -r -f "$FILTER" | jq -r '.cases[] | select(.id == "domain-scaffolder" and .caseId == "nuget-api") | .status')"
+if [ "$domain_local_status" = declared ] && [ "$domain_nuspec_status" = capability-missing ]; then
+    pass 'fixture offline conserva el scaffold local y marca la reverificacion externa como no disponible'
+else
+    fail "fixture offline inesperado: local=$domain_local_status, nuspec=$domain_nuspec_status"
 fi
 
 if jq -e '
