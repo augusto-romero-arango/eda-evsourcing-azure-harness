@@ -467,6 +467,22 @@ El adaptador OpenCode emite `command-entry-manifest.json`: hashes SHA-256 del
 contenido Markdown renderizado y recortado por el loader, sin incluir cuerpos.
 Su huella técnica permite revalidar snapshots, no equivale a consentimiento.
 
+## Roles de ejecución controlada
+
+`agent-execution.json` es el inventario neutral cerrado de los 22 agentes
+publicados. Declara solamente ownership (`writeScope`), recursos y las tablas de
+pipelines/raíces autorizantes; capacidades, MCP y Skills se derivan del
+frontmatter actual y no se duplican. La generación rechaza agentes faltantes,
+desconocidos, duplicados, `writeScope` incoherente con `edit`, o una llamada real
+del runner que no corresponda a las tablas TDD, tooling, IaC o scaffold.
+
+OpenCode recibe `agent-execution-manifest.json`, generado desde el renderer
+actual. Cada rol conserva su metadata renderizada, el digest SHA-256 del body
+recortado y el alias oculto `autonomy-<id>` para ejecución controlada. El alias
+no sustituye el id original ni acredita por sí mismo ownership; su admisión la
+deciden las raíces declaradas. El manifest no serializa modelos u overrides del
+consumidor.
+
 ## Biblioteca de rutas de recursos
 
 `scripts/lib/resource-paths.sh` es una biblioteca Bash 3.2 + `jq` que se carga
