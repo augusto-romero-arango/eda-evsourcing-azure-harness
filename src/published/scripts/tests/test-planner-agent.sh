@@ -23,7 +23,7 @@ absent() { case "$1" in *"$2"*) fail "$3" ;; *) pass "$3" ;; esac; }
 echo '[fuente] contrato neutral, perfil, skill y mcp'
 if bash "$REPO_ROOT/src/published/scripts/validate-published-artifacts.sh" "$SOURCE" >/dev/null; then pass 'la fuente valida'; else fail 'la fuente no valida'; fi
 metadata="$(awk 'NR == 1 { next } $0 == "---" { exit } { print }' "$SOURCE")"
-if printf '%s' "$metadata" | jq -e '.kind == "agent" and .id == "planner" and .mode == "all" and .profile == "deep" and (.capabilities | index("read") != null and index("edit") != null and index("shell") != null and index("web") != null) and .skills == ["projections"] and .mcp == ["microsoft-learn"]' >/dev/null; then
+if printf '%s' "$metadata" | jq -e '.kind == "agent" and .id == "planner" and .mode == "all" and .profile == "deep" and .capabilities == ["read","edit","shell","web","skill"] and .skills == ["projections"] and .mcp == ["microsoft-learn"]' >/dev/null; then
     pass 'metadata declara agent/planner/all/deep/web/skills-projections/mcp-microsoft-learn'
 else
     fail 'metadata neutral invalida'
@@ -58,6 +58,7 @@ contains "$body" 'Microsoft Learn bundleado' 'Microsoft usa MCP bundleado'
 contains "$body" 'documentacion oficial publica no Microsoft' 'Marten/Wolverine/WorkOS usan solo web oficial'
 contains "$body" 'MCP bundleado no esta disponible' 'web es fallback condicional para Microsoft'
 contains "$body" '**NO VERIFICADO**' 'ausencia de fuente requerida se marca sin certificar'
+contains "$body" 'pregunta por la fuente o posponlo' 'el claim sin fuente se pregunta o pospone'
 contains "$body" 'nunca envias instrucciones o configuracion del consumidor, tokens, secretos ni payloads' 'web no recibe datos del consumidor'
 contains "$body" 'No uses shell, curl ni otra llamada de red' 'no sustituye fuentes con shell o curl'
 

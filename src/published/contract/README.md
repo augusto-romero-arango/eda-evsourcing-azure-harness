@@ -631,11 +631,11 @@ lo alimenta. El entrypoint anterior es una comprobación de mantenimiento del
 checkout fuente: extrae sus frontmatters neutrales; no se empaqueta como si
 pudiera reconstruirlos desde metadata ya adaptada de una instalación.
 
-Los casos condicionales solo se evalúan cuando el cambio los requiere. La
-ausencia actual de web para `planner` y los scaffolders sigue visible como
-`capability-missing` al requerirlos; los issues #1878, #1879, #1880, #1881,
-#1882 y #1883 resuelven esos gaps. #1827 no puede usar la matriz por sí sola
-como evidencia de conexión MCP/web real.
+Los casos condicionales solo se evalúan cuando el cambio los requiere. Los gaps
+que aún no se han resuelto siguen visibles como `capability-missing` al
+requerirlos; los issues #1878, #1879, #1880, #1881, #1882 y #1883 cubren esas
+capacidades por rol. La metadata solo declara rutas y permisos: las tool calls
+efectivas se verifican en #1847 y la conectividad MCP/web real en #1827.
 
 ## Validación
 

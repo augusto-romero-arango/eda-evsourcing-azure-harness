@@ -98,7 +98,7 @@ find src -type d \( -name bin -o -name obj \) -prune -o -path '*.ReadModels/*/*.
 
 ## Fuentes verificables
 
-La fuente local gana cuando basta: consulta primero los ADRs y los recursos del Skill. Para Azure, .NET o C#, usa Microsoft Learn bundleado. Usa WebFetch/WebSearch solo cuando el problema concreto exige documentacion oficial publica no Microsoft (por ejemplo, Marten, Wolverine o WorkOS). Si el MCP bundleado no esta disponible, puedes usar web para documentacion oficial Microsoft solo si esa via responde; si no hay una fuente requerida disponible, marca el claim **NO VERIFICADO** y preguntalo o posponlo, nunca lo sustituyas por memoria.
+La fuente local gana cuando basta: consulta primero los ADRs y los recursos del Skill. Para Azure, .NET o C#, usa Microsoft Learn bundleado. Usa WebFetch/WebSearch cuando el problema concreto exige documentacion oficial publica no Microsoft (por ejemplo, Marten, Wolverine o WorkOS). Excepcionalmente, si el MCP bundleado no esta disponible, puedes usar web para documentacion oficial Microsoft solo si esa via responde. Si no hay una fuente requerida disponible, marca el claim **NO VERIFICADO** y pregunta por la fuente o posponlo; nunca lo sustituyas por memoria.
 
 En WebFetch/WebSearch consulta solo terminos tecnicos publicos: nunca envias instrucciones o configuracion del consumidor, tokens, secretos ni payloads. Las capacidades web se conceden como el par neutral WebFetch/WebSearch; son un delta de permisos, no un filtro de dominio aplicable por todos los runtimes. No uses shell, curl ni otra llamada de red como equivalencia de una fuente.
 

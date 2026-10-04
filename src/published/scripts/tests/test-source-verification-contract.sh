@@ -77,6 +77,14 @@ if [ "$planner_mcp_absent_status" = declared ] && [ "$planner_without_sources_st
 else
     fail "fallback Microsoft inesperado: MCP ausente=$planner_mcp_absent_status, sin fuentes=$planner_without_sources_status"
 fi
+if jq -e '
+    .roles[] | select(.id == "planner") |
+    all(.cases[] | select(.caseId == "microsoft-platform" or .caseId == "non-microsoft-official"); .onMissing == "not-verified")
+' "$MATRIX" >/dev/null; then
+    pass 'planner marca NO VERIFICADO cuando falta la fuente externa requerida'
+else
+    fail 'planner bloquea o certifica un claim sin fuente externa'
+fi
 
 if jq -e '
     [.roles[] | select(.id == "domain-scaffolder" or .id == "mcp-scaffolder" or .id == "projections-scaffolder") | .cases[] | select(.caseId == "nuget-version")] as $pins |
