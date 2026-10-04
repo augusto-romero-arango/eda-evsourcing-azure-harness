@@ -75,6 +75,8 @@ EOF
             if (id == "domain-scaffolder" && (value == "${PR_NUM}" || value == "${TIMEOUT}" || value == "${archivo}")) return 1
             if (id == "projection-test-writer" && (value == "$PLUGIN_ROOT" || value == "$HOME" || value == "$2")) return 1
             if (id == "reviewer" && (value == "$PLUGIN_ROOT" || value == "$HOME")) return 1
+            if ((id == "test-writer" || id == "reviewer" || id == "bug-investigator") && value ~ /^\$(ASSEMBLY|CANDIDATES|NUGET_RESOURCES|PACKAGE_ID_LOWER|PACKAGE_VERSION|SELECTED_ASSEMBLY|TFM|WORKTREE_ROOT|candidate|index|root)$/) return 1
+            if (id == "bug-investigator" && value ~ /^\$(OLD_ASSEMBLY|NEW_ASSEMBLY)$/) return 1
             if (id == "runtimes" && (value == "$MEFISTO_LIFECYCLE_LAUNCHER" || value == "$MEFISTO_LIFECYCLE_CONFIG_ROOT")) return 1
             if (id == "batch-stop" && value == "$REPO_ROOT") return 1
             if (id == "scaffold-mcp" && value ~ /^\$(\{)?(ROOT_NAMESPACE|SOLUTION_FILE|VERSION|PROPOSITO_PASCAL)(\})?$/) return 1

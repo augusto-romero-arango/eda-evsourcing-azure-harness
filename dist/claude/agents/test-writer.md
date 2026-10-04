@@ -271,15 +271,45 @@ Cuando tengas una duda sobre el harness (¿`Given` soporta X? ¿`Then` con un so
    ```
 
 3. **Fuente del package (fallback)** cuando el cheatsheet no cubre tu duda:
-   ```bash
-   # Localizar el path del NuGet cache
-   dotnet nuget locals global-packages --list
-   # Ruta esperada: /Users/<user>/.nuget/packages/cosmos.eventsourcing.testing.utilities/<version>/
+    ```bash
+    # Resuelve las roots efectivas para ESTE worktree. No reutilices variables de
+    # otra tool call ni inventes una root alternativa.
+    WORKTREE_ROOT="$(git rev-parse --show-toplevel)" || exit 1
+    NUGET_RESOURCES="$( MEFISTO_RUNTIME=claude "${MEFISTO_PACKAGE_ROOT}/scripts/resolve-nuget-resources.sh" --worktree-root "$WORKTREE_ROOT" )" || {
+      printf '%s\n' 'No se pudo resolver la evidencia NuGet; la inspeccion requerida queda no verificada.' >&2
+      exit 1
+    }
+    if [ "$(jq -r .status <<< "$NUGET_RESOURCES")" != resolved ]; then
+      printf '%s\n' 'Las roots NuGet estan unavailable o en conflicto; la inspeccion requerida queda no verificada.' >&2
+      exit 1
+    fi
 
-   # Si el package shipea DLL (sin .cs), descompilar:
-   mkdir -p ".mefisto/pipeline/tmp/test-writer-decompiled"
-    ilspycmd "$(dotnet nuget locals global-packages --list | cut -d' ' -f2-)/cosmos.eventsourcing.testing.utilities/<version>/lib/net10.0/Cosmos.EventSourcing.Testing.Utilities.dll" \
-     -p -o ".mefisto/pipeline/tmp/test-writer-decompiled"
+    PACKAGE_ID_LOWER=cosmos.eventsourcing.testing.utilities
+    PACKAGE_VERSION=<version>
+    TFM=net10.0
+    ASSEMBLY=Cosmos.EventSourcing.Testing.Utilities.dll
+    CANDIDATES=()
+    while IFS= read -r root; do
+      candidate="$root/$PACKAGE_ID_LOWER/$PACKAGE_VERSION/lib/$TFM/$ASSEMBLY"
+      [ -f "$candidate" ] && CANDIDATES+=("$candidate")
+    done < <(jq -r '.roots[].physicalRoot' <<< "$NUGET_RESOURCES")
+    [ "${#CANDIDATES[@]}" -gt 0 ] || {
+      printf '%s\n' "No se encontro $PACKAGE_ID_LOWER/$PACKAGE_VERSION/lib/$TFM/$ASSEMBLY en las roots resueltas; la inspeccion requerida queda no verificada." >&2
+      exit 1
+    }
+    SELECTED_ASSEMBLY="${CANDIDATES[0]}"
+    for ((index = 1; index < ${#CANDIDATES[@]}; index++)); do
+      if ! cmp -s "$SELECTED_ASSEMBLY" "${CANDIDATES[$index]}"; then
+        printf 'Conflicto: candidatos NuGet con contenido distinto: %s | %s\n' "$SELECTED_ASSEMBLY" "${CANDIDATES[$index]}" >&2
+        exit 1
+      fi
+    done
+    printf 'Assembly seleccionado: %s\n' "$SELECTED_ASSEMBLY"
+
+    # Si el package shipea DLL (sin .cs), descompilar:
+    mkdir -p ".mefisto/pipeline/tmp/test-writer-decompiled"
+     ilspycmd "$SELECTED_ASSEMBLY" \
+      -p -o ".mefisto/pipeline/tmp/test-writer-decompiled"
    ls ".mefisto/pipeline/tmp/test-writer-decompiled"
    ```
 

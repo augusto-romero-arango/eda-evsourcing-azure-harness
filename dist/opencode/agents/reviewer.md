@@ -265,9 +265,40 @@ MEF-ADR-0034 seccion 6 fija un config-test barato para el worker de proyecciones
 **Por que hace falta decompilar.** El write-side **no** tiene su configuracion completa en el codigo del consumidor: `ComposicionServicios{Dominio}.cs` solo invoca la fachada del paquete (`AgregarWolverineParaComandosServerless`; `UsarWolverineParaComandos` en un host que no sea Functions), y es esa fachada la que por debajo llama a `Commands.MartenEventStoreExtensions.AgregarConfiguracionMartenComandos` -- el metodo que realmente fija los atributos de Marten del write-side. **No busques `AgregarConfiguracionMartenComandos` en `src/`: no esta ahi**, y su ausencia no significa que el dominio no configure Marten. Mismo procedimiento y mismo gotcha de casing que ya documenta `agents/bug-investigator.md` para este mismo paquete (carpeta del cache de NuGet en minusculas, ensamblado en PascalCase, `TargetFramework net10.0`) -- no lo reinventes, solo cambia el objetivo:
 
 ```bash
-ls ~/.nuget/packages/cosmos.eventsourcing.critterstack/
-mkdir -p ".mefisto/pipeline/tmp/reviewer-decompiled"
-ilspycmd ~/.nuget/packages/cosmos.eventsourcing.critterstack/<version-del-csproj>/lib/net10.0/Cosmos.EventSourcing.CritterStack.dll -o ".mefisto/pipeline/tmp/reviewer-decompiled"
+    # Resuelve las roots efectivas para ESTE worktree antes de inspeccionar.
+    # No reutilices variables de otra tool call ni inventes una root alternativa.
+    WORKTREE_ROOT="$(git rev-parse --show-toplevel)" || exit 1
+    NUGET_RESOURCES="$( MEFISTO_RUNTIME=opencode "${MEFISTO_PACKAGE_ROOT}/scripts/resolve-nuget-resources.sh" --worktree-root "$WORKTREE_ROOT" )" || {
+      printf '%s\n' 'No se pudo resolver la evidencia NuGet; la verificacion queda no verificada.' >&2
+      exit 1
+    }
+    if [ "$(jq -r .status <<< "$NUGET_RESOURCES")" != resolved ]; then
+      printf '%s\n' 'Las roots NuGet estan unavailable o en conflicto; la verificacion queda no verificada.' >&2
+      exit 1
+    fi
+    PACKAGE_ID_LOWER=cosmos.eventsourcing.critterstack
+    PACKAGE_VERSION=<version-del-csproj>
+    TFM=net10.0
+    ASSEMBLY=Cosmos.EventSourcing.CritterStack.dll
+    CANDIDATES=()
+    while IFS= read -r root; do
+      candidate="$root/$PACKAGE_ID_LOWER/$PACKAGE_VERSION/lib/$TFM/$ASSEMBLY"
+      [ -f "$candidate" ] && CANDIDATES+=("$candidate")
+    done < <(jq -r '.roots[].physicalRoot' <<< "$NUGET_RESOURCES")
+    [ "${#CANDIDATES[@]}" -gt 0 ] || {
+      printf '%s\n' "No se encontro $PACKAGE_ID_LOWER/$PACKAGE_VERSION/lib/$TFM/$ASSEMBLY en las roots resueltas; la verificacion queda no verificada." >&2
+      exit 1
+    }
+    SELECTED_ASSEMBLY="${CANDIDATES[0]}"
+    for ((index = 1; index < ${#CANDIDATES[@]}; index++)); do
+      if ! cmp -s "$SELECTED_ASSEMBLY" "${CANDIDATES[$index]}"; then
+        printf 'Conflicto: candidatos NuGet con contenido distinto: %s | %s\n' "$SELECTED_ASSEMBLY" "${CANDIDATES[$index]}" >&2
+        exit 1
+      fi
+    done
+    printf 'Assembly seleccionado: %s\n' "$SELECTED_ASSEMBLY"
+    mkdir -p ".mefisto/pipeline/tmp/reviewer-decompiled"
+    ilspycmd "$SELECTED_ASSEMBLY" -o ".mefisto/pipeline/tmp/reviewer-decompiled"
 grep -n -A 30 "AgregarConfiguracionMartenComandos" ".mefisto/pipeline/tmp/reviewer-decompiled/Cosmos.EventSourcing.CritterStack.decompiled.cs"
 ```
 
