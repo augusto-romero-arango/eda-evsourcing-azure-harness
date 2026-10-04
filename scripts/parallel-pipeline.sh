@@ -210,6 +210,14 @@ fi
 # Cada pipeline hijo hereda la misma resolucion para que el lote no diverja.
 export MEFISTO_RUNTIME="$PARALLEL_RUNTIME"
 
+# Referencia de ejecucion de toda la cola (issue #1861, MEF-ADR-0055): abierta antes
+# del primer lanzamiento y viva hasta que termina el ultimo hijo, incluidos los huecos
+# por --max-parallel, hold y parada suave. Sin perfil/runtime autorizado: camino previo.
+_PARALLEL_PKG_ROOT="$(cd "$(_pc_script_dir)/.." && pwd -P)"
+orchestrator_execution_open parallel "$REPO_ROOT" "$_PARALLEL_PKG_ROOT" "$RUNTIME_LIB_DIR" "$(_pc_script_dir)/run-published-agent.sh" \
+    || abort "No se pudo abrir la ejecucion preparada del lote (contexto invalido, ocupado o revocado)"
+orchestrator_install_exit_trap
+
 # ─── Cabecera ─────────────────────────────────────────────────────────────────
 header "parallel-pipeline --- Procesamiento paralelo de issues"
 log "Runtime: $MEFISTO_RUNTIME"
@@ -281,6 +289,9 @@ PIDS=()
 STATUS_FILES=()
 ISSUE_LOGS=()
 START_TIMES=()
+CHILD_IDS=()       # contexto hijo reservado por indice (issue #1861); se cierra al observar su exit
+CHILD_DIGESTS=()
+NOT_LAUNCHED=()    # NOT_LAUNCHED[i]=motivo si la reserva fallo y el hijo nunca se lanzo
 DEFERRED_FLAG=()   # DEFERRED_FLAG[i]="true" si el issue en esa posicion quedo aplazado (issue #974, CA-3)
 
 # defer_pending_issues
@@ -318,8 +329,23 @@ launch_pipeline() {
     local issue_log="$LOG_DIR/parallel-issue-${issue}-${TIMESTAMP}.log"
     touch "$issue_log"
 
-    "$pipeline_script" "$issue" --status-file "$status_file" \
-        >"$issue_log" 2>&1 &
+    # Reserva ANTES del spawn: sin reserva el hijo no se lanza ni se reporta ejecutado.
+    if ! orchestrator_reserve_child "$(orchestrator_kind_for_script "$pipeline_script")" "$REPO_ROOT"; then
+        NOT_LAUNCHED[$idx]="no se pudo reservar el contexto de ejecucion; el pipeline no se lanzo"
+        ISSUE_LOGS[$idx]="$issue_log"
+        warn "Issue #$issue no se lanza: ${NOT_LAUNCHED[$idx]}"
+        return 0
+    fi
+    if [ -n "$ORCH_CHILD_ID" ]; then
+        CHILD_IDS[$idx]="$ORCH_CHILD_ID"
+        CHILD_DIGESTS[$idx]="$ORCH_CHILD_DIGEST"
+        MEFISTO_EXECUTION_CONTEXT="$ORCH_CHILD_CONTEXT" MEFISTO_EXECUTION_DIGEST="$ORCH_CHILD_DIGEST" \
+            "$pipeline_script" "$issue" --status-file "$status_file" \
+            >"$issue_log" 2>&1 &
+    else
+        "$pipeline_script" "$issue" --status-file "$status_file" \
+            >"$issue_log" 2>&1 &
+    fi
 
     PIDS[$idx]=$!
     STATUS_FILES[$idx]="$status_file"
@@ -419,6 +445,10 @@ print_dashboard() {
         # monitoreo, contradiciendo el aviso de parada que ya se imprimio.
         if [ "${DEFERRED_FLAG[$i]:-false}" = "true" ]; then
             printf "  ${YELLOW}%-6s  %-14s  %-8s  %s${NC}\n" "#$issue" "aplazado" "-" ""
+            continue
+        fi
+        if [ -n "${NOT_LAUNCHED[$i]:-}" ]; then
+            printf "  ${RED}%-6s  %-14s  %-8s  %s${NC}\n" "#$issue" "no lanzado" "-" ""
             continue
         fi
 
@@ -629,6 +659,14 @@ for i in "${!ISSUE_NUMS[@]}"; do
         continue
     fi
 
+    if [ -n "${NOT_LAUNCHED[$i]:-}" ]; then
+        ISSUE_RESULTS+=("ERROR: ${NOT_LAUNCHED[$i]}")
+        ISSUE_PRS+=("")
+        ISSUE_DURATIONS+=("-")
+        FAILED=$((FAILED + 1))
+        continue
+    fi
+
     local_pid="${PIDS[$i]}"
     local_issue="${ISSUE_NUMS[$i]}"
     local_status="${STATUS_FILES[$i]}"
@@ -636,6 +674,10 @@ for i in "${!ISSUE_NUMS[@]}"; do
 
     PIPELINE_EXIT=0
     wait "$local_pid" || PIPELINE_EXIT=$?
+    if [ -n "${CHILD_IDS[$i]:-}" ]; then
+        ORCH_CHILD_ID="${CHILD_IDS[$i]}"; ORCH_CHILD_DIGEST="${CHILD_DIGESTS[$i]}"
+        orchestrator_finish_child "$(orchestrator_outcome_for "$PIPELINE_EXIT")" || true
+    fi
 
     local_end=$(date +%s)
     local_dur=$(( local_end - local_start ))

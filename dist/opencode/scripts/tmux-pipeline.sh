@@ -26,7 +26,8 @@ set -euo pipefail
 # descarta los overrides de path ANTES de sourcear nada y usa siempre las
 # raices de ESTA distribucion y de ESTE consumidor. Los pipelines invocados
 # directamente conservan sus overrides. Solo garantiza paths y runtime del hijo
-# tmux; el transporte de contextos/leases por pane es de #1861.
+# tmux. El transporte de contextos/reservas por pane (issue #1861) viaja en el
+# mismo prefijo por proceso: nunca por set-environment global del servidor.
 unset MEFISTO_RUNTIME_LIB_DIR MEFISTO_MODELS_VALIDATOR MEFISTO_STATE_DIR MEFISTO_LEGACY_STATE_DIR
 
 # --- Funciones compartidas ---
@@ -119,12 +120,48 @@ CAFF="$(caffeinate_prefix)"
 # distribucion y las dos roots de estado de este consumidor. Valores quoteados
 # con printf %q; sin eval. No usa `env -i` (conserva HOME/PATH/credenciales).
 pipeline_env_prefix() {
-    printf 'env -u MEFISTO_RUNTIME_LIB_DIR -u MEFISTO_MODELS_VALIDATOR -u MEFISTO_STATE_DIR -u MEFISTO_LEGACY_STATE_DIR -u MEFISTO_RUN_AGENT_BIN'
+    printf 'env -u MEFISTO_RUNTIME_LIB_DIR -u MEFISTO_MODELS_VALIDATOR -u MEFISTO_STATE_DIR -u MEFISTO_LEGACY_STATE_DIR -u MEFISTO_RUN_AGENT_BIN -u MEFISTO_EXECUTION_CONTEXT -u MEFISTO_EXECUTION_DIGEST'
     printf ' MEFISTO_RUNTIME=%q' "$RESOLVED_RUNTIME"
     printf ' MEFISTO_RUNTIME_LIB_DIR=%q' "$RUNTIME_LIB_DIR"
     printf ' MEFISTO_MODELS_VALIDATOR=%q' "$MODELS_VALIDATOR"
     printf ' MEFISTO_STATE_DIR=%q' "$MEFISTO_STATE_DIR"
     printf ' MEFISTO_LEGACY_STATE_DIR=%q' "$MEFISTO_LEGACY_STATE_DIR"
+    orchestrator_child_env_words
+}
+
+# wrapper_execution_open <comando-raiz>
+#
+# Referencia de ejecucion del wrapper (issue #1861): se abre una vez, solo cuando
+# hay que despachar, y se cierra al salir. Soltarla es seguro porque cada hijo ya
+# esta reservado (y anclado) en ella antes del send-keys. Sin perfil/runtime
+# autorizado (o con runtime Claude) no abre nada.
+WRAPPER_EXEC_OPEN=0
+wrapper_execution_open() {
+    [ "$WRAPPER_EXEC_OPEN" = 1 ] && return 0
+    WRAPPER_EXEC_OPEN=1
+    orchestrator_execution_open "$1" "$PROJECT_ROOT" "$(cd "$SCRIPT_DIR/.." && pwd -P)" "$RUNTIME_LIB_DIR" "${MEFISTO_RUN_AGENT_BIN:-}" \
+        || abort "No se pudo abrir la ejecucion preparada del wrapper (contexto invalido, ocupado o revocado); no se lanzo nada."
+    orchestrator_install_exit_trap
+}
+
+# dispatch_pipeline_keys <pane> <comando-raiz> <tipo-hijo|""> <resto-del-comando>
+#
+# Reserva el contexto hijo ANTES del send-keys y lo transporta en el prefijo por
+# proceso. send-keys devuelve al teclear el comando, no al admitir al hijo: el attach
+# lo hace el pipeline al arrancar. Si send-keys falla el comando no se tecleo (no
+# entregado) y solo entonces se retira la reserva.
+dispatch_pipeline_keys() {
+    local pipe_pane="$1" root_cmd="$2" kind="$3" tail_cmd="$4"
+    wrapper_execution_open "$root_cmd"
+    orchestrator_reserve_child "$kind" "$PROJECT_ROOT" \
+        || abort "No se pudo reservar el contexto de ejecucion del pipeline; no se lanzo nada."
+    if tmux send-keys -t "$pipe_pane" "$CAFF $(pipeline_env_prefix) $tail_cmd" Enter; then
+        [ -z "$ORCH_CHILD_ID" ] || log "Contexto hijo $ORCH_CHILD_ID reservado: el pipeline hace attach al arrancar (admision no confirmada hasta entonces)."
+        ORCH_CHILD_ID=""; ORCH_CHILD_CONTEXT=""; ORCH_CHILD_DIGEST=""
+    else
+        orchestrator_finish_child aborted || true
+        abort "tmux send-keys fallo en el pane $pipe_pane: el pipeline no se lanzo."
+    fi
 }
 
 # Normaliza la ruta de sub-script devuelta por resolve_pipeline a una ruta
@@ -395,7 +432,9 @@ cmd_single() {
     # por si el plugin esta instalado bajo una ruta con espacios (mismo criterio
     # que '$EVENTS_LOG').
     pipe_pane=$(tmux split-window -h -t "$tail_pane" -c "$PROJECT_ROOT" -P -F '#{pane_id}')
-    tmux send-keys -t "$pipe_pane" "$CAFF $(pipeline_env_prefix) '$resolved' $issue $extra_args" Enter
+    local root_cmd="implement" child_kind="tdd"
+    case "$pipeline_name" in tooling-pipeline) root_cmd="tooling"; child_kind="tooling" ;; esac
+    dispatch_pipeline_keys "$pipe_pane" "$root_cmd" "$child_kind" "'$resolved' $issue $extra_args"
 
     tmux select-layout -t "$session:main" even-horizontal
 
@@ -450,7 +489,7 @@ cmd_batch() {
 
     # Pane derecho: batch pipeline
     pipe_pane=$(tmux split-window -h -t "$tail_pane" -c "$PROJECT_ROOT" -P -F '#{pane_id}')
-    tmux send-keys -t "$pipe_pane" "$CAFF $(pipeline_env_prefix) '$SCRIPT_DIR/batch-pipeline.sh' $pipeline_flag $issues_str" Enter
+    dispatch_pipeline_keys "$pipe_pane" sequential "" "'$SCRIPT_DIR/batch-pipeline.sh' $pipeline_flag $issues_str"
 
     tmux select-layout -t "$session:main" even-horizontal
 
@@ -562,7 +601,7 @@ cmd_parallel() {
     local pipe_pane
     for i in "${!resolved_issues[@]}"; do
         pipe_pane=$(tmux split-window -h -t "$session:main" -c "$PROJECT_ROOT" -P -F '#{pane_id}')
-        tmux send-keys -t "$pipe_pane" "$CAFF $(pipeline_env_prefix) '${resolved_pipelines[$i]}' ${resolved_issues[$i]}" Enter
+        dispatch_pipeline_keys "$pipe_pane" parallel "$(orchestrator_kind_for_script "${resolved_pipelines[$i]}")" "'${resolved_pipelines[$i]}' ${resolved_issues[$i]}"
         # Escalonar lanzamientos: 30s entre cada uno para evitar que multiples
         # invocaciones de claude -p compitan por recursos de API simultaneamente
         if [ "$i" -lt "$(( ${#resolved_issues[@]} - 1 ))" ]; then
@@ -620,7 +659,7 @@ cmd_tooling() {
     tmux send-keys -t "$tail_pane" "tail -F '$EVENTS_LOG' '$EVENTS_LOG_LEGACY'" Enter
 
     pipe_pane=$(tmux split-window -h -t "$tail_pane" -c "$PROJECT_ROOT" -P -F '#{pane_id}')
-    tmux send-keys -t "$pipe_pane" "$CAFF $(pipeline_env_prefix) '$SCRIPT_DIR/tooling-pipeline.sh' $issue $extra_args" Enter
+    dispatch_pipeline_keys "$pipe_pane" tooling tooling "'$SCRIPT_DIR/tooling-pipeline.sh' $issue $extra_args"
 
     tmux select-layout -t "$session:main" even-horizontal
 
@@ -653,7 +692,7 @@ cmd_infra() {
     tmux send-keys -t "$tail_pane" "tail -F '$EVENTS_LOG' '$EVENTS_LOG_LEGACY'" Enter
 
     pipe_pane=$(tmux split-window -h -t "$tail_pane" -c "$PROJECT_ROOT" -P -F '#{pane_id}')
-    tmux send-keys -t "$pipe_pane" "$CAFF $(pipeline_env_prefix) '$SCRIPT_DIR/iac-pipeline.sh' $issue $extra_args" Enter
+    dispatch_pipeline_keys "$pipe_pane" infra iac "'$SCRIPT_DIR/iac-pipeline.sh' $issue $extra_args"
 
     tmux select-layout -t "$session:main" even-horizontal
 
@@ -717,7 +756,7 @@ cmd_scaffold() {
     tmux send-keys -t "$tail_pane" "tail -F '$EVENTS_LOG' '$EVENTS_LOG_LEGACY'" Enter
 
     pipe_pane=$(tmux split-window -h -t "$tail_pane" -c "$PROJECT_ROOT" -P -F '#{pane_id}')
-    tmux send-keys -t "$pipe_pane" "$CAFF $(pipeline_env_prefix) '$SCRIPT_DIR/scaffold-pipeline.sh' $pipeline_args" Enter
+    dispatch_pipeline_keys "$pipe_pane" scaffold scaffold "'$SCRIPT_DIR/scaffold-pipeline.sh' $pipeline_args"
 
     tmux select-layout -t "$session:main" even-horizontal
 

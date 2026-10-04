@@ -2854,3 +2854,133 @@ pipeline_execution_close() {
         || echo "WARN: cierre de la ejecucion preparada incierto; queda para reconciliacion" >&2
     return 0
 }
+
+# --- Propagacion del contexto por orquestadores y multiplexores (issue #1861) ---
+# batch/parallel y los wrappers tmux/Herdr mantienen UNA referencia viva para toda
+# la cadena/cola y reservan un contexto hijo ANTES de cada spawn/dispatch; el hijo
+# hace attach antes de trabajar aunque el coordinador ya haya terminado. Sin
+# ejecucion habilitada (runtime Claude, sin perfil) nada de esto produce efectos.
+ORCH_SEQ=0
+ORCH_CHILD_ID=""
+ORCH_CHILD_CONTEXT=""
+ORCH_CHILD_DIGEST=""
+ORCH_EXIT_TRAP_SET=0
+
+# orchestrator_execution_open <comando-raiz> <project-root> <package-root> [runtime-lib-dir] [runner]
+orchestrator_execution_open() {
+    local root="${1:-}" project="${2:-}" pkg="${3:-}" lib_dir="${4:-}" runner="${5:-}"
+    [ -n "$lib_dir" ] || lib_dir="$pkg/src/runtime/lib"
+    lib_dir="$(cd "$lib_dir" 2>/dev/null && pwd -P)" || lib_dir=""
+    [ -n "$runner" ] || runner="${MEFISTO_RUN_AGENT_BIN:-}"
+    pipeline_execution_open "root:$root" "$project" "$pkg" "$lib_dir" "$runner"
+}
+
+# orchestrator_enabled: 0 si hay una ejecucion controlada abierta.
+orchestrator_enabled() { [ "${MEFISTO_EXECUTION_ENABLED:-0}" = 1 ] && [ -n "${_EC_RUN:-}" ] && [ -n "${_EC_CTX:-}" ]; }
+
+orchestrator_handoff_ledger() {
+    local f
+    if command -v mefisto_state_path >/dev/null 2>&1; then f="$(mefisto_state_path 'execution-handoffs.log')"
+    else f="${_EC_ROOT:-.}/.mefisto/pipeline/execution-handoffs.log"; fi
+    mkdir -p "$(dirname "$f")" 2>/dev/null
+    printf '%s' "$f"
+}
+
+# orchestrator_note_pending <motivo>: deja la reserva del hijo registrada para
+# reconciliacion. Nunca mata procesos ni limpia por edad.
+orchestrator_note_pending() {
+    [ -n "$ORCH_CHILD_ID" ] || return 0
+    printf '%s\t%s\t%s\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${_EC_RUN:-}" "$ORCH_CHILD_ID" "${1:-pendiente}" \
+        >> "$(orchestrator_handoff_ledger)" 2>/dev/null || true
+    echo "WARN: reserva del contexto hijo $ORCH_CHILD_ID pendiente de reconciliacion (${1:-pendiente}); no se asume admitido" >&2
+}
+
+# orchestrator_reserve_child <pipeline-kind|""> <execution-root>
+# Reserva el contexto del hijo (pipeline/root/identidad/alcance ya decididos) y deja
+# ORCH_CHILD_{ID,CONTEXT,DIGEST}. Sin ejecucion habilitada los deja vacios y retorna 0.
+# Retorna 1 si la reserva falla: el llamador no debe lanzar al hijo.
+orchestrator_reserve_child() {
+    local kind="${1:-}" exec_root="${2:-}" req out rc tries=0 stamp
+    ORCH_CHILD_ID=""; ORCH_CHILD_CONTEXT=""; ORCH_CHILD_DIGEST=""
+    orchestrator_enabled || return 0
+    ORCH_SEQ=$((ORCH_SEQ + 1))
+    stamp="$(date -u +%Y%m%dT%H%M%SZ)-$$-$ORCH_SEQ"
+    req="$(jq -cn --arg r "$_EC_ROOT" --arg run "$_EC_RUN" --arg p "$_EC_CTX" --arg d "$MEFISTO_EXECUTION_DIGEST" \
+        --arg c "ctx-c-$stamp" --arg res "res-$stamp" --arg k "$kind" --arg x "$exec_root" \
+        '{schemaVersion:1,projectRoot:$r,runId:$run,contextId:$p,digest:$d,childContextId:$c,reservationId:$res,executionRoot:$x} + (if $k == "" then {} else {pipelineKind:$k} end)')"
+    while :; do
+        out="$(printf '%s' "$req" | _ec_cli reserve-child)"; rc=$?
+        if [ "$rc" -eq 75 ] && [ "$tries" -lt 25 ]; then tries=$((tries + 1)); sleep 0.2; continue; fi
+        break
+    done
+    [ "$rc" -eq 0 ] || return 1
+    ORCH_CHILD_CONTEXT="$(printf '%s' "$out" | jq -r '.path // empty')"
+    ORCH_CHILD_DIGEST="$(printf '%s' "$out" | jq -r '.digest // empty')"
+    [ -n "$ORCH_CHILD_CONTEXT" ] && [ -n "$ORCH_CHILD_DIGEST" ] || { ORCH_CHILD_CONTEXT=""; ORCH_CHILD_DIGEST=""; return 1; }
+    ORCH_CHILD_ID="$(basename "$ORCH_CHILD_CONTEXT" .json)"
+    return 0
+}
+
+# orchestrator_child_env_words: asignaciones NAME=valor (quoteadas con %q, sin eval ni
+# set-environment global) para anteponer al comando del hijo; vacio sin reserva.
+orchestrator_child_env_words() {
+    [ -n "$ORCH_CHILD_ID" ] || return 0
+    printf ' MEFISTO_EXECUTION_CONTEXT=%q MEFISTO_EXECUTION_DIGEST=%q' "$ORCH_CHILD_CONTEXT" "$ORCH_CHILD_DIGEST"
+}
+
+# orchestrator_finish_child <outcome>: cierra el hijo reservado. Solo para hijos cuyo
+# desenlace este proceso observo (el hijo ya termino) o para una reserva demostrablemente
+# no entregada. Un fallo del cierre deja el hijo registrado, nunca lo oculta.
+orchestrator_finish_child() {
+    local outcome="${1:-failed}" rc
+    [ -n "$ORCH_CHILD_ID" ] || return 0
+    case "$outcome" in succeeded|failed|aborted|held) ;; *) outcome=failed ;; esac
+    jq -cn --arg r "$_EC_ROOT" --arg run "$_EC_RUN" --arg c "$ORCH_CHILD_ID" --arg d "$ORCH_CHILD_DIGEST" --arg o "$outcome" \
+        '{schemaVersion:1,projectRoot:$r,runId:$run,contextId:$c,digest:$d,outcome:$o}' | _ec_cli finish >/dev/null
+    rc=$?
+    if [ "$rc" -ne 0 ]; then orchestrator_note_pending "cierre incierto"; fi
+    ORCH_CHILD_ID=""; ORCH_CHILD_CONTEXT=""; ORCH_CHILD_DIGEST=""
+    return "$rc"
+}
+
+# orchestrator_outcome_for <exit-code>
+orchestrator_outcome_for() {
+    case "${1:-1}" in 0) echo succeeded ;; 130|143) echo aborted ;; *) echo failed ;; esac
+}
+
+# orchestrator_execution_close <exit-code>: cierra la referencia propia del orquestador
+# (preparada por este proceso o transportada y adjuntada por el, ya que el coordinador
+# original puede haber terminado). Los hijos no se tocan: finish reporta cuantos viven.
+orchestrator_execution_close() {
+    local code="${1:-1}" outcome
+    orchestrator_enabled || return 0
+    outcome="$(orchestrator_outcome_for "$code")"
+    if [ "${_EC_OWNED:-0}" = 1 ]; then
+        pipeline_execution_close "$code"
+    else
+        jq -cn --arg r "$_EC_ROOT" --arg run "$_EC_RUN" --arg c "$_EC_CTX" --arg d "$MEFISTO_EXECUTION_DIGEST" --arg o "$outcome" \
+            '{schemaVersion:1,projectRoot:$r,runId:$run,contextId:$c,digest:$d,outcome:$o}' | _ec_cli finish >/dev/null 2>&1 \
+            || echo "WARN: cierre de la ejecucion transportada incierto; queda para reconciliacion" >&2
+    fi
+    MEFISTO_EXECUTION_ENABLED=0
+    return 0
+}
+
+# orchestrator_install_exit_trap: cierra la referencia propia en cualquier salida
+# (abort incluido) sin alterar el exit.
+orchestrator_install_exit_trap() {
+    [ "$ORCH_EXIT_TRAP_SET" = 1 ] && return 0
+    ORCH_EXIT_TRAP_SET=1
+    trap 'orchestrator_execution_close "$?"' EXIT
+}
+
+# orchestrator_kind_for_script <ruta-del-pipeline>: tipo de pipeline para reservar al hijo.
+orchestrator_kind_for_script() {
+    case "$(basename "${1:-}")" in
+        tdd-pipeline.sh) echo tdd ;;
+        tooling-pipeline.sh) echo tooling ;;
+        iac-pipeline.sh) echo iac ;;
+        scaffold-pipeline.sh) echo scaffold ;;
+        *) echo "" ;;
+    esac
+}

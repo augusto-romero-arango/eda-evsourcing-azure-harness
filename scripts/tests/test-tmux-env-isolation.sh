@@ -123,7 +123,7 @@ assert_eq "B->A: B no cambia" "77" "$(cut -d'|' -f7 "$CONS_B/.mefisto/pipeline/c
 
 echo ""
 echo "[2] CA-2: los seis modos envian el mismo prefijo, sin set-environment global"
-expected_prefix="env -u MEFISTO_RUNTIME_LIB_DIR -u MEFISTO_MODELS_VALIDATOR -u MEFISTO_STATE_DIR -u MEFISTO_LEGACY_STATE_DIR -u MEFISTO_RUN_AGENT_BIN MEFISTO_RUNTIME=claude MEFISTO_RUNTIME_LIB_DIR="
+expected_prefix="env -u MEFISTO_RUNTIME_LIB_DIR -u MEFISTO_MODELS_VALIDATOR -u MEFISTO_STATE_DIR -u MEFISTO_LEGACY_STATE_DIR -u MEFISTO_RUN_AGENT_BIN -u MEFISTO_EXECUTION_CONTEXT -u MEFISTO_EXECUTION_DIGEST MEFISTO_RUNTIME=claude MEFISTO_RUNTIME_LIB_DIR="
 for mode in "77 --pipeline tooling" "--tooling 77 --from-stage 2 --models writer=sonnet --variant v1" "--infra 77" "--scaffold 77 --domain demo" "--batch 77 78 --pipeline tooling" "--parallel 77 78 --pipeline tooling"; do
     # shellcheck disable=SC2086
     dispatch "$DIST_B" "$CONS_B" "$DIST_A" "$CONS_A" $mode

@@ -36,6 +36,11 @@ _ec_has_config() { [ -f "$1/.mefisto/harness.config.json" ] || [ -f "$1/.claude/
 # degrada a legacy.
 published_execution_open() {
     local kind="${1:-}" project_root="${2:-}" package_root="${3:-}"
+    # kind "root:<comando>" abre la ejecucion de un orquestador (sequential/parallel
+    # o el wrapper de un multiplexor): sin pipelineKind propio, el alcance es el del
+    # comando raiz y los hijos reservados lo reducen (issue #1861).
+    local root_kind="" pipeline_kind="$kind"
+    case "$kind" in root:?*) root_kind="${kind#root:}"; pipeline_kind="" ;; esac
     local rt="${MEFISTO_RUNTIME:-}"
     local ctx_path="${MEFISTO_EXECUTION_CONTEXT:-}" ctx_digest="${MEFISTO_EXECUTION_DIGEST:-}"
     _ec_reset
@@ -55,7 +60,7 @@ published_execution_open() {
         local tail="${ctx_path#*/.mefisto/pipeline/autonomy/runs/}"
         local run="${tail%%/*}" ctx="${tail##*/}"; ctx="${ctx%.json}"
         local req
-        req="$(jq -cn --arg r "$base" --arg run "$run" --arg c "$ctx" --arg d "$ctx_digest" --arg p "$kind" --arg rt "$rt" \
+        req="$(jq -cn --arg r "$base" --arg run "$run" --arg c "$ctx" --arg d "$ctx_digest" --arg p "$pipeline_kind" --arg rt "$rt" \
             '{schemaVersion:1,projectRoot:$r,runId:$run,contextId:$c,digest:$d,pipelineKind:$p} + (if $rt=="" then {} else {runtime:{id:$rt}} end)')"
         out="$(printf '%s' "$req" | _ec_cli validate)"; rc=$?
         if [ "$rc" -ne 0 ]; then _ec_reset; return 1; fi
@@ -74,11 +79,15 @@ published_execution_open() {
     case "$rt" in ''|claude) return 0 ;; esac
     _ec_has_config "$project_root" || return 0
     local root_command
-    root_command="$(jq -r --arg k "$kind" '[.roots | to_entries[] | select(.value | index($k)) | .key] | first // empty' "$package_root/src/published/contract/agent-execution.json" 2>/dev/null)"
+    if [ -n "$root_kind" ]; then
+        root_command="$(jq -r --arg c "$root_kind" 'if (.roots | has($c)) then $c else empty end' "$package_root/src/published/contract/agent-execution.json" 2>/dev/null)"
+    else
+        root_command="$(jq -r --arg k "$kind" '[.roots | to_entries[] | select(.value | index($k)) | .key] | first // empty' "$package_root/src/published/contract/agent-execution.json" 2>/dev/null)"
+    fi
     [ -n "$root_command" ] || return 1
     local stamp="$(date -u +%Y%m%dT%H%M%SZ)-$$"
     local run="run-$stamp" ctx="ctx-$stamp"
-    out="$(jq -cn --arg r "$project_root" --arg run "$run" --arg c "$ctx" --arg rc "$root_command" --arg k "$kind" --arg rt "$rt" --arg lease "lease-$stamp" \
+    out="$(jq -cn --arg r "$project_root" --arg run "$run" --arg c "$ctx" --arg rc "$root_command" --arg k "$pipeline_kind" --arg rt "$rt" --arg lease "lease-$stamp" \
         '{schemaVersion:1,projectRoot:$r,runId:$run,contextId:$c,rootCommand:$rc,pipelineKind:$k,source:"pipeline",runtime:{id:$rt,version:(env.MEFISTO_RUNTIME_VERSION // "unknown")},leaseId:$lease}' | _ec_cli prepare)"; rc=$?
     [ "$rc" -eq 0 ] || { _ec_reset; return 1; }
     if [ "$(printf '%s' "$out" | jq -r '.status // empty')" = disabled ]; then return 0; fi

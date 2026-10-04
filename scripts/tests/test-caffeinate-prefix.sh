@@ -86,7 +86,7 @@ echo "[B] send-keys: el pane de ejecucion lleva \$CAFF, los panes visores no (CA
 # archivo:minimo de lanzadores esperados (single/batch/parallel/tooling/infra/
 # scaffold del lado publicado; tooling/batch del interno, su superficie completa)
 TMUX_RUNNERS=(
-    "scripts/tmux-pipeline.sh:6"
+    "scripts/tmux-pipeline.sh:1"
     "src/internal/scripts/mefisto-tmux-pipeline.sh:2"
 )
 
