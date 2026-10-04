@@ -443,6 +443,35 @@ El adaptador OpenCode emite `command-entry-manifest.json`: hashes SHA-256 del
 contenido Markdown renderizado y recortado por el loader, sin incluir cuerpos.
 Su huella técnica permite revalidar snapshots, no equivale a consentimiento.
 
+## Biblioteca de rutas de recursos
+
+`scripts/lib/resource-paths.sh` es una biblioteca Bash 3.2 + `jq` que se carga
+sin efectos y expone consultas puntuales, sin crear directorios ni cambiar el
+cwd del caller:
+
+```bash
+resource_path_resolve /ruta/absoluta existing # JSON: logicalRoot, physicalRoot, exists
+resource_path_resolve /ruta/absoluta planned
+resource_path_relative /base/absoluta /destino/absoluto # string JSON; igualdad es ""
+resource_path_contains /padre/absoluto /hijo/absoluto
+```
+
+Las entradas deben ser absolutas, sin controles ni componentes `.` o `..`.
+`resolve` sigue enlaces de directorios existentes; en `planned` conserva sin
+escribir el primer sufijo inexistente bajo un ancestro ya normalizado. `resolve`
+y `relative` retornan JSON; `relative` y `contains` operan por segmentos sobre
+la forma léxica normalizada y no vuelven a consultar el filesystem. `resolve`
+usa 0 para éxito, 1 para filesystem no resoluble y 2 para uso inválido;
+`contains` retorna 0 para igualdad/descendencia por
+segmentos, 1 para no contención y 2 para entrada inválida. Es una observación
+puntual, no una defensa TOCTOU, un walker seguro de todo el árbol ni una
+autorización de recursos. No recorre contenidos de home, configuración o stores
+de autenticación (MEF-ADR-0019, MEF-ADR-0025, MEF-ADR-0031 y MEF-ADR-0053).
+
+La regresión vive en `scripts/tests/test-resource-paths.sh`; compara su corpus
+de relativos con `node:path.relative` solo durante pruebas. Node no es una
+dependencia productiva de la biblioteca.
+
 ## Validación
 
 ```bash
