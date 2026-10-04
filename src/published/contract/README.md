@@ -907,3 +907,56 @@ consentimiento administrativo.
   No selecciona agente ni es un sandbox.
 - La certificación con runtime real y el control Claude pertenecen a #1827; las
   pruebas (`test-opencode-command-entry.sh`) usan dobles de SDK y resolver.
+
+## Contexto de ejecución y handoffs del consumidor
+
+`scripts/execution-context.sh` es el broker durable de contextos de ejecución de
+la autonomía del consumidor (MEF-ADR-0055); `scripts/_execution-context.sh` es la
+biblioteca sourceable de callbacks para pipelines. Hacer `source` no tiene
+efectos. Ninguna variable heredada de tmux ni marker ajeno acredita autorización:
+todo caller valida contra el archivo y contra el digest de su referencia.
+
+Archivo propio por contexto, regular y sin seguir symlinks:
+`<raíz-aprobada>/.mefisto/pipeline/autonomy/runs/<run-id>/contexts/<context-id>.json`.
+Se escribe de forma atómica con CAS por `state.revision` bajo un lock `mkdir`;
+un lock huérfano responde `busy` (75) y nunca se limpia por TTL. El modo local no
+lo vuelve inaccesible a procesos del mismo usuario: un hash no es identidad
+humana ni sandbox.
+
+- `contract` inmutable (schemaVersion, runId/contextId/parentContextId,
+  projectId/profileDigest, rootCommand, pipelineKind/logicalStage/originalAgent/
+  alias, release, allowedRoles/allowedPipelines, clases de recursos derivadas del
+  catálogo, approved/execution roots, runtime esperado, leaseId, nonce).
+  `contractDigest` excluye estado y timestamps; la autoedición se detecta contra
+  el digest de la referencia de uso (variable de transporte o ancla del padre),
+  no contra el checksum del propio archivo.
+- `state`: `prepared|attached|finished|conflict`, `revision`, sesiones,
+  hijos, recibos de handoff y `entryAdmission` opcional. `observations` por nonce
+  conserva `resourcesDigest`/`permissionBase`/`permissionImageDigest`/proyección.
+  Sin prompts, modelos, tokens, datos de negocio ni auth stores.
+
+Operaciones (request/respuesta JSON `schemaVersion: 1` por stdin/stdout; exit 0
+ready/disabled/finished, 75 busy, 1 conflicto, 2 uso/protocolo):
+
+| Operación | Efecto |
+|---|---|
+| `prepare` | Valida runtime, `inspect` (status y `reasonCode`), `rootCommand` aprobado y su `executionClass` del catálogo, pipeline/rol. Claude o `NO_PROFILE` → `disabled` sin archivos. `maintenance/query/prune` solo para clases `by-operation` y nunca dentro de un execute vivo del run |
+| `reserve-child` | Reserva anterior al dispatch: el hijo solo reduce alcance, exige worktree registrado del mismo repositorio y queda anclado (digest) en el padre |
+| `attach [--owner-pid <pid>]` | Vincula PID/identidad antes de efectos o modelo; idempotente para el mismo owner; reserva retirada → `HANDOFF_LATE` |
+| `validate` | Revalida consentimiento, identidad, release y anclas; revocación o deriva impiden nuevas admisiones sin matar trabajo lanzado |
+| `bind-session` | Vincula `sessionID` → contexto/rol/stage/release; `mode: resume` exige vínculo y huellas compatibles (sin fresh start silencioso) |
+| `record-entry-admission` | Guarda solo el veredicto acotado de la entrada `source: command`; exige nonce del controlador, contexto raíz y sesión vinculada; un hijo no lo fabrica |
+| `refresh-observations` | Escritura explícita distinta de `validate`: actualiza evidencia del mismo nonce solo si `permissionImageDigest` no cambia; otro cambio exige nueva admisión |
+| `finish` | Cierre del controlador, no prueba de CAs; no cierra hijos vivos (`liveChildren`, `leaseReleased`); la cobertura de descendencia no demostrada queda `recovery: unknown` |
+
+Callbacks: `published_execution_open <pipeline-kind> <project-root> <package-root>`
+valida/adjunta el contexto transportado (`MEFISTO_EXECUTION_CONTEXT` y
+`MEFISTO_EXECUTION_DIGEST`, solo ruta y digest) contra la raíz aprobada del propio
+contexto, o prepara una raíz standalone; publica `MEFISTO_EXECUTION_ENABLED` sin
+escribir a stdout. Un contexto que no valida impide admisiones y nunca degrada a
+legacy; solo la ausencia de contexto y de perfil (o runtime Claude) conserva el
+flujo previo. `published_execution_close <outcome>` cierra solo el uso propio.
+
+Dependencias abiertas: el registro/recuperador de #1852 aporta la reserva y
+retención del `leaseId`; este broker solo lo referencia y deja el recibo
+incompleto como `unknown`, sin habilitar recuperación automática.
