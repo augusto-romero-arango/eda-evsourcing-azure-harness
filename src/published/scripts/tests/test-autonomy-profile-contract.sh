@@ -51,4 +51,5 @@ assert_result 'clave cruda no integra el perfil' "$(printf '%s' "$BASE" | jq '.p
 assert_result 'catalogo malformado entra en conflicto' "$(printf '%s' "$BASE" | jq '.catalog=["sequential","sequential"]')" conflict INVALID_CATALOG
 assert_result 'envelope con campo extra entra en conflicto' "$(printf '%s' "$BASE" | jq '.extra=true')" conflict INVALID_ENVELOPE
 
+printf '\nResultado: %s PASS, %s FAIL\n' "$PASS" "$FAIL"
 exit "$FAIL"
