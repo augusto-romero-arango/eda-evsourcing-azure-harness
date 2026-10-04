@@ -64,12 +64,19 @@ mefisto_resolve_runtime() {
 runtime_service_start() {
     local runtime="$1" cwd="$2" work_dir="$3" timeout_s="$4" fn lib
     MEFISTO_RUNTIME_SERVICE_ERROR=""
+    if [ -n "$MEFISTO_RUNTIME_SERVICE_RUNTIME" ] || [ -n "$MEFISTO_RUNTIME_SERVICE_PID" ]; then
+        MEFISTO_RUNTIME_SERVICE_ERROR="ya existe un servicio preparado propio en este shell"
+        return 1
+    fi
     if ! mefisto_resolve_runtime "$runtime" >/dev/null; then MEFISTO_RUNTIME_SERVICE_ERROR="$MEFISTO_RUNTIME_ERROR"; return 1; fi
     runtime="$MEFISTO_RESOLVED_RUNTIME"; lib="$MEFISTO_RUNTIME_LIB_DIR/runtime-${runtime}.sh"
     source "$lib"; fn="runtime_${runtime}_service_start"
     if ! declare -F "$fn" >/dev/null 2>&1; then MEFISTO_RUNTIME_SERVICE_ERROR="runtime '$runtime' no soporta servicio preparado"; return 1; fi
-    "$fn" "$cwd" "$work_dir" "$timeout_s" || return $?
     MEFISTO_RUNTIME_SERVICE_RUNTIME="$runtime"
+    if ! "$fn" "$cwd" "$work_dir" "$timeout_s"; then
+        [ -n "$MEFISTO_RUNTIME_SERVICE_PID" ] || MEFISTO_RUNTIME_SERVICE_RUNTIME=""
+        return 1
+    fi
 }
 
 runtime_service_request() {
@@ -88,6 +95,6 @@ runtime_service_stop() {
     fn="runtime_${runtime}_service_stop"
     if ! declare -F "$fn" >/dev/null 2>&1; then MEFISTO_RUNTIME_SERVICE_ERROR="runtime '$runtime' no soporta detener el servicio preparado"; return 1; fi
     "$fn" || rc=$?
-    MEFISTO_RUNTIME_SERVICE_RUNTIME=""
+    [ -z "$MEFISTO_RUNTIME_SERVICE_PID" ] && MEFISTO_RUNTIME_SERVICE_RUNTIME=""
     return "$rc"
 }

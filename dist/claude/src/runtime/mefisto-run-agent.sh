@@ -109,7 +109,7 @@
 # lib/runtime-<id>.sh; este issue solo entrega runtime-fake.sh -- Claude Code
 # y OpenCode son #859/#860):
 #   runtime_<id>_build_cmd <agent> <cwd> <prompt_file> <model> <system_file>
-#                          [<resume_session_id>]
+#                          [<resume_session_id>] [<runtime_endpoint>]
 #     Rellena el array global MEFISTO_RUNTIME_CMD con el argv completo a
 #     invocar via run_agent_with_watchdog, SIN `eval`. <resume_session_id>
 #     (issue #968) es el ultimo argumento, OPCIONAL para el adaptador --
@@ -205,7 +205,9 @@ OPT_STDERR_LOG=""
 OPT_EVENTS_LOG=""
 OPT_RESUME_SESSION=""
 OPT_RUNTIME_ENDPOINT=""
+OPT_RUNTIME_ENDPOINT_SET=false
 OPT_EXECUTION_AGENT=""
+OPT_EXECUTION_AGENT_SET=false
 OPT_REDACT_OBSERVABILITY=false
 
 while [ $# -gt 0 ]; do
@@ -222,8 +224,8 @@ while [ $# -gt 0 ]; do
         --stderr-log)  [ $# -ge 2 ] || abort_usage "--stderr-log requiere un valor"; OPT_STDERR_LOG="$2"; shift 2 ;;
         --events-log)  [ $# -ge 2 ] || abort_usage "--events-log requiere un valor"; OPT_EVENTS_LOG="$2"; shift 2 ;;
         --resume-session) [ $# -ge 2 ] || abort_usage "--resume-session requiere un valor"; OPT_RESUME_SESSION="$2"; shift 2 ;;
-        --runtime-endpoint) [ $# -ge 2 ] || abort_usage "--runtime-endpoint requiere un valor"; OPT_RUNTIME_ENDPOINT="$2"; shift 2 ;;
-        --execution-agent) [ $# -ge 2 ] || abort_usage "--execution-agent requiere un valor"; OPT_EXECUTION_AGENT="$2"; shift 2 ;;
+        --runtime-endpoint) [ $# -ge 2 ] || abort_usage "--runtime-endpoint requiere un valor"; OPT_RUNTIME_ENDPOINT="$2"; OPT_RUNTIME_ENDPOINT_SET=true; shift 2 ;;
+        --execution-agent) [ $# -ge 2 ] || abort_usage "--execution-agent requiere un valor"; OPT_EXECUTION_AGENT="$2"; OPT_EXECUTION_AGENT_SET=true; shift 2 ;;
         --redact-observability) OPT_REDACT_OBSERVABILITY=true; shift ;;
         --help) usage; exit 0 ;;
         *) abort_usage "argumento desconocido: '$1'" ;;
@@ -278,12 +280,21 @@ RUNTIME_LIB="$MEFISTO_RUNTIME_LIB_DIR/runtime-${RUNTIME_ID}.sh"
 # shellcheck source=/dev/null
 source "$RUNTIME_LIB"
 
-if [ -n "$OPT_RUNTIME_ENDPOINT" ]; then
-    case "$OPT_RUNTIME_ENDPOINT" in http://127.0.0.1:[1-9][0-9]*|http://localhost:[1-9][0-9]*) ;; *) abort_usage "--runtime-endpoint debe ser un URL loopback HTTP con puerto" ;; esac
+if [ "$OPT_EXECUTION_AGENT_SET" = "true" ] && [ -z "$OPT_EXECUTION_AGENT" ]; then
+    abort_usage "--execution-agent no puede ser vacio"
+fi
+if [ "$OPT_RUNTIME_ENDPOINT_SET" = "true" ] && [ -z "$OPT_RUNTIME_ENDPOINT" ]; then
+    abort_usage "--runtime-endpoint no puede ser vacio"
+fi
+if [ "$OPT_RUNTIME_ENDPOINT_SET" = "true" ]; then
     SERVICE_CAPABILITY_FN="runtime_${RUNTIME_ID}_supports_prepared_service"
     declare -F "$SERVICE_CAPABILITY_FN" >/dev/null 2>&1 && "$SERVICE_CAPABILITY_FN" || abort_usage "runtime '$RUNTIME_ID' no soporta servicio preparado"
+    SERVICE_USABLE_FN="runtime_${RUNTIME_ID}_prepared_service_is_usable"
+    declare -F "$SERVICE_USABLE_FN" >/dev/null 2>&1 \
+        && "$SERVICE_USABLE_FN" "$OPT_RUNTIME_ENDPOINT" \
+        || abort_usage "--runtime-endpoint no identifica un servicio preparado local utilizable"
 fi
-if [ -n "$OPT_EXECUTION_AGENT" ] && [ -z "$OPT_RUNTIME_ENDPOINT" ]; then
+if [ "$OPT_EXECUTION_AGENT_SET" = "true" ] && [ "$OPT_RUNTIME_ENDPOINT_SET" != "true" ]; then
     abort_usage "--execution-agent requiere --runtime-endpoint"
 fi
 
