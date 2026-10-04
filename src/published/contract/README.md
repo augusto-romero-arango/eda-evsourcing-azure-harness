@@ -825,6 +825,44 @@ errores de projection (`absent`, `drift`, `conflict`) impiden un `ready` nuevo y
 `active` ni adoptan otra release. Se prueba con `src/published/scripts/tests/test-opencode-resources.sh`
 (MEF-ADR-0031, MEF-ADR-0050 y MEF-ADR-0055).
 
+## Proyección de permisos por rol (alias controlados)
+
+`scripts/resolve-agent-execution.sh < envelope.json` (release OpenCode, wrapper de
+`src/published/scripts/adapters/lib/opencode-agent-projection.sh` y su programa `.jq`) compila la
+política propia de cada alias `autonomy-<id>` (#1856, sobre #1853/#1838/#1825). Solo calcula: no
+aplica config, no autoriza una sesión, no escribe, no usa SDK, LLM ni red, y los agentes originales
+no cambian. Corre desde la release copiada (manifest + inventario `agent-execution.json` + la
+biblioteca `opencode-entry-permissions.jq` empaquetada), sin source checkout.
+
+Entrada cerrada `schemaVersion: 1`: `phase` (`config|verify`), `profile`, `snapshot` (salida
+`ready` de `resolve-opencode-resources.sh`), `home`, `roles` (`role`, `taskTargets` exactos y, para
+roles con shell, `attach` con `executable`/`pid`/`controlRoot`/`request` y `suffix` literal opcional),
+`originals` (hash de prompt, `mode`, `permission`/`tools` ya normalizados, sin modelo, provider ni
+prompt), `globalPolicy` (conocida; `null` es conflicto), `sessionPolicy` (`null` si no se observó),
+`collisions` (alias ocupados) y, opcionales, `entryTaskPolicies` (`entryId`, `targets`, `digest` =
+SHA-256 de `{entryId,targets}` canónico y ordenado) y `observed` (solo en `verify`: `name`, `mode`,
+`promptHash`, `rules` ordenadas efectivas y `available`).
+
+Salida: `status` `ready|conflict`, `admissionScope: agent-projection`, `catalogDigest`,
+`resourcesDigest`, `projectionDigest` (calculado por el helper sobre reglas ordenadas; el SDK no lo
+entrega), `actors` (`originalId`, `alias`, `permission`, `taskBindings`), `entryTaskBindings` por
+`entryId` y `diagnostics` (solo código y rol, sin prompts, config ni patrones). En `verify` agrega
+`observations` con el digest de la imagen observada. Exit 0 ready, 1 conflicto, 2 protocolo.
+
+Reglas: la política estática propia del original (idéntica a la del manifest) se reemplaza por su
+forma dinámica; cualquier divergencia de prompt, `mode`, `permission` o `tools` es conflicto y
+nunca se borra un override del usuario. `M` se deriva de `writeScope`/recursos del rol y se compone
+con la política global mediante `opencode-entry-permissions.jq` (#1838, sin segundo matcher). `read`
+y `edit` usan `relativeRoot`; `external_directory`, raíces absolutas. Solo el execution-root y su
+estado son editables, con exclusiones y raíces protegidas denegadas; `tool-output` es solo lectura y
+NuGet solo para roles que lo declaran. Task exige que el destino original y su alias no sean `deny`
+(el original además debe permitirlo); el par original/alias queda con la misma decisión y los
+comodines de sesión cuya contención no se demuestre son conflicto. Los roles shell reciben solo el
+prefijo de `execution-context.sh attach` de la release (PID y request bajo el `controlRoot`), nunca
+prepare/approve/finish genéricos. Se prueba con
+`src/published/scripts/tests/test-opencode-agent-projection.sh` (MEF-ADR-0050, MEF-ADR-0053,
+MEF-ADR-0055).
+
 ## Matriz de verificación de fuentes
 
 `source-verification.json` declara las vías suficientes para cada uno de los 22
