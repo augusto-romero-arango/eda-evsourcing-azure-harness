@@ -52,6 +52,9 @@
 #       api_duration_ms SIEMPRE null (el wire format no tiene equivalente);
 #       model degrada siempre al parametro pedido (el wire format no lo
 #       trae en ninguna version verificada).
+#   [P] issue #1817: `error.name` reconocido emite evidencia estructurada y
+#       `tool_use.state.error` solo admite los prefijos literales de la version
+#       fijada como hints sanitizados; la ausencia de observacion no es cero.
 #   [E] CA-5: ninguna ruta/variable de credenciales
 #       (~/.local/share/opencode/auth.json, OPENAI_API_KEY,
 #       ANTHROPIC_API_KEY) aparece en runtime-opencode.sh/.jq, y un secreto
@@ -469,6 +472,54 @@ if jq -e 'select(.type=="tool.completed") | .ok == false' "$B_ERR_OUT" >/dev/nul
     pass "B-7: tool_use con state.status=='error' -> tool.completed{ok:false}"
 else
     fail "B-7: no se tradujo el error de tool como ok:false: $(jq -c 'select(.type=="tool.completed")' "$B_ERR_OUT")"
+fi
+
+# issue #1817: los fixtures son sinteticos y estan declarados como derivados
+# del codigo oficial de OpenCode 1.18.29 en su README, no como capturas de una
+# denegacion real. Un `error` estructurado y un error textual de tool pueden
+# describir la misma causa: se preservan ambos en el orden del stream y no se
+# deduplica ni se deriva un contador.
+P_OUT="$TMP/permission-observed.jsonl"
+translate_fixture permission-observed-synthetic-1.18.29.jsonl "" 0 > "$P_OUT"
+if [ "$(jq -c 'select(.type == "permission.observed" and .evidence == "structured-error")' "$P_OUT" | wc -l | tr -d ' ')" = "3" ] \
+    && jq -e 'select(.type == "permission.observed" and .evidence == "structured-error") | .session_id == "ses_perm" and .tool == null' "$P_OUT" >/dev/null 2>&1 \
+    && jq -e 'select(.type == "permission.observed" and .signal == "denied" and .evidence == "structured-error")' "$P_OUT" >/dev/null 2>&1 \
+    && [ "$(jq -c 'select(.type == "permission.observed" and .signal == "rejected" and .evidence == "structured-error")' "$P_OUT" | wc -l | tr -d ' ')" = "2" ]; then
+    pass "P-1: los tres error.name exactos emiten solo observaciones estructuradas con sesion y sin tool"
+else
+    fail "P-1: observaciones estructuradas inesperadas: $(jq -c 'select(.type == "permission.observed")' "$P_OUT")"
+fi
+if [ "$(jq -c 'select(.type == "permission.observed" and .evidence == "tool-error-text")' "$P_OUT" | wc -l | tr -d ' ')" = "3" ] \
+    && jq -e 'select(.type == "permission.observed" and .signal == "possible-denial" and .tool == "glob")' "$P_OUT" >/dev/null 2>&1 \
+    && [ "$(jq -c 'select(.type == "permission.observed" and .signal == "possible-rejection" and .tool == "glob")' "$P_OUT" | wc -l | tr -d ' ')" = "1" ] \
+    && jq -e 'select(.type == "permission.observed" and .signal == "possible-rejection" and .tool == null)' "$P_OUT" >/dev/null 2>&1; then
+    pass "P-2: solo los prefijos oficiales de error de tool producen hints con tool acotado o null"
+else
+    fail "P-2: hints de error de tool inesperados: $(jq -c 'select(.type == "permission.observed")' "$P_OUT")"
+fi
+if ! jq -c 'select(.type == "permission.observed")' "$P_OUT" | grep -Eq 'SENTINEL|COMMAND'; then
+    pass "P-3: permission.observed no copia data, reglas, feedback ni input sensibles"
+else
+    fail "P-3: permission.observed filtro un centinela: $(jq -c 'select(.type == "permission.observed")' "$P_OUT")"
+fi
+if [ "$(jq -c 'select(.type == "tool.completed" and .ok == false)' "$P_OUT" | wc -l | tr -d ' ')" = "3" ] \
+    && jq -e 'select(.type == "run.completed") | .status == "success" and .denials == null and .error == null' "$P_OUT" >/dev/null 2>&1; then
+    pass "P-4: los hints no cambian tool.completed, terminal, error ni denials:null"
+else
+    fail "P-4: una observacion altero la traduccion previa: $(jq -c 'select(.type == "tool.completed" or .type == "run.completed")' "$P_OUT")"
+fi
+P_PERMISSION_ONLY="$TMP/permission-observed-only.jsonl"
+jq -c 'select(.type == "permission.observed")' "$P_OUT" > "$P_PERMISSION_ONLY"
+check_all_lines_valid "P-5: observaciones OpenCode" "$P_PERMISSION_ONLY"
+
+P_NEG_OUT="$TMP/permission-observed-negative.jsonl"
+translate_fixture permission-observed-negative-synthetic-1.18.29.jsonl "" 0 > "$P_NEG_OUT"
+if ! jq -e 'select(.type == "permission.observed")' "$P_NEG_OUT" >/dev/null 2>&1 \
+    && [ "$(jq -c 'select(.type == "tool.completed" and .ok == false)' "$P_NEG_OUT" | wc -l | tr -d ' ')" = "4" ] \
+    && jq -e 'select(.type == "run.completed") | .denials == null and .status == "success"' "$P_NEG_OUT" >/dev/null 2>&1; then
+    pass "P-6: nombres ajenos, mensajes parecidos, 403/texto generico y tools rojas no infieren permiso"
+else
+    fail "P-6: se infirio una observacion indebida: $(cat "$P_NEG_OUT")"
 fi
 
 # Tipo de evento nunca visto (forward-compat, CA-2): se descarta en silencio,

@@ -28,6 +28,8 @@ de version en cada nombre de archivo.
 | `malformed-1.18.29.jsonl` | Linea no-JSON: el `text` cortado a mitad de escritura. Derivado de `success-1.18.29.jsonl` truncando su segunda linea. | (recorte de `success-1.18.29.jsonl`) |
 | `empty-1.18.29.jsonl` | Stream vacio (cero lineas). | (archivo vacio a proposito) |
 | `sensitive-redaction-derived.jsonl` | Texto/input/output/metadata con centinelas sensibles para probar la proyeccion redactada del runner. | (fixture sintetico con la forma 1.18.29; issue #1128) |
+| `permission-observed-synthetic-1.18.29.jsonl` | Errores estructurados y textos de error de tool que pueden revelar una denegacion o rechazo parcial. | Sintetico, derivado del codigo oficial de OpenCode 1.18.29 citado en #1817; **no** es una captura de runtime. |
+| `permission-observed-negative-synthetic-1.18.29.jsonl` | Errores parecidos que no autorizan inferir una observacion de permiso. | Sintetico, derivado del codigo oficial de OpenCode 1.18.29 citado en #1817; **no** es una captura de runtime. |
 
 ## Regla de mantenimiento
 
@@ -37,7 +39,7 @@ nombre (`*-<version>.jsonl`) y se actualiza esta tabla; el fixture viejo se
 conserva como evidencia de lo que esa version emitia. Es la unica forma de que
 una regresion del adaptador se distinga de un cambio del CLI.
 
-Los fixtures **derivados** (recortes) se marcan como tales en la tabla: no son
+Los fixtures **derivados** (recortes o casos sinteticos) se marcan como tales en la tabla: no son
 salida literal de una corrida, sino un caso limite construido a partir de una
 que si lo es. Los casos que no requieren un formato real (tipos de evento
 desconocidos, `tool_use` en `state.status:"error"`, varios `step_finish` con

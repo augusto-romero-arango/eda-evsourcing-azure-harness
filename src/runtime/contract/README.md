@@ -62,6 +62,10 @@ En OpenCode 1.18.29 puede haber solicitudes autoaprobadas y denegaciones que no
 aparezcan en el JSON de ejecucion. Por ello, cero eventos observados no es
 evidencia de cero permisos solicitados o denegados.
 
+El smoke de certificacion de #1827 consume esta evidencia como parcial: una
+senal observada exige investigacion para la capacidad requerida, pero su
+ausencia no es un veredicto global de cero denegaciones.
+
 `estimated_cost_usd` es una estimacion de equivalencia a tarifas API, no el
 costo marginal de una suscripcion (MEF-ADR-0054). Los escritores posteriores
 al corte emiten solo ese nombre. Para leer JSONL v1 local previo, el schema
