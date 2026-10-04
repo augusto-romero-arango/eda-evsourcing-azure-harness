@@ -1,0 +1,7 @@
+{
+  "version": 3,
+  "packageFolders": {
+    "/fixtures/packages-primary/": {},
+    "/fixtures/packages-fallback/": {}
+  }
+}
