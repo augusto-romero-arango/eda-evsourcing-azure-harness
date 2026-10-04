@@ -75,6 +75,8 @@ out="$(bash "$REPORT" \
     --require planner/non-microsoft-official \
     --require domain-scaffolder/nuget-version \
     --require domain-scaffolder/nuget-api \
+    --require mcp-scaffolder/nuget-version \
+    --require mcp-scaffolder/nuget-api \
     --require infra-writer/provider-pin \
     --require infra-reviewer/provider-argument \
     --require apim-gateway-scaffolder/workos-discovery \
@@ -85,6 +87,8 @@ if [ "$rc" -eq 0 ] && jq -e '
     any(.cases[]; .id == "planner" and .caseId == "non-microsoft-official" and .status == "declared") and
     any(.cases[]; .id == "domain-scaffolder" and .caseId == "nuget-version" and .status == "declared") and
     any(.cases[]; .id == "domain-scaffolder" and .caseId == "nuget-api" and .status == "declared") and
+    any(.cases[]; .id == "mcp-scaffolder" and .caseId == "nuget-version" and .status == "declared") and
+    any(.cases[]; .id == "mcp-scaffolder" and .caseId == "nuget-api" and .status == "declared") and
     any(.cases[]; .id == "infra-writer" and .caseId == "provider-pin" and .status == "external-unobserved") and
     any(.cases[]; .id == "infra-reviewer" and .caseId == "provider-argument" and .status == "declared") and
     any(.cases[]; .id == "apim-gateway-scaffolder" and .caseId == "workos-discovery" and .status == "declared") and
@@ -160,6 +164,25 @@ if [ "$domain_local_status" = declared ] && [ "$domain_nuspec_status" = capabili
     pass 'fixture offline conserva el scaffold local y marca la reverificacion externa como no disponible'
 else
     fail "fixture offline inesperado: local=$domain_local_status, nuspec=$domain_nuspec_status"
+fi
+
+if jq -e '
+    .roles[] | select(.id == "mcp-scaffolder") |
+    any(.cases[]; .caseId == "nuget-version" and (.subject | contains("exacta") and contains("no la ultima absoluta")) and .onMissing == "not-verified" and (.options | map(.kind) | sort) == ["package-cli","web"]) and
+    any(.cases[]; .caseId == "nuget-api" and (.subject | contains(".nuspec") and contains("ModelContextProtocol") and contains("WorkOS") and contains("OAuth")) and .onMissing == "not-verified" and .options == [{"kind":"web","reference":".nuspec versionado de NuGet o documentacion/codigo oficial versionado del SDK"}])
+' "$MATRIX" >/dev/null; then
+    pass 'mcp-scaffolder distingue pin exacto, nuspec y SDKs versionados sin adoptar latest'
+else
+    fail 'casos NuGet y SDK de mcp-scaffolder no conservan la politica de reverificacion'
+fi
+
+mcp_without_web="$(jq -c '(.roles[] | select(.id == "mcp-scaffolder")).capabilities -= ["web"] | .requiredCases += ["mcp-scaffolder/nuget-api"]' <<< "$envelope")"
+mcp_local_status="$(printf '%s' "$mcp_without_web" | jq -r -f "$FILTER" | jq -r '.cases[] | select(.id == "mcp-scaffolder" and .caseId == "local-scaffold") | .status')"
+mcp_nuspec_status="$(printf '%s' "$mcp_without_web" | jq -r -f "$FILTER" | jq -r '.cases[] | select(.id == "mcp-scaffolder" and .caseId == "nuget-api") | .status')"
+if [ "$mcp_local_status" = declared ] && [ "$mcp_nuspec_status" = capability-missing ]; then
+    pass 'mcp-scaffolder conserva el scaffold local y marca NO VERIFICADO sin fuente web'
+else
+    fail "fallback mcp-scaffolder inesperado: local=$mcp_local_status, nuspec=$mcp_nuspec_status"
 fi
 
 if jq -e '
