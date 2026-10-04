@@ -16,7 +16,8 @@
 #                         [--system-file <f>] [--timeout <s>]
 #                         [--raw-log <f>] [--stderr-log <f>]
 #                         [--events-log <archivo>] [--resume-session <id>]
-#                         [--redact-observability]
+#                         [--redact-observability] [--runtime-endpoint <url>]
+#                         [--execution-agent <id>]
 #
 #   --runtime <id>       Fuerza el runtime (precedencia sobre MEFISTO_RUNTIME
 #                         y la autodeteccion, ver mefisto_resolve_runtime en
@@ -78,6 +79,12 @@
 #                         anexos en vivo como al volcado final. No redacta los
 #                         destinos explicitamente pedidos con --raw-log ni
 #                         --stderr-log.
+#   --runtime-endpoint <url> Endpoint HTTP loopback de una instancia preparada.
+#                         Requiere capacidad explicita del adaptador y no inicia
+#                         ni adopta servidores.
+#   --execution-agent <id> Id tecnico opaco para el adaptador con endpoint.
+#                         Requiere --runtime-endpoint; --agent conserva la
+#                         identidad logica de run.started y de la evidencia.
 #
 # --event-log en vivo (CA-1/CA-2/CA-3, issue #924): mientras el agente corre,
 # este runner reanexa a --event-log, cada MEFISTO_RUN_AGENT_LIVE_INTERVAL
@@ -154,7 +161,8 @@ Uso: mefisto-run-agent.sh --agent <id> --cwd <dir> --prompt-file <f> --event-log
                            [--runtime <id>] [--model <opaco>] [--system-file <f>]
                            [--timeout <s>] [--raw-log <f>] [--stderr-log <f>]
                            [--events-log <archivo>] [--resume-session <id>]
-                           [--redact-observability] [--help]
+                            [--redact-observability] [--runtime-endpoint <url>]
+                            [--execution-agent <id>] [--help]
 EOF
 }
 
@@ -196,6 +204,8 @@ OPT_RAW_LOG=""
 OPT_STDERR_LOG=""
 OPT_EVENTS_LOG=""
 OPT_RESUME_SESSION=""
+OPT_RUNTIME_ENDPOINT=""
+OPT_EXECUTION_AGENT=""
 OPT_REDACT_OBSERVABILITY=false
 
 while [ $# -gt 0 ]; do
@@ -212,6 +222,8 @@ while [ $# -gt 0 ]; do
         --stderr-log)  [ $# -ge 2 ] || abort_usage "--stderr-log requiere un valor"; OPT_STDERR_LOG="$2"; shift 2 ;;
         --events-log)  [ $# -ge 2 ] || abort_usage "--events-log requiere un valor"; OPT_EVENTS_LOG="$2"; shift 2 ;;
         --resume-session) [ $# -ge 2 ] || abort_usage "--resume-session requiere un valor"; OPT_RESUME_SESSION="$2"; shift 2 ;;
+        --runtime-endpoint) [ $# -ge 2 ] || abort_usage "--runtime-endpoint requiere un valor"; OPT_RUNTIME_ENDPOINT="$2"; shift 2 ;;
+        --execution-agent) [ $# -ge 2 ] || abort_usage "--execution-agent requiere un valor"; OPT_EXECUTION_AGENT="$2"; shift 2 ;;
         --redact-observability) OPT_REDACT_OBSERVABILITY=true; shift ;;
         --help) usage; exit 0 ;;
         *) abort_usage "argumento desconocido: '$1'" ;;
@@ -265,6 +277,15 @@ RUNTIME_ID="$MEFISTO_RESOLVED_RUNTIME"
 RUNTIME_LIB="$MEFISTO_RUNTIME_LIB_DIR/runtime-${RUNTIME_ID}.sh"
 # shellcheck source=/dev/null
 source "$RUNTIME_LIB"
+
+if [ -n "$OPT_RUNTIME_ENDPOINT" ]; then
+    case "$OPT_RUNTIME_ENDPOINT" in http://127.0.0.1:[1-9][0-9]*|http://localhost:[1-9][0-9]*) ;; *) abort_usage "--runtime-endpoint debe ser un URL loopback HTTP con puerto" ;; esac
+    SERVICE_CAPABILITY_FN="runtime_${RUNTIME_ID}_supports_prepared_service"
+    declare -F "$SERVICE_CAPABILITY_FN" >/dev/null 2>&1 && "$SERVICE_CAPABILITY_FN" || abort_usage "runtime '$RUNTIME_ID' no soporta servicio preparado"
+fi
+if [ -n "$OPT_EXECUTION_AGENT" ] && [ -z "$OPT_RUNTIME_ENDPOINT" ]; then
+    abort_usage "--execution-agent requiere --runtime-endpoint"
+fi
 
 BUILD_FN="runtime_${RUNTIME_ID}_build_cmd"
 TRANSLATE_FN="runtime_${RUNTIME_ID}_translate"
@@ -335,7 +356,8 @@ trap cleanup EXIT
 # fallar rapido con un mensaje explicito.
 MEFISTO_RUNTIME_CMD=()
 MEFISTO_RUNTIME_STDIN_FILE=""
-"$BUILD_FN" "$OPT_AGENT" "$OPT_CWD" "$OPT_PROMPT_FILE" "$OPT_MODEL" "$OPT_SYSTEM_FILE" "$OPT_RESUME_SESSION"
+EXECUTION_AGENT="${OPT_EXECUTION_AGENT:-$OPT_AGENT}"
+"$BUILD_FN" "$EXECUTION_AGENT" "$OPT_CWD" "$OPT_PROMPT_FILE" "$OPT_MODEL" "$OPT_SYSTEM_FILE" "$OPT_RESUME_SESSION" "$OPT_RUNTIME_ENDPOINT"
 if [ "${#MEFISTO_RUNTIME_CMD[@]}" -eq 0 ]; then
     echo "ERROR: $BUILD_FN no genero ningun comando (MEFISTO_RUNTIME_CMD vacio)" >&2
     exit 69

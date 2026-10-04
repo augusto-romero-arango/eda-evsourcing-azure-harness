@@ -192,6 +192,35 @@ recibe el modelo.
 decide timeout mediante la senal del watchdog y su reloj de pared conforme a
 MEF-ADR-0031.
 
+### Servicio preparado opt-in
+
+El core expone, para un caller que lo `source`,
+`runtime_service_start <runtime> <cwd> <work-dir> <startup-timeout-seconds>`,
+`runtime_service_request <runtime> <method> <relative-path> <directory>` y
+`runtime_service_stop <runtime>`. Es transporte mecanico: no admite agentes,
+roles, perfiles, leases ni autorizacion. `start` conserva solo en el shell del
+caller el PID concreto, su identidad al inicio, endpoint loopback y version en
+`MEFISTO_RUNTIME_SERVICE_{PID,IDENTITY,ENDPOINT,VERSION}`; no hay registro
+global ni adopcion de una instancia ajena. `stop` vuelve a acreditar la
+identidad antes de senalar exclusivamente ese PID y lo invalida tras `wait`.
+
+La capacidad es opcional por adaptador. El adaptador que la ofrece inicia una
+instancia privada con host loopback, puerto efimero y descubrimiento de red
+desactivado; espera endpoint y health dentro del plazo. La credencial IPC es
+aleatoria por instancia, permanece solo en memoria/entorno de hijos propios y
+en el canal de autenticacion de la peticion: nunca llega al argv, eventos,
+logs, configuracion o respuesta del API. Las peticiones solo aceptan HTTP
+loopback, no siguen redirects y se limitan a GET de `/agent`,
+`/session/<id>`, `/global/health` y POST de `/session/<id>/abort`; los errores
+son mensajes sanitizados.
+
+El runner acepta `--runtime-endpoint <loopback-url>` y
+`--execution-agent <opaque-id>`. Ambos son opt-in: un endpoint no loopback, un
+alias sin endpoint o un runtime sin capacidad abortan antes del CLI. El agente
+de ejecucion solo llega al adaptador; `--agent` sigue siendo la identidad
+logica de `run.started` y del modelo/evidencia. Sin esas opciones el argv,
+stdin, resume y eventos mantienen su comportamiento anterior.
+
 ## Mapping de modelos
 
 `models.validate.jq` valida el mapping abierto que entrega cada caller al

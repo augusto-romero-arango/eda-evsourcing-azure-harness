@@ -100,6 +100,81 @@ runtime_opencode_default_model() {
     esac
 }
 
+# Servicio local preparado (#1854). La contrasena solo queda en memoria y en el
+# entorno del hijo propio; los resultados publicos nunca la incluyen.
+MEFISTO_OPENCODE_SERVICE_PASSWORD=""
+MEFISTO_OPENCODE_SERVICE_LOG=""
+MEFISTO_OPENCODE_SERVICE_RESPONSE=""
+
+runtime_opencode_service_clear() {
+    MEFISTO_RUNTIME_SERVICE_PID=""; MEFISTO_RUNTIME_SERVICE_IDENTITY=""
+    MEFISTO_RUNTIME_SERVICE_ENDPOINT=""; MEFISTO_RUNTIME_SERVICE_VERSION=""
+    MEFISTO_OPENCODE_SERVICE_PASSWORD=""; MEFISTO_OPENCODE_SERVICE_LOG=""
+}
+
+runtime_opencode_service_endpoint_is_loopback() {
+    case "$1" in http://127.0.0.1:[1-9][0-9]*|http://localhost:[1-9][0-9]*) return 0 ;; *) return 1 ;; esac
+}
+
+runtime_opencode_service_start() {
+    local cwd="$1" work_dir="$2" timeout_s="$3" password endpoint identity version elapsed=0
+    runtime_opencode_service_clear
+    [ -d "$cwd" ] && [ -d "$work_dir" ] || { MEFISTO_RUNTIME_SERVICE_ERROR="directorio invalido al iniciar servicio preparado"; return 1; }
+    case "$timeout_s" in ''|*[!0-9]*) MEFISTO_RUNTIME_SERVICE_ERROR="timeout de inicio invalido"; return 1 ;; esac
+    [ "$timeout_s" -gt 0 ] || { MEFISTO_RUNTIME_SERVICE_ERROR="timeout de inicio debe ser mayor que cero"; return 1; }
+    command -v opencode >/dev/null 2>&1 || { MEFISTO_RUNTIME_SERVICE_ERROR="runtime no disponible para servicio preparado"; return 1; }
+    password="$(LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom | dd bs=32 count=1 2>/dev/null)"
+    [ "${#password}" -ge 24 ] || { MEFISTO_RUNTIME_SERVICE_ERROR="no se pudo generar la credencial efimera"; return 1; }
+    umask 077; MEFISTO_OPENCODE_SERVICE_LOG="$work_dir/runtime-service.log"
+    ( cd "$cwd" && OPENCODE_SERVER_PASSWORD="$password" exec opencode serve --hostname 127.0.0.1 --port 0 --mdns=false ) >"$MEFISTO_OPENCODE_SERVICE_LOG" 2>&1 &
+    MEFISTO_RUNTIME_SERVICE_PID=$!; MEFISTO_OPENCODE_SERVICE_PASSWORD="$password"
+    identity="$(ps -p "$MEFISTO_RUNTIME_SERVICE_PID" -o command= 2>/dev/null)"
+    case "$identity" in *'opencode serve --hostname 127.0.0.1 --port 0 --mdns=false'*) ;; *) MEFISTO_RUNTIME_SERVICE_ERROR="no se pudo acreditar la identidad del servicio iniciado"; runtime_opencode_service_stop || true; return 1 ;; esac
+    MEFISTO_RUNTIME_SERVICE_IDENTITY="$identity"
+    while [ "$elapsed" -lt "$timeout_s" ]; do
+        endpoint="$(grep -Eo 'http://(127\.0\.0\.1|localhost):[1-9][0-9]*' "$MEFISTO_OPENCODE_SERVICE_LOG" 2>/dev/null | while IFS= read -r line; do printf '%s' "$line"; break; done)"
+        if runtime_opencode_service_endpoint_is_loopback "$endpoint"; then
+            MEFISTO_RUNTIME_SERVICE_ENDPOINT="$endpoint"
+            if runtime_opencode_service_request GET /global/health "$work_dir" >/dev/null 2>&1; then
+                version="$(printf '%s' "$MEFISTO_OPENCODE_SERVICE_RESPONSE" | jq -r '.version // empty' 2>/dev/null)"; [ -n "$version" ] || version="unknown"
+                MEFISTO_RUNTIME_SERVICE_VERSION="$version"; return 0
+            fi
+        fi
+        kill -0 "$MEFISTO_RUNTIME_SERVICE_PID" 2>/dev/null || break
+        sleep 1; elapsed=$((elapsed + 1))
+    done
+    MEFISTO_RUNTIME_SERVICE_ERROR="el servicio preparado no anuncio un endpoint local saludable dentro del plazo"
+    runtime_opencode_service_stop || true; return 1
+}
+
+runtime_opencode_service_request() {
+    local method="$1" relative_path="$2" directory="$3" response curl_rc=0
+    case "$method:$relative_path" in
+        GET:/agent|GET:/global/health|GET:/session/*|POST:/session/*/abort) ;;
+        *) MEFISTO_RUNTIME_SERVICE_ERROR="metodo o ruta no permitidos para servicio preparado"; return 1 ;;
+    esac
+    case "$relative_path" in *'//'*) MEFISTO_RUNTIME_SERVICE_ERROR="ruta relativa invalida"; return 1 ;; esac
+    [ -d "$directory" ] || { MEFISTO_RUNTIME_SERVICE_ERROR="directorio de peticion invalido"; return 1; }
+    runtime_opencode_service_endpoint_is_loopback "$MEFISTO_RUNTIME_SERVICE_ENDPOINT" || { MEFISTO_RUNTIME_SERVICE_ERROR="endpoint preparado no es loopback"; return 1; }
+    [ -n "$MEFISTO_OPENCODE_SERVICE_PASSWORD" ] || { MEFISTO_RUNTIME_SERVICE_ERROR="no hay canal autenticado de servicio preparado"; return 1; }
+    response="$(printf 'user = "opencode:%s"\n' "$MEFISTO_OPENCODE_SERVICE_PASSWORD" | curl --config - --fail --silent --show-error --max-time 5 --connect-timeout 2 --proto '=http' --max-redirs 0 -X "$method" "$MEFISTO_RUNTIME_SERVICE_ENDPOINT$relative_path" 2>"$directory/runtime-service-request.err")" || curl_rc=$?
+    rm -f "$directory/runtime-service-request.err"
+    [ "$curl_rc" -eq 0 ] || { MEFISTO_RUNTIME_SERVICE_ERROR="fallo la peticion al servicio preparado"; return 1; }
+    MEFISTO_OPENCODE_SERVICE_RESPONSE="$response"; printf '%s' "$response"
+}
+
+runtime_opencode_service_stop() {
+    local pid="$MEFISTO_RUNTIME_SERVICE_PID" current_identity
+    [ -n "$pid" ] || return 0
+    current_identity="$(ps -p "$pid" -o command= 2>/dev/null)"
+    if [ -z "$current_identity" ]; then runtime_opencode_service_clear; return 0; fi
+    if [ "$current_identity" != "$MEFISTO_RUNTIME_SERVICE_IDENTITY" ]; then MEFISTO_RUNTIME_SERVICE_ERROR="no se pudo acreditar ownership del PID de servicio; terminacion unknown"; runtime_opencode_service_clear; return 1; fi
+    kill -TERM "$pid" 2>/dev/null || { MEFISTO_RUNTIME_SERVICE_ERROR="no se pudo terminar el servicio propio"; return 1; }
+    wait "$pid" 2>/dev/null || true; runtime_opencode_service_clear
+}
+
+runtime_opencode_supports_prepared_service() { return 0; }
+
 # --- Catalogo de tarifas Models.dev ------------------------------------------
 #
 # La estimacion es telemetria auxiliar: este adaptador conserva una copia
@@ -329,7 +404,7 @@ runtime_opencode_build_cmd() {
     # `opencode run` no tiene equivalente de `--append-system-prompt-file`,
     # asi que a diferencia de runtime-claude.sh este adaptador si tiene que
     # componer un archivo propio.
-    local agent="$1" cwd="$2" prompt_path="$3" model="$4" system_file="$5" resume_session_id="${6:-}"
+    local agent="$1" cwd="$2" prompt_path="$3" model="$4" system_file="$5" resume_session_id="${6:-}" runtime_endpoint="${7:-}"
 
     MEFISTO_RUNTIME_CMD=(opencode run --agent "$agent" --dir "$cwd" --format json --auto)
 
@@ -339,6 +414,11 @@ runtime_opencode_build_cmd() {
 
     if [ -n "$resume_session_id" ]; then
         MEFISTO_RUNTIME_CMD+=(--session "$resume_session_id")
+    fi
+
+    if [ -n "$runtime_endpoint" ]; then
+        runtime_opencode_service_endpoint_is_loopback "$runtime_endpoint" || { MEFISTO_RUNTIME_CMD=(); return 1; }
+        MEFISTO_RUNTIME_CMD+=(--attach "$runtime_endpoint")
     fi
 
     # MEFISTO_RUNTIME_STDIN_FILE (issue #1448): el mensaje (system + "\n\n" +
