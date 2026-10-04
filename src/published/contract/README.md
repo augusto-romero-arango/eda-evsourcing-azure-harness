@@ -498,7 +498,7 @@ dependencia productiva de la biblioteca.
 
 ## Observación de procesos registrados
 
-`scripts/lib/release-use-process.sh` se carga sin efectos y expone
+`src/published/scripts/lib/release-use-process.sh` se carga sin efectos y expone
 `release_use_process_capture <pid>` y `release_use_process_observe`. La captura
 emite una identidad JSON versión 1 local al host: hash de la identidad de host,
 boot, PID, token de inicio y PGID. La observación recibe esa identidad por stdin

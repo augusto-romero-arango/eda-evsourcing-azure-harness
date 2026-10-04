@@ -30,7 +30,7 @@ OUT="$(printf '%s' "$IDENTITY" | release_use_process_observe)"
 assert_json "$OUT" '.state == "live" and .groupState == "live" and .reason == "identity-live"' 'misma identidad y PGID vivo permanecen live'
 
 rm "$WORK/proc/4242/stat"
-: > "$WORK/ps-rows"
+printf '1 %s 1\n' "$(id -u)" > "$WORK/ps-rows"
 OUT="$(printf '%s' "$IDENTITY" | release_use_process_observe)"
 assert_json "$OUT" '.state == "gone" and .groupState == "empty" and .reason == "pid-absent"' 'PID ausente y grupo vacio se distinguen'
 printf '9999 %s 4242\n' "$(id -u)" > "$WORK/ps-rows"
@@ -49,14 +49,25 @@ assert_json "$OUT" '.state == "live"' 'misma precision observable conserva una p
 rm "$WORK/ps-rows"
 OUT="$(printf '%s' "$IDENTITY" | release_use_process_observe)"
 assert_json "$OUT" '.state == "live" and .groupState == "unknown"' 'error al observar grupo no se convierte en empty'
+printf 'metadata-incompleta\n' > "$WORK/proc/4242/stat"
+OUT="$(printf '%s' "$IDENTITY" | release_use_process_observe)"
+assert_json "$OUT" '.state == "unknown" and .groupState == "unknown" and .reason == "pid-unverifiable"' 'error al observar PID no se convierte en gone ni empty'
+cp "$FIXTURES/linux-stat-with-comm" "$WORK/proc/4242/stat"
 
 printf 'machine-id-otro\n' > "$WORK/machine-id"
 OUT="$(printf '%s' "$IDENTITY" | release_use_process_observe)"
 assert_json "$OUT" '.state == "unknown" and .groupState == "unknown" and .reason == "host-different"' 'host diferente no extrapola evidencia'
 printf 'machine-id-de-prueba\n' > "$WORK/machine-id"
 printf 'boot-b\n' > "$WORK/boot-id"
+printf '9999 %s 4242\n' "$(id -u)" > "$WORK/ps-rows"
 OUT="$(printf '%s' "$IDENTITY" | release_use_process_observe)"
-assert_json "$OUT" '.state == "gone" and .groupState == "empty" and .reason == "reboot"' 'reboot demostrable termina el boot anterior'
+assert_json "$OUT" '.state == "gone" and .groupState == "live" and .reason == "reboot"' 'reboot termina el propietario pero un PGID reutilizado permanece live'
+printf 'sentinela-argv-env\n' > "$WORK/ps-rows"
+OUT="$(printf '%s' "$IDENTITY" | release_use_process_observe)"
+assert_json "$OUT" '.state == "gone" and .groupState == "unknown" and .reason == "reboot"' 'error de grupo tras reboot tampoco se convierte en empty'
+printf '1 %s 1\n' "$(id -u)" > "$WORK/ps-rows"
+OUT="$(printf '%s' "$IDENTITY" | release_use_process_observe)"
+assert_json "$OUT" '.state == "gone" and .groupState == "empty" and .reason == "reboot"' 'reboot y observacion completa permiten declarar vacio el PGID'
 rm "$WORK/boot-id"
 OUT="$(printf '%s' "$IDENTITY" | release_use_process_observe)"
 assert_json "$OUT" '.state == "unknown" and .reason == "host-unverifiable"' 'host desconocido conserva unknown'
@@ -65,6 +76,16 @@ printf 'sentinela-argv-env\n' > "$WORK/boot-id"
 BAD='{ "schemaVersion": 1, "pid": 1 }'
 printf '%s' "$BAD" | release_use_process_observe > "$WORK/stdout" 2>"$WORK/stderr"; RC=$?
 [ "$RC" -eq 2 ] && [ ! -s "$WORK/stdout" ] && ! grep -q 'sentinela-argv-env' "$WORK/stderr" && pass 'protocolo invalido no contamina stdout ni expone centinelas' || fail 'protocolo invalido debe ser sanitizado'
+
+printf 'boot-a\n' > "$WORK/boot-id"
+printf 'sentinela-argv-env\n' > "$WORK/ps-rows"
+OUT="$(printf '%s' "$IDENTITY" | release_use_process_observe 2>"$WORK/stderr")"
+assert_json "$OUT" '.state == "live" and .groupState == "unknown"' 'snapshot de grupo malformado nunca se convierte en empty'
+if [[ "$OUT" != *sentinela-argv-env* ]] && ! grep -q 'sentinela-argv-env' "$WORK/stderr"; then
+    pass 'fallo de metadata no filtra el centinela por stdout ni stderr'
+else
+    fail 'fallo de metadata expuso el centinela'
+fi
 
 export RELEASE_USE_PROCESS_OS=Darwin RELEASE_USE_PROCESS_IOPLATFORMUUID_FILE="$WORK/platform-uuid" RELEASE_USE_PROCESS_BOOTSESSIONUUID_FILE="$WORK/boot-session" RELEASE_USE_PROCESS_PS_PID_FILE="$WORK/macos-pid" RELEASE_USE_PROCESS_PS_ROWS_FILE="$WORK/macos-rows"
 printf 'uuid-de-prueba\n' > "$WORK/platform-uuid"; printf 'mac-boot\n' > "$WORK/boot-session"
