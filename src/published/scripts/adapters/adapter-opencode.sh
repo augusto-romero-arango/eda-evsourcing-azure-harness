@@ -12,6 +12,8 @@ HOOKS_CONTRACT="$REPO_ROOT/src/published/hooks/interactive-hooks.json"
 HOOKS_VALIDATOR="$REPO_ROOT/src/published/scripts/validate-interactive-hooks.sh"
 MCP_REGISTRY="$REPO_ROOT/src/published/contract/mcp-servers.json"
 MCP_VALIDATOR="$REPO_ROOT/src/published/scripts/validate-published-mcp.sh"
+COMMAND_ENTRY="$REPO_ROOT/src/published/contract/command-entry.json"
+COMMAND_ENTRY_FILTER="$REPO_ROOT/src/published/scripts/lib/command-entry.jq"
 source "$SCRIPT_DIR/../lib/effective-contract.sh" || { printf '%s\n' "ERROR: falta src/published/scripts/lib/effective-contract.sh; sin esa biblioteca las rutas efectivas del contrato consumidor no se resolverian." >&2; exit 1; }
 
 error() { printf '%s\n' "$1" >&2; return 1; }
@@ -127,6 +129,52 @@ mcp_tools_json() {
         ok) printf '%s' "$payload" ;;
         *) error "$rel: mcp: resultado OpenCode no representable"; return 1 ;;
     esac
+}
+
+command_entry_catalog() {
+    local command_file agent_file command_body commands='[]' agents='[]' item
+    [ -f "$COMMAND_ENTRY" ] && [ -f "$COMMAND_ENTRY_FILTER" ] || { error 'command-entry: contrato o helper ausente'; return 1; }
+    for command_file in "$REPO_ROOT"/src/published/commands/*.md; do
+        [ -f "$command_file" ] || continue
+        command_body="$(body "$command_file")" || return 1
+        item="$(jq -cn --arg id "$(basename "$command_file" .md)" --arg body "$command_body" '{id:$id,body:$body}')" || return 1
+        commands="$(jq -cn --argjson items "$commands" --argjson item "$item" '$items + [$item]')" || return 1
+    done
+    for agent_file in "$REPO_ROOT"/src/published/agents/*.md; do
+        if [ -f "$agent_file" ]; then
+            agents="$(jq -cn --argjson items "$agents" --arg id "$(basename "$agent_file" .md)" '$items + [$id]')" || return 1
+        fi
+    done
+    jq -cn --slurpfile matrix "$COMMAND_ENTRY" --argjson commands "$commands" --argjson agents "$agents" '{matrix:$matrix[0],commands:$commands,agents:$agents}' | jq -c -f "$COMMAND_ENTRY_FILTER"
+}
+
+trimmed_sha256() {
+    local content
+    content="$(jq -jRs 'gsub("^[[:space:]]+|[[:space:]]+$"; "")')" || return 1
+    printf '%s' "$content" | shasum -a 256 | awk '{print $1}'
+}
+
+render_command_entry_manifest() {
+    local catalog source rel marker rendered hash templates='[]' delegated='[]' command agent
+    catalog="$(command_entry_catalog)" || return 1
+    while IFS= read -r command; do
+        source="$REPO_ROOT/src/published/commands/$command.md"
+        rel="${source#"$REPO_ROOT/"}"
+        marker="<!-- GENERADO por src/published/scripts/generate-published-adapters.sh desde $rel. No editar a mano. -->"
+        rendered="$(render "$source" "$marker")" || return 1
+        hash="$(printf '%s' "$rendered" | body /dev/stdin | trimmed_sha256)" || return 1
+        templates="$(jq -cn --argjson prior "$templates" --arg id "$command" --arg sha256 "$hash" '$prior + [{kind:"command",id:$id,sha256:$sha256}]')" || return 1
+        while IFS= read -r agent; do
+            [ -n "$agent" ] || continue
+            source="$REPO_ROOT/src/published/agents/$agent.md"
+            rel="${source#"$REPO_ROOT/"}"
+            marker="<!-- GENERADO por src/published/scripts/generate-published-adapters.sh desde $rel. No editar a mano. -->"
+            rendered="$(render "$source" "$marker")" || return 1
+            hash="$(printf '%s' "$rendered" | body /dev/stdin | trimmed_sha256)" || return 1
+            delegated="$(jq -cn --argjson prior "$delegated" --arg command "$command" --arg agent "$agent" --arg sha256 "$hash" '$prior + [{command:$command,agent:$agent,sha256:$sha256}]')" || return 1
+        done < <(jq -r --arg id "$command" '.commands[] | select(.id == $id) | .delegates[]' <<< "$catalog")
+    done < <(jq -r '.commands[].id' <<< "$catalog")
+    jq -cn --arg fingerprint "$(printf '%s' "$catalog" | shasum -a 256 | awk '{print $1}')" --argjson templates "$templates" --argjson delegatedPrompts "$delegated" '{schemaVersion:1,catalogFingerprint:$fingerprint,templates:($templates | sort_by(.kind,.id)),delegatedPrompts:($delegatedPrompts | sort_by(.command,.agent))}'
 }
 
 published_opencode_translate_body() {
@@ -554,10 +602,10 @@ if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
         path)
             case "${2:-}" in src/published/agents/*.md) printf 'agents/%s\n' "$(basename "$2")" ;; src/published/commands/*.md) printf 'commands/mefisto:%s\n' "$(basename "$2")" ;; *) error "$2: path: fuente publicada desconocida" ;; esac ;;
         render) [ "$#" -eq 3 ] || error 'render: se esperaban fuente y marcador'; render "$2" "$3" ;;
-        assets) validate_interactive_hooks && validate_published_mcp && { skill_assets | jq '. + [{id:"interactive-observability",source:"src/published/hooks/interactive-hooks.json",destination:"plugins/mefisto-observability.js",mode:"0644"},{id:"mcp-config",source:"src/published/contract/mcp-servers.json",destination:"plugins/mefisto-mcp.js",mode:"0644"}]'; } ;;
+        assets) validate_interactive_hooks && validate_published_mcp && command_entry_catalog >/dev/null && { skill_assets | jq '. + [{id:"interactive-observability",source:"src/published/hooks/interactive-hooks.json",destination:"plugins/mefisto-observability.js",mode:"0644"},{id:"mcp-config",source:"src/published/contract/mcp-servers.json",destination:"plugins/mefisto-mcp.js",mode:"0644"},{id:"command-entry-manifest",source:"src/published/contract/command-entry.json",destination:"command-entry-manifest.json",mode:"0644"}]'; } ;;
         render-asset)
             [ "$#" -eq 3 ] || error 'render-asset: se esperaban id y fuente'
-            case "$2" in interactive-observability) render_observability_plugin ;; mcp-config) render_mcp_plugin "$3" ;; *) render_skill_asset "$2" "$3" ;; esac ;;
+            case "$2" in interactive-observability) render_observability_plugin ;; mcp-config) render_mcp_plugin "$3" ;; command-entry-manifest) render_command_entry_manifest ;; *) render_skill_asset "$2" "$3" ;; esac ;;
         *) error 'uso: adapter-opencode.sh root|path|render|assets|render-asset' ;;
     esac
 fi
