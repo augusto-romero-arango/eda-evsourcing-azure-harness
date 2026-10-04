@@ -39,6 +39,7 @@ assert 'serializacion desplaza la ultima clave repetida al final' '.permission |
 printf '%s\n' '[sesion y diagnosticos no sensibles]'
 session='{"action":"certify-session","home":"/h","consent":true,"managed":{"permission":{"edit":{"safe":"allow"}}},"session":[{"permission":"edit","pattern":"safe","value":"allow"}],"required":[{"permission":"edit","candidate":"safe"}]}'
 assert 'sesion observada no amplia una operacion gestionada' '.accepted == true' "$session"
+assert 'grant de sesion no demostrable se rechaza' '.accepted == false and (.conflicts | any(.code == "session-grant-not-provable"))' '{"action":"certify-session","home":"/h","consent":true,"managed":{"permission":{"edit":{"safe":"allow"}}},"session":[{"permission":"edit","pattern":"other","value":"allow"}],"required":[]}'
 assert 'sin consentimiento se rechaza sin incluir el centinela' '(.accepted == false) and ((.conflicts | tostring | contains("SECRETO-1838")) | not)' '{"action":"certify-session","consent":false,"managed":{},"session":[],"required":[{"permission":"edit","candidate":"SECRETO-1838"}]}'
 assert 'sesion ausente se diagnostica' '.conflicts[0].code == "session-not-observed"' '{"action":"certify-session","consent":true,"managed":{},"session":null,"required":[]}'
 

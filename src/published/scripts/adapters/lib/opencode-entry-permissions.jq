@@ -78,6 +78,17 @@ def evaluate_rules($rules; $candidates; $home):
     {permission: $candidate.permission, decision: ($winner.value // "ask")} ];
 def rules_to_map($rules):
   reduce $rules[] as $rule ({}; del(.[$rule.pattern]) + {($rule.pattern): $rule.value});
+def _grant_proven($managed; $grant; $home):
+  if ($grant.pattern | _literal) then
+    (evaluate_rules($managed; [{permission: $grant.permission, candidate: $grant.pattern}]; $home)[0].decision == "allow")
+  else
+    any(range(0; ($managed | length)); . as $i |
+      $managed[$i] as $base |
+      ($base.permission == $grant.permission and $base.value == "allow" and
+       ((_intersection($base.pattern; $grant.pattern; $home).pattern // "") == ($grant.pattern | _home($home))) and
+       all(range($i + 1; ($managed | length)); . as $later |
+          (_intersection($managed[$later].pattern; $grant.pattern; $home) == null))))
+  end;
 def compose_policy($managed; $global; $home):
   normalize_policy($managed; $home) as $m |
   normalize_policy($global; $home) as $f |
@@ -104,10 +115,13 @@ def certify_session($managed; $session; $required; $consent; $home):
   else
     evaluate_rules($m.rules; $required; $home) as $base |
     evaluate_rules($session; $required; $home) as $seen |
-    [ range(0; ($required | length)) as $i |
+    ([ range(0; ($session | length)) as $i | $session[$i] as $grant |
+       if $grant.value == "allow" and (_grant_proven($m.rules; $grant; $home) | not) then _diag("session-grant-not-provable"; $grant.permission; $i)
+       else empty end ] +
+     [ range(0; ($required | length)) as $i |
       if $base[$i].decision != "allow" then _diag("managed-operation-not-allowed"; $required[$i].permission; $i)
       elif $seen[$i].decision == "deny" or $seen[$i].decision == "ask" then _diag("session-operation-not-allowed"; $required[$i].permission; $i)
-      else empty end ] as $conflicts |
+      else empty end ]) as $conflicts |
     _result({accepted: ($conflicts | length == 0), decisions: $seen, conflicts: ($m.conflicts + $conflicts)})
   end;
 def entry_permissions:
