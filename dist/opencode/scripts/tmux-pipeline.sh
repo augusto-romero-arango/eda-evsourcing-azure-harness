@@ -432,8 +432,14 @@ cmd_single() {
     # por si el plugin esta instalado bajo una ruta con espacios (mismo criterio
     # que '$EVENTS_LOG').
     pipe_pane=$(tmux split-window -h -t "$tail_pane" -c "$PROJECT_ROOT" -P -F '#{pane_id}')
-    local root_cmd="implement" child_kind="tdd"
-    case "$pipeline_name" in tooling-pipeline) root_cmd="tooling"; child_kind="tooling" ;; esac
+    local child_kind root_cmd
+    child_kind="$(orchestrator_kind_for_script "$resolved")"
+    case "$child_kind" in
+        tooling) root_cmd="tooling" ;;
+        iac) root_cmd="infra" ;;
+        scaffold) root_cmd="scaffold" ;;
+        *) root_cmd="implement"; child_kind="tdd" ;;
+    esac
     dispatch_pipeline_keys "$pipe_pane" "$root_cmd" "$child_kind" "'$resolved' $issue $extra_args"
 
     tmux select-layout -t "$session:main" even-horizontal

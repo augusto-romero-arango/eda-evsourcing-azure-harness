@@ -388,9 +388,8 @@ for ISSUE_NUM in ${BATCH_QUEUE[@]+"${BATCH_QUEUE[@]}"}; do
 
     # Reserva del contexto hijo ANTES del spawn (issue #1861): si no se puede reservar
     # el eslabon no arranca y no se reporta como ejecutado.
-    ISSUE_HELD_NOTE=""
     if ! orchestrator_reserve_child "$(orchestrator_kind_for_script "$PIPELINE_SCRIPT")" "$REPO_ROOT"; then
-        fail_issue "$ISSUE_NUM" "no se pudo reservar el contexto de ejecucion del eslabon; el pipeline no se lanzo$ISSUE_HELD_NOTE"
+        fail_issue "$ISSUE_NUM" "no se pudo reservar el contexto de ejecucion del eslabon; el pipeline no se lanzo"
         FAILED=$((FAILED + 1))
         if [ "$STOP_ON_ERROR" = true ]; then
             abort "Detenido por --stop-on-error en issue #$ISSUE_NUM"
