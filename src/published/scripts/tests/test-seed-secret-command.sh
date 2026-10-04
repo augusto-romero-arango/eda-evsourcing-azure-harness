@@ -33,6 +33,7 @@ for command in '(cd "infra/environments/<env>" && terraform fmt -recursive ../..
     contains "$body" "$command" "validacion local usa subshell para $command"
 done
 absent "$body" 'terraform -chdir=' 'validacion local no usa -chdir'
+contains "$body" 'command -v terraform' 'consulta canonica de disponibilidad'
 contains "$body" 'Key Vault Secrets User' 'verifica Secrets User'
 contains "$body" 'Nunca toques' 'regla: nunca Secrets Officer'
 contains "$body" 'Nunca ejecutes' 'regla: nunca plan/apply'

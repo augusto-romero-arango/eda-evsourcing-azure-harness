@@ -30,6 +30,7 @@ for command in '(cd "infra/environments/<env>" && terraform fmt -recursive ../..
     contains "$body" "$command" "validacion local usa subshell para $command"
 done
 absent "$body" 'terraform -chdir=' 'validacion local no usa -chdir'
+contains "$body" 'command -v terraform' 'consulta canonica de disponibilidad'
 contains "$body" '{{mefisto:config-path}}' 'lee el config via config-path'
 contains "$body" '{{mefisto:instructions-path}}' 'lee RootNamespace via instructions-path'
 contains "$body" '{{mefisto:command onboard}}' 'remite al diagnostico via command onboard'

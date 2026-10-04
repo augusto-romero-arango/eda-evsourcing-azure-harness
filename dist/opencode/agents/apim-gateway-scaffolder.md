@@ -1312,7 +1312,7 @@ Si el `grep` reporta "YA CABLEADO", no toques el archivo -- una corrida previa d
 (cd "infra/environments/${ENV}" && terraform validate)
 ```
 
-`-backend=false` omite el remote state (util en local/CI sin credenciales). Si `terraform validate` falla, corrige y vuelve a validar. **No termines hasta que valide.** Si `terraform` no esta instalado, avisa y deja el formateo/validacion como paso manual pendiente.
+`-backend=false` omite el remote state (util en local/CI sin credenciales). Si `terraform validate` falla, corrige y vuelve a validar. **No termines hasta que valide.** Si `command -v terraform` no encuentra la herramienta, avisa y deja el formateo/validacion como paso manual pendiente.
 
 ---
 

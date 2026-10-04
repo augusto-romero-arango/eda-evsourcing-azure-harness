@@ -33,6 +33,7 @@ for command in '(cd "infra/environments/${ENV}" && terraform fmt -recursive ../.
     contains "$body" "$command" "validacion local usa subshell para $command"
 done
 absent "$body" 'terraform -chdir=' 'validacion local no usa -chdir'
+contains "$body" 'command -v terraform' 'consulta canonica de disponibilidad'
 
 echo '[fuente] (b) ausencia de curl y de tokens de runtime'
 for pattern in 'curl' 'export MEFISTO_INSTRUCTIONS_PATH' '.claude' 'claude --agent' 'opencode' 'AGENTS.md' 'CLAUDE.md'; do
