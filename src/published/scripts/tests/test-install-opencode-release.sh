@@ -92,6 +92,8 @@ jq -n --arg root "$ROOT/releases/1.2.3" '{schemaVersion:1,revision:1,leases:[{id
 OUTPUT="$("$XDG_DATA_HOME/mefisto/active/bin/mefisto-opencode" activate 1.2.3 2>&1)"; assert_rc "$?" 75 'activate ocupado devuelve el codigo de lifecycle'
 printf '%s' "$OUTPUT" | grep -q 'MEFISTO_LIFECYCLE_BUSY.*execute-fixture' && assert_active 1.2.3 'activate ocupado diagnostica la referencia y no cambia active' || fail 'activate ocupado no conserva el estado ni explica el reintento'
 rm -rf "$ROOT/runtime-use"
+"$XDG_DATA_HOME/mefisto/active/bin/mefisto-opencode" activate 1.2.3 >/dev/null; assert_rc "$?" 0 'activate en quiescencia adquiere maintenance'
+jq -e 'any(.leases[]; .kind=="maintenance" and .phase=="finished") and ([.leases[]|select(.kind=="maintenance" and .phase!="finished")]|length)==0' "$ROOT/runtime-use/v1/registry.json" >/dev/null && pass 'activate finaliza su permit maintenance propio' || fail 'activate dejo maintenance activo'
 
 MEFISTO_OPENCODE_TEST_HOLD_LOCK_SECONDS=5 "$EXTRACT/install.sh" install 1.2.3 >/dev/null 2>&1 & HOLDER=$!
 wait_for_lock install && pass 'install adquiere el lock global antes de cambiar active' || fail 'install no adquirio el lock global'

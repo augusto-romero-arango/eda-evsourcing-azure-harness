@@ -58,14 +58,51 @@ lifecycle_busy() {
     printf 'MEFISTO_LIFECYCLE_BUSY: referencias activas (%s); finalice o reconcilie evidencia verificable y reintente.\n' "${ids:-desconocidas}" >&2
     return 75
 }
+lifecycle_release_identity() {
+    local release version commit
+    release="$(cd "$SCRIPT_DIR" 2>/dev/null && pwd -P)" || return 1
+    case "$release" in "$RELEASES"/*)
+        version="${release#"$RELEASES/"}";;
+    *)
+        version="$(active_version 2>/dev/null)" || return 1
+        release="$(cd "$RELEASES/$version" 2>/dev/null && pwd -P)" || return 1;;
+    esac
+    valid_version "$version" && manifest_valid "$release" "$version" && release_immutable "$release" || return 1
+    commit="$(jq -er '.commit' "$release/mefisto-manifest.json")" || return 1
+    jq -cn --arg root "$release" --arg version "$version" --arg commit "$commit" '{root:$root,version:$version,commit:$commit}'
+}
+lifecycle_finish_maintenance_locked() {
+    local inspected revision request response
+    [ -n "${LIFECYCLE_MAINTENANCE_ID:-}" ] || return 0
+    inspected="$(lifecycle_inspect_locked)" || return 1
+    lifecycle_response_ok "$inspected" || return 1
+    revision="$(jq -r .revision <<<"$inspected")" || return 1
+    request="$(jq -cn --arg request "finish-${LOCK_TOKEN}" --arg id "$LIFECYCLE_MAINTENANCE_ID" --argjson revision "$revision" --argjson pid "$$" \
+        '{schemaVersion:1,requestId:$request,operation:"finish",expectedRevision:$revision,id:$id,ownerPid:$pid,reason:"maintenance-finished"}')" || return 1
+    response="$(RELEASE_USE_LOCK_TOKEN="$LOCK_TOKEN" opencode_release_use_finish_locked "$ROOT" "$request")" || return 1
+    lifecycle_response_ok "$response" || return 1
+    LIFECYCLE_MAINTENANCE_ID=''
+}
 lifecycle_mutation_guard_locked() {
-    local inspected rc
+    local inspected revision identity request response rc operation
     release_use_library || { printf 'ERROR: no se encontro el protocolo de referencias de release.\n' >&2; return 1; }
     lifecycle_reconcile_locked; rc=$?
     [ "$rc" -eq 0 ] || { [ "$rc" -eq 75 ] && lifecycle_busy "$(lifecycle_inspect_locked 2>/dev/null || printf '{}')"; return "$rc"; }
     inspected="$(lifecycle_inspect_locked)" || return 1
     lifecycle_response_ok "$inspected" || return 1
-    jq -e '.executionBlockers | length == 0' >/dev/null 2>&1 <<<"$inspected" || lifecycle_busy "$inspected"
+    jq -e '.executionBlockers | length == 0' >/dev/null 2>&1 <<<"$inspected" || { lifecycle_busy "$inspected"; return $?; }
+    # Una instalacion inicial no tiene una identidad de release que la API pueda
+    # referenciar; el lock ya impide que exista una admision concurrente valida.
+    identity="$(lifecycle_release_identity 2>/dev/null)" || return 0
+    revision="$(jq -r .revision <<<"$inspected")" || return 1
+    operation="$(command cat "$LOCK/operation" 2>/dev/null)" || return 1
+    LIFECYCLE_MAINTENANCE_ID="maintenance-${LOCK_TOKEN}"
+    request="$(jq -cn --arg request "acquire-${LOCK_TOKEN}" --arg id "$LIFECYCLE_MAINTENANCE_ID" --argjson revision "$revision" \
+        --argjson release "$identity" --argjson pid "$$" --arg operation "$operation" \
+        '{schemaVersion:1,requestId:$request,operation:"acquire",expectedRevision:$revision,id:$id,kind:"maintenance",release:$release,ownerPid:$pid,runId:("maintenance-"+$operation),projectId:"mefisto-installation",parentId:null,coverage:"complete",bindingDigest:null,owner:null,startToken:null}')" || return 1
+    response="$(RELEASE_USE_LOCK_TOKEN="$LOCK_TOKEN" opencode_release_use_acquire_locked "$ROOT" "$request")"; rc=$?
+    if [ "$rc" -eq 75 ]; then LIFECYCLE_MAINTENANCE_ID=''; lifecycle_busy "$(lifecycle_inspect_locked 2>/dev/null || printf '{}')"; return 75; fi
+    [ "$rc" -eq 0 ] && lifecycle_response_ok "$response" || { LIFECYCLE_MAINTENANCE_ID=''; return 1; }
 }
 
 caller_release_version() {
@@ -94,6 +131,7 @@ release_lock() {
     fi
     if [ -n "${LOCK:-}" ] && [ -n "${LOCK_TOKEN:-}" ] && [ -f "$LOCK/owner" ] \
         && [ "$(command cat "$LOCK/owner" 2>/dev/null || true)" = "$LOCK_TOKEN" ]; then
+        lifecycle_finish_maintenance_locked >/dev/null 2>&1 || true
         rm -rf "$LOCK"
     fi
 }
@@ -385,9 +423,9 @@ prune() {
     protected=( "$active" )
     [ -n "$previous" ] && protected=( "${protected[@]}" "$previous" )
     caller="$(caller_release_version 2>/dev/null || true)"
-    [ -z "$caller" ] || protected=( "${protected[@]}" "$caller" )
+    if [ -n "$caller" ]; then case " ${protected[*]} " in *" $caller "*) ;; *) protected=( "${protected[@]}" "$caller" );; esac; fi
     while IFS= read -r version; do
-        [ -z "$version" ] || protected=( "${protected[@]}" "$version" )
+        if [ -n "$version" ]; then case " ${protected[*]} " in *" $version "*) ;; *) protected=( "${protected[@]}" "$version" );; esac; fi
     done < <(jq -r '.retainedReleases[]?.version' <<<"$lifecycle_inspected")
     retained_count="${#protected[@]}"
     for ((i=${#VALID_RELEASES[@]} - 1; i >= 0 && retained_count < keep; i--)); do
