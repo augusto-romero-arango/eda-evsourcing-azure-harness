@@ -154,6 +154,11 @@ interpretar ni migrar una declaración que pudiera contener.
 El digest ata el registro al perfil, pero no prueba identidad humana ni aísla el
 registro de otro proceso con el mismo usuario del host.
 
+```bash
+jq -c -f src/published/contract/autonomy-profile.validate.jq envelope.json
+src/published/scripts/tests/test-autonomy-profile-contract.sh
+```
+
 ### Admisión previa de autonomía (preflight)
 
 `scripts/autonomy-preflight.sh --project-root <raíz-Git> --runtime <id> [--context <ruta>]`
@@ -183,8 +188,7 @@ orquestadores (#1826) es un issue aparte; `onboard-diagnose.sh` conserva su cont
 informativo independiente.
 
 ```bash
-jq -c -f src/published/contract/autonomy-profile.validate.jq envelope.json
-src/published/scripts/tests/test-autonomy-profile-contract.sh
+scripts/tests/test-autonomy-preflight.sh
 ```
 
 ### Plan preautorizado de fix-review

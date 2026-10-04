@@ -139,6 +139,11 @@ admit allowed
 pf "$R" opencode "$CMD_PLAN" "$CTX"
 eq "$(j .status)/$RC/$(chk ENTRY_ADMISSION)" 'ready-to-dispatch/0/pass/NONE' 'entrada admitida y ligada a la sesion queda ready'
 eq "$(j .resourcesDigest)" 'res1' 'resourcesDigest sale de la evidencia de entrada'
+RID="$REL/src/published/release-identity.json"; cp "$RID" "$TMP/rid.json"
+jq '.version = "9.9.9-otra"' "$TMP/rid.json" > "$RID"
+pf "$R" opencode "$CMD_PLAN" "$CTX"
+eq "$(j .status)/$RC/$(chk CONTEXT_VALID)" 'blocked/1/block/RELEASE_CHANGED' 'cambio de release revalida el contexto y bloquea'
+cp "$TMP/rid.json" "$RID"
 pf "$R" claude "$CMD_PLAN" "$CTX"
 eq "$(j .status)/$RC/$(chk CONTEXT_RUNTIME)" 'blocked/1/block/CONTEXT_RUNTIME_MISMATCH' 'Claude con contexto de otro runtime falla visiblemente'
 mkdir -p "$TMP/ext"; cp "$CTX" "$TMP/ext/ctx1.json"

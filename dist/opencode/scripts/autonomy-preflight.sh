@@ -78,7 +78,8 @@ TOP="$(cd "$TOP" 2>/dev/null && pwd -P)"
 
 REL_VERSION="$(jq -r '.version // empty' "$RELEASE_FILE" 2>/dev/null)"
 REL_COMMIT="$(jq -r '.commit // empty' "$RELEASE_FILE" 2>/dev/null)"
-REL_ROOT_SAFE="$PACKAGE_ROOT"; [ -z "${HOME:-}" ] || REL_ROOT_SAFE="$(printf '%s' "$PACKAGE_ROOT" | sed "s#^$HOME#~#")"
+REL_ROOT_SAFE="$PACKAGE_ROOT"
+case "$PACKAGE_ROOT" in "${HOME:-/nonexistent}"/*) REL_ROOT_SAFE="~${PACKAGE_ROOT#"$HOME"}" ;; esac
 
 CHECKS=""; HARD_BLOCK=0; EVIDENCE_GAP=0
 add() { # code state owner action [evidence]
