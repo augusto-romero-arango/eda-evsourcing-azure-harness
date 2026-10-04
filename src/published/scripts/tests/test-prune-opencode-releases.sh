@@ -23,8 +23,8 @@ release() {
     local version="$1" root
     root="$XDG_DATA_HOME/mefisto/releases/$version"
     mkdir -p "$root/bin"
-    cp "$INSTALLER" "$root/install.sh"; cp "$INSTALLER" "$root/project-opencode-release.sh"; cp "$INSTALLER" "$root/diagnose-installation-identity.sh"; cp "$INSTALLER" "$root/bin/mefisto-opencode"
-    chmod +x "$root/install.sh" "$root/project-opencode-release.sh" "$root/diagnose-installation-identity.sh" "$root/bin/mefisto-opencode"
+    cp "$INSTALLER" "$root/install.sh"; cp "$INSTALLER" "$root/project-opencode-release.sh"; cp "$INSTALLER" "$root/diagnose-installation-identity.sh"; cp "$INSTALLER" "$root/release-use.sh"; cp "$INSTALLER" "$root/bin/mefisto-opencode"
+    chmod +x "$root/install.sh" "$root/project-opencode-release.sh" "$root/diagnose-installation-identity.sh" "$root/release-use.sh" "$root/bin/mefisto-opencode"
     dd if=/dev/zero of="$root/payload" bs=1024 count=2 2>/dev/null
     jq -n --arg version "$version" '{schemaVersion: 1, runtime: "opencode", version: $version, commit: "0123456789abcdef0123456789abcdef01234567", minimumRuntimeVersion: "1.18.29"}' > "$root/mefisto-manifest.json"
     chmod -R a-w "$root"

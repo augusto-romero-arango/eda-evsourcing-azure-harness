@@ -119,6 +119,9 @@ SHA_DIGEST="${SHA_VALUE%%  *}"; SHA_FILE="${SHA_VALUE#*  }"
 EXTRACT="$WORK/extract"; mkdir "$EXTRACT"; tar -xzf "$TAR" -C "$EXTRACT"
 [ -f "$EXTRACT/mefisto-manifest.json" ] && [ -x "$EXTRACT/comandos/run.sh" ] && [ -x "$EXTRACT/install.sh" ] && [ -x "$EXTRACT/project-opencode-release.sh" ] && [ -x "$EXTRACT/diagnose-installation-identity.sh" ] && [ -x "$EXTRACT/release-use.sh" ] && [ -x "$EXTRACT/bin/mefisto-opencode" ] && [ -d "$EXTRACT/directorio-vacio" ] && pass 'extrae instalador, proyector, API de uso y contenido sin envolvente' || fail 'layout o permisos incorrectos'
 [ "$(file_mode "$EXTRACT/mefisto-manifest.json")" = 644 ] && pass 'manifiesto tiene modo 0644' || fail 'modo del manifiesto invalido'
+COPIED_DATA="$WORK/copied-data"; mkdir -p "$COPIED_DATA/releases"
+COPIED_INSPECT="$(jq -cn '{schemaVersion:1,requestId:"copied-inspect",operation:"inspect"}' | bash "$EXTRACT/release-use.sh" inspect --data-root "$COPIED_DATA")"; COPIED_RC=$?
+[ "$COPIED_RC" -eq 0 ] && jq -e '.status=="ok" and .revision==0 and .capabilities.protocol=="release-use-v1"' >/dev/null <<<"$COPIED_INSPECT" && pass 'API empaquetada funciona sin checkout fuente' || fail 'API empaquetada depende del checkout fuente'
 closure_ok=true
 for source in \
     scripts/_pipeline-common.sh scripts/tmux-pipeline.sh scripts/herdr-pipeline.sh scripts/stream-watch.sh scripts/tooling-pipeline.sh scripts/tdd-pipeline.sh \
