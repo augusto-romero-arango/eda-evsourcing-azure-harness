@@ -117,6 +117,40 @@ Solo una aprobación válida con proyecto y digest coincidentes produce `ready`.
 Una revocación coincidente produce `disabled`; la declaración ausente también.
 No representa aislamiento del host ni certificación de un runtime.
 
+### Lifecycle del operador
+
+`scripts/autonomy-profile.sh` es la única interfaz local para que un operador
+previsualice, apruebe o revoque un perfil. Recibe siempre una raíz explícita:
+
+```bash
+scripts/autonomy-profile.sh preview --project-root /ruta/al/consumidor
+scripts/autonomy-profile.sh approve --project-root /ruta/al/consumidor --expected-digest <sha-256>
+scripts/autonomy-profile.sh revoke --project-root /ruta/al/consumidor
+scripts/autonomy-profile.sh inspect --project-root /ruta/al/consumidor
+```
+
+`preview` no escribe y entrega el perfil, sus grants administrativos y el digest
+que debe volver en `approve`. La aprobación no ejecuta acciones administrativas
+ni reemplaza sus validaciones de entorno, recurso o plan. `revoke` es idempotente
+y solo impide admisiones nuevas; snapshots ya admitidos y la política de parada
+conservan su ciclo propio.
+
+Cuando `inspect` se ejecuta dentro de un checkout o worktree, la raíz explícita
+debe compartir su directorio Git común normalizado. Un worktree puede consultar
+la raíz principal aprobada del mismo proyecto, pero no reutilizar el registro de
+otro clon o repositorio. Las operaciones de operador pueden ejecutarse desde un
+directorio ajeno a Git, manteniendo siempre `--project-root` explícito.
+
+Los adaptadores y etapas son lectores: usan exclusivamente `inspect`, cuya salida
+estándar es el JSON neutral del validador. Sus códigos son 0 para `disabled` o
+`ready`, 1 para `needs-approval` o `conflict`, y 2 para errores de uso o ejecución.
+El registro canónico es `.mefisto/pipeline/autonomy/consent.json`; no se lee ni
+escribe configuración legacy, stores de autenticación, secretos o servicios remotos.
+Cuando solo existe la configuración legacy, el lector responde `disabled` sin
+interpretar ni migrar una declaración que pudiera contener.
+El digest ata el registro al perfil, pero no prueba identidad humana ni aísla el
+registro de otro proceso con el mismo usuario del host.
+
 ```bash
 jq -c -f src/published/contract/autonomy-profile.validate.jq envelope.json
 src/published/scripts/tests/test-autonomy-profile-contract.sh

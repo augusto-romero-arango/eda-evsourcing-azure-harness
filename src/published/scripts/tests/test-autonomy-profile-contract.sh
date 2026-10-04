@@ -48,6 +48,8 @@ assert_result 'aprobacion coincidente queda lista' "$APPROVED" ready CONSENT_APP
 REVOKED="$(printf '%s' "$APPROVED" | jq '.consent.decision="revoked"')"
 assert_result 'revocacion coincidente deshabilita' "$REVOKED" disabled CONSENT_REVOKED
 assert_result 'ausencia de declaracion deshabilita' "$(printf '%s' "$BASE" | jq '.profile=null')" disabled NO_PROFILE
+assert_result 'registro malformado no se oculta aunque falte declaracion' "$(printf '%s' "$BASE" | jq '.profile=null | .consent="invalid-consent-record"')" conflict INVALID_CONSENT
+assert_result 'registro de otro proyecto no se oculta aunque falte declaracion' "$(printf '%s' "$APPROVED" | jq '.profile=null | .consent.projectId="otro-proyecto"')" conflict PROJECT_MISMATCH
 assert_result 'digest de consentimiento antiguo requiere aprobacion' "$(printf '%s' "$APPROVED" | jq '.consent.profileDigest="0000000000000000000000000000000000000000000000000000000000000000"')" needs-approval CONSENT_DIGEST_MISMATCH
 assert_result 'revision nueva con digest nuevo requiere nueva aprobacion' "$(printf '%s' "$APPROVED" | jq --argjson p "$(jq -c '.autonomy' "$FIXTURES/profile-revision-2.json")" --arg d "$REVISION_DIGEST" '.profile=$p | .context.profileDigest=$d')" needs-approval CONSENT_DIGEST_MISMATCH
 assert_result 'proyecto ajeno entra en conflicto' "$(printf '%s' "$APPROVED" | jq '.consent.projectId="otro-proyecto"')" conflict PROJECT_MISMATCH
