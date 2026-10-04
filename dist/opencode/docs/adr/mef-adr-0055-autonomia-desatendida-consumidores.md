@@ -57,7 +57,8 @@ Cada corrida/etapa deja evidencia sanitizada de identidad, comprobaciones, solic
 | Bootstrap exacto, entorno y recurso incluidos en autorizacion vigente | **Permitir** tras admision; la etapa no pide aprobacion. |
 | Purga sin consentimiento especifico | **No admitir**, con causa de autorizacion faltante. |
 | Operacion cambia a entorno o recurso no aprobado | **No admitir/fallar** con causa; no autoampliar permisos. |
-| Denegacion observada o conteo de solicitudes desconocido durante etapa | **Completitud no demostrada**; fallar con evidencia, sin ocultarlo como exito. |
+| Denegacion o hint observados en una operacion requerida durante la etapa | **Caso no aprobado** hasta investigar la señal; exit 0 no permite ocultarla como exito. |
+| Sin señales observadas y conteos desconocidos durante la etapa | **Solo outcomes ejercidos verificables**; documentar los limites de observabilidad, sin afirmar conteos cero ni cobertura universal. |
 
 ### 5. Local primero; aislamiento despues
 
@@ -134,9 +135,10 @@ solo como texto. El mantenedor acepta esta evidencia parcial para el smoke de
 #1827, con límites visibles, en vez de falsear un contador global de cero.
 
 Las señales positivas estructuradas permiten rechazar o escalar un caso. Un
-error de tool expresado como texto es un *hint*, no una decisión tipada. La
-ausencia de ambas señales no prueba que no existieron eventos que el runtime no
-emitió, ni `--auto` demuestra autonomía. El smoke verifica outcomes concretos
+error de tool expresado como texto es un *hint*, no una decisión tipada, pero
+también impide aprobar el caso hasta investigarlo. La ausencia de ambas señales
+no prueba que no existieron eventos que el runtime no emitió, ni `--auto`
+demuestra autonomía. El smoke verifica outcomes concretos
 de los escenarios ejercidos, incluidos sus entregables y prompts visibles; no
 certifica universalmente `denials == 0` ni `asks == 0`.
 
