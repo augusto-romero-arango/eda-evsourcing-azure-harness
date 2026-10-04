@@ -2,6 +2,26 @@
 description: "Genera diagramas profesionales con la API de Eraser (sequence, architecture, flowchart, ERD y BPMN) y los renderiza con ERASER_API_TOKEN."
 ---
 <!-- GENERADO por src/published/scripts/generate-published-adapters.sh desde src/published/commands/eraser-diagram.md. No editar a mano. -->
+```bash
+# Cada llamada bash que use ${MEFISTO_PACKAGE_ROOT} debe incluir este bloque antes de sus comandos: no se asume estado de shell persistente entre llamadas.
+if [ -n "${XDG_DATA_HOME:-}" ]; then mefisto_opencode_launcher="$XDG_DATA_HOME/mefisto/active/bin/mefisto-opencode"
+elif [ "${OSTYPE%%[0-9.]*}" = darwin ]; then mefisto_opencode_launcher="$HOME/Library/Application Support/mefisto/active/bin/mefisto-opencode"
+else mefisto_opencode_launcher="$HOME/.local/share/mefisto/active/bin/mefisto-opencode"; fi
+if [ ! -f "$mefisto_opencode_launcher" ] || [ -L "$mefisto_opencode_launcher" ] || [ ! -x "$mefisto_opencode_launcher" ]; then
+    printf '%s\n' 'ERROR OpenCode: no hay una release activa valida; instale o active la release OpenCode.' >&2; exit 1
+fi
+MEFISTO_PACKAGE_ROOT="$("$mefisto_opencode_launcher" package-root)" || {
+    printf '%s\n' 'ERROR OpenCode: no se pudo resolver la release activa; instale o active la release OpenCode.' >&2; exit 1;
+}
+case "$MEFISTO_PACKAGE_ROOT" in
+    /*) ;;
+    *) printf '%s\n' 'ERROR OpenCode: la release activa no devolvio una raiz absoluta; reinstale o active la release OpenCode.' >&2; exit 1 ;;
+esac
+MEFISTO_PACKAGE_ROOT="$(cd -P "$MEFISTO_PACKAGE_ROOT" 2>/dev/null && printf '%s\n' "$PWD")" || {
+    printf '%s\n' 'ERROR OpenCode: la release activa no existe; reinstale o active la release OpenCode.' >&2; exit 1;
+}
+export MEFISTO_PACKAGE_ROOT
+```
 
 Genera diagramas profesionales usando la API de Eraser. Soporta 5 tipos: sequence, architecture, flowchart, ERD y BPMN.
 
@@ -30,26 +50,34 @@ Genera el codigo DSL siguiendo estrictamente la sintaxis documentada abajo segun
 - Un nodo por linea, pero los labels siempre en la misma linea
 - Usa `typeface clean` y `colorMode pastel` como defaults para legibilidad
 
-## Paso 3 - Llamar al API de Eraser
+## Paso 3 - Renderizar con Eraser
 
-IMPORTANTE: SIEMPRE ejecuta el curl despues de generar el DSL. Nunca te detengas solo con el DSL.
+IMPORTANTE: despues de generar el DSL, prepara el siguiente JSON regular en
+`.mefisto/pipeline/tmp/eraser-diagram-payload.json` con tus herramientas de
+archivo. Sustituye los dos marcadores por el DSL y el `diagramType` elegido; no
+incluyas `ERASER_API_TOKEN` en el archivo.
+
+```json
+{
+  "elements": [{
+    "type": "diagram",
+    "id": "diagram-1",
+    "code": "<DSL_GENERADO>",
+    "diagramType": "<TIPO>"
+  }],
+  "scale": 2,
+  "theme": "dark",
+  "background": true
+}
+```
+
+Ejecuta siempre el renderizador despues de preparar el archivo. El script toma
+la credencial exclusivamente del entorno y devuelve un JSON con `imageUrl` y
+`createEraserFileUrl`; no afirmes que el render fue exitoso si termina con
+error.
 
 ```bash
-curl -s -X POST https://app.eraser.io/api/render/elements \
-  -H "Content-Type: application/json" \
-  -H "X-Skill-Source: mefisto" \
-  -H "Authorization: Bearer ${ERASER_API_TOKEN}" \
-  -d '{
-    "elements": [{
-      "type": "diagram",
-      "id": "diagram-1",
-      "code": "<DSL_GENERADO>",
-      "diagramType": "<TIPO>"
-    }],
-    "scale": 2,
-    "theme": "dark",
-    "background": true
-  }'
+MEFISTO_RUNTIME=opencode "${MEFISTO_PACKAGE_ROOT}/scripts/render-eraser-diagram.sh" --payload-file .mefisto/pipeline/tmp/eraser-diagram-payload.json
 ```
 
 ## Paso 4 - Mostrar resultado
