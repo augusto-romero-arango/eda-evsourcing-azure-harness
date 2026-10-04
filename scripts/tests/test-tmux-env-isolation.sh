@@ -88,7 +88,7 @@ dispatch() {
     (
         cd "$cons" || exit 99
         while IFS= read -r l; do [ -n "$l" ] && export "$l"; done <<< "$envs"
-        PATH="$FAKE_BIN:$PATH" MEFISTO_UI=tmux MEFISTO_RUNTIME=claude "$dist/scripts/tmux-pipeline.sh" "$@"
+        PATH="$FAKE_BIN:$PATH" MEFISTO_UI=tmux MEFISTO_RUNTIME="${CALLER_RUNTIME:-claude}" "$dist/scripts/tmux-pipeline.sh" "$@"
     ) </dev/null >"$TMP_DIR/out" 2>"$TMP_DIR/err"
     LAST_RC=$?
     LAST_CMD=$(grep 'send-keys -t %1 ' "$TMUX_STUB_LOG" | tail -1 | sed 's/^tmux send-keys -t %1 //; s/ Enter$//')
@@ -148,10 +148,24 @@ dispatch "$TMP_DIR/dist broken" "$CONS_B" "$DIST_A" "$CONS_A" --tooling 77
 [ "$LAST_RC" -ne 0 ] && pass "falta validador propio: aborta" || fail "falta validador propio: no aborto"
 assert_not_contains "falta validador propio: sin new-session" "$(cat "$TMUX_STUB_LOG")" "new-session"
 assert_contains "falta validador propio: causa" "$(cat "$TMP_DIR/err")" "models.validate.jq"
+rm -rf "$TMP_DIR/dist broken/src/runtime/contract"
+dispatch "$TMP_DIR/dist broken" "$CONS_B" "$DIST_A" "$CONS_A" --tooling 77
+[ "$LAST_RC" -ne 0 ] && pass "falta contract/ propio: aborta" || fail "falta contract/ propio: no aborto"
+assert_contains "falta contract/ propio: causa (no aborto silencioso)" "$(cat "$TMP_DIR/err")" "models.validate.jq"
+assert_not_contains "falta contract/ propio: sin new-session" "$(cat "$TMUX_STUB_LOG")" "new-session"
 rm -rf "$TMP_DIR/dist broken/src/runtime/lib"
 dispatch "$TMP_DIR/dist broken" "$CONS_B" "$DIST_A" "$CONS_A" --tooling 77
 [ "$LAST_RC" -ne 0 ] && pass "falta lib propia: aborta" || fail "falta lib propia: no aborto"
 assert_not_contains "falta lib propia: sin new-session" "$(cat "$TMUX_STUB_LOG")" "new-session"
+
+echo ""
+echo "[3b] CA-1/CA-4: el runtime del caller se conserva aunque el servidor sea de otro runtime"
+CALLER_RUNTIME=opencode dispatch "$DIST_B" "$CONS_B" "$DIST_A" "$CONS_A" --tooling 79
+assert_eq "caller opencode: rc 0" "0" "$LAST_RC"
+assert_contains "caller opencode: MEFISTO_RUNTIME del caller" "$LAST_CMD" "MEFISTO_RUNTIME=opencode "
+run_child "$CONS_B" "$DIST_A" "$CONS_A"
+assert_eq "caller opencode: hijo ve runtime del caller y runner descartado" \
+    "opencode|unset" "$(cut -d'|' -f1,6 "$CONS_B/.mefisto/pipeline/child.env")"
 
 echo ""
 echo "[4] CA-5: --help conserva su UX"

@@ -40,7 +40,10 @@ source "$(dirname "${BASH_SOURCE[0]}")/_pipeline-common.sh"
 # punto de delegacion a Herdr y solo en los modos que lanzan un sub-pipeline.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RUNTIME_LIB_DIR="$(cd "$SCRIPT_DIR/../src/runtime/lib" 2>/dev/null && pwd -P)" || RUNTIME_LIB_DIR=""
-MODELS_VALIDATOR="$(cd "$SCRIPT_DIR/../src/runtime/contract" 2>/dev/null && pwd -P)/models.validate.jq"
+# Con `|| ...` explicito: bajo `set -e` una sustitucion fallida (falta el
+# directorio contract/) abortaria en silencio, sin la causa del guard de abajo.
+MODELS_VALIDATOR="$(cd "$SCRIPT_DIR/../src/runtime/contract" 2>/dev/null && pwd -P)/models.validate.jq" \
+    || MODELS_VALIDATOR=""
 [ -d "$RUNTIME_LIB_DIR" ] \
     || { echo "ERROR: no se encontro src/runtime/lib junto al paquete publicado" >&2; exit 1; }
 [ -f "$RUNTIME_LIB_DIR/mefisto-runtime.sh" ] \
