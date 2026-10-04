@@ -290,6 +290,49 @@ scripts/fix-review-receipts.sh status --project-root <approved-root> --plan-id <
 Es un libro de contabilidad local, no un sandbox: un proceso con permisos de shell del mismo
 usuario puede editar el libro. Prueba: `src/published/scripts/tests/test-fix-review-receipts.sh`.
 
+### Gate de admision de fix-review
+
+`scripts/fix-review-admission.sh` (issue #1889) es el gate de **consulta** que cada etapa de la
+corrida preautorizada de `/fix-review` consulta antes de actuar. No publica, no edita, no muta el
+contexto, no invoca `approve`/`revoke` ni modifica `fix-review.md` (la entrada ejecutable se cablea
+en #1821). Una llamada interactiva sin `--plan-id` no usa este guard y conserva los gates actuales:
+ningun estado `authorized` sale de defaults, `--yes` ni del texto del issue.
+
+```bash
+scripts/fix-review-admission.sh check --project-root <approved-root> --pr <N> --plan-id <planDigest> \
+  --phase <pre-edit|pre-push|pre-reply|pre-improvement|finish> [--comment-id <id>] [--action <categoria>]
+```
+
+- Salida `{schemaVersion:1,status:authorized|blocked|incomplete,phase,projectId,planDigest,
+  currentHead,allowedActions,diagnostics:[{code,actionCode}]}`; proceso 0 authorized, 1
+  blocked/incomplete, 2 protocolo. Nunca imprime bodies, Markdown del plan, texto de respuestas,
+  tokens ni settings; `gh` usa su propia custodia (el guard no lee credenciales).
+- Valida siempre: `autonomy-profile.sh inspect` en `ready`/`CONSENT_APPROVED` con el `projectId` del
+  plan; plan sellado (#1887) con digest recomputado (#1886); copia Markdown con SHA-256 ==
+  `planTextDigest` (ausente o alterada: `incomplete`); grant exacto por accion (`command:
+  fix-review`, `environment: repository`, resources `pr:N` + clase, `planDigest` presente e igual).
+- Estado remoto solo lectura: PR abierto del repo/rama del plan; `headRefOid` debe ser el head
+  inicial o el ultimo de la cadena de recibos (#1888), que debe encadenarse sin huecos desde el head
+  sellado (`HEAD_CHAIN_BROKEN`); todas las paginas de review comments contra
+  el snapshot (id/bodyDigest/path/line/originalLine/replies) mas las respuestas con recibo; cambios
+  de `line` se toleran solo tras pushes propios. Edicion, comentario nuevo, respuesta sin recibo,
+  cabeza ajena, PR cerrado o mas de 30 comentarios ajenos (las respuestas propias con recibo no
+  cuentan): `blocked`; API ausente o ambigua: `incomplete`
+  (sin reintento ciego de POST ni reparacion; el comentario nuevo no entra al plan).
+- Fases: `pre-edit` (triaje exacto, worktree limpio en la rama y cabeza vigente; sin comentarios
+  `corregir` no exige grant de edicion), `pre-push` (diff local acotado a los paths planeados o a la
+  clase `--action <clase>`; la verificacion build/test declarada la exige `record-push`), `pre-reply`
+  (solo ids del snapshot, una respuesta por id, texto factual libre, sin resolver threads),
+  `pre-improvement` (`--action` = clase local aprobada, `fix-review-consumer-issue` o
+  `fix-review-harness-draft`, dentro de cupos; cualquier otra accion es `ACTION_OUT_OF_SCOPE`),
+  `finish` (cotejo con recibos: codigo/respuestas/seguimientos pendientes salen como `PARTIAL_*`
+  en `incomplete`, nunca como completitud).
+- Un path permitido no acredita la semantica del cambio: ante desvio del plan, el agente se detiene
+  y pide una nueva preparacion fuera del lote. La politica es cooperativa, no un sandbox frente al
+  proceso o usuario anfitrion, y no representa permisos remotos de GitHub.
+
+Prueba: `src/published/scripts/tests/test-fix-review-admission.sh`.
+
 ## Permisos Bash de OpenCode
 
 La capacidad neutral `shell` genera `permission.bash` con `"*": "deny"`.
