@@ -178,6 +178,10 @@ for status in needs-approval conflict; do
   check "$status instala agentes denegados y no admite" "$out" '.result | startswith("mefisto_entry_not_admitted")'
 done
 
+R="$WORK/r-noagent"; make_release "$R"; projection ready OK none | jq 'del(.agents["command-entry-sequential"])' > "$R/fake/config.json"
+out="$(run "$R" deny)"
+check 'entrada sin agente proyectado falla visible, sin mutar ni heredar' "$out" '.configAfter == "unchanged" and .result == "mefisto_entry_not_admitted:BINDING_INVALID"'
+
 R="$WORK/r-nores"; make_release "$R"; rm "$R/scripts/resolve-opencode-entry.sh"
 out="$(run "$R" deny)"
 check 'resolver ausente: no admision sin mutar config' "$out" '.configAfter == "unchanged" and (.result | startswith("mefisto_entry_not_admitted:"))'

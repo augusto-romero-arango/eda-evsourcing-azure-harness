@@ -87,9 +87,9 @@ export default async function mefistoCommandEntry(input = {}) {
       for (const row of bindings) {
         const name = agentId(row.command);
         const proposed = agents[name];
-        const agent = { ...(plain(proposed) ? proposed : { permission: { "*": "deny" } }), mode: "primary" };
+        if (row.agent !== name || row.admitted !== false || !plain(proposed)) return await fail("BINDING_INVALID");
+        const agent = { ...proposed, mode: "primary" };
         delete agent.model; delete agent.variant;
-        if (row.agent !== name || row.admitted !== false) return await fail("BINDING_INVALID");
         const existing = plain(cfg.agent) ? cfg.agent[name] : undefined;
         const command = plain(cfg.command) ? cfg.command["mefisto:" + row.command] : undefined;
         if (!plain(command)) return await fail("COMMAND_MISSING");
