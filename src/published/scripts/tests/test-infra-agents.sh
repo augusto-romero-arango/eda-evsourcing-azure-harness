@@ -53,10 +53,11 @@ else
     fail 'fixture de fuentes del infra-reviewer incompleta'
 fi
 if jq -e '
-    .schemaVersion == 1 and (.cases | length) == 4 and
+    .schemaVersion == 1 and (.cases | length) == 5 and
     any(.cases[]; .id == "local-module-sufficient" and .queryTerms == [] and .expected == "local-artifact") and
     any(.cases[]; .id == "pinned-v4-mcp-latest-v5" and .lockVersion == "4.81.0" and .constraint == "~> 4.0" and .latestVersion == "5.0.1" and .mcpDiscovered == true and (.queryTerms | index("4.81.0")) != null and (.queryTerms | index("5.0.1")) == null and .expected == "mcp-version-locked-docs") and
     any(.cases[]; .id == "pinned-v4-web-fallback" and .mcpDiscovered == false and .webAvailable == true and (.source | startswith("https://registry.terraform.io/providers/hashicorp/azurerm/4.81.0/")) and .expected == "web-version-locked-docs") and
+    any(.cases[]; .id == "mcp-connection-failed-no-web" and .mcpDiscovered == true and .mcpConnected == false and .webAvailable == false and .expected == "NO VERIFICADO") and
     any(.cases[]; .id == "no-external-source" and .mcpDiscovered == false and .webAvailable == false and .queryTerms == [] and .expected == "NO VERIFICADO") and
     all(.cases[] | select(.queryTerms | length > 0); all(.queryTerms[]; IN("hashicorp azurerm", "4.81.0", "linux_function_app application_stack")))
 ' "$WRITER_SOURCE_FIXTURES" >/dev/null 2>&1; then
@@ -82,6 +83,7 @@ for statement in \
     'primero lee `required_providers` y `.terraform.lock.hcl` del ambiente objetivo' \
     'no uses documentacion v5 para afirmar argumentos v4 ni modifiques pins' \
     'herramientas Terraform MCP estan descubiertas y permitidas en esta corrida' \
+    'falla su conexion o no entregan documentacion de la version requerida' \
     'usa WebSearch solo para localizar y WebFetch para comprobar la documentacion publica oficial' \
     'marca los argumentos como **NO VERIFICADO** y no escribas ni afirmes HCL que dependa de ellos' \
     'no pidas una herramienta, no instales MCP automaticamente y no uses `curl`, `sudo`' \
@@ -114,6 +116,7 @@ claude_reviewer="$(< "$WORK/dist/claude/agents/infra-reviewer.md")"
 contains "$claude_writer" 'mcp__terraform__*' 'Claude writer expone el matcher corto de terraform'
 contains "$claude_writer" 'mcp__plugin_terraform_terraform__*' 'Claude writer expone el matcher scoped del plugin terraform'
 contains "$claude_writer" 'tools: "Read, Glob, Grep, Edit, Write, Bash, WebFetch, WebSearch, mcp__terraform__*, mcp__plugin_terraform_terraform__*"' 'Claude writer suma solo el par web y conserva matchers Terraform'
+absent "$claude_writer" 'AskUserQuestion' 'Claude writer no puede pedir herramientas ni aprobacion'
 contains "$claude_writer" 'model: "sonnet"' 'Claude writer materializa perfil balanced'
 contains "$claude_reviewer" 'model: "opus"' 'Claude reviewer materializa perfil deep'
 contains "$claude_reviewer" 'tools: "Read, Glob, Grep, Edit, Write, Bash, WebFetch, WebSearch"' 'Claude reviewer conserva Read/Edit/Bash y suma solo el par web'
@@ -124,6 +127,8 @@ opencode_reviewer="$(< "$WORK/dist/opencode/agents/infra-reviewer.md")"
 contains "$opencode_writer" '"terraform_*":true' 'OpenCode writer habilita terraform_*'
 contains "$opencode_writer" '"webfetch":"allow"' 'OpenCode writer permite WebFetch solo en este rol'
 contains "$opencode_writer" '"websearch":"allow"' 'OpenCode writer permite WebSearch solo en este rol'
+contains "$opencode_writer" '"question":"deny"' 'OpenCode writer no puede pedir herramientas ni aprobacion'
+contains "$opencode_writer" '"curl *":"deny"' 'OpenCode writer no sustituye fuentes con curl'
 contains "$opencode_reviewer" '"terraform_*":false' 'OpenCode reviewer deniega terraform_*'
 contains "$opencode_reviewer" '"webfetch":"allow"' 'OpenCode reviewer permite WebFetch'
 contains "$opencode_reviewer" '"websearch":"allow"' 'OpenCode reviewer permite WebSearch'

@@ -36,11 +36,11 @@ find infra/ -name "*.tf" | head -30
 
 Para un modulo o recurso ya cubierto por los ADRs y los modulos locales, esas son las fuentes suficientes: no hagas una consulta externa gratuita. Para un recurso, modulo comunitario o argumento Terraform nuevo o incierto, primero lee `required_providers` y `.terraform.lock.hcl` del ambiente objetivo. El lock fija la version efectiva; si no existe, explicita el limite que permite el constraint. `get_latest_provider_version` y una pagina `latest` no prueban la version instalada: si solo conoces `~> 4.0`, no uses documentacion v5 para afirmar argumentos v4 ni modifiques pins.
 
-Con la version o linea requerida identificada, aplica este orden:
+Con la version o linea requerida identificada, aplica este orden hasta obtener evidencia:
 
 1. Si las herramientas Terraform MCP estan descubiertas y permitidas en esta corrida, usalas primero: `get_provider_capabilities` y `get_provider_details` para recursos del provider; `search_modules` y `get_module_details` para modulos comunitarios. Consulta `get_latest_provider_version` solo como informacion comparativa, nunca como sustituto del lock o constraint.
-2. Si esas herramientas no estan descubiertas o permitidas, usa WebSearch solo para localizar y WebFetch para comprobar la documentacion publica oficial del provider o Registry HashiCorp correspondiente a la version o linea requerida.
-3. Si no existe ninguna de esas vias, falla la conexion, o no hay documentacion para la version requerida, marca los argumentos como **NO VERIFICADO** y no escribas ni afirmes HCL que dependa de ellos. No los infieras de memoria, no pidas una herramienta, no instales MCP automaticamente y no uses `curl`, `sudo` ni otra llamada de red como sustituto.
+2. Si esas herramientas no estan descubiertas o permitidas, falla su conexion o no entregan documentacion de la version requerida, usa WebSearch solo para localizar y WebFetch para comprobar la documentacion publica oficial del provider o Registry HashiCorp correspondiente a esa version o linea, siempre que ambas herramientas web esten disponibles.
+3. Si ninguna de esas vias produce la evidencia requerida, marca los argumentos como **NO VERIFICADO** y no escribas ni afirmes HCL que dependa de ellos. No los infieras de memoria, no pidas una herramienta, no instales MCP automaticamente y no uses `curl`, `sudo` ni otra llamada de red como sustituto.
 
 En MCP y web envia exclusivamente identificadores tecnicos publicos: provider, version, recurso, modulo o argumento. Nunca envies el issue, HCL completo, configuracion, estado, identificadores del consumidor, secretos o payloads. La metadata de `mcp` o `web` no demuestra que una herramienta este disponible, que haya conectividad o que exista documentacion para la version requerida (contrato de fuentes de #1822, MEF-ADR-0055 y MEF-ADR-0050/0053.5).
 
