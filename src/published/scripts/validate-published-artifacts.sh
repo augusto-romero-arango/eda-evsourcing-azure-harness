@@ -94,7 +94,7 @@ EOF
             if (id == "mcp-scaffolder" && value ~ /^\$\{(APP_NAME|PR_NUM|REPO|RUN_SHA|app_name|azure_region_short|body|code|dominio_kebab|espera|expected_sha|intentos|i|project|proposito_kebab|region_seq_suffix|resource_sequence|startup_logs_url|transcurrido|ultimo_cuerpo)\}$/) return 1
             if (id == "historiador" && value ~ /^\$(0|BRANCH|DIAS_PENDIENTES|FECHA|HISTORIAL|HISTORIAL_CANONICO|f)$/) return 1
             if (id == "historiador" && (value == "${FECHA}" || value == "${FECHA_MAS_RECIENTE}")) return 1
-            if (id == "install-apim" && value ~ /^\$(COMMON|CONFIG|CORS_JSON|ESTRATEGIA|HARNESS_CONFIG_PATH|REPO_ROOT|ROOT_NAMESPACE|TENANCY_TOKEN_FLIPPED|TMP|s)$/) return 1
+            if (id == "install-apim" && value ~ /^\$(COMMON|CONFIG|CORS_JSON|ESTRATEGIA|HARNESS_CONFIG_PATH|REPO_ROOT|ROOT_NAMESPACE|SETTER_RESULT|TENANCY_TOKEN_FLIPPED|TMP|s)$/) return 1
             if (id == "install-apim" && (value == "${ENV}" || value == "${ROOT_NAMESPACE}")) return 1
             if (id == "onboard" && value ~ /^\$(COMMON|CONFIG|ESTRATEGIA|HARNESS_CONFIG_PATH|REPO_ROOT|TMP|s)$/) return 1
             if (id == "install-auth" && (value == "${ENV}" || value == "${#CORS_ORIGINS[@]}" || value == "$?")) return 1

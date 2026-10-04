@@ -66,6 +66,7 @@ TOOLING_CLOSURE_ASSETS=(
     'scripts/scaffold-pipeline.sh|0755'
     'scripts/field-note.sh|0755'
     'scripts/register-harness-secret.sh|0755'
+    'scripts/set-harness-tenancy.sh|0755'
     'scripts/seed-secret.sh|0755'
     'scripts/next-order.sh|0755'
     'scripts/metrics-report.sh|0755'

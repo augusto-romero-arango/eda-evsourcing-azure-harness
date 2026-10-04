@@ -167,7 +167,7 @@ PUBLISHED_PIPELINES=(
     tooling-pipeline.sh parallel-pipeline.sh batch-pipeline.sh pr-sync.sh
     tdd-pipeline.sh iac-pipeline.sh scaffold-pipeline.sh tmux-pipeline.sh
     appinsights-query.sh setup-github-ci.sh setup-github-labels.sh
-    bootstrap-backend.sh seed-secret.sh onboard-diagnose.sh onboard-migrate-directives.sh purge-store.sh
+    bootstrap-backend.sh seed-secret.sh set-harness-tenancy.sh onboard-diagnose.sh onboard-migrate-directives.sh purge-store.sh
 )
 
 for pipe in "${PUBLISHED_PIPELINES[@]}"; do
@@ -197,7 +197,7 @@ echo "[C2] Scripts auxiliares publicados: el guard aborta cuando se ejecutan en 
 
 AUX_SCRIPTS=(
     appinsights-query.sh setup-github-ci.sh setup-github-labels.sh
-    bootstrap-backend.sh seed-secret.sh onboard-diagnose.sh onboard-migrate-directives.sh update-plugin.sh upgrade.sh
+    bootstrap-backend.sh seed-secret.sh set-harness-tenancy.sh onboard-diagnose.sh onboard-migrate-directives.sh update-plugin.sh upgrade.sh
     purge-store.sh next-order.sh field-note.sh
 )
 

@@ -296,49 +296,14 @@ fi
 #### 9.2 Flip del token
 
 ```bash
-REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || { echo "ERROR: no estas en un repositorio git"; exit 1; }
-
-COMMON="${MEFISTO_PACKAGE_ROOT}/scripts/_pipeline-common.sh"
-if [ ! -f "$COMMON" ]; then
-  echo "ERROR: no se hallo _pipeline-common.sh en el paquete activo ($COMMON)."
-  exit 1
-fi
-source "$COMMON"
-CONFIG=$(resolve_harness_config_path write "$REPO_ROOT") || exit 1
-
-if ! load_harness_config >/dev/null; then
-  echo "ERROR: el config efectivo no es válido. Corrígelo antes de escribir $CONFIG."
-  exit 1
-fi
-
-ESTRATEGIA=$(jq -r '.tenancy.strategy // "mono-tenant-transitorio"' "$HARNESS_CONFIG_PATH")
-TENANCY_TOKEN_FLIPPED=false
-if [ "$HARNESS_CONFIG_PATH" != "$CONFIG" ]; then
-  echo "ERROR: el config efectivo todavía es legacy ($HARNESS_CONFIG_PATH)."
-  echo "       Migra primero el config a $CONFIG; los escritores nuevos no modifican la ruta legacy."
-  exit 1
-elif [ "$ESTRATEGIA" = "multi-tenant-header" ]; then
-  echo "OK: tenancy.strategy ya esta en etapa (b) en $HARNESS_CONFIG_PATH."
-elif ! command -v jq >/dev/null 2>&1; then
-  echo "ERROR: jq no esta instalado. Requerido para escribir $CONFIG."
-  exit 1
-else
-  TMP=$(mktemp)
-  if jq --arg s "multi-tenant-header" '.tenancy = ((.tenancy // {}) + {strategy: $s})' "$CONFIG" > "$TMP" \
-      && jq empty "$TMP" && mv "$TMP" "$CONFIG"; then
-    TENANCY_TOKEN_FLIPPED=true
-    echo "OK: tenancy.strategy = \"multi-tenant-header\" escrito en $CONFIG."
-  else
-    rm -f "$TMP"
-    echo "ERROR: no se pudo escribir $CONFIG (revisa que sea JSON valido)."
-    exit 1
-  fi
-fi
+SETTER_RESULT=$( MEFISTO_RUNTIME=claude "${MEFISTO_PACKAGE_ROOT}/scripts/set-harness-tenancy.sh" --strategy multi-tenant-header ) || exit 1
+CONFIG=$(printf '%s' "$SETTER_RESULT" | jq -er '.configPath') || exit 1
+TENANCY_TOKEN_FLIPPED=$(printf '%s' "$SETTER_RESULT" | jq -r 'if (.changed | type) == "boolean" then .changed else error("changed debe ser booleano") end') || exit 1
 ```
 
-- Si ya es `"multi-tenant-header"`: no toques el archivo. Repórtalo "ya en etapa (b)" y segui directo al 9.3 -- puede haber dominios scaffoldeados entre corridas que todavia no se migraron.
-- Cualquier otro valor, incluido `"mono-tenant-transitorio"` o un campo ausente, se trata como etapa (a) y se actualiza exclusivamente en el config canónico. El objeto `tenancy` conserva sus demas campos.
-- Si no hay config efectivo o si solo existe el legacy, el bloque termina con un error bloqueante antes del 9.3. En el segundo caso migra primero el archivo completo a `.mefisto/harness.config.json`; este skill nunca crea, copia ni modifica el config legacy.
+- Si `changed` es `false`: no toques el archivo. Repórtalo "ya en etapa (b)" y segui directo al 9.3 -- puede haber dominios scaffoldeados entre corridas que todavia no se migraron.
+- El setter actualiza exclusivamente el config canónico, conserva los demas campos de `tenancy` y devuelve la ruta realmente escrita en `configPath`.
+- Si no hay config efectivo o si solo existe el legacy, el setter termina con un error bloqueante antes del 9.3. En el segundo caso migra primero el archivo completo a `.mefisto/harness.config.json`; este skill nunca crea, copia ni modifica el config legacy.
 
 #### 9.3 Scaffold de la biblioteca `src/<RootNamespace>.TenantResolver/` (CA-1, MEF-ADR-0028 seccion 4)
 
