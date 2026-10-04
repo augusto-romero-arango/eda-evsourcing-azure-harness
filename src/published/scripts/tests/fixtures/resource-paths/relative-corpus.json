@@ -1,0 +1,6 @@
+[
+  { "base": "base", "target": "base/child", "relative": "child" },
+  { "base": "base/left", "target": "base/right", "relative": "../right" },
+  { "base": "base/left/child", "target": "base", "relative": "../.." },
+  { "base": "base/same", "target": "base/same", "relative": "" }
+]
