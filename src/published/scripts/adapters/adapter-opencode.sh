@@ -156,7 +156,7 @@ trimmed_sha256() {
 }
 
 render_command_entry_manifest() {
-    local catalog source rel marker rendered hash templates='[]' delegated='[]' command agent
+    local catalog source rel marker rendered hash native_binding legacy_binding templates='[]' delegated='[]' command agent
     catalog="$(command_entry_catalog)" || return 1
     while IFS= read -r command; do
         source="$REPO_ROOT/src/published/commands/$command.md"
@@ -164,7 +164,9 @@ render_command_entry_manifest() {
         marker="<!-- GENERADO por src/published/scripts/generate-published-adapters.sh desde $rel. No editar a mano. -->"
         rendered="$(render "$source" "$marker")" || return 1
         hash="$(printf '%s' "$rendered" | body /dev/stdin | trimmed_sha256)" || return 1
-        templates="$(jq -cn --argjson prior "$templates" --arg id "$command" --arg sha256 "$hash" '$prior + [{kind:"command",id:$id,sha256:$sha256}]')" || return 1
+        native_binding="$(printf '%s' "$rendered" | frontmatter /dev/stdin | jq -c 'if has("command-entry-id") then {commandEntryId:."command-entry-id",subtask:(.subtask // false)} else null end')" || return 1
+        legacy_binding="$(jq -cn --arg id "$command" '{commandEntryId:$id,subtask:false}')" || return 1
+        templates="$(jq -cn --argjson prior "$templates" --arg id "$command" --arg sha256 "$hash" --argjson nativeBinding "$native_binding" --argjson legacyBinding "$legacy_binding" '$prior + [{kind:"command",id:$id,sha256:$sha256,nativeBinding:$nativeBinding,legacyBinding:$legacyBinding}]')" || return 1
         while IFS= read -r agent; do
             [ -n "$agent" ] || continue
             source="$REPO_ROOT/src/published/agents/$agent.md"
