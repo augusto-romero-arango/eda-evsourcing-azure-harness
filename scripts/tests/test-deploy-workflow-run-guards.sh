@@ -56,6 +56,7 @@ for label, path, header in (
         if j:
             txt = j.group(0)
             check(ORIGIN in txt, f"[{label}] CA-2 {job} incluye la guarda de origen")
+            check("# Guarda de origen repetida junto al checkout" in txt, f"[{label}] CA-2 {job} explica por que repite la guarda")
             check("needs.determinar-alcance.outputs.debe_desplegar == 'true'" in txt, f"[{label}] CA-2 {job} conserva debe_desplegar")
             if label == "domain" and job == "deploy":
                 check("github.event_name != 'pull_request'" in txt, "[domain] CA-2 deploy conserva la exclusion de pull_request")
