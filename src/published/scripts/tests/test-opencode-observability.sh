@@ -53,6 +53,7 @@ const root = process.argv[2];
 const logs = [];
 const client = { app: { log: async (value) => logs.push(value) } };
 const observationIdentity = JSON.parse(process.env.OBSERVATION_IDENTITY);
+const markerFixture = JSON.parse(process.env.OBSERVATION_FIXTURE);
 const observations = new Map();
 globalThis[Symbol.for("mefisto.original-tool-observation.v1")] = observations;
 const mark = (context, input, value, identity = observationIdentity) => observations.set(JSON.stringify([identity[0], identity[1], context.project?.id, context.directory, input.sessionID, input.callID]), value);
@@ -78,17 +79,17 @@ const projectA = { directory: root, project: { id: "project-a" }, client };
 const projectB = { directory: root, project: { id: "project-b" }, client };
 const observedA = await plugin(projectA);
 const observedB = await plugin(projectB);
-const testCall = { sessionID: "same-session", callID: "same-call", tool: "bash", args: { command: "context-prefix SENTINELA dotnet test" } };
-const terraformCall = { sessionID: "same-session", callID: "same-call", tool: "shell", args: { command: "context-prefix SENTINELA terraform init" } };
-mark(projectA, testCall, { family: "test", subcommand: "test" });
-mark(projectB, terraformCall, { family: "terraform", subcommand: "init" });
+const testCall = { sessionID: "same-session", callID: "same-call", tool: "bash", args: { command: markerFixture.test.command } };
+const terraformCall = { sessionID: "same-session", callID: "same-call", tool: "shell", args: { command: markerFixture.terraform.command } };
+mark(projectA, testCall, markerFixture.test.marker);
+mark(projectB, terraformCall, markerFixture.terraform.marker);
 await observedA["tool.execute.after"](testCall, { metadata: { exitCode: 1 } });
 await observedB["tool.execute.after"](terraformCall, { metadata: { exitCode: 0 } });
-const unclassified = { sessionID: "null-session", callID: "null-call", tool: "bash", args: { command: "context-prefix SENTINELA dotnet test" } };
-mark(projectA, unclassified, null);
+const unclassified = { sessionID: "null-session", callID: "null-call", tool: "bash", args: { command: markerFixture.unclassified.command } };
+mark(projectA, unclassified, markerFixture.unclassified.marker);
 await observedA["tool.execute.after"](unclassified, { metadata: { exitCode: 0 } });
-const invalid = { sessionID: "invalid-session", callID: "invalid-call", tool: "shell", args: { command: "context-prefix SENTINELA terraform apply" } };
-mark(projectA, invalid, { family: "terraform", subcommand: "destroy" });
+const invalid = { sessionID: "invalid-session", callID: "invalid-call", tool: "shell", args: { command: markerFixture.invalid.command } };
+mark(projectA, invalid, markerFixture.invalid.marker);
 await observedA["tool.execute.after"](invalid, { metadata: { exitCode: 0 } });
 const repeated = { sessionID: "repeat-session", callID: "repeat-call", tool: "shell", args: { command: "context-prefix SENTINELA terraform apply" } };
 mark(projectA, repeated, { family: "terraform", subcommand: "apply" });
@@ -138,7 +139,7 @@ console.log(JSON.stringify({
 }));
 EOF
 ROOT="$WORK/repo sin git y con espacios"; mkdir -p "$ROOT"
-result="$(OBSERVATION_IDENTITY="$(jq -c '[.version, .commit]' "$REPO_ROOT/src/published/release-identity.json")" node "$WORK/probe.mjs" "$ROOT")"; rc=$?
+result="$(OBSERVATION_IDENTITY="$(jq -c '[.version, .commit]' "$REPO_ROOT/src/published/release-identity.json")" OBSERVATION_FIXTURE="$(jq -c . "$HERE/fixtures/opencode-observability/original-tool-observations.json")" node "$WORK/probe.mjs" "$ROOT")"; rc=$?
 [ "$rc" -eq 0 ] && pass 'callbacks toleran repo no Git y paths con espacios' || fail 'callbacks fallaron'
 jq -e '.sessions | split("\n") | map(select(length > 0) | fromjson) | length == 3 and .[0] == {record_type:"session.started",session_id:"s",transcript_path:null,cwd:$root,source:null,timestamp:.[0].timestamp,runtime:"opencode",model:null,harness_version:.[0].harness_version,harness_commit:.[0].harness_commit} and [.[].model] == [null,"azure/a","azure/b"] and all(.[].timestamp; test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"))' --arg root "$ROOT" <<< "$result" >/dev/null && pass 'inicio null y modelos concurrente/repetido/cambiado respetan la allowlist' || fail 'sesiones o deduplicacion invalidas'
 jq -e '.events | split("\n") | map(select(length > 0) | fromjson) | length == 10 and .[0].file_path == "src/con espacios.cs" and .[1].file_path == "(desconocido)" and .[2].result == "PASS" and .[3].result == "FAIL" and .[4] == {time:.[4].time,family:"terraform",terraform_subcommand:"apply",result:"ERROR"} and .[5].terraform_subcommand == "plan" and .[5].result == "OK" and .[6].terraform_subcommand == "validate" and .[6].result == "ERROR" and .[7] == {time:.[7].time,family:"test",result:"FAIL"} and .[8] == {time:.[8].time,family:"terraform",terraform_subcommand:"init",result:"OK"} and .[9] == {time:.[9].time,family:"terraform",terraform_subcommand:"apply",result:"ERROR"}' <<< "$result" >/dev/null && pass 'marcadores preservan familia, resultado y consumo unico sin inspeccionar el prefijo' || fail 'resumen de herramientas invalido'
