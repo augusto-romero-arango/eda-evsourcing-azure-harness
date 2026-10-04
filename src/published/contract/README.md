@@ -489,6 +489,10 @@ NuGet y no crea directorios. Rechaza roots amplias y assets explícitos ausentes
 corruptos o fuera del worktree físico. Se distribuye junto con
 `src/published/scripts/lib/resource-paths.sh`, que conserva su ruta relativa
 para que el script sea una clausura autocontenida (MEF-ADR-0031 y MEF-ADR-0053).
+Invoca exclusivamente `dotnet nuget locals global-packages --list
+--force-english-output`, por argumentos y desde la raíz física indicada. Usa 0
+para `resolved`, 1 para `unavailable`/`conflict` con envelope JSON y 2 para uso
+o protocolo inválido; nunca sustituye una consulta fallida por el home.
 
 ## Descubrimiento de raíces OpenCode
 
