@@ -211,7 +211,21 @@ batch_autonomy_preflight() {
     PREFLIGHT_DIAG=$(printf '%s' "$out" | jq -r '[.diagnostics[]? | select(type == "string" and test("^[A-Za-z0-9_#:.-]+$"))] | join(",")' 2>/dev/null) || PREFLIGHT_DIAG=""
     PREFLIGHT_DEFERRED=$(printf '%s' "$out" | jq -r '[.checks[]? | select(.state == "deferred" and (.code|type) == "string" and (.owner|type) == "string") | "\(.code)@\(.owner)"] | map(select(test("^[A-Za-z0-9_#:./@-]+$"))) | join(",")' 2>/dev/null) || PREFLIGHT_DEFERRED=""
     if [ "$rc" -eq 0 ]; then
-        case "$PREFLIGHT_STATUS" in legacy|ready-to-dispatch) return 0 ;; esac
+        case "$PREFLIGHT_STATUS" in
+            legacy)
+                # Un contexto transportado nunca degrada a legacy (CA-5).
+                [ "$src" = command ] || return 0
+                PREFLIGHT_STATUS="invalid"; PREFLIGHT_DIAG="PREFLIGHT_LEGACY_WITH_CONTEXT"; return 1 ;;
+            ready-to-dispatch)
+                # Fail-closed (CA-3): todo check clasificado; deferred solo con propietario;
+                # ningun block ni estado desconocido presentado como admision.
+                if printf '%s' "$out" | jq -e '(.checks | type == "array") and all(.checks[];
+                        (.state | IN("pass","deferred","not-applicable"))
+                        and (.state != "deferred" or ((.owner | type) == "string" and (.owner | length) > 0)))' >/dev/null 2>&1; then
+                    return 0
+                fi
+                PREFLIGHT_STATUS="invalid"; PREFLIGHT_DIAG="PREFLIGHT_CHECKS_INCONSISTENT"; return 1 ;;
+        esac
     fi
     if [ "$rc" -eq 75 ]; then
         PREFLIGHT_STATUS="busy"; PREFLIGHT_DIAG="${PREFLIGHT_DIAG:-PREFLIGHT_BUSY}"

@@ -134,6 +134,17 @@ run_case "" 501
 echo "$OUT" | grep -qF "STAGE_ACTOR_GUARD@run-published-agent.sh/#1858" && pass "deferred con propietario" || fail "deferred perdido"
 echo "$OUT" | grep -qF "no es permiso efectivo futuro" && pass "no declara permiso futuro" || fail "falta aviso"
 
+echo "[5b] CA-3: ready-to-dispatch inconsistente falla cerrado"
+NO_OWNER='{"status":"ready-to-dispatch","diagnostics":[],"checks":[{"code":"STAGE_ACTOR_GUARD","state":"deferred","owner":"","actionCode":"X"}]}'
+UNKNOWN='{"status":"ready-to-dispatch","diagnostics":[],"checks":[{"code":"PROFILE_CONSENT","state":"unknown","owner":"preflight","actionCode":"X"}]}'
+WITH_BLOCK='{"status":"ready-to-dispatch","diagnostics":[],"checks":[{"code":"PROFILE_CONSENT","state":"block","owner":"preflight","actionCode":"X"}]}'
+for variant in "$NO_OWNER" "$UNKNOWN" "$WITH_BLOCK"; do
+    VN=$((${VN:-0}+1)); new_case "fiveb$VN"; echo "0 $variant" > "$PF_DIR/mode.1"
+    run_case "" 501
+    [ "$RC" -ne 0 ] && [ ! -s "$CALLS" ] && echo "$OUT" | grep -qF PREFLIGHT_CHECKS_INCONSISTENT \
+        && pass "rechaza ready-to-dispatch inconsistente ($VN)" || fail "despacho con checks inconsistentes ($VN, rc=$RC)"
+done
+
 echo "[6] CA-4: reevaluacion antes del eslabon siguiente"
 new_case seven; echo "0 $READY" > "$PF_DIR/mode.1"; echo "1 $BLOCKED" > "$PF_DIR/mode.2"
 run_case "" 501 502 503
