@@ -31,6 +31,15 @@ check_agent() {
 "$GENERATOR" --out "$WORK/release" >/dev/null
 for agent in test-writer reviewer bug-investigator; do check_agent "$agent"; done
 
+for agent in test-writer reviewer bug-investigator; do
+    source="$REPO_ROOT/src/published/agents/$agent.md"
+    if grep -Fq 'unavailable o en conflicto' "$source" && grep -Fq 'No se encontro $PACKAGE_ID_LOWER/$PACKAGE_VERSION/lib/$TFM/$ASSEMBLY' "$source"; then
+        pass "$agent deja unavailable/conflict y ausencia como inspeccion no verificada"
+    else
+        fail "$agent puede declarar completa una inspeccion sin assembly"
+    fi
+done
+
 BUG="$REPO_ROOT/src/published/agents/bug-investigator.md"
 if [ "$(grep -Fc 'resolve-nuget-resources.sh --worktree-root' "$BUG")" -ge 1 ] && \
    grep -Fq 'OLD_ASSEMBLY' "$BUG" && grep -Fq 'NEW_ASSEMBLY' "$BUG" && \
