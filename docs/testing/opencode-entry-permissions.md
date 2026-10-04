@@ -5,11 +5,15 @@ pura del adaptador publicado. Implementa el subconjunto verificable de
 `Permission.evaluate`, `Permission.fromConfig` y `Wildcard.match` de OpenCode
 v1.18.29: <https://github.com/anomalyco/opencode/blob/v1.18.29/packages/opencode/src/permission/index.ts>
 y <https://github.com/anomalyco/opencode/blob/v1.18.29/packages/core/src/util/wildcard.ts>.
+La forma de configuracion y la precedencia de la conversion legacy se fijan en
+<https://github.com/anomalyco/opencode/blob/v1.18.29/packages/core/src/v1/config/permission.ts>
+y <https://github.com/anomalyco/opencode/blob/v1.18.29/packages/opencode/src/config/config.ts#L567-L577>.
 
 Recibe JSON por `stdin` y se invoca con `jq -L ... 'include
 "opencode-entry-permissions"; entry_permissions'`. No lee configuracion, no
 ejecuta comandos y no modifica sesiones. Su salida versionada contiene solo
-codigos, permiso e indice; nunca reproduce candidatos, patrones ni payloads.
+datos de politica y decisiones. Sus diagnosticos contienen solo codigo, permiso
+e indice; nunca reproducen candidatos, patrones ni payloads.
 
 ## Operaciones
 
@@ -20,9 +24,12 @@ codigos, permiso e indice; nunca reproduce candidatos, patrones ni payloads.
 - `compose`: materializa las restricciones globales sobre la politica gestionada.
   Un allow global no concede fuera de la gestionada y un deny conservado gana por
   posicion. Rechaza toda interseccion no representable o mas de 1024 reglas por
-  permiso con un conflicto.
+  permiso con un conflicto y sin devolver una politica parcial. Un `ask` global
+  solo se convierte en `allow` cuando la entrada declara consentimiento vigente;
+  `auto` no participa en esa decision.
 - `certify-session`: exige consentimiento vigente y observacion de sesion. Un
-  deny o ask sobre una operacion requerida rechaza la entrada; las aprobaciones
+  deny o ask efectivo sobre una operacion requerida rechaza la entrada; una
+  sesion observada vacia conserva la decision gestionada. Las aprobaciones
   recordadas no son una autoridad adicional.
 
 El matcher normaliza barras inversas, expande `~` y `$HOME` solo con el `home`
