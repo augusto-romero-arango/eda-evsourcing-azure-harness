@@ -44,17 +44,83 @@ forma implícita (MEF-ADR-0052).
 
 ## Autonomia desatendida por proyecto
 
-MEF-ADR-0055 define el contrato objetivo, opt-in y neutral de autonomia
-desatendida: el perfil se declara en `.mefisto/harness.config.json` y la
-autorizacion/evidencia por corrida se conserva en `.mefisto/pipeline/`. La
-declaracion no contiene secretos ni equivale por si sola al consentimiento del
-operador; la admision debe usar una autorizacion aprobada antes de ejecutar.
+MEF-ADR-0055 define una autonomia opt-in y neutral: el perfil se declara en
+`.mefisto/harness.config.json` y el consentimiento se conserva por separado.
+`autonomy-profile.validate.jq` es un validador puro: recibe un único JSON por
+stdin, no lee disco, Git, red, reloj ni variables del host, y no activa perfiles
+ni materializa permisos. Un consumidor sin `autonomy`, incluido uno con el
+contrato legacy, permanece `disabled` sin obligación de adopción.
 
-Este contrato no implementa todavia ese schema, el registro, el preflight ni
-los bindings de permisos. Las capacidades actuales y los fallbacks de lectura
-legacy siguen siendo los de MEF-ADR-0053. Las implementaciones posteriores
-deben conservar la configuracion global ajena, las releases inmutables y la
-compatibilidad de consumidores que solo usan Claude.
+### Envelope de entrada
+
+El caller extrae `autonomy` del config y construye este objeto cerrado:
+
+```json
+{
+  "profile": { "schemaVersion": 1, "id": "operacion-local", "revision": 1,
+    "commands": ["sequential"], "administration": [] },
+  "consent": null,
+  "context": { "projectId": "proyecto-demo", "profileDigest": "<sha-256>" },
+  "catalog": ["sequential", "bitacora"]
+}
+```
+
+`profile` es `null` cuando no hay declaración; de otro modo es exactamente el
+subobjeto `autonomy`. Sus campos son cerrados: `schemaVersion: 1`, `id`
+kebab-case, `revision` entero positivo, `commands` no vacío, único y sin el
+prefijo `mefisto:`, y `administration` (posiblemente vacío). Cada grant tiene
+solo `command`, `action`, `environment`, `resources` y, opcionalmente,
+`planDigest`. Los ids lógicos de `command` deben estar en `commands`; los
+recursos son referencias no vacías, no valores de credenciales. `planDigest`,
+cuando la operación exige plan o diagnóstico aprobado, es SHA-256. El contrato
+valida forma y referencias; no deduce del texto de un issue una autorización
+para una operación real.
+
+`catalog` es el array no vacío y sin duplicados de ids kebab-case suministrado
+por la release. Así un id agregado o retirado exige actualizar el catálogo del
+caller: no hay permisos por prefijo ni catálogo piloto hardcodeado.
+
+El consentimiento separado es `null` o el objeto cerrado
+`{schemaVersion:1,projectId,profileDigest,decision,recordedAt}`. `decision` es
+`approved` o `revoked`, `profileDigest` es SHA-256 y `recordedAt` es ISO-8601
+con zona horaria. El digest enlaza el registro al perfil, pero no es firma ni
+prueba criptográfica de identidad humana. La ausencia de registro nunca
+aprueba; un proyecto ajeno o datos malformados son conflicto.
+
+### Digest normalizado
+
+El caller calcula `profileDigest` sobre los bytes UTF-8, sin salto final, de:
+
+```bash
+jq -j -cS '.autonomy' .mefisto/harness.config.json
+```
+
+`-cS` produce JSON compacto con las claves ordenadas del subobjeto válido y
+`-j` evita que `jq` agregue un salto final. Se calcula SHA-256 directamente
+sobre esos bytes; no sobre la salida habitual de `jq -cS`, que termina en
+salto de línea. La normalización no
+incluye el resto del config, timestamps, rutas de worktree ni la release. Por
+tanto un cambio ajeno a `autonomy` conserva el digest, mientras que una
+revisión, comando o grant distinto lo cambia. Los fixtures sintéticos y su hash
+estable están en `src/published/scripts/tests/fixtures/autonomy/`; los cambios de release o
+recursos técnicos se revalidan aparte y no equivalen por sí mismos a nuevo
+consentimiento.
+
+### Salida
+
+La salida siempre es el objeto cerrado
+`{schemaVersion,status,reasonCode,projectId,profileDigest,profile}`. Los
+estados son `disabled`, `needs-approval`, `ready` y `conflict`; `reasonCode` es
+estable (`NO_PROFILE`, `CONSENT_REQUIRED`, `CONSENT_DIGEST_MISMATCH`,
+`CONSENT_REVOKED`, `CONSENT_APPROVED` o un `INVALID_*`/`PROJECT_MISMATCH`).
+Solo una aprobación válida con proyecto y digest coincidentes produce `ready`.
+Una revocación coincidente produce `disabled`; la declaración ausente también.
+No representa aislamiento del host ni certificación de un runtime.
+
+```bash
+jq -c -f src/published/contract/autonomy-profile.validate.jq envelope.json
+src/published/scripts/tests/test-autonomy-profile-contract.sh
+```
 
 ## Permisos Bash de OpenCode
 
