@@ -4,6 +4,15 @@
 
 set -euo pipefail
 
+REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || {
+    echo "ERROR: no estas en un repositorio git" >&2
+    exit 1
+}
+if [ -f "$REPO_ROOT/.claude-plugin/plugin.json" ]; then
+    echo "ERROR: set-harness-tenancy.sh es del plugin publicado y solo aplica al consumidor." >&2
+    exit 1
+fi
+
 usage() {
     echo "Uso: set-harness-tenancy.sh --strategy <mono-tenant-transitorio|multi-tenant-header>" >&2
     exit 1
@@ -15,15 +24,6 @@ case "$STRATEGY" in
     mono-tenant-transitorio|multi-tenant-header) ;;
     *) usage ;;
 esac
-
-REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || {
-    echo "ERROR: no estas en un repositorio git" >&2
-    exit 1
-}
-if [ -f "$REPO_ROOT/.claude-plugin/plugin.json" ]; then
-    echo "ERROR: set-harness-tenancy.sh es del plugin publicado y solo aplica al consumidor." >&2
-    exit 1
-fi
 
 source "$(dirname "${BASH_SOURCE[0]}")/_pipeline-common.sh"
 
