@@ -1,0 +1,13 @@
+{
+  "elements": [
+    {
+      "type": "diagram",
+      "id": "diagram-1",
+      "code": "Client > API: Render",
+      "diagramType": "sequence-diagram"
+    }
+  ],
+  "scale": 2,
+  "theme": "dark",
+  "background": true
+}

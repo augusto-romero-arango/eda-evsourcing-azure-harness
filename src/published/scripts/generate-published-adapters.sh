@@ -81,6 +81,7 @@ TOOLING_CLOSURE_ASSETS=(
     'scripts/update-plugin.sh|0755'
     'scripts/upgrade.sh|0755'
     'scripts/autonomy-profile.sh|0755'
+    'scripts/render-eraser-diagram.sh|0755'
     'src/published/contract/autonomy-profile.validate.jq|0644'
     'src/runtime/mefisto-run-agent.sh|0755'
     'src/runtime/lib/mefisto-runtime.sh|0755'

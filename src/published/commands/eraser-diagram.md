@@ -35,26 +35,34 @@ Genera el codigo DSL siguiendo estrictamente la sintaxis documentada abajo segun
 - Un nodo por linea, pero los labels siempre en la misma linea
 - Usa `typeface clean` y `colorMode pastel` como defaults para legibilidad
 
-## Paso 3 - Llamar al API de Eraser
+## Paso 3 - Renderizar con Eraser
 
-IMPORTANTE: SIEMPRE ejecuta el curl despues de generar el DSL. Nunca te detengas solo con el DSL.
+IMPORTANTE: despues de generar el DSL, prepara el siguiente JSON regular en
+`.mefisto/pipeline/tmp/eraser-diagram-payload.json` con tus herramientas de
+archivo. Sustituye los dos marcadores por el DSL y el `diagramType` elegido; no
+incluyas `ERASER_API_TOKEN` en el archivo.
+
+```json
+{
+  "elements": [{
+    "type": "diagram",
+    "id": "diagram-1",
+    "code": "<DSL_GENERADO>",
+    "diagramType": "<TIPO>"
+  }],
+  "scale": 2,
+  "theme": "dark",
+  "background": true
+}
+```
+
+Ejecuta siempre el renderizador despues de preparar el archivo. El script toma
+la credencial exclusivamente del entorno y devuelve un JSON con `imageUrl` y
+`createEraserFileUrl`; no afirmes que el render fue exitoso si termina con
+error.
 
 ```bash
-curl -s -X POST https://app.eraser.io/api/render/elements \
-  -H "Content-Type: application/json" \
-  -H "X-Skill-Source: mefisto" \
-  -H "Authorization: Bearer ${ERASER_API_TOKEN}" \
-  -d '{
-    "elements": [{
-      "type": "diagram",
-      "id": "diagram-1",
-      "code": "<DSL_GENERADO>",
-      "diagramType": "<TIPO>"
-    }],
-    "scale": 2,
-    "theme": "dark",
-    "background": true
-  }'
+{{mefisto:run render-eraser-diagram.sh --payload-file .mefisto/pipeline/tmp/eraser-diagram-payload.json}}
 ```
 
 ## Paso 4 - Mostrar resultado
