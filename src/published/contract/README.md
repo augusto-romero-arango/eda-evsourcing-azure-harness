@@ -1013,3 +1013,37 @@ guard no es sandbox ni cubre la interpolacion previa del comando. El pin
 `MEFISTO_LOADED_RELEASE_ROOT` viaja solo por llamada y el preambulo OpenCode
 aborta si hay contexto sin pin valido. Pruebas:
 `src/published/scripts/tests/test-opencode-binding-guard.sh`.
+
+## Launcher de etapas publicadas preparadas (#1858)
+
+`scripts/run-published-agent.sh --pipeline <tdd|tooling|iac|scaffold> --context <ruta> --context-digest <sha> [--startup-timeout <s>] -- <argv del runner neutral>`
+lanza una etapa OpenCode solo despues de verificar la instancia privada que la ejecutara
+(MEF-ADR-0055). Corre desde la clausura de su propia release: broker, resolvers, runner y
+biblioteca de servicio salen de esa release; un override del runner es incompatible, no un bypass.
+No inicia este modo por la presencia de OpenCode en PATH, no invoca `approve` y no concede
+consentimiento. Sin perfil o con Claude los callers conservan su invocacion previa.
+
+Secuencia: (1) valida contexto/rol/pipeline/release y deriva el alias `autonomy-<rol>` del
+catalogo (el caller no pasa `--runtime-endpoint` ni `--execution-agent`); (2) reserva un contexto
+hijo con nonce propio (`reserve-child` + `attach`) antes del spawn e inicia un servicio privado
+con ese contexto; (3) `GET /agent` sobre la misma instancia, alias unico y no `subagent`, espera
+el `runtime-ready.json` del hijo dentro del plazo (30 s por defecto, 1-300) y compara
+nonce/digest/release/proyecto/alias/`projectionDigest`/PID de instancia contra el servicio propio y
+contra la observacion registrada en el broker; la observacion acotada (`name`, `mode`, hash de
+prompt, reglas) pasa por `resolve-agent-execution.sh` en fase `verify` (#1856); (4) cualquier
+fallo -- plugin ausente, config ignorado, alias ausente/subagent, ready ajeno o stale, error de SDK,
+sesion no verificable -- sale con **78** y `invocationStatus: not-started` en
+`<run>/launcher/<intento>.json`, sin invocar el runner (un SDK error no es una lista vacia
+conocida); (5) solo entonces invoca el runner con sus argumentos originales mas
+`--runtime-endpoint`/`--execution-agent`; el guard `chat.params` del binding rechaza un fallback
+del CLI antes del modelo. `--resume-session` exige `bind-session` en modo `resume` del broker y
+metadata SDK de la sesion (mismo `directory`); nunca degrada a sesion nueva.
+
+Salida: stdout es el del runner; el exit despues de iniciar es el del runner (cancelacion: 143).
+Preflight no iniciado: 78; contexto/reserva ocupados: 75. Al cierre confirma el cierre del
+servicio por PID/identidad propios (`runtime_service_stop`); si queda desconocido registra
+`cleanup: unknown` y conserva la referencia hija. La referencia padre nunca se libera aqui (hold/
+retry). Cada intento tiene nonce e identidad nuevos. Limitaciones: la politica global del verify
+se toma del `permission` de `opencode.json` del proyecto (ausente = vacia, ilegible = fallo); la
+configuracion global del usuario no se lee. La certificacion instalada queda en #1827. Pruebas:
+`scripts/tests/test-run-published-agent.sh` (dobles; sin runtime, LLM ni red).
