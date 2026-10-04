@@ -777,6 +777,43 @@ target canónico mediante `active`; `absent`,
 instantánea sin defensa contra TOCTOU; una versión futura del runtime con otra
 semántica de raíces requiere revalidación antes de reutilizar este oráculo.
 
+## Snapshot de recursos OpenCode
+
+`scripts/resolve-opencode-resources.sh --project-root <raíz-aprobada> --worktree-root <raíz-de-ejecución>`
+(release OpenCode, wrapper de `src/published/scripts/adapters/lib/opencode-resources.sh`) ensambla
+el descriptor de recursos de una corrida controlada. Recibe por stdin un envelope cerrado:
+`schemaVersion: 1`, `runtimeContext` (los campos de las raíces del host más `directory` y
+`worktree` absolutos observados por el plugin), `requiredResources` (ids cerrados `release`,
+`project`, `state`, `runtime-tool-output`, y `nuget-packages` solo si el caller lo declara) y
+`nugetAssetsFiles`. El caller confiable deriva esos requisitos de su matriz; ni un issue ni una
+tool call los amplían, y la release es siempre la que contiene al wrapper.
+
+La salida es `resolutionScope: resources` con `status` `disabled|needs-approval|ready|conflict`,
+`projectId`, `profileDigest`, `resourcesDigest`, `release`, `project`, `permissionBase`,
+`resources`, `protectedRoots`, `projection`, `nuget` y `diagnostics` (solo códigos, sin volcar
+entradas, configuración ni stderr). Exit 0 para `disabled`/`ready`, 1 para
+`needs-approval`/`conflict` con envelope válido y 2 para uso o protocolo inválido. `disabled` y
+`needs-approval` no entregan recursos; `NO_PROFILE` y `CONSENT_REVOKED` se distinguen en
+`diagnostics`, y la revocación no autoriza un fallback.
+
+Cada recurso lleva `id`, `root` física, `exists`, `maxAccess` (`read|project|state`, un límite de
+clase y **no un grant**: el rol conserva su `writeScope`), `relativeRoot` calculado contra el
+`worktree` lógico exacto, `aliases` verificados, `excludedPaths` y procedencia. Hay filas
+múltiples `project`/`state`/`nuget-packages`, identificadas por `id` + `root`. La carpeta
+`tool-output` completa del runtime es una clase `read` (decisión expresa del mantenedor: incluye
+resultados de otras sesiones, que pueden ser sensibles); `protectedRoots` conserva config,
+datos del runtime, `runtime-use/`, credenciales del home y los contextos de autonomía, con esa
+única excepción. Un consumidor debe usar ambas formas del candidato: la relativa al `worktree`
+(lectura) y la absoluta + `/*` (directorio externo). `ready` significa recursos solicitados
+descritos y verificados: no es permiso efectivo, restore fresco ni admisión de una operación.
+
+`resourcesDigest` es el SHA-256 del snapshot de datos canónico (release, base, roots, aliases,
+exclusiones, ledger y hashes de assets); excluye existencia, contenido o listado de
+`tool-output` y timestamps, de modo que crear una salida no invalida la autorización. Los
+errores de projection (`absent`, `drift`, `conflict`) impiden un `ready` nuevo y nunca cambian
+`active` ni adoptan otra release. Se prueba con `src/published/scripts/tests/test-opencode-resources.sh`
+(MEF-ADR-0031, MEF-ADR-0050 y MEF-ADR-0055).
+
 ## Matriz de verificación de fuentes
 
 `source-verification.json` declara las vías suficientes para cada uno de los 22
