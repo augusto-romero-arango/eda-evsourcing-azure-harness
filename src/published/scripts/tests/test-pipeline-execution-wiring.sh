@@ -85,5 +85,38 @@ OUT="$(run)"; case "$OUT" in *"close=0"*) pass "close sin ejecucion habilitada n
 SCRIPT_BODY='MEFISTO_EXECUTION_ENABLED=1; published_execution_close() { echo "outcome=$1"; return 3; }; pipeline_execution_close 143; echo "close=$?"'
 OUT="$(run)"; case "$OUT" in *"close=0"*) pass "un fallo de limpieza no altera el exit" ;; *) fail "close fallo: $OUT" ;; esac
 
+# --- ciclo de vida con un CLI de contexto falso (CA-1) ---
+cp "$REPO_ROOT/scripts/_execution-context.sh" "$PKG/scripts/"
+mkdir -p "$PKG/src/published/contract"
+cp "$REPO_ROOT/src/published/contract/agent-execution.json" "$PKG/src/published/contract/"
+cat > "$TMP/ec-cli.sh" <<'SH'
+#!/usr/bin/env bash
+op="$1"; req="$(cat)"; printf '%s\n' "$op" >> "${FAKE_EC_OPS:?}"
+case "$op" in
+    validate) printf '{"state":"attached","path":"x","digest":"d"}\n' ;;
+    prepare) printf '{"status":"prepared","digest":"d"}\n' ;;
+    attach) printf '{"path":"/p/c.json","digest":"d"}\n' ;;
+    finish) printf '%s\n' "$req" | jq -r '.outcome' >> "${FAKE_EC_OPS}.outcome" ;;
+esac
+SH
+chmod +x "$TMP/ec-cli.sh"
+export EC_EXECUTION_CONTEXT_CMD="$TMP/ec-cli.sh" FAKE_EC_OPS="$TMP/ec.ops"
+TWO_STAGES='pipeline_run_runner "'"$TMP"'/runner.sh" --agent writer; pipeline_run_runner "'"$TMP"'/runner.sh" --agent reviewer; echo "finish-entre-stages=$(grep -c finish "$FAKE_EC_OPS")"; pipeline_execution_close 1; echo "closed"'
+
+# contexto transportado: validate sin finish propio; el cierre del parent no toca el contexto ni sus hijos
+rm -f "$FAKE_EC_OPS" "$FAKE_EC_OPS.outcome"
+SCRIPT_BODY='pipeline_execution_open tooling "'"$TMP"'" "'"$PKG"'" "'"$PKG"'/src/runtime/lib" "'"$TMP"'/runner.sh" || echo OPEN-FAIL; '"$TWO_STAGES"
+OUT="$(run MEFISTO_EXECUTION_CONTEXT="$TMP/.mefisto/pipeline/autonomy/runs/r/contexts/c.json" MEFISTO_EXECUTION_DIGEST=d)"
+case "$OUT" in *OPEN-FAIL*) fail "transportado: $OUT" ;; *"finish-entre-stages=0"*closed*) pass "transportado: la referencia sigue viva entre stages" ;; *) fail "transportado: $OUT" ;; esac
+[ "$(grep -c finish "$FAKE_EC_OPS")" = 0 ] && pass "el cierre del parent no finaliza un contexto transportado (hijos conservados)" || fail "transportado finalizado por el parent"
+
+# perfil autorizado sin contexto: prepare+attach una vez, finish solo al cierre y con el outcome del exit
+rm -f "$FAKE_EC_OPS" "$FAKE_EC_OPS.outcome"; mkdir -p "$TMP/proj/.mefisto"; echo '{}' > "$TMP/proj/.mefisto/harness.config.json"
+SCRIPT_BODY='MEFISTO_RESOLVED_RUNTIME=opencode; pipeline_execution_open tooling "'"$TMP"'/proj" "'"$PKG"'" "'"$PKG"'/src/runtime/lib" "'"$TMP"'/runner.sh" || echo OPEN-FAIL; '"$TWO_STAGES"
+OUT="$(run)"
+case "$OUT" in *OPEN-FAIL*) fail "propio: $OUT" ;; *"finish-entre-stages=0"*closed*) pass "propio: el lease sigue activo entre stages" ;; *) fail "propio: $OUT" ;; esac
+eq "$(tr '\n' ' ' < "$FAKE_EC_OPS")" "prepare attach finish " "propio: un solo open y un solo close por pipeline"
+eq "$(cat "$FAKE_EC_OPS.outcome" 2>/dev/null)" "failed" "propio: el cierre refleja el exit original"
+
 printf '\n%s pasaron, %s fallaron\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
