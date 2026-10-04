@@ -83,6 +83,7 @@ TOOLING_CLOSURE_ASSETS=(
     'scripts/upgrade.sh|0755'
     'scripts/autonomy-profile.sh|0755'
     'scripts/fix-review-prepare.sh|0755'
+    'scripts/fix-review-receipts.sh|0755'
     'scripts/render-eraser-diagram.sh|0755'
     'scripts/resolve-nuget-resources.sh|0755'
     'src/published/scripts/lib/resource-paths.sh|0755'
