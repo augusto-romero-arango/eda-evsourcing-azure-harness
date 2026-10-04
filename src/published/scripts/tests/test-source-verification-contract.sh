@@ -89,7 +89,7 @@ if [ "$rc" -eq 0 ] && jq -e '
     any(.cases[]; .id == "domain-scaffolder" and .caseId == "nuget-api" and .status == "declared") and
     any(.cases[]; .id == "mcp-scaffolder" and .caseId == "nuget-version" and .status == "declared") and
     any(.cases[]; .id == "mcp-scaffolder" and .caseId == "nuget-api" and .status == "declared") and
-    any(.cases[]; .id == "infra-writer" and .caseId == "provider-pin" and .status == "external-unobserved") and
+    any(.cases[]; .id == "infra-writer" and .caseId == "provider-pin" and .status == "declared") and
     any(.cases[]; .id == "infra-reviewer" and .caseId == "provider-argument" and .status == "declared") and
     any(.cases[]; .id == "apim-gateway-scaffolder" and .caseId == "workos-discovery" and .status == "declared") and
     any(.cases[]; .id == "bug-investigator" and .caseId == "external-diagnosis" and .status == "declared") and
@@ -119,14 +119,23 @@ else
     fail 'reviewer no conserva la degradacion de fuente oficial'
 fi
 
-without_external="$(jq -c '(.roles[] | select(.id == "infra-writer")).mcp=[]' <<< "$envelope")"
+without_external="$(jq -c '(.roles[] | select(.id == "infra-writer")).mcp=[] | (.roles[] | select(.id == "infra-writer")).capabilities -= ["web"]' <<< "$envelope")"
 with_web="$(jq -c '(.roles[] | select(.id == "infra-writer")).capabilities += ["web"]' <<< "$without_external")"
 status_without="$(printf '%s' "$without_external" | jq -r -f "$FILTER" | jq -r '.cases[] | select(.id == "infra-writer" and .caseId == "provider-pin") | .status')"
 status_web="$(printf '%s' "$with_web" | jq -r -f "$FILTER" | jq -r '.cases[] | select(.id == "infra-writer" and .caseId == "provider-pin") | .status')"
 if [ "$status_without" = capability-missing ] && [ "$status_web" = declared ]; then
-    pass 'Terraform ausente bloquea y web declarado actua como fallback alternativo'
+    pass 'Terraform ausente sin web bloquea y web declarado actua como fallback alternativo'
 else
     fail "fallback Terraform inesperado: sin MCP=$status_without, con web=$status_web"
+fi
+
+if jq -e '
+    .roles[] | select(.id == "infra-writer") |
+    any(.cases[]; .caseId == "provider-pin" and .onMissing == "not-verified" and .options == [{"kind":"external-mcp","reference":"terraform"},{"kind":"web","reference":"documentacion oficial versionada del provider o Registry HashiCorp"}])
+' "$MATRIX" >/dev/null; then
+    pass 'writer declara MCP externo y web versionada como fallback sin certificar argumentos ausentes'
+else
+    fail 'writer no conserva el fallback versionado ni la degradacion NO VERIFICADO'
 fi
 
 planner_without_mcp="$(jq -c '(.roles[] | select(.id == "planner")).mcp=[]' <<< "$envelope")"

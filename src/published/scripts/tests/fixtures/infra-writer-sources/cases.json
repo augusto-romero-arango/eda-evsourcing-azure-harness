@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "cases": [
+    {"id":"local-module-sufficient","input":"ADR y modulo local cubren el recurso","mcpDiscovered":false,"webAvailable":false,"queryTerms":[],"expected":"local-artifact"},
+    {"id":"pinned-v4-mcp-latest-v5","lockVersion":"4.81.0","constraint":"~> 4.0","latestVersion":"5.0.1","mcpDiscovered":true,"webAvailable":true,"queryTerms":["hashicorp azurerm","4.81.0","linux_function_app application_stack"],"expected":"mcp-version-locked-docs"},
+    {"id":"pinned-v4-web-fallback","lockVersion":"4.81.0","constraint":"~> 4.0","mcpDiscovered":false,"webAvailable":true,"queryTerms":["hashicorp azurerm","4.81.0","linux_function_app application_stack"],"source":"https://registry.terraform.io/providers/hashicorp/azurerm/4.81.0/docs/resources/linux_function_app","expected":"web-version-locked-docs"},
+    {"id":"mcp-connection-failed-no-web","lockVersion":"4.81.0","mcpDiscovered":true,"mcpConnected":false,"webAvailable":false,"queryTerms":["hashicorp azurerm","4.81.0","linux_function_app application_stack"],"expected":"NO VERIFICADO"},
+    {"id":"no-external-source","lockVersion":"4.81.0","mcpDiscovered":false,"webAvailable":false,"queryTerms":[],"expected":"NO VERIFICADO"}
+  ]
+}
