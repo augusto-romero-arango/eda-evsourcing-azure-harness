@@ -293,6 +293,7 @@ CHILD_IDS=()       # contexto hijo reservado por indice (issue #1861); se cierra
 CHILD_DIGESTS=()
 NOT_LAUNCHED=()    # NOT_LAUNCHED[i]=motivo si la reserva fallo y el hijo nunca se lanzo
 DEFERRED_FLAG=()   # DEFERRED_FLAG[i]="true" si el issue en esa posicion quedo aplazado (issue #974, CA-3)
+PREFLIGHT_NOT_STARTED=()   # PREFLIGHT_NOT_STARTED[i]="<status>: <codigos>" si el preflight de autonomia le impidio arrancar (issue #1871)
 
 # defer_pending_issues
 #
@@ -309,6 +310,94 @@ defer_pending_issues() {
         DEFERRED_FLAG[$idx]="true"
     done
     PENDING_IDXS=()
+}
+
+# ─── Preflight de autonomia (issue #1871, MEF-ADR-0055) ──────────────────────
+# Gate de CONSULTA: delega en autonomy-preflight.sh (#1870) un plan cerrado
+# launchKind:parallel con las filas que el scheduler esta por lanzar (mismo
+# VALID_ISSUES/ISSUE_PIPELINES; sin releer bodies). No pide aprobacion, no repara
+# perfil/permisos ni certifica la sesion futura: ready-to-dispatch deja sus checks
+# `deferred` al guard por instancia del stage (#1858). `legacy` (sin perfil/runtime
+# sin contexto) conserva el flujo previo; blocked/incomplete/75/salida invalida/
+# evaluador ausente impiden NUEVOS lanzamientos y nunca degradan a legacy. El trabajo
+# ya en vuelo no se mata: termina y se recolecta normalmente.
+PARALLEL_PREFLIGHT_BLOCKED=false
+PREFLIGHT_STATUS=""
+PREFLIGHT_DIAG=""
+PREFLIGHT_DEFERRED=""
+
+# parallel_autonomy_preflight <numero:pipelineKind>...
+# 0 = legacy|ready-to-dispatch; 1 = no se puede lanzar (PREFLIGHT_STATUS/DIAG con codigos).
+parallel_autonomy_preflight() {
+    local bin plan out rc=0 src=direct args
+    PREFLIGHT_STATUS=""; PREFLIGHT_DIAG=""; PREFLIGHT_DEFERRED=""
+    bin="$(_pc_script_dir)/autonomy-preflight.sh"
+    args=(--project-root "$REPO_ROOT" --runtime "$PARALLEL_RUNTIME")
+    if [ -n "${MEFISTO_EXECUTION_CONTEXT:-}" ]; then
+        src=command
+        args+=(--context "$MEFISTO_EXECUTION_CONTEXT")
+    fi
+    if [ ! -x "$bin" ]; then
+        PREFLIGHT_STATUS="unavailable"; PREFLIGHT_DIAG="PREFLIGHT_UNAVAILABLE"
+        return 1
+    fi
+    plan=$(jq -cn --arg s "$src" '{schemaVersion:1,launchKind:"parallel",source:$s,requestedOperations:[],
+        issues:[$ARGS.positional[] | split(":") | {number:(.[0]|tonumber),pipelineKind:.[1]}]}' --args "$@" 2>/dev/null) \
+        || { PREFLIGHT_STATUS="unavailable"; PREFLIGHT_DIAG="PREFLIGHT_PLAN_INVALID"; return 1; }
+    out=$(printf '%s' "$plan" | "$bin" "${args[@]}" 2>/dev/null) || rc=$?
+    PREFLIGHT_STATUS=$(printf '%s' "$out" | jq -r '.status // empty' 2>/dev/null) || PREFLIGHT_STATUS=""
+    PREFLIGHT_DIAG=$(printf '%s' "$out" | jq -r '[.diagnostics[]? | select(type == "string" and test("^[A-Za-z0-9_#:.-]+$"))] | join(",")' 2>/dev/null) || PREFLIGHT_DIAG=""
+    PREFLIGHT_DEFERRED=$(printf '%s' "$out" | jq -r '[.checks[]? | select(.state == "deferred" and (.code|type) == "string" and (.owner|type) == "string") | "\(.code)@\(.owner)"] | map(select(test("^[A-Za-z0-9_#:./@-]+$"))) | join(",")' 2>/dev/null) || PREFLIGHT_DEFERRED=""
+    if [ "$rc" -eq 0 ]; then
+        case "$PREFLIGHT_STATUS" in
+            legacy)
+                # Un contexto transportado nunca degrada a legacy.
+                [ "$src" = command ] || return 0
+                PREFLIGHT_STATUS="invalid"; PREFLIGHT_DIAG="PREFLIGHT_LEGACY_WITH_CONTEXT"; return 1 ;;
+            ready-to-dispatch)
+                # Fail-closed: todo check clasificado; deferred solo con propietario.
+                if printf '%s' "$out" | jq -e '(.checks | type == "array") and all(.checks[];
+                        (.state | IN("pass","deferred","not-applicable"))
+                        and (.state != "deferred" or ((.owner | type) == "string" and (.owner | length) > 0)))' >/dev/null 2>&1; then
+                    return 0
+                fi
+                PREFLIGHT_STATUS="invalid"; PREFLIGHT_DIAG="PREFLIGHT_CHECKS_INCONSISTENT"; return 1 ;;
+        esac
+    fi
+    if [ "$rc" -eq 75 ]; then
+        PREFLIGHT_STATUS="busy"; PREFLIGHT_DIAG="${PREFLIGHT_DIAG:-PREFLIGHT_BUSY}"
+    else
+        case "$PREFLIGHT_STATUS" in
+            blocked|incomplete) ;;
+            *) PREFLIGHT_STATUS="invalid"; PREFLIGHT_DIAG="${PREFLIGHT_DIAG:-PREFLIGHT_RC_$rc}" ;;
+        esac
+    fi
+    return 1
+}
+
+# parallel_preflight_items <idx>...
+# Arma los items numero:pipelineKind en PREFLIGHT_ITEMS (omite filas sin kind).
+parallel_preflight_items() {
+    local idx kind
+    PREFLIGHT_ITEMS=()
+    for idx in "$@"; do
+        kind=$(orchestrator_kind_for_script "${ISSUE_PIPELINES[$idx]}")
+        [ -n "$kind" ] || continue
+        PREFLIGHT_ITEMS+=("${ISSUE_NUMS[$idx]}:$kind")
+    done
+}
+
+# parallel_preflight_block_pending <momento>
+# Corta los NUEVOS lanzamientos: marca los pendientes como "no iniciado por preflight"
+# (nunca "aplazado"), no consume batch-stop ni toca PIDS: lo ya en vuelo sigue y se recolecta.
+parallel_preflight_block_pending() {
+    local when="$1" idx
+    PARALLEL_PREFLIGHT_BLOCKED=true
+    for idx in ${PENDING_IDXS[@]+"${PENDING_IDXS[@]}"}; do
+        PREFLIGHT_NOT_STARTED[$idx]="${PREFLIGHT_STATUS}: ${PREFLIGHT_DIAG:-sin-detalle}"
+    done
+    PENDING_IDXS=()
+    echo -e "\n${RED}${BOLD}✗ Preflight de autonomia ${when}: ${PREFLIGHT_STATUS} [${PREFLIGHT_DIAG:-sin-detalle}]. No se lanzan mas issues; los ya en vuelo terminan normalmente.${NC}" | tee -a "$LOG_FILE_ABS"
 }
 
 # launch_pipeline <idx>
@@ -447,6 +536,10 @@ print_dashboard() {
             printf "  ${YELLOW}%-6s  %-14s  %-8s  %s${NC}\n" "#$issue" "aplazado" "-" ""
             continue
         fi
+        if [ -n "${PREFLIGHT_NOT_STARTED[$i]:-}" ]; then
+            printf "  ${RED}%-6s  %-14s  %-8s  %s${NC}\n" "#$issue" "no iniciado" "-" ""
+            continue
+        fi
         if [ -n "${NOT_LAUNCHED[$i]:-}" ]; then
             printf "  ${RED}%-6s  %-14s  %-8s  %s${NC}\n" "#$issue" "no lanzado" "-" ""
             continue
@@ -553,6 +646,26 @@ MONITOR_INTERVAL=10
 PENDING_IDXS=()
 for ((i = 0; i < TOTAL; i++)); do PENDING_IDXS+=("$i"); done
 
+# Preflight de autonomia, plan inicial (issue #1871): ANTES del primer launch_pipeline y
+# despues de honrar un batch-stop ya existente (sin consulta para trabajo que no arrancara).
+# Un bloqueo aqui deja cero hijos lanzados. Con la parada ya pedida el loop de abajo aplaza
+# todo con el comportamiento vigente.
+PREFLIGHT_FRESH=false
+if [ ${#PENDING_IDXS[@]} -gt 0 ] && ! batch_stop_requested; then
+    parallel_preflight_items "${PENDING_IDXS[@]}"
+    if [ ${#PREFLIGHT_ITEMS[@]} -gt 0 ]; then
+        if parallel_autonomy_preflight "${PREFLIGHT_ITEMS[@]}"; then
+            log "Preflight de autonomia: $PREFLIGHT_STATUS"
+            if [ "$PREFLIGHT_STATUS" = "ready-to-dispatch" ] && [ -n "$PREFLIGHT_DEFERRED" ]; then
+                log "Verificaciones diferidas al stage (no es permiso efectivo futuro): $PREFLIGHT_DEFERRED"
+            fi
+            PREFLIGHT_FRESH=true
+        else
+            parallel_preflight_block_pending "antes del primer lanzamiento"
+        fi
+    fi
+fi
+
 while [ ${#PENDING_IDXS[@]} -gt 0 ]; do
     if batch_stop_requested; then
         _deferred_count=${#PENDING_IDXS[@]}
@@ -569,6 +682,7 @@ while [ ${#PENDING_IDXS[@]} -gt 0 ]; do
     # arriba, esto no es una parada: en cuanto la espera se resuelva, el
     # scheduler retoma el lanzamiento normal sin intervencion humana).
     if hold_active_in_any_events_log; then
+        PREFLIGHT_FRESH=false
         print_dashboard
         echo ""
         log "Espera (hold) activa -- $(format_active_hold_status). ${#PENDING_IDXS[@]} issue(s) en cola esperan a que se libere antes de lanzar el siguiente."
@@ -576,11 +690,36 @@ while [ ${#PENDING_IDXS[@]} -gt 0 ]; do
         continue
     fi
 
+    # Subconjunto que puede salir en ESTA pasada (mismas reglas de can_launch_now, con
+    # el contador simulado): se revalida identidad/perfil/recursos justo antes de lanzar,
+    # sin cache. La pasada inmediata al chequeo inicial no lo repite (#1871).
+    LAUNCH_SET=" "
+    _sim_running=$(running_count)
+    _sim_proj="false"
+    is_projection_running && _sim_proj="true"
+    _sim_idxs=()
+    for idx in "${PENDING_IDXS[@]}"; do
+        if can_launch_now "$MAX_PARALLEL" "$_sim_running" "${ISSUE_IS_PROJECTION[$idx]}" "$_sim_proj"; then
+            _sim_idxs+=("$idx")
+            LAUNCH_SET="${LAUNCH_SET}${idx} "
+            _sim_running=$((_sim_running + 1))
+            [ "${ISSUE_IS_PROJECTION[$idx]}" = "true" ] && _sim_proj="true"
+        fi
+    done
+    if [ ${#_sim_idxs[@]} -gt 0 ] && [ "$PREFLIGHT_FRESH" != true ]; then
+        parallel_preflight_items "${_sim_idxs[@]}"
+        if [ ${#PREFLIGHT_ITEMS[@]} -gt 0 ] && ! parallel_autonomy_preflight "${PREFLIGHT_ITEMS[@]}"; then
+            parallel_preflight_block_pending "antes de lanzar nuevos issues"
+            break
+        fi
+    fi
+    PREFLIGHT_FRESH=false
+
     NEXT_PENDING=()
     for idx in "${PENDING_IDXS[@]}"; do
         _proj_running="false"
         is_projection_running && _proj_running="true"
-        if can_launch_now "$MAX_PARALLEL" "$(running_count)" "${ISSUE_IS_PROJECTION[$idx]}" "$_proj_running"; then
+        if [[ "$LAUNCH_SET" == *" $idx "* ]] && can_launch_now "$MAX_PARALLEL" "$(running_count)" "${ISSUE_IS_PROJECTION[$idx]}" "$_proj_running"; then
             launch_pipeline "$idx"
         else
             NEXT_PENDING+=("$idx")
@@ -607,7 +746,11 @@ done
 # siguiente, y se avisa para que el humano no busque aplazados inexistentes.
 if batch_stop_requested; then
     rm -f "$BATCH_STOP_SIGNAL"
-    warn "Parada solicitada ($BATCH_STOP_SIGNAL): no quedaba ningun issue en cola por lanzar (todos ya estaban en vuelo). La senal se consumio igual, para no afectar la corrida siguiente."
+    if [ "$PARALLEL_PREFLIGHT_BLOCKED" = true ]; then
+        warn "Parada solicitada ($BATCH_STOP_SIGNAL) tras un bloqueo del preflight de autonomia: los pendientes ya quedaron 'no iniciado por preflight', no aplazados. La senal se consumio igual, para no afectar la corrida siguiente."
+    else
+        warn "Parada solicitada ($BATCH_STOP_SIGNAL): no quedaba ningun issue en cola por lanzar (todos ya estaban en vuelo). La senal se consumio igual, para no afectar la corrida siguiente."
+    fi
 fi
 
 # ─── Loop de monitoreo ────────────────────────────────────────────────────────
@@ -650,12 +793,21 @@ ISSUE_PRS=()       # URL del PR o ""
 ISSUE_DURATIONS=() # segundos totales o "-"
 COMPLETED=0
 FAILED=0
+NOT_STARTED=0
 
 for i in "${!ISSUE_NUMS[@]}"; do
     if [ "${DEFERRED_FLAG[$i]:-false}" = "true" ]; then
         ISSUE_RESULTS+=("aplazado (parada solicitada; no se proceso en esta corrida)")
         ISSUE_PRS+=("")
         ISSUE_DURATIONS+=("-")
+        continue
+    fi
+
+    if [ -n "${PREFLIGHT_NOT_STARTED[$i]:-}" ]; then
+        ISSUE_RESULTS+=("no iniciado por preflight (${PREFLIGHT_NOT_STARTED[$i]})")
+        ISSUE_PRS+=("")
+        ISSUE_DURATIONS+=("-")
+        NOT_STARTED=$((NOT_STARTED + 1))
         continue
     fi
 
@@ -718,7 +870,7 @@ for i in "${!ISSUE_NUMS[@]}"; do
 
     if echo "$RESULT" | grep -q "^completado"; then
         COLOR="$GREEN"
-    elif echo "$RESULT" | grep -q "^ERROR"; then
+    elif echo "$RESULT" | grep -qE "^(ERROR|no iniciado por preflight)"; then
         COLOR="$RED"
     else
         COLOR="$YELLOW"
@@ -740,7 +892,7 @@ for i in "${!ISSUE_NUMS[@]}"; do
 done
 
 echo ""
-echo -e "  Total: $TOTAL  |  ${GREEN}Completados: $COMPLETED${NC}  |  ${RED}Fallidos: $FAILED${NC}  |  ${YELLOW}Aplazados: $DEFERRED${NC}"
+echo -e "  Total: $TOTAL  |  ${GREEN}Completados: $COMPLETED${NC}  |  ${RED}Fallidos: $FAILED${NC}  |  ${YELLOW}Aplazados: $DEFERRED${NC}  |  ${RED}No iniciados por preflight: $NOT_STARTED${NC}"
 echo -e "  Log: $LOG_FILE_ABS"
 echo ""
 
@@ -771,6 +923,10 @@ if [ "$KEEP_STATUS" = "false" ]; then
     done
 fi
 
+if [ "$NOT_STARTED" -gt 0 ]; then
+    warn "Preflight de autonomia: $NOT_STARTED issue(s) no iniciados por preflight (distinto de aplazado por parada solicitada). No se reintento ni se amplio ningun permiso; el trabajo en vuelo se recolecto. Log: $LOG_FILE_ABS"
+    exit 1
+fi
 if [ "$FAILED" -gt 0 ]; then
     warn "Algunos issues tuvieron errores. Revisa el log: $LOG_FILE_ABS"
     exit 1
