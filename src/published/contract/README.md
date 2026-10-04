@@ -549,15 +549,15 @@ target canónico mediante `active`; `absent`,
 instantánea sin defensa contra TOCTOU; una versión futura del runtime con otra
 semántica de raíces requiere revalidación antes de reutilizar este oráculo.
 
-## Validación
-
 ## Matriz de verificación de fuentes
 
 `source-verification.json` declara las vías suficientes para cada uno de los 22
-roles publicados. Sus opciones son alternativas, no grants: una URL citada por
-un issue no añade permisos. El helper puro `scripts/lib/source-verification.jq`
-recibe matriz, registro MCP, frontmatters ya extraídos y los casos condicionales
-que el cambio exige; no lee disco, red, reloj ni credenciales.
+roles publicados. Sus opciones son alternativas suficientes **dentro de cada
+caso**, no grants: una URL citada por un issue no añade permisos. Comprobaciones
+distintas, como listar una versión de WorkOS y compilar contra sus firmas, viven
+en casos separados. El helper puro `scripts/lib/source-verification.jq` recibe
+matriz, registro MCP, frontmatters ya extraídos y los casos condicionales que el
+cambio exige; no lee disco, red, reloj ni credenciales.
 
 ```bash
 src/published/scripts/validate-source-verification.sh
@@ -572,11 +572,18 @@ son tres fronteras distintas. Un MCP externo declarado queda
 autorización efectiva. El preflight posterior verifica disponibilidad derivada
 del rol y del plan, no certifica una sesión futura al generar este JSON.
 
+Las distribuciones incluyen la matriz, el helper y el registro MCP neutral que
+lo alimenta. El entrypoint anterior es una comprobación de mantenimiento del
+checkout fuente: extrae sus frontmatters neutrales; no se empaqueta como si
+pudiera reconstruirlos desde metadata ya adaptada de una instalación.
+
 Los casos condicionales solo se evalúan cuando el cambio los requiere. La
 ausencia actual de web para `planner` y los scaffolders sigue visible como
 `capability-missing` al requerirlos; los issues #1878, #1879, #1880, #1881,
 #1882 y #1883 resuelven esos gaps. #1827 no puede usar la matriz por sí sola
 como evidencia de conexión MCP/web real.
+
+## Validación
 
 ```bash
 src/published/scripts/validate-published-artifacts.sh [archivo...]
