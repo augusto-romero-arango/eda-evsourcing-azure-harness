@@ -275,11 +275,10 @@ Cuando tengas una duda sobre el harness (¿`Given` soporta X? ¿`Then` con un so
     # Resuelve las roots efectivas para ESTE worktree. No reutilices variables de
     # otra tool call ni inventes una root alternativa.
     WORKTREE_ROOT="$(git rev-parse --show-toplevel)" || exit 1
-    NUGET_RESOURCES="$( MEFISTO_RUNTIME=claude "${MEFISTO_PACKAGE_ROOT}/scripts/resolve-nuget-resources.sh" --worktree-root "$WORKTREE_ROOT" )" || {
-      printf '%s\n' 'No se pudo resolver la evidencia NuGet; la inspeccion requerida queda no verificada.' >&2
-      exit 1
-    }
-    if [ "$(jq -r .status <<< "$NUGET_RESOURCES")" != resolved ]; then
+    # El resolver entrega el envelope tambien al fallar cerrado; conserva esa
+    # salida para distinguir resolved de unavailable/conflict.
+    NUGET_RESOURCES="$( MEFISTO_RUNTIME=claude "${MEFISTO_PACKAGE_ROOT}/scripts/resolve-nuget-resources.sh" --worktree-root "$WORKTREE_ROOT" )" || true
+    if [ "$(jq -r '.status // empty' <<< "$NUGET_RESOURCES" 2>/dev/null)" != resolved ]; then
       printf '%s\n' 'Las roots NuGet estan unavailable o en conflicto; la inspeccion requerida queda no verificada.' >&2
       exit 1
     fi

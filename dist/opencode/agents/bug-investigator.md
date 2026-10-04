@@ -158,48 +158,54 @@ La firma diagnostica es **"compila + unit tests verdes pero revienta en runtime"
    MEFISTO_RUNTIME=opencode "${MEFISTO_PACKAGE_ROOT}/scripts/appinsights-query.sh" exceptions
    # busca el tipo de excepcion (p. ej. InvalidOperationException: "Unable to resolve service for type ...", la excepcion que lanza el contenedor Microsoft.Extensions.DependencyInjection del worker isolated) y su conteo en la ventana del deploy
    ```
-2. **Resuelve y localiza cada version por separado en las roots efectivas**. Una version vieja y una nueva pueden vivir en roots distintas. Ejecuta este bloque una vez con `<version-vieja>` y otra con `<version-nueva>`; no reutilices variables de otra tool call ni inventes una root alternativa:
+2. **Resuelve y localiza cada version por separado en las roots efectivas**. Una version vieja y una nueva pueden vivir en roots distintas. Ejecuta el bloque completo en una sola tool call: la funcion vuelve a invocar el resolver para cada version y no depende de variables de una llamada anterior ni inventa una root alternativa.
     ```bash
     WORKTREE_ROOT="$(git rev-parse --show-toplevel)" || exit 1
-    NUGET_RESOURCES="$( MEFISTO_RUNTIME=opencode "${MEFISTO_PACKAGE_ROOT}/scripts/resolve-nuget-resources.sh" --worktree-root "$WORKTREE_ROOT" )" || {
-      printf '%s\n' 'No se pudo resolver la evidencia NuGet; la inspeccion requerida queda no verificada.' >&2
-      exit 1
-    }
-    if [ "$(jq -r .status <<< "$NUGET_RESOURCES")" != resolved ]; then
-      printf '%s\n' 'Las roots NuGet estan unavailable o en conflicto; la inspeccion requerida queda no verificada.' >&2
-      exit 1
-    fi
     PACKAGE_ID_LOWER=<paquete-en-minusculas>
-    PACKAGE_VERSION=<version-vieja-o-nueva>
     TFM=<TargetFramework>
     ASSEMBLY=<Ensamblado-con-casing-real>.dll
-    CANDIDATES=()
-    while IFS= read -r root; do
-      candidate="$root/$PACKAGE_ID_LOWER/$PACKAGE_VERSION/lib/$TFM/$ASSEMBLY"
-      [ -f "$candidate" ] && CANDIDATES+=("$candidate")
-    done < <(jq -r '.roots[].physicalRoot' <<< "$NUGET_RESOURCES")
-    [ "${#CANDIDATES[@]}" -gt 0 ] || {
-      printf '%s\n' "No se encontro $PACKAGE_ID_LOWER/$PACKAGE_VERSION/lib/$TFM/$ASSEMBLY en las roots resueltas; la inspeccion requerida queda no verificada." >&2
-      exit 1
-    }
-    SELECTED_ASSEMBLY="${CANDIDATES[0]}"
-    for ((index = 1; index < ${#CANDIDATES[@]}; index++)); do
-      if ! cmp -s "$SELECTED_ASSEMBLY" "${CANDIDATES[$index]}"; then
-        printf 'Conflicto: candidatos NuGet con contenido distinto: %s | %s\n' "$SELECTED_ASSEMBLY" "${CANDIDATES[$index]}" >&2
-        exit 1
+
+    resolve_assembly() {
+      PACKAGE_VERSION="$1"
+      # El resolver entrega el envelope tambien al fallar cerrado.
+      NUGET_RESOURCES="$( MEFISTO_RUNTIME=opencode "${MEFISTO_PACKAGE_ROOT}/scripts/resolve-nuget-resources.sh" --worktree-root "$WORKTREE_ROOT" )" || true
+      if [ "$(jq -r '.status // empty' <<< "$NUGET_RESOURCES" 2>/dev/null)" != resolved ]; then
+        printf '%s\n' 'Las roots NuGet estan unavailable o en conflicto; la inspeccion requerida queda no verificada.' >&2
+        return 1
       fi
-    done
-    printf 'Assembly seleccionado: %s\n' "$SELECTED_ASSEMBLY"
+      CANDIDATES=()
+      while IFS= read -r root; do
+        candidate="$root/$PACKAGE_ID_LOWER/$PACKAGE_VERSION/lib/$TFM/$ASSEMBLY"
+        [ -f "$candidate" ] && CANDIDATES+=("$candidate")
+      done < <(jq -r '.roots[].physicalRoot' <<< "$NUGET_RESOURCES")
+      [ "${#CANDIDATES[@]}" -gt 0 ] || {
+        printf '%s\n' "No se encontro $PACKAGE_ID_LOWER/$PACKAGE_VERSION/lib/$TFM/$ASSEMBLY en las roots resueltas; la inspeccion requerida queda no verificada." >&2
+        return 1
+      }
+      SELECTED_ASSEMBLY="${CANDIDATES[0]}"
+      for ((index = 1; index < ${#CANDIDATES[@]}; index++)); do
+        if ! cmp -s "$SELECTED_ASSEMBLY" "${CANDIDATES[$index]}"; then
+          printf 'Conflicto: candidatos NuGet con contenido distinto: %s | %s\n' "$SELECTED_ASSEMBLY" "${CANDIDATES[$index]}" >&2
+          return 1
+        fi
+      done
+    }
+
+    resolve_assembly <version-vieja> || exit 1
+    OLD_ASSEMBLY="$SELECTED_ASSEMBLY"
+    printf 'Assembly viejo seleccionado: %s\n' "$OLD_ASSEMBLY"
+    resolve_assembly <version-nueva> || exit 1
+    NEW_ASSEMBLY="$SELECTED_ASSEMBLY"
+    printf 'Assembly nuevo seleccionado: %s\n' "$NEW_ASSEMBLY"
     ```
-    Tras la primera ejecucion guarda `OLD_ASSEMBLY="$SELECTED_ASSEMBLY"`; repite el bloque completo cambiando solo `PACKAGE_VERSION` a la version nueva y guarda `NEW_ASSEMBLY="$SELECTED_ASSEMBLY"`. Cada ejecucion vuelve a invocar el resolver con el worktree real y compara solo los candidatos de esa version.
+    Cada llamada a `resolve_assembly` obtiene un envelope nuevo y compara solo los candidatos de esa version. Si cualquiera falla, no continúes a la decompilacion.
 3. **Decompila cada version con `ilspycmd`** (dotnet global tool). Si el tool no esta instalado, indica el comando de instalacion — **no lo instales por cuenta propia**:
    ```bash
    dotnet tool install -g ilspycmd
    ```
    Comando de decompilacion. Ojo con el casing: NuGet normaliza el id del paquete a minusculas para la **carpeta** del almacen local (`<paquete>`), pero el `.dll` conserva el casing real del **ensamblado** (`<Ensamblado>`), que suele ser PascalCase y puede diferir de la carpeta — una sustitucion literal del mismo placeholder en ambos sitios falla en sistemas de archivos sensibles a mayusculas (Linux). Placeholders: `<paquete>` (carpeta, minusculas), `<Ensamblado>.dll` (ensamblado, casing real), `<version-vieja>`, `<version-nueva>`, `<TargetFramework>`:
    ```bash
-    # Ejecuta el resolver anterior para la version vieja y guarda su ruta como OLD_ASSEMBLY;
-    # vuelvelo a ejecutar para la nueva y guarda su ruta como NEW_ASSEMBLY.
+    # Usa OLD_ASSEMBLY y NEW_ASSEMBLY seleccionadas en el mismo bloque anterior.
     ilspycmd "$OLD_ASSEMBLY" -o .mefisto/pipeline/tmp/decompiled-vieja
     ilspycmd "$NEW_ASSEMBLY" -o .mefisto/pipeline/tmp/decompiled-nueva
    ```

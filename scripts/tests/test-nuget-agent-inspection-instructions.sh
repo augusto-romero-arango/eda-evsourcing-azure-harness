@@ -42,20 +42,21 @@ done
 
 BUG="$REPO_ROOT/src/published/agents/bug-investigator.md"
 if [ "$(grep -Fc 'resolve-nuget-resources.sh --worktree-root' "$BUG")" -ge 1 ] && \
-   grep -Fq 'OLD_ASSEMBLY' "$BUG" && grep -Fq 'NEW_ASSEMBLY' "$BUG" && \
+   grep -Fq 'resolve_assembly <version-vieja>' "$BUG" && grep -Fq 'resolve_assembly <version-nueva>' "$BUG" && \
+   grep -Fq 'OLD_ASSEMBLY="$SELECTED_ASSEMBLY"' "$BUG" && grep -Fq 'NEW_ASSEMBLY="$SELECTED_ASSEMBLY"' "$BUG" && \
    grep -Fq 'Una version vieja y una nueva pueden vivir en roots distintas' "$BUG"; then
     pass 'bug-investigator conserva selecciones separadas para versiones vieja y nueva'
 else
     fail 'bug-investigator no separa las versiones'
 fi
 
-# Fixture acotado: roots con espacios, assets antes que CLI y versiones en roots distintas.
+# Fixture acotado: roots con espacios, assets distintos de CLI y versiones en roots distintas.
 mkdir -p "$WORK/assets root/pkg/1.0/lib/net10.0" "$WORK/cli root/pkg/1.0/lib/net10.0" "$WORK/cli root/pkg/2.0/lib/net10.0"
 printf vieja > "$WORK/assets root/pkg/1.0/lib/net10.0/Assembly.Real.dll"
 printf nueva > "$WORK/cli root/pkg/2.0/lib/net10.0/Assembly.Real.dll"
 roots=("$WORK/assets root" "$WORK/cli root")
 select_assembly() {
-    local version="$1" candidate root
+    local version="$1" candidate root index
     CANDIDATES=()
     for root in "${roots[@]}"; do
         candidate="$root/pkg/$version/lib/net10.0/Assembly.Real.dll"
@@ -63,6 +64,9 @@ select_assembly() {
     done
     [ "${#CANDIDATES[@]}" -gt 0 ] || return 1
     SELECTED_ASSEMBLY="${CANDIDATES[0]}"
+    for ((index = 1; index < ${#CANDIDATES[@]}; index++)); do
+        cmp -s "$SELECTED_ASSEMBLY" "${CANDIDATES[$index]}" || return 2
+    done
 }
 select_assembly 1.0 && old="$SELECTED_ASSEMBLY"; select_assembly 2.0 && new="$SELECTED_ASSEMBLY"
 if [ "$old" = "$WORK/assets root/pkg/1.0/lib/net10.0/Assembly.Real.dll" ] && [ "$new" = "$WORK/cli root/pkg/2.0/lib/net10.0/Assembly.Real.dll" ]; then
@@ -72,18 +76,34 @@ else
 fi
 
 cp "$old" "$WORK/cli root/pkg/1.0/lib/net10.0/Assembly.Real.dll"
-select_assembly 1.0
-if [ "${#CANDIDATES[@]}" -eq 2 ] && cmp -s "${CANDIDATES[0]}" "${CANDIDATES[1]}"; then
+if select_assembly 1.0 && [ "${#CANDIDATES[@]}" -eq 2 ] && [ "$SELECTED_ASSEMBLY" = "${CANDIDATES[0]}" ]; then
     pass 'duplicados identicos conservan el primer candidato en orden determinista'
 else
     fail 'duplicados identicos no se comparan como exige el contrato'
 fi
 printf distinto > "$WORK/cli root/pkg/1.0/lib/net10.0/Assembly.Real.dll"
-if ! cmp -s "${CANDIDATES[0]}" "${CANDIDATES[1]}"; then
+select_assembly 1.0; rc=$?
+if [ "$rc" -eq 2 ]; then
     pass 'duplicados distintos quedan visibles como conflicto sin ejecutar ilspycmd'
 else
     fail 'duplicados distintos no se distinguen'
 fi
+
+select_assembly 3.0; rc=$?
+if [ "$rc" -eq 1 ]; then
+    pass 'ausencia de assembly detiene la seleccion sin ejecutar ilspycmd'
+else
+    fail 'ausencia de assembly no falla cerrada'
+fi
+
+for status in unavailable conflict; do
+    envelope="$(jq -cn --arg status "$status" '{status:$status,roots:[]}')"
+    if [ "$(jq -r '.status // empty' <<< "$envelope" 2>/dev/null)" != resolved ]; then
+        pass "envelope $status detiene la inspeccion sin ejecutar ilspycmd"
+    else
+        fail "envelope $status permite una inspeccion incompleta"
+    fi
+done
 
 printf '\nResultado: %s PASS, %s FAIL\n' "$PASS" "$FAIL"
 exit "$FAIL"
