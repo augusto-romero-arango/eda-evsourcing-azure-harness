@@ -11,7 +11,7 @@
     {"id":"infra-reviewer","capabilities":["read","edit","shell"],"skills":[],"mcp":[]},
     {"id":"infra-writer","capabilities":["read","edit","shell"],"skills":[],"mcp":["terraform"]},
     {"id":"mcp-scaffolder","capabilities":["read","edit","shell"],"skills":[],"mcp":[]},
-    {"id":"planner","capabilities":["read","edit","shell","skill"],"skills":["projections"],"mcp":["microsoft-learn"]},
+    {"id":"planner","capabilities":["read","edit","shell","web","skill"],"skills":["projections"],"mcp":["microsoft-learn"]},
     {"id":"pr-sync","capabilities":["shell"],"skills":[],"mcp":[]},
     {"id":"projection-implementer","capabilities":["read","edit","shell","skill"],"skills":["projections"],"mcp":[]},
     {"id":"projection-test-writer","capabilities":["read","edit","shell","skill"],"skills":["projections"],"mcp":[]},
