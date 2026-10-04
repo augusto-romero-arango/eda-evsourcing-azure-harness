@@ -86,6 +86,7 @@ for file in "$CLAUDE" "$OPENCODE"; do
     status_json="$(TEST_STATE=conflict OPENCODE_CONFIG_DIR="$config_root" "$launcher" projection-status)"; rc=$?
     [ "$rc" -eq 1 ] && jq -e '.status == "conflict"' <<< "$status_json" >/dev/null && pass "${file#"$REPO_ROOT/"} conserva conflicto con codigo no cero" || fail "${file#"$REPO_ROOT/"} no conserva conflicto estructurado"
 done
+contains "$(< "$OPENCODE")" 'Cada llamada bash que use $MEFISTO_LIFECYCLE_LAUNCHER o $MEFISTO_LIFECYCLE_CONFIG_ROOT debe incluir este bloque' 'OpenCode exige repetir el preambulo lifecycle por llamada'
 if "$GENERATOR" --check >/dev/null; then pass 'generate-published-adapters --check esta al dia'; else fail 'generate-published-adapters --check detecto divergencias'; fi
 printf 'RESULTADO: %s pasaron, %s fallaron\n' "$PASS" "$FAIL"
 exit "$FAIL"
