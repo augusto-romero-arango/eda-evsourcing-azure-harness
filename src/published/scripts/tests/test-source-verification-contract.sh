@@ -195,6 +195,25 @@ else
 fi
 
 if jq -e '
+    .roles[] | select(.id == "projections-scaffolder") |
+    any(.cases[]; .caseId == "nuget-version" and (.subject | contains("exacta") and contains("no la ultima absoluta")) and .onMissing == "not-verified" and (.options | map(.kind) | sort) == ["package-cli","web"]) and
+    any(.cases[]; .caseId == "nuget-api" and (.subject | contains("Marten")) and .onMissing == "not-verified" and .options == [{"kind":"web","reference":".nuspec versionado para dependencias o documentacion/codigo oficial de la misma version o linea para firmas y Marten"}])
+' "$MATRIX" >/dev/null; then
+    pass 'projections-scaffolder distingue pin exacto, nuspec y limite Marten sin adoptar latest'
+else
+    fail 'casos NuGet y Marten de projections-scaffolder no conservan la politica de reverificacion'
+fi
+
+projections_without_web="$(jq -c '(.roles[] | select(.id == "projections-scaffolder")).capabilities -= ["web"] | .requiredCases += ["projections-scaffolder/nuget-api"]' <<< "$envelope")"
+projections_local_status="$(printf '%s' "$projections_without_web" | jq -r -f "$FILTER" | jq -r '.cases[] | select(.id == "projections-scaffolder" and .caseId == "local-scaffold") | .status')"
+projections_nuspec_status="$(printf '%s' "$projections_without_web" | jq -r -f "$FILTER" | jq -r '.cases[] | select(.id == "projections-scaffolder" and .caseId == "nuget-api") | .status')"
+if [ "$projections_local_status" = declared ] && [ "$projections_nuspec_status" = capability-missing ]; then
+    pass 'fixture offline conserva el scaffold local y marca NO VERIFICADO sin fuente web'
+else
+    fail "fallback projections-scaffolder inesperado: local=$projections_local_status, nuspec=$projections_nuspec_status"
+fi
+
+if jq -e '
     .roles[] | select(.id == "workos-identity-scaffolder") |
     (.cases | length) == 2 and
     any(.cases[]; .caseId == "package-signatures" and .options == [{"kind":"local-artifact","reference":"paquete restaurado y compilacion"}]) and
