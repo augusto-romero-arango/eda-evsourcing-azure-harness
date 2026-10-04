@@ -58,11 +58,11 @@ _opencode_roots_emit() {
 # se deriva de active, que se observa solamente para detectar deriva.
 opencode_resource_roots() {
     [ "$#" -eq 1 ] || return 2
-    local loaded_input="$1" input platform os_home xdg_data xdg_config config_override
+    local loaded_input="$1" input platform os_home xdg_data xdg_config config_override config_defined config_valid=true
     local mefisto_logical config_logical runtime_logical tool_logical
     local mefisto_record config_record runtime_record tool_record loaded_record
     local paths release='null' projection status='resolved' version='' commit='' loaded_physical=''
-    local expected_record expected_physical manifest active_record state rel target target_record expected_target
+    local expected_record expected_physical manifest active_record state rel target target_record expected_target expected_link link_value digest
 
     input="$(command cat)" || return 2
     jq -e '
@@ -72,12 +72,26 @@ opencode_resource_roots() {
       (.xdgDataHome == null or (.xdgDataHome | type == "string")) and
       (.xdgConfigHome == null or (.xdgConfigHome | type == "string")) and
       (.opencodeConfigDir == null or (.opencodeConfigDir | type == "string"))
-    ' >/dev/null <<< "$input" || return 2
+    ' >/dev/null 2>&1 <<< "$input" || return 2
 
     platform="$(jq -r .platform <<< "$input")"; os_home="$(jq -r .osHome <<< "$input")"
     xdg_data="$(jq -r '.xdgDataHome // empty' <<< "$input")"; xdg_config="$(jq -r '.xdgConfigHome // empty' <<< "$input")"
-    config_override="$(jq -r 'if .opencodeConfigDir == null then "__ABSENT__" else .opencodeConfigDir end' <<< "$input")"
+    config_override="$(jq -r '.opencodeConfigDir // empty' <<< "$input")"
+    config_defined="$(jq -r 'if .opencodeConfigDir == null then "false" else "true" end' <<< "$input")"
     _opencode_roots_diag='[]'
+
+    if jq -e '.osHome | test("[[:cntrl:]]")' >/dev/null <<< "$input"; then
+        _opencode_roots_add_diag INVALID_OS_HOME; status='conflict'; os_home=''
+    fi
+    if jq -e '.xdgDataHome != null and (.xdgDataHome | test("[[:cntrl:]]"))' >/dev/null <<< "$input"; then
+        _opencode_roots_add_diag INVALID_XDG_DATA_HOME; status='conflict'; xdg_data=''
+    fi
+    if jq -e '.xdgConfigHome != null and (.xdgConfigHome | test("[[:cntrl:]]"))' >/dev/null <<< "$input"; then
+        _opencode_roots_add_diag INVALID_XDG_CONFIG_HOME; status='conflict'; xdg_config=''
+    fi
+    if jq -e '.opencodeConfigDir != null and (.opencodeConfigDir | test("[[:cntrl:]]"))' >/dev/null <<< "$input"; then
+        _opencode_roots_add_diag INVALID_OPENCODE_CONFIG_DIR; status='conflict'; config_valid=false
+    fi
 
     case "$os_home" in /*) ;; *) _opencode_roots_add_diag INVALID_OS_HOME; status='conflict' ;; esac
     case "$loaded_input" in /*) ;; *) _opencode_roots_add_diag INVALID_LOADED_RELEASE_ROOT; status='conflict' ;; esac
@@ -88,8 +102,9 @@ opencode_resource_roots() {
     else
         mefisto_logical="$os_home/.local/share/mefisto"; runtime_logical="$os_home/.local/share/opencode"
     fi
-    if [ "$config_override" != __ABSENT__ ]; then
-        if [ -z "$config_override" ]; then _opencode_roots_add_diag EMPTY_OPENCODE_CONFIG_DIR; status='conflict'
+    if [ "$config_defined" = true ]; then
+        if [ "$config_valid" != true ]; then :
+        elif [ -z "$config_override" ]; then _opencode_roots_add_diag EMPTY_OPENCODE_CONFIG_DIR; status='conflict'
         elif [ "${config_override#/}" = "$config_override" ]; then _opencode_roots_add_diag RELATIVE_OPENCODE_CONFIG_DIR; status='conflict'
         else config_logical="$config_override"; fi
     elif [ -n "$xdg_config" ]; then
@@ -121,6 +136,10 @@ opencode_resource_roots() {
             fi
         fi
         if [ "$status" = resolved ]; then
+            # El almacen puede tener ancestros enlazados, pero una entrada de
+            # release no puede ser a su vez un alias hacia un root externo.
+            [ -d "$mefisto_logical/releases/$version" ] && [ ! -L "$mefisto_logical/releases/$version" ] \
+                || { _opencode_roots_add_diag LOADED_RELEASE_NOT_IN_STORE; status='conflict'; }
             expected_record="$(_opencode_roots_record "$mefisto_logical/releases/$version" existing)" || { _opencode_roots_add_diag LOADED_RELEASE_NOT_IN_STORE; status='conflict'; }
             expected_physical="$(jq -r .physicalRoot <<< "${expected_record:-null}")"
             [ "$loaded_physical" = "$expected_physical" ] || { _opencode_roots_add_diag LOADED_RELEASE_NOT_IN_STORE; status='conflict'; }
@@ -144,21 +163,31 @@ opencode_resource_roots() {
               ' "$state" >/dev/null 2>&1; then
                 _opencode_roots_add_diag INVALID_PROJECTION_LEDGER; projection='{"status":"conflict","ledgerDigest":null}'
             else
-                projection="$(jq -cn --arg digest "$(_opencode_roots_digest "$state")" '{status:"aligned",ledgerDigest:$digest}')"
-                if [ "$(jq -r .release "$state")" != "$version" ]; then
-                    _opencode_roots_add_diag PROJECTION_RELEASE_DRIFT; projection="$(jq -cn --arg digest "$(_opencode_roots_digest "$state")" '{status:"drift",ledgerDigest:$digest}')"
-                else
+                digest="$(_opencode_roots_digest "$state")"
+                projection="$(jq -cn --arg digest "$digest" '{status:"aligned",ledgerDigest:$digest}')"
+                while IFS= read -r rel; do
+                    [ "$rel" = . ] || _opencode_roots_safe_relative "$rel/x" || { _opencode_roots_add_diag INVALID_PROJECTION_DIRECTORY; projection="$(jq -cn --arg digest "$digest" '{status:"conflict",ledgerDigest:$digest}')"; break; }
+                done < <(jq -r '.directories[]' "$state")
+                if [ "$(jq -r .status <<< "$projection")" != conflict ]; then
                     while IFS= read -r rel; do
-                        [ "$rel" = . ] || _opencode_roots_safe_relative "$rel/x" || { _opencode_roots_add_diag INVALID_PROJECTION_DIRECTORY; projection="$(jq -cn --arg digest "$(_opencode_roots_digest "$state")" '{status:"conflict",ledgerDigest:$digest}')"; break; }
-                    done < <(jq -r '.directories[]' "$state")
+                        _opencode_roots_safe_relative "$rel" || { _opencode_roots_add_diag INVALID_PROJECTION_PATH; projection="$(jq -cn --arg digest "$digest" '{status:"conflict",ledgerDigest:$digest}')"; break; }
+                    done < <(jq -r '.paths[]' "$state")
+                fi
+                if [ "$(jq -r .status <<< "$projection")" != conflict ] && [ "$(jq -r .release "$state")" != "$version" ]; then
+                    _opencode_roots_add_diag PROJECTION_RELEASE_DRIFT
+                    projection="$(jq -cn --arg digest "$digest" '{status:"drift",ledgerDigest:$digest}')"
+                elif [ "$(jq -r .status <<< "$projection")" = aligned ]; then
                     while IFS= read -r rel; do
-                        [ "$(jq -r .status <<< "$projection")" = conflict ] && break
-                        _opencode_roots_safe_relative "$rel" || { _opencode_roots_add_diag INVALID_PROJECTION_PATH; projection="$(jq -cn --arg digest "$(_opencode_roots_digest "$state")" '{status:"conflict",ledgerDigest:$digest}')"; break; }
-                        target="$config_logical/$rel"; expected_target="$loaded_physical/$rel"
-                        [ -L "$target" ] || { _opencode_roots_add_diag PROJECTION_LINK_MISSING; projection="$(jq -cn --arg digest "$(_opencode_roots_digest "$state")" '{status:"conflict",ledgerDigest:$digest}')"; break; }
-                        target_record="$(_opencode_roots_link_target_physical "$target")" || { _opencode_roots_add_diag PROJECTION_LINK_UNRESOLVABLE; projection="$(jq -cn --arg digest "$(_opencode_roots_digest "$state")" '{status:"conflict",ledgerDigest:$digest}')"; break; }
-                        expected_record="$(_opencode_roots_record "${expected_target%/*}" existing)" || { _opencode_roots_add_diag LOADED_RELEASE_INCOMPLETE; projection="$(jq -cn --arg digest "$(_opencode_roots_digest "$state")" '{status:"conflict",ledgerDigest:$digest}')"; break; }
-                        [ "$target_record" = "$(jq -r .physicalRoot <<< "$expected_record")/${expected_target##*/}" ] || { _opencode_roots_add_diag PROJECTION_LINK_TARGET_DRIFT; projection="$(jq -cn --arg digest "$(_opencode_roots_digest "$state")" '{status:"conflict",ledgerDigest:$digest}')"; break; }
+                        target="$config_logical/$rel"; expected_target="$loaded_physical/$rel"; expected_link="$mefisto_logical/active/$rel"
+                        [ -L "$target" ] || { _opencode_roots_add_diag PROJECTION_LINK_MISSING; projection="$(jq -cn --arg digest "$digest" '{status:"conflict",ledgerDigest:$digest}')"; break; }
+                        link_value="$(readlink "$target")" || { _opencode_roots_add_diag PROJECTION_LINK_UNRESOLVABLE; projection="$(jq -cn --arg digest "$digest" '{status:"conflict",ledgerDigest:$digest}')"; break; }
+                        target_record="$(_opencode_roots_link_target_physical "$target")" || { _opencode_roots_add_diag PROJECTION_LINK_UNRESOLVABLE; projection="$(jq -cn --arg digest "$digest" '{status:"conflict",ledgerDigest:$digest}')"; break; }
+                        expected_record="$(_opencode_roots_record "${expected_target%/*}" existing)" || { _opencode_roots_add_diag LOADED_RELEASE_INCOMPLETE; projection="$(jq -cn --arg digest "$digest" '{status:"conflict",ledgerDigest:$digest}')"; break; }
+                        if [ "$target_record" != "$(jq -r .physicalRoot <<< "$expected_record")/${expected_target##*/}" ]; then
+                            _opencode_roots_add_diag PROJECTION_LINK_TARGET_DRIFT; projection="$(jq -cn --arg digest "$digest" '{status:"conflict",ledgerDigest:$digest}')"; break
+                        elif [ "$link_value" != "$expected_link" ]; then
+                            _opencode_roots_add_diag PROJECTION_LINK_FOREIGN; projection="$(jq -cn --arg digest "$digest" '{status:"conflict",ledgerDigest:$digest}')"; break
+                        fi
                     done < <(jq -r '.paths[]' "$state")
                 fi
             fi
