@@ -1294,9 +1294,9 @@ Si el `grep` reporta "YA CABLEADO", no toques el archivo -- una corrida previa d
 ## Paso 5 - Formatear y validar
 
 ```bash
-terraform -chdir="infra/environments/${ENV}" fmt -recursive ../..
-terraform -chdir="infra/environments/${ENV}" init -backend=false
-terraform -chdir="infra/environments/${ENV}" validate
+(cd "infra/environments/${ENV}" && terraform fmt -recursive ../..)
+(cd "infra/environments/${ENV}" && terraform init -backend=false)
+(cd "infra/environments/${ENV}" && terraform validate)
 ```
 
 `-backend=false` omite el remote state (util en local/CI sin credenciales). Si `terraform validate` falla, corrige y vuelve a validar. **No termines hasta que valide.** Si `terraform` no esta instalado, avisa y deja el formateo/validacion como paso manual pendiente.
