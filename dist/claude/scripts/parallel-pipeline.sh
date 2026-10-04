@@ -746,7 +746,11 @@ done
 # siguiente, y se avisa para que el humano no busque aplazados inexistentes.
 if batch_stop_requested; then
     rm -f "$BATCH_STOP_SIGNAL"
-    warn "Parada solicitada ($BATCH_STOP_SIGNAL): no quedaba ningun issue en cola por lanzar (todos ya estaban en vuelo). La senal se consumio igual, para no afectar la corrida siguiente."
+    if [ "$PARALLEL_PREFLIGHT_BLOCKED" = true ]; then
+        warn "Parada solicitada ($BATCH_STOP_SIGNAL) tras un bloqueo del preflight de autonomia: los pendientes ya quedaron 'no iniciado por preflight', no aplazados. La senal se consumio igual, para no afectar la corrida siguiente."
+    else
+        warn "Parada solicitada ($BATCH_STOP_SIGNAL): no quedaba ningun issue en cola por lanzar (todos ya estaban en vuelo). La senal se consumio igual, para no afectar la corrida siguiente."
+    fi
 fi
 
 # ─── Loop de monitoreo ────────────────────────────────────────────────────────
