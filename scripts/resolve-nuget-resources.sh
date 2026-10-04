@@ -21,7 +21,7 @@ done
 
 TMP="$(mktemp -d)" || exit 1
 trap 'rm -rf "$TMP"' EXIT
-DIAGNOSTICS=() ROOT_LOGICAL=() ROOT_PHYSICAL=() ROOT_EXISTS=() ROOT_SOURCES=() ASSET_ROWS=()
+DIAGNOSTICS=() ROOT_LOGICAL=() ROOT_PHYSICAL=() ROOT_EXISTS=() ROOT_SOURCES=() ASSET_ROWS=() ROOT_COUNT=0
 STATUS=resolved CLI_AVAILABLE=true CONFLICT=false
 diagnostic() { DIAGNOSTICS+=("$1"); }
 conflict() { CONFLICT=true; diagnostic "$1"; }
@@ -47,7 +47,7 @@ add_root() {
     for index in "${!ROOT_PHYSICAL[@]}"; do
         if [ "${ROOT_PHYSICAL[$index]}" = "$physical" ]; then ROOT_SOURCES[$index]="$(jq -c --argjson source "$source" '. + [$source]' <<< "${ROOT_SOURCES[$index]}")"; return; fi
     done
-    ROOT_LOGICAL+=("$logical"); ROOT_PHYSICAL+=("$physical"); ROOT_EXISTS+=("$exists"); ROOT_SOURCES+=("[$source]")
+    ROOT_LOGICAL+=("$logical"); ROOT_PHYSICAL+=("$physical"); ROOT_EXISTS+=("$exists"); ROOT_SOURCES+=("[$source]"); ROOT_COUNT=$((ROOT_COUNT + 1))
 }
 
 # La invocacion esta deliberadamente limitada a este argv y al cwd fisico.
@@ -70,7 +70,7 @@ fi
 
 ASSET_FILES=()
 while IFS= read -r asset; do ASSET_FILES+=("$asset"); done < <(find -P "$WORKTREE_PHYSICAL" \( -name .git -o -name .mefisto -o -name node_modules \) -type d -prune -o -type f -path '*/obj/project.assets.json' -print | sort)
-for explicit in "${EXPLICIT_ASSETS[@]}"; do
+for explicit in ${EXPLICIT_ASSETS[@]+"${EXPLICIT_ASSETS[@]}"}; do
     normalized="$(resource_path_normalize_input "$explicit" 2>/dev/null || true)"
     [ -n "$normalized" ] || { conflict EXPLICIT_ASSET_INVALID; continue; }
     parent="${normalized%/*}"; basename="${normalized##*/}"; [ -n "$parent" ] || parent=/
@@ -82,9 +82,9 @@ for explicit in "${EXPLICIT_ASSETS[@]}"; do
 done
 
 UNIQUE_ASSETS=()
-for asset in "${ASSET_FILES[@]}"; do
-    seen=false; for known in "${UNIQUE_ASSETS[@]}"; do [ "$known" = "$asset" ] && seen=true; done; [ "$seen" = false ] && UNIQUE_ASSETS+=("$asset"); done
-for asset in "${UNIQUE_ASSETS[@]}"; do
+for asset in ${ASSET_FILES[@]+"${ASSET_FILES[@]}"}; do
+    seen=false; for known in ${UNIQUE_ASSETS[@]+"${UNIQUE_ASSETS[@]}"}; do [ "$known" = "$asset" ] && seen=true; done; [ "$seen" = false ] && UNIQUE_ASSETS+=("$asset"); done
+for asset in ${UNIQUE_ASSETS[@]+"${UNIQUE_ASSETS[@]}"}; do
     relative="$(resource_path_relative "$WORKTREE_PHYSICAL" "$asset" | jq -r .)"
     hash="$(sha256_file "$asset")"
     if ! jq -e 'type == "object" and .version == 3 and (.packageFolders | type == "object") and all(.packageFolders | keys[]; type == "string" and length > 0)' "$asset" >/dev/null 2>&1; then conflict ASSET_INVALID; continue; fi
@@ -98,8 +98,8 @@ done
 
 [ "$CONFLICT" = true ] && STATUS=conflict
 COVERAGE=global-only; [ "${#ASSET_ROWS[@]}" -gt 0 ] && COVERAGE=observed-assets
-roots_json='[]'; for index in "${!ROOT_PHYSICAL[@]}"; do roots_json="$(jq -c --arg logical "${ROOT_LOGICAL[$index]}" --arg physical "${ROOT_PHYSICAL[$index]}" --argjson exists "${ROOT_EXISTS[$index]}" --argjson sources "${ROOT_SOURCES[$index]}" '. + [{logicalRoot:$logical,physicalRoot:$physical,exists:$exists,sources:$sources}]' <<< "$roots_json")"; done
-assets_json='[]'; for row in "${ASSET_ROWS[@]}"; do assets_json="$(jq -c --argjson row "$row" '. + [$row]' <<< "$assets_json")"; done
-diagnostics_json="$(printf '%s\n' "${DIAGNOSTICS[@]}" | jq -R . | jq -sc .)"
+roots_json='[]'; for ((index=0; index<ROOT_COUNT; index++)); do roots_json="$(jq -c --arg logical "${ROOT_LOGICAL[$index]}" --arg physical "${ROOT_PHYSICAL[$index]}" --argjson exists "${ROOT_EXISTS[$index]}" --argjson sources "${ROOT_SOURCES[$index]}" '. + [{logicalRoot:$logical,physicalRoot:$physical,exists:$exists,sources:$sources}]' <<< "$roots_json")"; done
+assets_json='[]'; for row in ${ASSET_ROWS[@]+"${ASSET_ROWS[@]}"}; do assets_json="$(jq -c --argjson row "$row" '. + [$row]' <<< "$assets_json")"; done
+if [ "${#DIAGNOSTICS[@]}" -eq 0 ]; then diagnostics_json='[]'; else diagnostics_json="$(printf '%s\n' "${DIAGNOSTICS[@]}" | jq -R . | jq -sc .)"; fi
 jq -cn --arg status "$STATUS" --arg coverage "$COVERAGE" --arg worktreeRoot "$WORKTREE_PHYSICAL" --argjson roots "$roots_json" --argjson assets "$assets_json" --argjson diagnostics "$diagnostics_json" '{schemaVersion:1,status:$status,coverage:$coverage,worktreeRoot:$worktreeRoot,roots:$roots,assets:$assets,diagnostics:$diagnostics}'
 [ "$STATUS" = resolved ] && exit 0 || exit 1
