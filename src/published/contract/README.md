@@ -467,8 +467,8 @@ escritura, que sigue determinada exclusivamente por `edit` y `writeScope`.
 campos cerrados, referencias `command-doc` y `launch-agent`, ciclos y calcula
 la clausura de composición. También cierra `executionClass`: la ejecución
 ordinaria o los parsers puros y sin evaluación `runtimes-v1` y `upgrade-v1`.
-La clasificación rechaza formas no canónicas, repetidas, mezcladas o
-desconocidas. La clausura une necesidades de comandos compuestos; nunca hereda
+La clasificación rechaza ids ajenos al inventario y formas no canónicas,
+repetidas, mezcladas o desconocidas. La clausura une necesidades de comandos compuestos; nunca hereda
 las capacidades de un agente delegado ni interpreta
 `{{mefisto:command ...}}` como llamada. Sí enumera los agentes alcanzables para
 que esa topología pueda verificarse sin convertirla en capacidades del padre.

@@ -19,8 +19,10 @@ def valid_execution_class($entry_id):
   . == {kind:"execute"} or
   ($entry_id == "runtimes" and . == {kind:"by-operation",parser:"runtimes-v1"}) or
   ($entry_id == "upgrade" and . == {kind:"by-operation",parser:"upgrade-v1"});
+def command_ids: ["batch-stop","bitacora","bug","draft","eraser-diagram","fix-review","health-check","implement","infra","infra-base","install-apim","install-auth","install-workos","merge","next-order","onboard","parallel","purge-store","runtimes","scaffold","scaffold-mcp","scaffold-projections","seed-secret","sequential","tooling","upgrade","work-status"];
 def classify_execution($command_id; $arguments):
-  if ($arguments | type) != "string" then fail("argumentos no textuales para " + $command_id)
+  if ($command_id | type) != "string" or (command_ids | index($command_id) | not) then fail("comando no reconocido")
+  elif ($arguments | type) != "string" then fail("argumentos no textuales para " + $command_id)
   elif $command_id == "runtimes" then
     if $arguments == "" or $arguments == "status" then {kind:"execute",operation:"query"}
     elif $arguments == "enable opencode" or $arguments == "disable opencode" then {kind:"maintenance",operation:"mutate"}
@@ -30,8 +32,7 @@ def classify_execution($command_id; $arguments):
     elif ($arguments | test("^--prune(?: --keep [0-9]+)?(?: --loaded [^[:space:]]+)?$")) then {kind:"execute",operation:"prune"}
     elif $arguments == "" or $arguments == "--align-peer" then {kind:"maintenance",operation:"mutate"}
     else fail("forma de upgrade no canonica") end
-  elif $command_id | identifier then {kind:"execute",operation:"query"}
-  else fail("comando no reconocido: " + $command_id) end;
+  else {kind:"execute",operation:"query"} end;
 def valid_entry($entry_id):
   (type == "object") and (keys | sort) == required and (.id | identifier) and
   (.capabilities | string_set and all(.[]; . == "read" or . == "edit" or . == "shell" or . == "web" or . == "task")) and
@@ -50,11 +51,15 @@ def command_entry:
   if ((.matrix | keys | sort) != ["commands","schemaVersion"] or .matrix.schemaVersion != 1) then fail("matriz invalida")
   elif (($entries | map(.id) | length) != ($entries | map(.id) | unique | length)) then fail("id de matriz duplicado")
   elif (($commands | map(.id) | length) != ($commands | map(.id) | unique | length)) then fail("id de catalogo duplicado")
+  elif (($entries | map(.id) | sort) != (command_ids | sort)) then fail("inventario de matriz no soportado")
   elif (($entries | map(.id) | sort) != ($commands | map(.id) | sort)) then fail("ids de matriz y catalogo no coinciden")
   elif any($entries[]; .id as $entry_id | (valid_entry($entry_id) | not)) then fail("fila con campos, tipos o valores invalidos")
   elif any($commands[]; . as $command | ($entries | map(select(.id == ($command | .id))) | .[0]) as $entry | $entry == null or (directives(($command | .body); "command-doc") | unique | sort) != ($entry.composes | sort) or (directives(($command | .body); "launch-agent") | unique | sort) != ($entry.delegates | sort) or (($entry.delegates - $agents) | length) != 0) then fail("referencia de composicion o delegado invalida")
   else {schemaVersion: 1,
    commands: [$entries[] as $entry | (closure($entries; ($entry | .id); []) | unique_by(.id)) as $rows |
      $entry + {closure: {commands: ($rows | map(.id) | sort), delegates: union($rows; "delegates"), capabilities: union($rows; "capabilities"), resources: union($rows; "resources"), skills: union($rows; "skills"), mcp: union($rows; "mcp")}}] | sort_by(.id)} end;
-if has("classification") then .classification as $request | classify_execution($request.commandId; $request.arguments)
+if has("classification") then
+  if (keys | sort) != ["classification"] or (.classification | type) != "object" or (.classification | keys | sort) != ["arguments","commandId"]
+  then fail("solicitud de clasificacion invalida")
+  else .classification as $request | classify_execution($request.commandId; $request.arguments) end
 else command_entry end

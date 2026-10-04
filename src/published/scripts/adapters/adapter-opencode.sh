@@ -159,11 +159,23 @@ native_command_binding() {
     awk '
         NR == 1 { next }
         $0 == "---" { exit }
-        /^command-entry-id: / { entry_id=$0; sub(/^command-entry-id: /, "", entry_id) }
-        /^subtask: (true|false)$/ { subtask=$2 }
+        /^command-entry-id:/ {
+            entry_count++
+            if (match($0, /^command-entry-id: "[a-z0-9]+(-[a-z0-9]+)*"$/)) {
+                entry_id=$0
+                sub(/^command-entry-id: "/, "", entry_id)
+                sub(/"$/, "", entry_id)
+            }
+        }
+        /^subtask:/ {
+            subtask_count++
+            if ($0 == "subtask: false") subtask="false"
+        }
         END {
-            if (entry_id == "") print "null"
-            else printf "{\"commandEntryId\":%s,\"subtask\":%s}\n", entry_id, (subtask == "" ? "false" : subtask)
+            if (entry_count == 0 && subtask_count == 0) print "null"
+            else if (entry_count == 1 && subtask_count == 1 && entry_id != "" && subtask == "false")
+                printf "{\"commandEntryId\":\"%s\",\"subtask\":false}\n", entry_id
+            else exit 2
         }
     '
 }
