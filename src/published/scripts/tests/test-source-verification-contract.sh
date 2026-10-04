@@ -86,7 +86,7 @@ if [ "$rc" -eq 0 ] && jq -e '
     any(.cases[]; .id == "domain-scaffolder" and .caseId == "nuget-version" and .status == "declared") and
     any(.cases[]; .id == "domain-scaffolder" and .caseId == "nuget-api" and .status == "declared") and
     any(.cases[]; .id == "infra-writer" and .caseId == "provider-pin" and .status == "external-unobserved") and
-    any(.cases[]; .id == "infra-reviewer" and .caseId == "provider-argument" and .status == "capability-missing") and
+    any(.cases[]; .id == "infra-reviewer" and .caseId == "provider-argument" and .status == "declared") and
     any(.cases[]; .id == "apim-gateway-scaffolder" and .caseId == "workos-discovery" and .status == "declared") and
     any(.cases[]; .id == "bug-investigator" and .caseId == "external-diagnosis" and .status == "declared") and
     any(.cases[]; .status == "not-required")' <<< "$out" >/dev/null; then
@@ -97,6 +97,24 @@ fi
 
 roles="$(jq -c '[.roles[] | {id,capabilities,mcp}]' "$FIXTURE")"
 envelope="$(jq -cn --slurpfile matrix "$MATRIX" --slurpfile registry "$REGISTRY" --argjson roles "$roles" '{matrix:$matrix[0],registry:$registry[0],roles:$roles,requiredCases:["infra-writer/provider-pin"]}')"
+reviewer_without_web="$(jq -c '(.roles[] | select(.id == "infra-reviewer")).capabilities -= ["web"] | .requiredCases += ["infra-reviewer/provider-argument"]' <<< "$envelope")"
+reviewer_external_status="$(printf '%s' "$reviewer_without_web" | jq -r -f "$FILTER" | jq -r '.cases[] | select(.id == "infra-reviewer" and .caseId == "provider-argument") | .status')"
+reviewer_local_status="$(printf '%s' "$reviewer_without_web" | jq -r -f "$FILTER" | jq -r '.cases[] | select(.id == "infra-reviewer" and .caseId == "local-hcl") | .status')"
+if [ "$reviewer_external_status" = capability-missing ] && [ "$reviewer_local_status" = declared ]; then
+    pass 'reviewer conserva revision local y no certifica argumento externo sin fuente'
+else
+    fail "fallback reviewer inesperado: local=$reviewer_local_status, externo=$reviewer_external_status"
+fi
+
+if jq -e '
+    .roles[] | select(.id == "infra-reviewer") |
+    any(.cases[]; .caseId == "provider-argument" and .when == "conditional" and .onMissing == "not-verified" and .options == [{"kind":"web","reference":"documentacion oficial del provider"}])
+' "$MATRIX" >/dev/null; then
+    pass 'reviewer declara documentacion oficial condicional y resultado NO VERIFICADO'
+else
+    fail 'reviewer no conserva la degradacion de fuente oficial'
+fi
+
 without_external="$(jq -c '(.roles[] | select(.id == "infra-writer")).mcp=[]' <<< "$envelope")"
 with_web="$(jq -c '(.roles[] | select(.id == "infra-writer")).capabilities += ["web"]' <<< "$without_external")"
 status_without="$(printf '%s' "$without_external" | jq -r -f "$FILTER" | jq -r '.cases[] | select(.id == "infra-writer" and .caseId == "provider-pin") | .status')"

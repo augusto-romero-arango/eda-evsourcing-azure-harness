@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 # Verifica el corte vertical neutral de infra-writer/infra-reviewer (issue #1625):
-# metadata/perfiles, allowlist MCP por runtime, denegacion de terraform
-# plan/apply y az en OpenCode, ausencia de tokens de runtime en la fuente y
-# paridad byte a byte de los mirrors raiz Claude.
+# metadata/perfiles, fuente oficial condicional del reviewer, allowlist MCP por
+# runtime, denegacion de terraform plan/apply y az en OpenCode, ausencia de
+# tokens de runtime en la fuente y paridad byte a byte de los mirrors raiz Claude.
 set -uo pipefail
 export LC_ALL=C
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 REPO_ROOT="$(cd "$HERE/../../../.." && pwd -P)"
 GENERATOR="$REPO_ROOT/src/published/scripts/generate-published-adapters.sh"
+SOURCE_FIXTURES="$HERE/fixtures/infra-reviewer-sources/cases.json"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 PASS=0; FAIL=0
@@ -19,13 +20,14 @@ frontmatter() { awk 'NR == 1 { next } $0 == "---" { exit } { print }' "$1"; }
 body() { awk 'NR == 1 { next } $0 == "---" && !seen { seen=1; next } seen { print }' "$1"; }
 
 echo '[a] metadata y perfiles de la fuente neutral'
-for spec in 'infra-writer|balanced' 'infra-reviewer|deep'; do
-    agent="${spec%%|*}"; expected_profile="${spec##*|}"
+for spec in 'infra-writer|balanced|["read","edit","shell"]' 'infra-reviewer|deep|["read","edit","shell","web"]'; do
+    agent="${spec%%|*}"; rest="${spec#*|}"; expected_profile="${rest%%|*}"; expected_capabilities="${rest#*|}"
     source="$REPO_ROOT/src/published/agents/$agent.md"
     if bash "$REPO_ROOT/src/published/scripts/validate-published-artifacts.sh" "$source" >/dev/null; then pass "$agent valida contra el contrato"; else fail "$agent no valida contra el contrato"; fi
     metadata="$(frontmatter "$source")"
     if printf '%s' "$metadata" | jq -e --arg id "$agent" --arg profile "$expected_profile" \
-        '.kind == "agent" and .id == $id and .mode == "all" and .profile == $profile and .capabilities == ["read", "edit", "shell"]' >/dev/null; then
+        --argjson capabilities "$expected_capabilities" \
+        '.kind == "agent" and .id == $id and .mode == "all" and .profile == $profile and .capabilities == $capabilities' >/dev/null; then
         pass "$agent declara kind/id/mode/profile/capabilities esperados"
     else
         fail "$agent no declara kind/id/mode/profile/capabilities esperados"
@@ -35,6 +37,31 @@ writer_mcp="$(frontmatter "$REPO_ROOT/src/published/agents/infra-writer.md" | jq
 reviewer_mcp="$(frontmatter "$REPO_ROOT/src/published/agents/infra-reviewer.md" | jq -c '.mcp // []')"
 [ "$writer_mcp" = '["terraform"]' ] && pass 'infra-writer declara mcp: ["terraform"]' || fail "infra-writer declaro mcp inesperado: $writer_mcp"
 [ "$reviewer_mcp" = '[]' ] && pass 'infra-reviewer no declara mcp' || fail "infra-reviewer declaro mcp inesperado: $reviewer_mcp"
+
+echo '[fuentes] fallback condicional y degradacion verificable'
+if jq -e '
+    .schemaVersion == 1 and (.cases | length) == 4 and
+    any(.cases[]; .id == "adr-schema-local" and .expected == "local-artifact") and
+    any(.cases[]; .id == "provider-v4-versus-latest-v5" and .lockVersion == "4.81.0" and .latestVersion == "5.0.1" and .expected == "version-locked-official-docs") and
+    any(.cases[]; .id == "external-source-absent" and .expected == "NO VERIFICADO") and
+    any(.cases[]; .id == "official-docs-available" and .expected == "semantic-review")
+' "$SOURCE_FIXTURES" >/dev/null 2>&1; then
+    pass 'fixture cubre ADR/schema local, version v4 frente a latest v5, ausencia y fuente oficial'
+else
+    fail 'fixture de fuentes del infra-reviewer incompleta'
+fi
+reviewer_body="$(body "$REPO_ROOT/src/published/agents/infra-reviewer.md")"
+for statement in \
+    'ADRs del proyecto, el HCL y el schema/provider local son las primeras fuentes' \
+    'version fijada en `.terraform.lock.hcl` o permitida por el constraint del proyecto' \
+    'documentacion `latest` de otra major' \
+    'Nunca envies HCL completo, configuracion del consumidor, identificadores, tokens, secretos ni payloads' \
+    'no demuestra conectividad ni que exista una fuente para la version requerida' \
+    'marca la fila del argumento como **NO VERIFICADO** y no apruebes su semantica' \
+    'no convierte la revision local en una consulta de red obligatoria' \
+    'MCP de Terraform al reviewer'; do
+    contains "$reviewer_body" "$statement" "reviewer conserva la regla de fuente: $statement"
+done
 
 echo '[d] ausencia de tokens de runtime en la fuente neutral'
 for agent in infra-writer infra-reviewer; do
@@ -61,11 +88,15 @@ contains "$claude_writer" 'mcp__terraform__*' 'Claude writer expone el matcher c
 contains "$claude_writer" 'mcp__plugin_terraform_terraform__*' 'Claude writer expone el matcher scoped del plugin terraform'
 contains "$claude_writer" 'model: "sonnet"' 'Claude writer materializa perfil balanced'
 contains "$claude_reviewer" 'model: "opus"' 'Claude reviewer materializa perfil deep'
+contains "$claude_reviewer" 'WebFetch, WebSearch' 'Claude reviewer expone solo el par web adicional'
 absent "$claude_reviewer" 'mcp__' 'Claude reviewer no expone ningun matcher MCP'
 opencode_writer="$(< "$WORK/dist/opencode/agents/infra-writer.md")"
 opencode_reviewer="$(< "$WORK/dist/opencode/agents/infra-reviewer.md")"
 contains "$opencode_writer" '"terraform_*":true' 'OpenCode writer habilita terraform_*'
 contains "$opencode_reviewer" '"terraform_*":false' 'OpenCode reviewer deniega terraform_*'
+contains "$opencode_reviewer" '"webfetch":"allow"' 'OpenCode reviewer permite WebFetch'
+contains "$opencode_reviewer" '"websearch":"allow"' 'OpenCode reviewer permite WebSearch'
+contains "$opencode_writer" '"webfetch":"deny"' 'OpenCode writer no recibe web'
 absent "$opencode_writer" 'model:' 'OpenCode writer no fija model'
 absent "$opencode_reviewer" 'model:' 'OpenCode reviewer no fija model'
 
@@ -73,9 +104,9 @@ echo '[c] terraform plan/apply y az denegados en OpenCode'
 for rendered_name in opencode_writer opencode_reviewer; do
     rendered="${!rendered_name}"
     contains "$rendered" '"bash":{"*":"deny"' "$rendered_name mantiene shell deny por defecto"
-    contains "$rendered" '"terraform init -backend=false*":"allow"' "$rendered_name permite terraform init -backend=false"
-    contains "$rendered" '"terraform validate*":"allow"' "$rendered_name permite terraform validate"
-    contains "$rendered" '"terraform fmt*":"allow"' "$rendered_name permite terraform fmt"
+    contains "$rendered" '"terraform init -backend=false":"allow"' "$rendered_name permite terraform init -backend=false"
+    contains "$rendered" '"terraform validate":"allow"' "$rendered_name permite terraform validate"
+    contains "$rendered" '"terraform fmt -recursive ../..":"allow"' "$rendered_name permite terraform fmt"
     for denied in '"terraform plan' '"terraform apply' '"az '; do
         absent "$rendered" "$denied" "$rendered_name no declara allow explicito para: $denied"
     done
