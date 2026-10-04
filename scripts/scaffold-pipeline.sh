@@ -90,7 +90,7 @@ cleanup_on_error() {
 trap cleanup_on_error ERR
 # abort() sale con exit 1 sin disparar ERR: el directorio temporal del runner
 # se limpia en cualquier salida, no solo ante error.
-trap 'rm -rf "$PIPELINE_TMP_DIR" 2>/dev/null || true' EXIT
+trap 'pipeline_execution_close "$?"; rm -rf "$PIPELINE_TMP_DIR" 2>/dev/null || true' EXIT
 
 # --- Help ---
 show_help() {
@@ -160,6 +160,9 @@ MEFISTO_RUNTIME_JSON="\"$MEFISTO_RUNTIME_RESUELTO\""
 if ! runtime_cli_available "$MEFISTO_RUNTIME_RESUELTO"; then
     abort "Falta el CLI del runtime resuelto ('$MEFISTO_RUNTIME_RESUELTO')"
 fi
+# Ejecucion preparada (#1860): una referencia para todo el pipeline, antes del worktree.
+pipeline_execution_open scaffold "$(git rev-parse --show-toplevel)" "$(cd "$SCRIPT_DIR/.." && pwd -P)" "$RUNTIME_LIB_DIR" "$RUN_AGENT_BIN_DEFAULT" \
+    || abort "No se pudo abrir la ejecucion preparada del pipeline scaffold"
 
 # --- Obtener contexto del issue ---
 ISSUE_TITLE=""
@@ -326,7 +329,8 @@ run_scaffold_agent() {
         local args=(--runtime "$MEFISTO_RUNTIME_RESUELTO" --agent domain-scaffolder --cwd "$WORKTREE_PATH" --prompt-file "$attempt_prompt" --system-file "$system_file" --event-log "$events_file" --events-log "$EVENTS_LOG" --redact-observability --timeout "$SCAFFOLD_TIMEOUT")
         [ -n "$SCAFFOLD_AGENT_MODEL" ] && args+=(--model "$SCAFFOLD_AGENT_MODEL")
         [ -n "$resume_session" ] && args+=(--resume-session "$resume_session")
-        if "$RUN_AGENT_BIN" "${args[@]}" >"$runner_file" 2>&1; then run_exit=0; else run_exit=$?; fi
+        if pipeline_run_runner "$RUN_AGENT_BIN" "${args[@]}" >"$runner_file" 2>&1; then run_exit=0; else run_exit=$?; fi
+        pipeline_runner_started_or_abort domain-scaffolder
         [ "$attempt_prompt" = "$prompt_file" ] || rm -f "$attempt_prompt"
         elapsed=$(( $(date +%s) - start_ts ))
         derive_stage_log_from_stream "$events_file" "" "$SCAFFOLD_LOG"

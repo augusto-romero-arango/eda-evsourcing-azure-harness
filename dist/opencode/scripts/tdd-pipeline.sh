@@ -441,6 +441,10 @@ HARNESS_IDENTITY_JSON="$(get_harness_identity_json "$MEFISTO_RUNTIME_RESUELTO")"
 if ! runtime_cli_available "$MEFISTO_RUNTIME_RESUELTO"; then
     abort "Falta el CLI del runtime resuelto ('$MEFISTO_RUNTIME_RESUELTO')"
 fi
+# Ejecucion preparada (#1860): una referencia para todo el pipeline, antes del worktree.
+pipeline_execution_open tdd "$(git rev-parse --show-toplevel)" "$(cd "$SCRIPT_DIR/.." && pwd -P)" "$RUNTIME_LIB_DIR" "$RUN_AGENT_BIN_DEFAULT" \
+    || abort "No se pudo abrir la ejecucion preparada del pipeline tdd"
+trap 'pipeline_execution_close "$?"' EXIT
 if [ "$(printf '%s' "$HARNESS_IDENTITY_JSON" | jq -r '.identity_state')" != "complete" ]; then
     warn "Identidad de distribucion degradada: metadata ausente o invalida; version/commit se registran como null"
 fi
@@ -515,7 +519,7 @@ fi
 
 PIPELINE_TMP_DIR="$(mktemp -d -t mefisto-tdd)" || abort "No se pudo crear el directorio temporal del pipeline"
 [ -d "$PIPELINE_TMP_DIR" ] || abort "No se pudo crear el directorio temporal del pipeline"
-trap 'rm -rf "${PIPELINE_TMP_DIR:-}"' EXIT
+trap 'pipeline_execution_close "$?"; rm -rf "${PIPELINE_TMP_DIR:-}"' EXIT
 
 # ─── Invocacion neutral unica para stages sin politicas de run_agent ──────────
 # Debe declararse antes de Stage 0: Bash solo conoce una funcion despues de
@@ -529,7 +533,8 @@ invoke_agent_once() {
     start_ts=$(date +%s)
     local args=(--runtime "$MEFISTO_RUNTIME_RESUELTO" --agent "$agent" --cwd "$WORKTREE_PATH" --prompt-file "$prompt_file" --system-file "$system_file" --event-log "$events_file" --events-log "$EVENTS_LOG_ABS" --redact-observability --timeout "$MEFISTO_AGENT_TIMEOUT_SECONDS")
     [ -n "$model" ] && args+=(--model "$model")
-    if "$RUN_AGENT_BIN" "${args[@]}" >"$runner_file" 2>&1; then run_exit=0; else run_exit=$?; fi
+    if pipeline_run_runner "$RUN_AGENT_BIN" "${args[@]}" >"$runner_file" 2>&1; then run_exit=0; else run_exit=$?; fi
+    pipeline_runner_started_or_abort "$agent"
     derive_stage_log_from_stream "$events_file" "" "$log_file"
     LAST_AGENT_METRICS_JSON=$(compute_stage_metrics "$events_file")
     LAST_AGENT_DURATION=$(( $(date +%s) - start_ts ))
@@ -793,7 +798,8 @@ Al cerrar este stage, deja tu resumen en: $summary_path"
         local args=(--runtime "$MEFISTO_RUNTIME_RESUELTO" --agent "$agent" --cwd "$WORKTREE_PATH" --prompt-file "$attempt_prompt" --system-file "$system_file" --event-log "$events_file" --events-log "$EVENTS_LOG_ABS" --redact-observability --timeout "$MEFISTO_AGENT_TIMEOUT_SECONDS")
         [ -n "$AGENT_MODEL_OVERRIDE" ] && args+=(--model "$AGENT_MODEL_OVERRIDE")
         [ -n "$resume_session" ] && args+=(--resume-session "$resume_session")
-        if "$RUN_AGENT_BIN" "${args[@]}" >"$runner_file" 2>&1; then run_exit=0; else run_exit=$?; fi
+        if pipeline_run_runner "$RUN_AGENT_BIN" "${args[@]}" >"$runner_file" 2>&1; then run_exit=0; else run_exit=$?; fi
+        pipeline_runner_started_or_abort "$agent"
         [ "$attempt_prompt" = "$prompt_file" ] || rm -f "$attempt_prompt"
         elapsed=$(( $(date +%s) - start_ts ))
         derive_stage_log_from_stream "$events_file" "" "$log_stage"
