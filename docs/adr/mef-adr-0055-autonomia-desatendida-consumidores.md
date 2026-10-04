@@ -47,7 +47,7 @@ Los actores que custodian credenciales continuan usandolas sin revelar valores a
 
 La secuencia es: **activar/autorizar perfil -> resolver identidad y recursos -> verificar capacidades/requisitos -> admitir -> ejecutar/observar -> verificar resultado**. La admision captura snapshot de repo, runtime/version, release cargada, revision de perfil/autorizacion, recursos, toolchain y agentes. Una corrida conserva una identidad de release coherente y no toma la ultima version del cache en cada paso.
 
-Invariante de una corrida admitida: **cero prompts y cero denegaciones de capacidades requeridas**. No se omite una lectura o comprobacion obligatoria para aparentar continuidad. Un cambio externo o una operacion fuera del alcance falla o no se admite explícitamente, de forma recuperable, sin autoampliacion, espera interactiva silenciosa ni reintento ciego. Esto no promete eliminar fallos de red, proveedor, credenciales expiradas o autorizacion externa cambiante. La politica existente del orquestador sigue gobernando cola, dependencias y reanudacion.
+Invariante y objetivo operacional de una corrida admitida: **cero prompts y cero denegaciones de capacidades requeridas**. No se omite una lectura o comprobacion obligatoria para aparentar continuidad. Un cambio externo o una operacion fuera del alcance falla o no se admite explícitamente, de forma recuperable, sin autoampliacion, espera interactiva silenciosa ni reintento ciego. Esto no promete eliminar fallos de red, proveedor, credenciales expiradas o autorizacion externa cambiante. La politica existente del orquestador sigue gobernando cola, dependencias y reanudacion. El objetivo no convierte una telemetria incompleta en una afirmacion demostrada; el alcance de certificacion se precisa en la seccion 8.
 
 Cada corrida/etapa deja evidencia sanitizada de identidad, comprobaciones, solicitudes o denegaciones observadas y resultados requeridos. Desconocido no equivale a cero; exit 0 no demuestra por si solo tarea completa.
 
@@ -123,6 +123,47 @@ actual y se reporta al caller para que distinga la causa. El lease coordina uso
 de instalación, no reemplaza la autorización administrativa, los modelos o el
 flujo existente del adaptador Claude, ni la administración acotada de este ADR.
 
+### 8. Enmienda: certificación con evidencia parcial observable
+
+La certificación preserva el objetivo operacional de la sección 4, pero separa
+lo que se desea evitar de lo que el wire realmente demuestra. En OpenCode
+v1.18.29, `run --format json` no exporta el ciclo completo de permisos:
+`denials:null` es **desconocido**, nunca cero; las solicitudes autoaprobadas por
+`--auto` pueden no aparecer en el JSON; y una denegación de tool puede llegar
+solo como texto. El mantenedor acepta esta evidencia parcial para el smoke de
+#1827, con límites visibles, en vez de falsear un contador global de cero.
+
+Las señales positivas estructuradas permiten rechazar o escalar un caso. Un
+error de tool expresado como texto es un *hint*, no una decisión tipada. La
+ausencia de ambas señales no prueba que no existieron eventos que el runtime no
+emitió, ni `--auto` demuestra autonomía. El smoke verifica outcomes concretos
+de los escenarios ejercidos, incluidos sus entregables y prompts visibles; no
+certifica universalmente `denials == 0` ni `asks == 0`.
+
+| Situación observada | Qué puede afirmarse | Qué no puede afirmarse |
+|---|---|---|
+| Hint o denegación observada en una operación requerida, incluso con exit 0 | El caso no se aprueba hasta investigarla o clasificarla; texto final y exit 0 no sustituyen esa investigación. | Que la operación fue autónoma o que el resultado terminal prueba completitud. |
+| Stream sin observaciones y `denials:null` | Los escenarios ejecutados terminaron sin prompts visibles ni señales observadas, si sus outcomes concretos se verificaron. | Que no hubo denegaciones o solicitudes no emitidas, ni cero bloqueos en todo el catálogo. |
+| Permiso autoaprobado que no se emitió en el stream | La ausencia de señal es compatible con la cobertura parcial conocida del wire. | Que `--auto` prueba autonomía, ausencia de solicitudes o un conteo cero. |
+| Fuente completa que informa explícitamente cero | Cero para el alcance, versión y superficie que esa fuente cubre. | Cero fuera de esa cobertura o una garantía permanente ante cambios externos. |
+
+#1827 puede cerrarse manualmente cuando conserve evidencia reproducible y
+sanitizada de escenarios concretos, sus outcomes y una sección visible de
+limitaciones: versión, superficies probadas, `denials:null`, solicitudes no
+observables y cambios externos. Ese cierre certifica dichos escenarios; no
+declara una garantía de cero bloqueos para todas las etapas ni para todo el
+catálogo. Fallos externos no relacionados se clasifican aparte y no se usan
+para ocultar una señal de permiso de una operación requerida. Un preflight en
+estado `ready` y una suite simulada son controles útiles, pero no sustituyen la
+telemetría real ni acreditan por sí solos todas las etapas.
+
+Esta limitación no rebaja la evidencia de Claude por una paridad aparente:
+cuando su versión emite `permission_denials`, el adaptador conserva ese dato
+real y no lo transforma en `null`. Cuando una versión o API ofrezca una señal
+completa para el otro adaptador, se revalidará el objetivo mediante un issue
+específico, con nueva caracterización de la fuente. No se introduce un fork
+silencioso del runtime ni se presenta un test simulado como telemetría real.
+
 ## Alternativas consideradas
 
 ### Alt a: permiso por tool call o por lote
@@ -165,6 +206,7 @@ flujo existente del adaptador Claude, ni la administración acotada de este ADR.
 - MEF-ADR-0049, seccion 5: `--auto` no elimina denegaciones y su politica interna no cambia aqui.
 - MEF-ADR-0050: intenciones neutrales y bindings por adaptador.
 - MEF-ADR-0053, secciones 2, 4 y 5: releases inmutables, contrato canonico/fallback y paridad distribuida.
+- MEF-ADR-0053, secciones 5 y 6: paridad entre adaptadores y certificación de la release instalada.
 - [1] OpenCode, [Security: No Sandbox](https://github.com/anomalyco/opencode/blob/v1.18.29/SECURITY.md), version 1.18.29; fuente del limite del modo local.
 - [2] OpenCode, [Permissions](https://github.com/anomalyco/opencode/blob/v1.18.29/packages/web/src/content/docs/permissions.mdx), version 1.18.29; fuente del limite de `--auto`.
 - [3] OpenCode, [carga de plugins y disparo de configuración](https://github.com/anomalyco/opencode/blob/v1.18.29/packages/opencode/src/plugin/index.ts), versión 1.18.29; un fallo de configuración no es evidencia de que el guard se aplicó.
@@ -172,9 +214,12 @@ flujo existente del adaptador Claude, ni la administración acotada de este ADR.
 - [5] OpenCode, [parámetros efectivos de petición de chat](https://github.com/anomalyco/opencode/blob/v1.18.29/packages/opencode/src/session/llm/request.ts), versión 1.18.29; fundamento para observar la petición de la misma instancia.
 - [6] The Open Group, POSIX.1-2024, [`kill`](https://pubs.opengroup.org/onlinepubs/9799919799/functions/kill.html); la señal 0 comprueba el PID y los permisos sin enviar una señal.
 - [7] The Open Group, POSIX.1-2024, [`wait`](https://pubs.opengroup.org/onlinepubs/9799919799/functions/wait.html); su alcance son procesos hijo del proceso llamador, no un grafo arbitrario.
+- [8] OpenCode, [`run --format json`](https://github.com/anomalyco/opencode/blob/v1.18.29/packages/opencode/src/cli/cmd/run.ts), versión 1.18.29; el stream no exporta el ciclo completo de permisos y `--auto` puede responder sin emitir la solicitud.
+- [9] OpenCode, [permission/index.ts](https://github.com/anomalyco/opencode/blob/v1.18.29/packages/opencode/src/permission/index.ts) y [SessionProcessor](https://github.com/anomalyco/opencode/blob/v1.18.29/packages/opencode/src/session/processor.ts), versión 1.18.29; una denegación puede no conservar tipo al representarse como texto.
 - Issue #1820: origen y decisiones del mantenedor; #1821--#1827: implementacion y certificacion posteriores.
 
 ## Control de cambios
 
 - 2026-10-03: creacion como `aceptado` (issue #1820). Fija perfil opt-in por proyecto, entrada controlada, administracion preautorizada y acotada, ciclo de admision con evidencia, local primero sin promesa de sandbox y compatibilidad/certificacion futura; no implementa permisos ni declara certificacion runtime.
 - 2026-10-04: enmienda (issue #1862). Precisa la convención de mantenimiento entre corridas, la recuperación automática solo con terminación demostrable del grafo pertinente, la separación entre metadata global de instalación y controles del consumidor, el guard síncrono sobre la instancia efectiva y el tratamiento no fallback de `CONSENT_REVOKED`; no implementa ni certifica esos mecanismos.
+- 2026-10-04: enmienda (issue #1875). Distingue el objetivo de cero prompts/denegaciones de la certificación limitada por el wire de OpenCode v1.18.29: `denials:null` permanece desconocido, las señales positivas rechazan el caso y #1827 solo puede cerrar manualmente escenarios reproducibles con sus límites visibles; no implementa traductores ni declara una garantía global.
