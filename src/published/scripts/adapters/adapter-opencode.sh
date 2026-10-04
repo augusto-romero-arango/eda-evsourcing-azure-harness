@@ -14,6 +14,7 @@ MCP_REGISTRY="$REPO_ROOT/src/published/contract/mcp-servers.json"
 MCP_VALIDATOR="$REPO_ROOT/src/published/scripts/validate-published-mcp.sh"
 COMMAND_ENTRY="$REPO_ROOT/src/published/contract/command-entry.json"
 COMMAND_ENTRY_FILTER="$REPO_ROOT/src/published/scripts/lib/command-entry.jq"
+AGENT_EXECUTION="$REPO_ROOT/src/published/contract/agent-execution.json"
 source "$SCRIPT_DIR/../lib/effective-contract.sh" || { printf '%s\n' "ERROR: falta src/published/scripts/lib/effective-contract.sh; sin esa biblioteca las rutas efectivas del contrato consumidor no se resolverian." >&2; exit 1; }
 
 error() { printf '%s\n' "$1" >&2; return 1; }
@@ -175,6 +176,62 @@ render_command_entry_manifest() {
         done < <(jq -r --arg id "$command" '.commands[] | select(.id == $id) | .delegates[]' <<< "$catalog")
     done < <(jq -r '.commands[].id' <<< "$catalog")
     jq -cn --arg fingerprint "$(printf '%s' "$catalog" | shasum -a 256 | awk '{print $1}')" --argjson templates "$templates" --argjson delegatedPrompts "$delegated" '{schemaVersion:1,catalogFingerprint:$fingerprint,templates:($templates | sort_by(.kind,.id)),delegatedPrompts:($delegatedPrompts | sort_by(.command,.agent))}'
+}
+
+agent_execution_catalog() {
+    local agent_file frontmatter agents='[]' item
+    [ -f "$AGENT_EXECUTION" ] || { error 'agent-execution: contrato ausente'; return 1; }
+    for agent_file in "$REPO_ROOT"/src/published/agents/*.md; do
+        [ -f "$agent_file" ] || continue
+        frontmatter="$(frontmatter "$agent_file")" || return 1
+        item="$(printf '%s\n' "$frontmatter" | jq -c '{id,mode:(.mode // ""),capabilities:(.capabilities // []),mcp:(.mcp // []),skills:(.skills // [])}')" || return 1
+        agents="$(jq -cn --argjson prior "$agents" --argjson item "$item" '$prior + [$item]')" || return 1
+    done
+    jq -cn --slurpfile catalog "$AGENT_EXECUTION" --argjson agents "$agents" '
+      ($catalog[0]) as $c |
+      ($c.roles | map(.id)) as $declared |
+      ($agents | map(.id)) as $actual |
+      def unique_ids: length == (unique | length);
+      if ($c | keys | sort) != ["pipelines","roles","roots","schemaVersion"] or $c.schemaVersion != 1 then error("schema")
+      elif ($c.roles | type) != "array" or ($c.roles | length) != 22 or ($declared | unique_ids | not) then error("roles")
+      elif ($actual | unique_ids | not) or (($declared | sort) != ($actual | sort)) then error("inventory")
+      elif any($c.roles[]; (keys | sort) != ["id","resources","writeScope"] or (.writeScope != "project" and .writeScope != "none") or (.resources[0:4] != ["project","release","state","runtime-tool-output"]) or (.resources | unique_ids | not)) then error("role shape")
+      elif any($agents[]; (.capabilities | index("task")) != null) then error("task")
+      elif any($agents[] as $agent | $c.roles[] | select(.id == $agent.id) | {writeScope,capabilities:$agent.capabilities}; (.writeScope == "project") != (.capabilities | index("edit") != null)) then error("write scope")
+      elif ($c.pipelines | keys | sort) != ["iac","scaffold","tdd","tooling"] or ($c.roots | keys | sort) != ["implement","infra","parallel","scaffold","sequential","tooling"] then error("ownership tables")
+      elif any($c.pipelines[]; type != "array" or length == 0 or (unique_ids | not) or any(.[]; . as $role | ($declared | index($role) | not))) then error("pipeline roles")
+      elif any($c.roots[]; type != "array" or length == 0 or (unique_ids | not) or any(.[]; . as $pipeline | ($c.pipelines | has($pipeline) | not))) then error("root pipelines")
+      else {catalog:$c,agents:$agents} end
+    ' || { error 'agent-execution: catalogo invalido, incompleto o divergente del frontmatter'; return 1; }
+}
+
+validate_agent_execution_callers() {
+    local tdd="$REPO_ROOT/scripts/tdd-pipeline.sh" tooling="$REPO_ROOT/scripts/tooling-pipeline.sh" iac="$REPO_ROOT/scripts/iac-pipeline.sh" scaffold="$REPO_ROOT/scripts/scaffold-pipeline.sh"
+    grep -Fq 'STAGE1_AGENT="test-writer"' "$tdd" && grep -Fq 'STAGE1_AGENT="projection-test-writer"' "$tdd" && grep -Fq 'run_agent "2b" "smoke-test-writer"' "$tdd" && grep -Fq 'run_agent "3" "reviewer"' "$tdd" && grep -Fq 'invoke_agent_once "domain-scaffolder"' "$tdd" && grep -Fq 'invoke_agent_once "$STAGE1_AGENT"' "$tdd" && grep -Fq 'invoke_agent_once "$STAGE2_AGENT"' "$tdd" || { error 'agent-execution: callers TDD divergentes'; return 1; }
+    grep -Fq 'agent_id="tooling-reviewer"' "$tooling" && grep -Fq 'agent_id="tooling-writer"' "$tooling" || { error 'agent-execution: callers tooling divergentes'; return 1; }
+    grep -Fq 'run_agent "1" "infra-writer"' "$iac" && grep -Fq 'run_agent "2" "infra-reviewer"' "$iac" || { error 'agent-execution: callers iac divergentes'; return 1; }
+    grep -Fq -- '--agent domain-scaffolder --cwd "$WORKTREE_PATH"' "$scaffold" || { error 'agent-execution: caller scaffold divergente'; return 1; }
+}
+
+render_agent_execution_manifest() {
+    local catalog role source rel marker rendered metadata source_metadata rendered_frontmatter rendered_mode rendered_tools rendered_permission digest roles='[]' fingerprint
+    catalog="$(agent_execution_catalog)" || { error 'agent-execution: no se pudo leer el catalogo'; return 1; }
+    validate_agent_execution_callers || { error 'agent-execution: callers invalidos'; return 1; }
+    fingerprint="$(printf '%s' "$catalog" | jq -c '.catalog' | shasum -a 256 | awk '{print $1}')" || { error 'agent-execution: no se pudo calcular la huella'; return 1; }
+    while IFS= read -r role; do
+        source="$REPO_ROOT/src/published/agents/$role.md"; rel="${source#"$REPO_ROOT/"}"
+        marker="<!-- GENERADO por src/published/scripts/generate-published-adapters.sh desde $rel. No editar a mano. -->"
+        rendered="$(render "$source" "$marker")" || { error "agent-execution: no se pudo renderizar $role"; return 1; }
+        source_metadata="$(frontmatter "$source")" || { error "agent-execution: frontmatter fuente invalido para $role"; return 1; }
+        rendered_frontmatter="$(printf '%s\n' "$rendered" | awk 'NR == 1 { next } $0 == "---" { closed=1; next } !closed { print }')" || { error "agent-execution: frontmatter renderizado invalido para $role"; return 1; }
+        rendered_mode="$(printf '%s\n' "$rendered_frontmatter" | awk '/^mode: / {sub(/^mode: /, ""); print; exit}')"
+        rendered_tools="$(printf '%s\n' "$rendered_frontmatter" | awk '/^tools: / {sub(/^tools: /, ""); print; exit}')"
+        rendered_permission="$(printf '%s\n' "$rendered_frontmatter" | awk '/^permission: / {sub(/^permission: /, ""); print; exit}')"
+        metadata="$(jq -cn --argjson mode "$rendered_mode" --argjson tools "$rendered_tools" --argjson permission "$rendered_permission" --argjson source "$source_metadata" '{mode:$mode,tools:$tools,skills:($source.skills // []),permission:$permission}')" || { error "agent-execution: metadata renderizada invalida para $role"; return 1; }
+        digest="$(printf '%s\n' "$rendered" | awk 'NR == 1 { next } $0 == "---" && !seen { seen=1; next } seen { print }' | trimmed_sha256)" || { error "agent-execution: digest invalido para $role"; return 1; }
+        roles="$(jq -cn --arg id "$role" --arg alias "autonomy-$role" --arg sourceDigest "$digest" --argjson metadata "$metadata" --argjson roles "$roles" '$roles + [{id:$id,alias:$alias,hidden:true,mode:"all",question:"deny",sourceDigest:$sourceDigest,metadata:$metadata}]')" || { error "agent-execution: rol no representable $role"; return 1; }
+    done < <(printf '%s' "$catalog" | jq -r '.catalog.roles[].id')
+    jq -cn --arg fingerprint "$fingerprint" --argjson roles "$roles" '{schemaVersion:1,catalogFingerprint:$fingerprint,roles:$roles}'
 }
 
 published_opencode_translate_body() {
@@ -595,10 +652,10 @@ if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
         path)
             case "${2:-}" in src/published/agents/*.md) printf 'agents/%s\n' "$(basename "$2")" ;; src/published/commands/*.md) printf 'commands/mefisto:%s\n' "$(basename "$2")" ;; *) error "$2: path: fuente publicada desconocida" ;; esac ;;
         render) [ "$#" -eq 3 ] || error 'render: se esperaban fuente y marcador'; render "$2" "$3" ;;
-        assets) validate_interactive_hooks && validate_published_mcp && command_entry_catalog >/dev/null && { skill_assets | jq '. + [{id:"interactive-observability",source:"src/published/hooks/interactive-hooks.json",destination:"plugins/mefisto-observability.js",mode:"0644"},{id:"mcp-config",source:"src/published/contract/mcp-servers.json",destination:"plugins/mefisto-mcp.js",mode:"0644"},{id:"command-entry-manifest",source:"src/published/contract/command-entry.json",destination:"command-entry-manifest.json",mode:"0644"}]'; } ;;
+        assets) validate_interactive_hooks && validate_published_mcp && command_entry_catalog >/dev/null && agent_execution_catalog >/dev/null && validate_agent_execution_callers && { skill_assets | jq '. + [{id:"interactive-observability",source:"src/published/hooks/interactive-hooks.json",destination:"plugins/mefisto-observability.js",mode:"0644"},{id:"mcp-config",source:"src/published/contract/mcp-servers.json",destination:"plugins/mefisto-mcp.js",mode:"0644"},{id:"command-entry-manifest",source:"src/published/contract/command-entry.json",destination:"command-entry-manifest.json",mode:"0644"},{id:"agent-execution-manifest",source:"src/published/contract/agent-execution.json",destination:"agent-execution-manifest.json",mode:"0644"}]'; } ;;
         render-asset)
             [ "$#" -eq 3 ] || error 'render-asset: se esperaban id y fuente'
-            case "$2" in interactive-observability) render_observability_plugin ;; mcp-config) render_mcp_plugin "$3" ;; command-entry-manifest) render_command_entry_manifest ;; *) render_skill_asset "$2" "$3" ;; esac ;;
+            case "$2" in interactive-observability) render_observability_plugin ;; mcp-config) render_mcp_plugin "$3" ;; command-entry-manifest) render_command_entry_manifest ;; agent-execution-manifest) render_agent_execution_manifest ;; *) render_skill_asset "$2" "$3" ;; esac ;;
         *) error 'uso: adapter-opencode.sh root|path|render|assets|render-asset' ;;
     esac
 fi
