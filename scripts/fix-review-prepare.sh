@@ -204,18 +204,19 @@ no_symlinks_from_root "$TEXT_DIR/$PLAN_DIGEST.md" || conflict STATE_SYMLINK
 for d in "$PROJECT_ROOT/.mefisto" "$PROJECT_ROOT/$STATE_REL" "$PROJECT_ROOT/$STATE_REL/autonomy" "$SEALED_DIR" "$SUMMARIES" "$TEXT_DIR"; do chmod 700 "$d" 2>/dev/null || true; done
 
 SEALED="$(jq -cnS --argjson plan "$FINAL" --arg tp "$TEXT_REL" --arg csd "$SNAP_DIGEST" '{schemaVersion:1,plan:$plan,planTextPath:$tp,commentSnapshotDigest:$csd}')"
-write_idempotent() { # destino contenido
-    local dest="$1" content="$2" tmp
+write_idempotent() { # destino contenido [formato-printf]
+    local dest="$1" content="$2" fmt="${3:-%s\n}" tmp
     if [ -e "$dest" ] || [ -L "$dest" ]; then
         [ -f "$dest" ] && [ ! -L "$dest" ] || return 1
         [ "$(cat "$dest")" = "$content" ] && return 0
         return 1
     fi
     tmp="$(mktemp "${dest%/*}/.prepare.XXXXXX")" || return 1
-    if printf '%s\n' "$content" > "$tmp" && chmod 600 "$tmp" && mv -f "$tmp" "$dest"; then return 0; fi
+    if printf "$fmt" "$content" > "$tmp" && chmod 600 "$tmp" && mv -f "$tmp" "$dest"; then return 0; fi
     rm -f "$tmp"; return 1
 }
-write_idempotent "$TEXT_DIR/$PLAN_DIGEST.md" "$TEXT" || conflict STATE_EXISTS_DIFFERENT "la copia del Markdown ya existe con otros bytes"
+# Sin salto final: sha256 del archivo == planTextDigest.
+write_idempotent "$TEXT_DIR/$PLAN_DIGEST.md" "$TEXT" '%s' || conflict STATE_EXISTS_DIFFERENT "la copia del Markdown ya existe con otros bytes"
 write_idempotent "$SEALED_DIR/$PLAN_DIGEST.json" "$SEALED" || conflict STATE_EXISTS_DIFFERENT "el plan sellado ya existe con otros bytes"
 chmod 600 "$TEXT_DIR/$PLAN_DIGEST.md" "$SEALED_DIR/$PLAN_DIGEST.json" 2>/dev/null || true
 

@@ -228,7 +228,8 @@ scripts/fix-review-prepare.sh --project-root <Git-root> --pr <n> \
   `planDigest` con `fix-review-plan.validate.jq` y rechaza digests declarados que no coincidan.
 - Persiste (0700/0600, sin symlinks, atómico, idempotente) el plan sellado en
   `.mefisto/pipeline/autonomy/fix-review/<planDigest>.json` y la copia redactada del Markdown en
-  `.mefisto/pipeline/summaries/fix-review/<planDigest>.md`; ambos ignorados por Git.
+  `.mefisto/pipeline/summaries/fix-review/<planDigest>.md` (su SHA-256 es `planTextDigest`); ambos
+  ignorados por Git.
 - Responde `{schemaVersion,status:prepared|conflict,pr,expectedHeadSha,planDigest,
   commentSnapshotDigest,planPath,requiredGrants,diagnostics}` sin bodies.
 

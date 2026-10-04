@@ -80,7 +80,7 @@ reset; printf 'b\n' >> "$R/src/A.cs"; OUT="$(run)"; status_is "$OUT" conflict WO
 git -C "$R" checkout -q -- .
 reset; cp "$SUM/plan.json" "$TMP/fuera.json"; OUT="$(run "$TMP/fuera.json")"; status_is "$OUT" conflict PLAN_FILE_NOT_OWN && no_artifacts; ok $? 'plan fuera de summaries/'
 reset; ln -s "$TMP/fuera.json" "$SUM/enlace.json"; OUT="$(run .mefisto/pipeline/summaries/enlace.json)"; status_is "$OUT" conflict PLAN_FILE_NOT_OWN; ok $? 'plan como symlink'
-grep -Eq '^(repo view|pr view|api repos/acme/demo/pulls/42/comments --paginate)' "$FIX/calls.log" && ! grep -Eq 'checkout|switch|worktree|merge|edit|comment|review|close|-X|--method|--input' "$FIX/calls.log"; ok $? 'solo lecturas GH, sin checkout'
+[ -s "$FIX/calls.log" ] && ! grep -Ev '^(repo view --json nameWithOwner -q \.nameWithOwner|pr view 42 --repo acme/demo --json [A-Za-z,]+|api repos/acme/demo/pulls/42/comments --paginate)$' "$FIX/calls.log"; ok $? 'solo lecturas GH, sin checkout'
 [ "$(git -C "$R" rev-parse HEAD)" = "$SHA" ] && [ "$(git -C "$R" symbolic-ref --short HEAD)" = fix/demo ]; ok $? 'HEAD y rama intactos'
 
 printf '[2] snapshot paginado completo\n'
@@ -114,10 +114,10 @@ mode() { stat -f '%Lp' "$1" 2>/dev/null || stat -c '%a' "$1"; }
 [ "$(mode "$SEALED")" = 600 ] && [ "$(mode "$MD")" = 600 ] && [ "$(mode "$(dirname "$SEALED")")" = 700 ] && [ "$(mode "$(dirname "$MD")")" = 700 ]; ok $? 'permisos 0600/0700'
 git -C "$R" check-ignore -q "$SEALED" && git -C "$R" check-ignore -q "$MD" && [ -z "$(git -C "$R" status --porcelain)" ]; ok $? 'artefactos ignorados por Git'
 jq -e --arg d "$PD" '.planTextPath == (".mefisto/pipeline/summaries/fix-review/" + $d + ".md")' "$SEALED" >/dev/null \
-  && [ "$(printf '%s' "$(cat "$MD")" | sha)" = "$(jq -r .plan.planTextDigest "$SEALED")" ]; ok $? 'copia del Markdown con path propio y hash comprobable'
-! grep -rq 'SENTINELA-CUERPO-RAW\|NOTA-HUMANA-SENTINELA' "$SEALED" <<<"$OUT$(cat "$TMP/err")"; ok $? 'ni stdout/stderr filtran cuerpos ni Markdown'
+  && [ "$(sha < "$MD")" = "$(jq -r .plan.planTextDigest "$SEALED")" ]; ok $? 'copia del Markdown con path propio y hash comprobable'
+! printf '%s' "$OUT$(cat "$TMP/err")" | grep -q 'SENTINELA-CUERPO-RAW\|NOTA-HUMANA-SENTINELA'; ok $? 'ni stdout/stderr filtran cuerpos ni Markdown'
 ! grep -q 'SENTINELA-CUERPO-RAW\|NOTA-HUMANA-SENTINELA' "$SEALED"; ok $? 'el JSON sellado no incluye cuerpos ni Markdown'
-! grep -rq 'sentinel-no-debe-leerse' "$R/.mefisto" "$TMP/err" <<<"$OUT"; ok $? 'sin tokens en estado ni salida'
+! grep -rq 'sentinel-no-debe-leerse' "$R/.mefisto" "$TMP/err" && ! printf '%s' "$OUT" | grep -q 'sentinel-no-debe-leerse'; ok $? 'sin tokens en estado ni salida'
 reset; printf 'usar ghp_abcdefghijklmnopqrstuvwxyz0123456789\n' > "$SUM/plan.md"; OUT="$(run)"; status_is "$OUT" conflict PLAN_TEXT_SENSITIVE && no_artifacts && ! printf '%s' "$OUT$(cat "$TMP/err")" | grep -q ghp_; ok $? 'Markdown sensible exige redaccion'
 reset; mkdir -p "$R/.mefisto/pipeline" "$TMP/ajeno"; ln -s "$TMP/ajeno" "$R/.mefisto/pipeline/autonomy"; OUT="$(run)"; status_is "$OUT" conflict STATE_SYMLINK && [ -z "$(ls -A "$TMP/ajeno")" ]; ok $? 'symlink en el estado: no escribe'
 rm -f "$R/.mefisto/pipeline/autonomy"
