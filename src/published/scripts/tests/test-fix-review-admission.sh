@@ -138,10 +138,17 @@ rm -f "$RCPF"; write_comments
 jq -cn '[range(0;31) | {id:(3000+.),body:"x",path:null,line:null,original_line:null,in_reply_to_id:null}]' > "$FIX/comments.json"
 chk pre-reply --comment-id 1001; blk COMMENTS_OVER_LIMIT; ok $? 'mas de 30 comentarios'
 write_comments
+jq -c '. + [range(0;28) | {id:(7000+.),body:"r",path:null,line:null,original_line:null,in_reply_to_id:1002}]' "$FIX/comments.json" > "$FIX/c31"; mv "$FIX/c31" "$FIX/comments.json"
+write_receipts '[]' "$(jq -cn '[range(0;28) | {replyId:(7000+.),parentId:1002}]')"
+chk pre-reply --comment-id 1001; auth; ok $? 'respuestas propias con recibo no cuentan para el limite de 30'
+rm -f "$RCPF"
+write_comments
 S9="$(printf '9%.0s' $(seq 1 40))"; printf '%s' "$S9" > "$FIX/head"
 chk pre-reply --comment-id 1001; blk HEAD_NOT_IN_OWN_CHAIN; ok $? 'head externo'
 write_receipts "$(jq -cn --arg f "$S0" --arg t "$S9" '[{seq:1,phase:"corrections",from:$f,to:$t,class:null,paths:["src/A.cs"]}]')" '[]'
 chk pre-reply --comment-id 1001; auth && printf '%s' "$OUT" | jq -e --arg h "$S9" '.currentHead == $h' >/dev/null; ok $? 'cadena propia de pushes registrados'
+write_receipts "$(jq -cn --arg t "$S9" '[{seq:1,phase:"corrections",from:"8888888888888888888888888888888888888888",to:$t,class:null,paths:["src/A.cs"]}]')" '[]'
+chk pre-reply --comment-id 1001; blk HEAD_CHAIN_BROKEN; ok $? 'cadena de recibos que no parte del head sellado'
 rm -f "$RCPF"; printf '%s' "$S0" > "$FIX/head"
 printf 'CLOSED' > "$FIX/state"; chk pre-reply --comment-id 1001; blk PR_NOT_OPEN; ok $? 'PR cerrado'
 printf 'OPEN' > "$FIX/state"

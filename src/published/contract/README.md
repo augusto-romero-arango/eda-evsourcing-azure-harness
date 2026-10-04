@@ -312,10 +312,12 @@ scripts/fix-review-admission.sh check --project-root <approved-root> --pr <N> --
   `planTextDigest` (ausente o alterada: `incomplete`); grant exacto por accion (`command:
   fix-review`, `environment: repository`, resources `pr:N` + clase, `planDigest` presente e igual).
 - Estado remoto solo lectura: PR abierto del repo/rama del plan; `headRefOid` debe ser el head
-  inicial o el ultimo de la cadena de recibos (#1888); todas las paginas de review comments contra
+  inicial o el ultimo de la cadena de recibos (#1888), que debe encadenarse sin huecos desde el head
+  sellado (`HEAD_CHAIN_BROKEN`); todas las paginas de review comments contra
   el snapshot (id/bodyDigest/path/line/originalLine/replies) mas las respuestas con recibo; cambios
   de `line` se toleran solo tras pushes propios. Edicion, comentario nuevo, respuesta sin recibo,
-  cabeza ajena, PR cerrado o mas de 30 comentarios: `blocked`; API ausente o ambigua: `incomplete`
+  cabeza ajena, PR cerrado o mas de 30 comentarios ajenos (las respuestas propias con recibo no
+  cuentan): `blocked`; API ausente o ambigua: `incomplete`
   (sin reintento ciego de POST ni reparacion; el comentario nuevo no entra al plan).
 - Fases: `pre-edit` (triaje exacto, worktree limpio en la rama y cabeza vigente; sin comentarios
   `corregir` no exige grant de edicion), `pre-push` (diff local acotado a los paths planeados o a la

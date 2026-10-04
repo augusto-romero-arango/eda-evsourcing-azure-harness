@@ -160,6 +160,12 @@ if [ -e "$RECEIPTS" ] || [ -L "$RECEIPTS" ]; then
 else
     RCP="$(jq -cn --arg i "$INITIAL_SHA" '{headTransitions:[],replies:[],issues:[],initialHeadSha:$i}')"
 fi
+# La cadena de recibos debe partir del head sellado y encadenarse sin huecos (un libro editado a mano no acredita pushes).
+printf '%s' "$RCP" | jq -e --arg i "$INITIAL_SHA" --arg repo "$REPO_SLUG" --arg ref "$HEAD_REF" '
+    ((.initialHeadSha // $i) == $i) and ((.repoSlug // $repo) == $repo) and ((.headRefName // $ref) == $ref)
+    and (.headTransitions as $t | all(range(0; $t | length);
+        ($t[.].to | type == "string" and test("^[0-9a-f]{40}$"))
+        and $t[.].from == (if . == 0 then $i else $t[. - 1].to end)))' >/dev/null 2>&1 || blocked HEAD_CHAIN_BROKEN reprepare-outside-batch
 EXPECTED_HEAD="$(printf '%s' "$RCP" | jq -r --arg i "$INITIAL_SHA" '(.headTransitions | last | .to) // $i')"
 HAS_TRANSITIONS="$(printf '%s' "$RCP" | jq '.headTransitions | length > 0')"
 
@@ -179,7 +185,9 @@ RAW="$(cd "$PROJECT_ROOT" && gh api "repos/$REPO_SLUG/pulls/$PR/comments" --pagi
 RAW="$(printf '%s' "$RAW" | jq -s -c '[.[] | if type == "array" then .[] else . end]' 2>/dev/null)" || incomplete GH_COMMENTS_UNREADABLE retry-read-once
 printf '%s' "$RAW" | jq -e 'all(.[]; type == "object" and (.id | type == "number"))' >/dev/null 2>&1 || incomplete GH_COMMENTS_AMBIGUOUS retry-read-once
 LIVE="$(printf '%s' "$RAW" | jq -c '[.[] | {id:.id,body:(.body // ""),path:(.path // null),line:(.line // null),originalLine:(.original_line // null),inReplyToId:(.in_reply_to_id // null)}] | unique_by(.id)')"
-[ "$(printf '%s' "$LIVE" | jq 'length')" -le "$MAX_COMMENTS" ] || blocked COMMENTS_OVER_LIMIT reprepare-outside-batch
+# El limite aplica a los comentarios ajenos: las respuestas propias con recibo no consumen cupo.
+[ "$(printf '%s' "$LIVE" | jq --argjson r "$RCP" '[.[] | select(.id as $i | $r.replies | any(.[]; .replyId == $i) | not)] | length')" -le "$MAX_COMMENTS" ] \
+    || blocked COMMENTS_OVER_LIMIT reprepare-outside-batch
 # bodyDigest de los comentarios vivos (solo hashes llegan a la comparacion)
 LIVE_H='[]'
 for id in $(printf '%s' "$LIVE" | jq -r '.[].id'); do
@@ -226,8 +234,8 @@ path_in_class() {
         *) return 1 ;;
     esac
 }
-class_of_action() { # accion -> clase local o vacio
-    case "$1" in fix-review-local-improvement) printf '' ;; fix-review-consumer-issue|fix-review-harness-draft|fix-review-correct|fix-review-reply) printf '' ;; *) printf '%s' "$1" ;; esac
+class_of_action() { # accion -> clase local; vacio para las acciones fix-review-* (no son clases)
+    case "$1" in fix-review-*) printf '' ;; *) printf '%s' "$1" ;; esac
 }
 HAS_CORREGIR="$(printf '%s' "$PLAN" | jq '[.triage[] | select(.category == "corregir")] | length > 0')"
 PLANNED_PATHS="$(printf '%s' "$PLAN" | jq -c '[.triage[] | select(.category == "corregir") | .edits[].path]')"
