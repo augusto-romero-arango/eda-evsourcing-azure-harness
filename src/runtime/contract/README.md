@@ -141,10 +141,12 @@ lectura v1 previa al corte. Los casos de
 limite de uso muestran `resets_at` poblado cuando el runtime ofrece esa senal y
 `null` cuando no la ofrece. `invalid-missing-field.jsonl`,
 `invalid-unknown-type.jsonl`, `invalid-status-mismatch.jsonl` y los
-`invalid-permission-observed-*.jsonl` son rechazables linea a linea. Estos
+`invalid-permission-observed-*.jsonl` son rechazables linea a linea por la
+validacion de referencia, incluido su complemento jq. Estos
 ultimos cubren propiedades sensibles extras, signals desconocidas, parejas
 signal/evidence invalidas e identificadores fuera de los limites. Un fixture
-con `tool.completed{ok:false}` sigue siendo valido sin crear una observacion ni
+`valid-tool-failure-no-permission.jsonl` demuestra que
+`tool.completed{ok:false}` sigue siendo valido sin crear una observacion ni
 cambiar `denials`.
 
 `invalid-two-terminals.jsonl` tiene lineas individualmente validas, pero viola

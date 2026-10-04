@@ -42,10 +42,10 @@
 #
 # Neutral a runtime (CA-6, MEF-ADR-0049): el parser solo conoce el vocabulario
 # de run-events.schema.json (`message`, `tool.started`, `tool.completed`,
-# `run.completed`, `run.failed`; `run.started` se reconoce pero no se
-# renderiza) -- nunca un nombre de campo propio de un runtime concreto. Un
-# campo no disponible (`null` en el JSONL) se muestra como "n/d", nunca como
-# un cero fabricado (CA-3).
+# `permission.observed`, `run.completed`, `run.failed`; `run.started` se
+# reconoce pero no se renderiza) -- nunca un nombre de campo propio de un
+# runtime concreto. Un campo no disponible (`null` en el JSONL) se muestra
+# como "n/d", nunca como un cero fabricado (CA-3).
 #
 # Solo lectura y autonomo: no modifica ningun pipeline ni archivo existente,
 # no escribe mas que en un directorio temporal propio via mktemp, y se puede
