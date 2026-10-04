@@ -2054,7 +2054,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           EVENTO: ${{ github.event_name }}
           RUN_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          RUN_EVENTO: ${{ github.event.workflow_run.event }}
           RUN_RAMA: ${{ github.event.workflow_run.head_branch }}
+          RUN_REPO: ${{ github.event.workflow_run.head_repository.full_name }}
           RUN_SHA: ${{ github.event.workflow_run.head_sha }}
           REPO: ${{ github.repository }}
         run: |
@@ -2063,8 +2065,10 @@ jobs:
             echo "debe_desplegar=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          # ...y la corrida de 'Infra CD' fue un apply exitoso sobre main.
-          if [ "$RUN_CONCLUSION" != "success" ] || [ "$RUN_RAMA" != "main" ]; then
+          # ...y la corrida de 'Infra CD' fue un apply exitoso sobre main, disparado por push y
+          # del mismo repo (head_branch solo no prueba de que repositorio viene el commit).
+          if [ "$RUN_CONCLUSION" != "success" ] || [ "$RUN_RAMA" != "main" ] || \
+             [ "$RUN_EVENTO" != "push" ] || [ "$RUN_REPO" != "$REPO" ]; then
             echo "debe_desplegar=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -2081,8 +2085,10 @@ jobs:
           fi
 
   build-and-test:
+    # Guarda de origen repetida junto al checkout (CodeQL actions/untrusted-checkout): este job
+    # compila el head_sha de una corrida ajena; solo se confia en un push a main del mismo repo.
     needs: determinar-alcance
-    if: needs.determinar-alcance.outputs.debe_desplegar == 'true'
+    if: needs.determinar-alcance.outputs.debe_desplegar == 'true' && (github.event_name != 'workflow_run' || (github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch == 'main' && github.event.workflow_run.head_repository.full_name == github.repository))
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -2107,7 +2113,8 @@ jobs:
 
   deploy:
     needs: [determinar-alcance, build-and-test]
-    if: needs.determinar-alcance.outputs.debe_desplegar == 'true'
+    # Guarda de origen repetida junto al checkout con OIDC (CodeQL actions/untrusted-checkout).
+    if: needs.determinar-alcance.outputs.debe_desplegar == 'true' && (github.event_name != 'workflow_run' || (github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch == 'main' && github.event.workflow_run.head_repository.full_name == github.repository))
     runs-on: ubuntu-latest
     permissions:
       contents: read
