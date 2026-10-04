@@ -45,11 +45,10 @@
 #     trae.
 #   - `error`: evento de fallo a nivel de proceso (observado con un `-m`
 #     invalido: `{"type":"error","error":{"name":...,"data":{"message":...}}}`,
-#     exit 1, SIN nada por stderr). Deliberadamente NO se usa para clasificar
-#     ni para `error.detail` (CA-3 de #860 solo autoriza stderr como fuente de
-#     detalle): mezclar dos fuentes de verdad para el mismo campo haria el
-#     detalle dependiente del orden en que a alguien se le ocurra mirarlas.
-#     Se cuenta igual que cualquier tipo no traducido (ver `$raw_ignored`).
+#     exit 1, SIN nada por stderr). No se usa para `error.detail` ni para
+#     cambiar el veredicto (CA-3 de #860 solo autoriza stderr como fuente de
+#     detalle). Desde #1817, tres nombres estructurados exactos producen una
+#     observacion parcial y sanitizada de permiso; los demas no se traducen.
 #
 # Ningun evento trae un id de modelo (ni init, ni el mensaje, ni el step):
 # a diferencia de runtime-claude.jq, `model` del terminal SIEMPRE degrada a
@@ -383,7 +382,7 @@ def opencode_step_cost($rates; $tok):
               )
             )
       elif ($ev.type == "error") then
-          (opencode_structured_permission_signal($ev.error.name // null)) as $permission_signal
+          (opencode_structured_permission_signal(try $ev.error.name catch null)) as $permission_signal
           | if $permission_signal != null then
               {
                 v: 1, type: "permission.observed",

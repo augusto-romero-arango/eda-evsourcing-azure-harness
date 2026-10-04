@@ -483,11 +483,18 @@ P_OUT="$TMP/permission-observed.jsonl"
 translate_fixture permission-observed-synthetic-1.18.29.jsonl "" 0 > "$P_OUT"
 if [ "$(jq -c 'select(.type == "permission.observed" and .evidence == "structured-error")' "$P_OUT" | wc -l | tr -d ' ')" = "3" ] \
     && jq -e 'select(.type == "permission.observed" and .evidence == "structured-error") | .session_id == "ses_perm" and .tool == null' "$P_OUT" >/dev/null 2>&1 \
+    && jq -e 'select(.type == "permission.observed" and .signal == "denied" and .evidence == "structured-error") | .ts == "2026-09-06T03:52:00Z"' "$P_OUT" >/dev/null 2>&1 \
     && jq -e 'select(.type == "permission.observed" and .signal == "denied" and .evidence == "structured-error")' "$P_OUT" >/dev/null 2>&1 \
     && [ "$(jq -c 'select(.type == "permission.observed" and .signal == "rejected" and .evidence == "structured-error")' "$P_OUT" | wc -l | tr -d ' ')" = "2" ]; then
     pass "P-1: los tres error.name exactos emiten solo observaciones estructuradas con sesion y sin tool"
 else
     fail "P-1: observaciones estructuradas inesperadas: $(jq -c 'select(.type == "permission.observed")' "$P_OUT")"
+fi
+P_SEQUENCE="$(jq -r 'select(.type == "permission.observed") | [.evidence, .signal] | join(":")' "$P_OUT" | tr '\n' ' ')"
+if [ "$P_SEQUENCE" = "structured-error:denied tool-error-text:possible-denial structured-error:rejected tool-error-text:possible-rejection structured-error:rejected tool-error-text:possible-rejection " ]; then
+    pass "P-2b: las observaciones conservan el orden del stream sin deduplicarse"
+else
+    fail "P-2b: orden de observaciones inesperado: $P_SEQUENCE"
 fi
 if [ "$(jq -c 'select(.type == "permission.observed" and .evidence == "tool-error-text")' "$P_OUT" | wc -l | tr -d ' ')" = "3" ] \
     && jq -e 'select(.type == "permission.observed" and .signal == "possible-denial" and .tool == "glob")' "$P_OUT" >/dev/null 2>&1 \
@@ -954,6 +961,18 @@ if [ -s "$F_EVENTS" ] \
     pass "redaccion OpenCode elimina centinelas y conserva identidad/metricas/tools"
 else
     fail "redaccion OpenCode filtro contenido sensible o perdio evidencia operacional"
+fi
+
+F_PERMISSION_EV="$TMP/f-permission-redacted.jsonl"
+F_PERMISSION_EVENTS="$TMP/f-permission-redacted-events.log"
+RC=$(MEFISTO_OPENCODE_STUB_FIXTURE="$FIXTURES_DIR/permission-observed-synthetic-1.18.29.jsonl" MEFISTO_OPENCODE_STUB_EXIT=0 run_opencode_scenario "$F_PERMISSION_EV" --events-log "$F_PERMISSION_EVENTS" --redact-observability)
+check_scenario "observaciones de permiso redactadas OpenCode" "$F_PERMISSION_EV" 0 "success" "" "$RC"
+if [ "$(jq -c 'select(.type == "permission.observed")' "$F_PERMISSION_EV" | wc -l | tr -d ' ')" = "6" ] \
+    && ! grep -Eq 'SENTINEL|COMMAND' "$F_PERMISSION_EV" "$F_PERMISSION_EVENTS" \
+    && jq -e 'select(.type == "run.completed") | .denials == null and .error == null' "$F_PERMISSION_EV" >/dev/null 2>&1; then
+    pass "runner redactado conserva las observaciones sanitizadas sin filtrar payload ni fabricar denials"
+else
+    fail "runner redactado perdio observaciones o filtro payload sensible"
 fi
 
 # ============================================================================
