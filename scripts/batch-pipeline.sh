@@ -303,6 +303,15 @@ fi
 # auto-detectar por su cuenta y podria divergir del batch.
 export MEFISTO_RUNTIME="$BATCH_RUNTIME"
 
+# Referencia de ejecucion de TODA la cadena (issue #1861, MEF-ADR-0055): se abre una
+# vez, antes del primer eslabon, y sobrevive a huecos, hold, sync de main, espera de
+# cuota y reintentos hasta el cierre del batch. Sin contexto transportado ni perfil
+# autorizado (o con runtime Claude) conserva el camino previo, sin servicio ni lease.
+_BATCH_PKG_ROOT="$(cd "$(_pc_script_dir)/.." && pwd -P)"
+orchestrator_execution_open sequential "$REPO_ROOT" "$_BATCH_PKG_ROOT" "$RUNTIME_LIB_DIR" "$(_pc_script_dir)/run-published-agent.sh" \
+    || abort "No se pudo abrir la ejecucion preparada del batch (contexto invalido, ocupado o revocado)"
+orchestrator_install_exit_trap
+
 # ─── Cabecera ─────────────────────────────────────────────────────────────────
 header "batch-pipeline --- Procesamiento secuencial de issues"
 log "Runtime: $MEFISTO_RUNTIME"
@@ -377,8 +386,25 @@ for ISSUE_NUM in ${BATCH_QUEUE[@]+"${BATCH_QUEUE[@]}"}; do
         [ -z "$HOLD_LINE_START_LEGACY" ] && HOLD_LINE_START_LEGACY=0
     fi
 
+    # Reserva del contexto hijo ANTES del spawn (issue #1861): si no se puede reservar
+    # el eslabon no arranca y no se reporta como ejecutado.
+    if ! orchestrator_reserve_child "$(orchestrator_kind_for_script "$PIPELINE_SCRIPT")" "$REPO_ROOT"; then
+        fail_issue "$ISSUE_NUM" "no se pudo reservar el contexto de ejecucion del eslabon; el pipeline no se lanzo"
+        FAILED=$((FAILED + 1))
+        if [ "$STOP_ON_ERROR" = true ]; then
+            abort "Detenido por --stop-on-error en issue #$ISSUE_NUM"
+        fi
+        continue
+    fi
+
     PIPELINE_EXIT=0
-    "$PIPELINE_SCRIPT" "$ISSUE_NUM" 2>&1 | tee "$ISSUE_LOG" || PIPELINE_EXIT=$?
+    if [ -n "$ORCH_CHILD_ID" ]; then
+        MEFISTO_EXECUTION_CONTEXT="$ORCH_CHILD_CONTEXT" MEFISTO_EXECUTION_DIGEST="$ORCH_CHILD_DIGEST" \
+            "$PIPELINE_SCRIPT" "$ISSUE_NUM" 2>&1 | tee "$ISSUE_LOG" || PIPELINE_EXIT=$?
+        orchestrator_finish_child "$(orchestrator_outcome_for "$PIPELINE_EXIT")" || true
+    else
+        "$PIPELINE_SCRIPT" "$ISSUE_NUM" 2>&1 | tee "$ISSUE_LOG" || PIPELINE_EXIT=$?
+    fi
 
     # Agregar el log del issue al log general
     cat "$ISSUE_LOG" | _strip_ansi >> "$LOG_FILE_ABS"

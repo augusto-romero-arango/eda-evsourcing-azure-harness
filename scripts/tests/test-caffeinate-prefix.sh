@@ -83,10 +83,11 @@ done
 echo ""
 echo "[B] send-keys: el pane de ejecucion lleva \$CAFF, los panes visores no (CA-2, CA-4)"
 
-# archivo:minimo de lanzadores esperados (single/batch/parallel/tooling/infra/
-# scaffold del lado publicado; tooling/batch del interno, su superficie completa)
+# archivo:minimo de lanzadores esperados. El publicado concentra su send-keys en
+# dispatch_pipeline_keys (issue #1861): 1 linea literal + bloque [B2] que exige sus
+# seis llamadas (single/batch/parallel/tooling/infra/scaffold); tooling/batch del interno.
 TMUX_RUNNERS=(
-    "scripts/tmux-pipeline.sh:6"
+    "scripts/tmux-pipeline.sh:1"
     "src/internal/scripts/mefisto-tmux-pipeline.sh:2"
 )
 
@@ -133,6 +134,15 @@ for entry in "${TMUX_RUNNERS[@]}"; do
         echo "$visores_con_prefijo" | sed 's/^/    /'
     fi
 done
+
+echo ""
+echo "[B2] tmux publicado: los seis modos despachan por dispatch_pipeline_keys (issue #1861)"
+llamadas=$(grep -cE '^[[:space:]]+dispatch_pipeline_keys "\$pipe_pane"' "$REPO_ROOT/scripts/tmux-pipeline.sh" || true)
+if [ "$llamadas" -ge 6 ]; then
+    pass "scripts/tmux-pipeline.sh: $llamadas despachos por dispatch_pipeline_keys (>= 6)"
+else
+    fail "scripts/tmux-pipeline.sh: solo $llamadas despachos por dispatch_pipeline_keys (esperado >= 6)"
+fi
 
 # -------- Bloque C: lanzamiento en background de los runners herdr --------
 
