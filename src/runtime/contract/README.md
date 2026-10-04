@@ -17,6 +17,7 @@ Todo evento lleva `v: 1` y un `type` del vocabulario cerrado declarado en
 | `message` | `ts`, `role`, `text`, `kind?` (`text` o `thinking`) |
 | `tool.started` | `ts`, `tool`, `input_summary|null` |
 | `tool.completed` | `ts`, `tool`, `ok`, `duration_ms|null` |
+| `permission.observed` | `ts`, `session_id|null`, `tool|null`, `signal`, `evidence` |
 | `run.completed` / `run.failed` | `ts`, `status`, `runtime`, `model|null`, `session_id|null`, `duration_ms`, `tokens`, `estimated_cost_usd|null`, `turns|null`, `denials|null`, `ttft_ms|null`, `api_duration_ms|null`, `error|null`, `resets_at?` |
 
 `tokens` conserva `input` y `output`, ambos numero o `null`, y puede incluir
@@ -29,6 +30,38 @@ su `output_tokens` en `output`, mapea
 con `null`, nunca con un cero ni otro valor inventado. Cada definicion cierra su forma con
 `additionalProperties: false`; lo mismo hacen `tokens` y `error`.
 
+## Observaciones parciales de permisos
+
+`permission.observed` es un evento no terminal opcional: registra una senal
+vista, no un inventario de decisiones ni una llamada unica. Puede repetirse y
+un duplicado no incrementa ningun contador. Su forma cerrada no admite texto de
+error, reglas, patrones, identificadores sensibles, feedback ni input de
+comando. `session_id` y `tool` son identificadores acotados o `null`; un nombre
+de tool no representable se omite como `null`, nunca se vuelca crudo.
+
+| `signal` | `evidence` permitida |
+|---|---|
+| `denied` / `rejected` | `structured-error` |
+| `possible-denial` / `possible-rejection` | `tool-error-text` |
+
+La pareja se valida en el gate complementario porque `jsonschema-lite.jq` no
+expresa dependencias entre campos. `structured-error` solo se emite cuando el
+productor reconoce exactamente el nombre de error estructurado de su runtime;
+no se transporta ese nombre. `tool-error-text` es una clasificacion de la
+senal, no una extraccion ni una busqueda de texto crudo.
+
+`run.*.denials` conserva su significado: es un entero solo con una fuente de
+cobertura completa y es `null` con cobertura parcial o desconocida. Una o mas
+observaciones no establecen cardinalidad completa, y la ausencia de
+`permission.observed` nunca prueba cero solicitudes ni cero denegaciones.
+`tool.completed{ok:false}` solo indica fallo de tool y no crea una observacion
+ni una denegacion. El evento no cambia `success`, exit, retry, hold, duration,
+costo, retries o completitud de la corrida.
+
+En OpenCode 1.18.29 puede haber solicitudes autoaprobadas y denegaciones que no
+aparezcan en el JSON de ejecucion. Por ello, cero eventos observados no es
+evidencia de cero permisos solicitados o denegados.
+
 `estimated_cost_usd` es una estimacion de equivalencia a tarifas API, no el
 costo marginal de una suscripcion (MEF-ADR-0054). Los escritores posteriores
 al corte emiten solo ese nombre. Para leer JSONL v1 local previo, el schema
@@ -39,7 +72,8 @@ al menos uno de los dos. No hay protocolo v2 ni doble escritura.
 
 ## Relacion entre terminal y estado
 
-Los unicos terminales son `run.completed` y `run.failed`. `type` y `status` no
+Los unicos terminales son `run.completed` y `run.failed`. `permission.observed`
+tambien es no terminal. `type` y `status` no
 son dos veredictos independientes: el schema divide deliberadamente el
 vocabulario de estados entre ambos.
 
@@ -106,8 +140,14 @@ nuevo y no usa `cost_usd`. `legacy-cost-usd.jsonl` identifica expresamente una
 lectura v1 previa al corte. Los casos de
 limite de uso muestran `resets_at` poblado cuando el runtime ofrece esa senal y
 `null` cuando no la ofrece. `invalid-missing-field.jsonl`,
-`invalid-unknown-type.jsonl` e `invalid-status-mismatch.jsonl` son rechazables
-linea a linea.
+`invalid-unknown-type.jsonl`, `invalid-status-mismatch.jsonl` y los
+`invalid-permission-observed-*.jsonl` son rechazables linea a linea por la
+validacion de referencia, incluido su complemento jq. Estos
+ultimos cubren propiedades sensibles extras, signals desconocidas, parejas
+signal/evidence invalidas e identificadores fuera de los limites. Un fixture
+`valid-tool-failure-no-permission.jsonl` demuestra que
+`tool.completed{ok:false}` sigue siendo valido sin crear una observacion ni
+cambiar `denials`.
 
 `invalid-two-terminals.jsonl` tiene lineas individualmente validas, pero viola
 la cardinalidad de exactamente un terminal; existe para comprobar el gate
