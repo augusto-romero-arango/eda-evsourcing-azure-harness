@@ -42,6 +42,20 @@ scope/gate del pipeline consumidor correspondiente: no sourcea ni replica como
 autoridad `is_path_in_mefisto_scope`. En OpenCode tampoco habilita `lsp` de
 forma implícita (MEF-ADR-0052).
 
+## Autonomia desatendida por proyecto
+
+MEF-ADR-0055 define el contrato objetivo, opt-in y neutral de autonomia
+desatendida: el perfil se declara en `.mefisto/harness.config.json` y la
+autorizacion/evidencia por corrida se conserva en `.mefisto/pipeline/`. La
+declaracion no contiene secretos ni equivale por si sola al consentimiento del
+operador; la admision debe usar una autorizacion aprobada antes de ejecutar.
+
+Este contrato no implementa todavia ese schema, el registro, el preflight ni
+los bindings de permisos. Las capacidades actuales y los fallbacks de lectura
+legacy siguen siendo los de MEF-ADR-0053. Las implementaciones posteriores
+deben conservar la configuracion global ajena, las releases inmutables y la
+compatibilidad de consumidores que solo usan Claude.
+
 ## Permisos Bash de OpenCode
 
 La capacidad neutral `shell` genera `permission.bash` con `"*": "deny"`.

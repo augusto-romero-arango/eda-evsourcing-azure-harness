@@ -138,6 +138,13 @@ El contrato neutral de un consumidor es:
 
 Todo escritor nuevo escribe solo esas ubicaciones canonicas. Los lectores conservan indefinidamente fallback a `CLAUDE.md` y `.claude/*` -- incluidos `.claude/harness.config.json` y `.claude/pipeline/` -- cuando el equivalente canonico no existe. No hay migracion destructiva ni fecha de retiro del fallback.
 
+El perfil opt-in de autonomia desatendida y su evidencia de admision usan esas
+mismas ubicaciones canonicas: declaracion neutral en
+`.mefisto/harness.config.json` y estado/evidencia por corrida en
+`.mefisto/pipeline/`. MEF-ADR-0055 complementa esta decision sin cambiar la
+lectura legacy, la no mutacion de configuracion global ni la instalacion
+inmutable de releases fijada por esta decision.
+
 #### Enmienda transitoria: mirror de identidad de release del adaptador Claude (#1099)
 
 La regla de escritura solo canonica tiene una unica excepcion, transitoria y estrecha: `record-active-release` del adaptador publicado Claude puede, ademas de escribir obligatoria y primariamente `canonical-state`/`release-identity`, reflejar la misma identidad de la distribucion ya cargada observada desde `CLAUDE_PLUGIN_ROOT` en `.claude/pipeline/.plugin-root` y limpiar `.claude/pipeline/.plugin-root.previous`. No resuelve independientemente el mirror ni usa la version mas reciente del cache: esta puede no ser la version que la sesion mantiene cargada. El marker no contiene credenciales ni configuracion del proveedor.
@@ -225,6 +232,7 @@ Git ni permite comprobar la relacion padre/tag.
 - MEF-ADR-0033: Agent Skills y frontmatter portable como parte de la distribucion.
 - MEF-ADR-0049: arquitectura neutral interna cuyo diferido publicado queda resuelto aqui.
 - MEF-ADR-0050: neutralidad, namespace `/mefisto:*` y prefijo `mefisto-` para Skills adaptados.
+- MEF-ADR-0055: contrato opt-in de autonomia desatendida por proyecto que usa el contrato canonico y conserva sus fallbacks.
 - Git: [`git-commit-tree`](https://git-scm.com/docs/git-commit-tree), modelo de
   creacion de commits desde tree y padres que fundamenta la imposibilidad de un
   SHA autorreferencial y la verificacion de la relacion padre/tag.
@@ -240,3 +248,4 @@ Git ni permite comprobar la relacion padre/tag.
 - 2026-09-08: enmienda la decision 2 (issue #1091). Fija el proyector global por enlaces a `active`, la version minima OpenCode 1.18.29 y la preservacion no destructiva de configuracion ajena; registra degradaciones de capacidades que el release aun no contiene.
 - 2026-09-08: enmienda la decision 4 (issue #1099). Autoriza exclusivamente a `record-active-release` del adaptador publicado Claude a mantener temporalmente el mirror `.claude/pipeline/.plugin-root` y limpiar `.plugin-root.previous`, siempre junto a la escritura canonica primaria; reserva su retiro a un issue posterior con inventario verificable de lectores legacy eliminado.
 - 2026-09-08: enmienda la decision 3 (issue #1126). Define `commit` como el commit fuente de `origin/main` capturado antes de la preparacion mecanica, no como el commit etiquetado; exige que el commit squash del tag tenga ese SHA como padre unico, limita su delta a metadata mecanica y fija manifests comparables sin diagnostico externo. Descarta SHA autorreferencial, solo SemVer, cache, Git o red del consumidor y hash de contenido renombrado como commit. Follow-ups separados: #1135 (registro de raiz transitoria), #1131 (manifiesto Claude), #1134 (alineacion OpenCode), #1132 (release) y la futura raiz Claude autocontenida.
+- 2026-10-03: referencia acotada a MEF-ADR-0055 (issue #1820). El perfil de autonomia desatendida usa `.mefisto/harness.config.json` y `.mefisto/pipeline/` sin modificar precedencia, fallback legacy, configuracion global ni releases inmutables de este ADR.
