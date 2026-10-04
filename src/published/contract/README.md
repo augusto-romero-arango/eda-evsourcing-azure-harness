@@ -460,15 +460,25 @@ neutral ni en este contrato.
 ## Matriz de entrada de comandos
 
 `command-entry.json` declara exclusivamente las necesidades directas de los 27
-comandos publicados. `command-entry.jq` comprueba ids, campos cerrados,
-referencias `command-doc` y `launch-agent`, ciclos y calcula la clausura de
-composición. La clausura une necesidades de comandos compuestos; nunca hereda
+comandos publicados. Todas las filas declaran los recursos legibles base
+`project`, `release`, `state` y `runtime-tool-output`; `state` no concede
+escritura, que sigue determinada exclusivamente por `edit` y `writeScope`.
+`fix-review` declara además `nuget-packages`. `command-entry.jq` comprueba ids,
+campos cerrados, referencias `command-doc` y `launch-agent`, ciclos y calcula
+la clausura de composición. También cierra `executionClass`: la ejecución
+ordinaria o los parsers puros y sin evaluación `runtimes-v1` y `upgrade-v1`.
+La clasificación rechaza ids ajenos al inventario y formas no canónicas,
+repetidas, mezcladas o desconocidas. La clausura une necesidades de comandos compuestos; nunca hereda
 las capacidades de un agente delegado ni interpreta
 `{{mefisto:command ...}}` como llamada. Sí enumera los agentes alcanzables para
 que esa topología pueda verificarse sin convertirla en capacidades del padre.
 El adaptador OpenCode emite `command-entry-manifest.json`: hashes SHA-256 del
-contenido Markdown renderizado y recortado por el loader, sin incluir cuerpos.
-Su huella técnica permite revalidar snapshots, no equivale a consentimiento.
+contenido Markdown renderizado y recortado por el loader, sin incluir cuerpos,
+el binding nativo observado y el binding legacy derivado de la semántica
+neutral anterior. Si el renderer no expone el header nativo, su valor es
+`null`; los metadatos se validan separadamente del body. Su huella técnica
+permite revalidar snapshots, no equivale a admisión, certificación ni
+consentimiento.
 
 ## Roles de ejecución controlada
 
