@@ -87,6 +87,7 @@ TOOLING_CLOSURE_ASSETS=(
     'src/published/scripts/lib/resource-paths.sh|0755'
     'src/published/scripts/lib/release-use-process.sh|0755'
     'src/published/contract/autonomy-profile.validate.jq|0644'
+    'src/published/contract/agent-execution.json|0644'
     'src/published/contract/mcp-servers.json|0644'
     'src/published/contract/source-verification.json|0644'
     'src/published/scripts/lib/source-verification.jq|0644'
