@@ -124,6 +124,12 @@ for index in "${!agents[@]}"; do
             expected_skills='["projections"]'
             expected_keys='["capabilities", "description", "id", "kind", "mode", "profile", "skills"]'
             ;;
+        domain-scaffolder)
+            expected_profile='balanced'
+            expected_capabilities='["read", "edit", "shell", "web"]'
+            expected_skills='null'
+            expected_keys='["capabilities", "description", "id", "kind", "mode", "profile"]'
+            ;;
         *)
             expected_profile='balanced'
             expected_capabilities='["read", "edit", "shell"]'
@@ -226,9 +232,21 @@ for agent in "${agents[@]}"; do
         grep -Fq 'tools: "Read, Glob, Grep, Edit, Write, Bash, Skill"' "$claude" && pass "$agent Claude materializa capacidades y Skill" || fail "$agent Claude no materializa Skill"
         grep -Fq 'skills: ["projections"]' "$claude" && pass "$agent Claude conserva skills" || fail "$agent Claude no conserva skills"
         grep -Fq '"skill":{"*":"deny","mefisto-projections":"allow"}' "$opencode" && grep -Fq 'Antes de ejecutar este body, usa la tool nativa `skill` para cargar, en este orden: `mefisto-projections`.' "$opencode" && pass "$agent OpenCode materializa skills" || fail "$agent OpenCode no materializa skills"
+    elif [ "$agent" = domain-scaffolder ]; then
+        grep -Fq 'model: "sonnet"' "$claude" && pass "$agent Claude materializa balanced como sonnet" || fail "$agent Claude no materializa sonnet"
+        grep -Fq 'tools: "Read, Glob, Grep, Edit, Write, Bash, WebFetch, WebSearch"' "$claude" && pass "$agent Claude materializa capacidades y web" || fail "$agent Claude no materializa web"
+        if grep -Fq '"webfetch":"allow","websearch":"allow","skill":"deny","task":"deny"' "$opencode" \
+            && grep -Fq 'tools: {"microsoft-learn_*":false,"terraform_*":false}' "$opencode"; then
+            pass "$agent OpenCode materializa web y conserva Skills/MCP denegados"
+        else
+            fail "$agent OpenCode amplia permisos ajenos a web"
+        fi
     else
         grep -Fq 'model: "sonnet"' "$claude" && pass "$agent Claude materializa balanced como sonnet" || fail "$agent Claude no materializa sonnet"
         grep -Fq 'tools: "Read, Glob, Grep, Edit, Write, Bash"' "$claude" && pass "$agent Claude materializa capacidades" || fail "$agent Claude no materializa capacidades"
+    fi
+    if [ "$agent" != domain-scaffolder ]; then
+        grep -Fq '"webfetch":"deny","websearch":"deny"' "$opencode" && pass "$agent OpenCode no recibe web por uniformidad" || fail "$agent OpenCode recibio web sin declararla"
     fi
     grep -Fq 'permission: ' "$opencode" && grep -Fq '"read":{"*":"allow"' "$opencode" && grep -Fq '"edit":{"*":"allow"' "$opencode" && grep -Fq '"bash":{"*":"deny"' "$opencode" && pass "$agent OpenCode materializa permisos" || fail "$agent OpenCode no materializa permisos"
     grep -Fq 'mode: "all"' "$opencode" && pass "$agent OpenCode conserva mode all" || fail "$agent OpenCode no conserva mode all"
@@ -261,18 +279,23 @@ done
 
 consumer="$WORK/consumidor Claude con espacios"
 mock_bin="$WORK/binarios simulados"
-mkdir -p "$consumer" "$mock_bin"
+test_writer_cache="$WORK/cache NuGet test writer"
+test_writer_assembly="$test_writer_cache/cosmos.eventsourcing.testing.utilities/version-simulada/lib/net10.0/Cosmos.EventSourcing.Testing.Utilities.dll"
+mkdir -p "$consumer" "$mock_bin" "$(dirname "$test_writer_assembly")"
 git -C "$consumer" init -q
 printf '%s\n' '.mefisto/' > "$consumer/.gitignore"
-printf '%s\n' '#!/usr/bin/env bash' 'printf "%s\\n" "global-packages: /cache"' > "$mock_bin/dotnet"
+printf '%s\n' '#!/usr/bin/env bash' "printf '%s\\n' 'global-packages: $test_writer_cache'" > "$mock_bin/dotnet"
+printf '%s\n' 'assembly fixture' > "$test_writer_assembly"
 printf '%s\n' '#!/usr/bin/env bash' 'set -eu' 'output=' 'while [ $# -gt 0 ]; do' '    case "$1" in' '        -o) output="$2"; shift 2 ;;' '        *) shift ;;' '    esac' 'done' '[ -d "$output" ]' 'printf "%s\\n" "decompilado" > "$output/CommandHandlerTestBase.cs"' > "$mock_bin/ilspycmd"
 chmod +x "$mock_bin/dotnet" "$mock_bin/ilspycmd"
 claude_decompilation="$(decompilation_block "$REPO_ROOT/dist/claude/agents/test-writer.md")"
-if (cd "$consumer" && PATH="$mock_bin:$PATH" bash -c "$claude_decompilation") >/dev/null 2>&1 && \
+claude_decompilation="${claude_decompilation//<version>/version-simulada}"
+claude_decompilation_output="$(cd "$consumer" && MEFISTO_PACKAGE_ROOT="$REPO_ROOT/dist/claude" PATH="$mock_bin:$PATH" bash -c "$claude_decompilation" 2>&1)"; claude_decompilation_rc=$?
+if [ "$claude_decompilation_rc" -eq 0 ] && \
     [ -f "$consumer/.mefisto/pipeline/tmp/test-writer-decompiled/CommandHandlerTestBase.cs" ]; then
     pass 'test-writer Claude crea y lee el temporal del consumidor con espacios'
 else
-    fail 'test-writer Claude no conserva su temporal bajo el cwd del consumidor'
+    fail "test-writer Claude no conserva su temporal bajo el cwd del consumidor: $claude_decompilation_output"
 fi
 if git -C "$consumer" check-ignore -q .mefisto/pipeline/tmp/test-writer-decompiled/CommandHandlerTestBase.cs; then
     pass 'el temporal decompilado del consumidor no entra al commit'
@@ -309,19 +332,24 @@ done
 
 reviewer_consumer="$WORK/consumidor reviewer con espacios"
 reviewer_mock_bin="$WORK/binarios reviewer simulados"
-mkdir -p "$reviewer_consumer" "$reviewer_mock_bin"
+reviewer_cache="$WORK/cache NuGet reviewer"
+reviewer_assembly="$reviewer_cache/cosmos.eventsourcing.critterstack/version-simulada/lib/net10.0/Cosmos.EventSourcing.CritterStack.dll"
+mkdir -p "$reviewer_consumer" "$reviewer_mock_bin" "$(dirname "$reviewer_assembly")"
 git -C "$reviewer_consumer" init -q
 printf '%s\n' '.mefisto/' > "$reviewer_consumer/.gitignore"
+printf '%s\n' '#!/usr/bin/env bash' "printf '%s\\n' 'global-packages: $reviewer_cache'" > "$reviewer_mock_bin/dotnet"
+printf '%s\n' 'assembly fixture' > "$reviewer_assembly"
 printf '%s\n' '#!/usr/bin/env bash' 'set -eu' 'output=' 'while [ $# -gt 0 ]; do' '    case "$1" in' '        -o) output="$2"; shift 2 ;;' '        -p) exit 3 ;;' '        *) shift ;;' '    esac' 'done' '[ -d "$output" ]' 'printf "%s\\n" "AgregarConfiguracionMartenComandos" > "$output/Cosmos.EventSourcing.CritterStack.decompiled.cs"' > "$reviewer_mock_bin/ilspycmd"
 printf '%s\n' '#!/usr/bin/env bash' 'exit 0' > "$reviewer_mock_bin/ls"
-chmod +x "$reviewer_mock_bin/ilspycmd" "$reviewer_mock_bin/ls"
+chmod +x "$reviewer_mock_bin/dotnet" "$reviewer_mock_bin/ilspycmd" "$reviewer_mock_bin/ls"
 claude_reviewer_decompilation="$(decompilation_block "$REPO_ROOT/dist/claude/agents/reviewer.md")"
 claude_reviewer_decompilation="${claude_reviewer_decompilation//<version-del-csproj>/version-simulada}"
-if (cd "$reviewer_consumer" && PATH="$reviewer_mock_bin:$PATH" bash -c "$claude_reviewer_decompilation") >/dev/null 2>&1 && \
+claude_reviewer_output="$(cd "$reviewer_consumer" && MEFISTO_PACKAGE_ROOT="$REPO_ROOT/dist/claude" PATH="$reviewer_mock_bin:$PATH" bash -c "$claude_reviewer_decompilation" 2>&1)"; claude_reviewer_rc=$?
+if [ "$claude_reviewer_rc" -eq 0 ] && \
     [ -f "$reviewer_consumer/.mefisto/pipeline/tmp/reviewer-decompiled/Cosmos.EventSourcing.CritterStack.decompiled.cs" ]; then
     pass 'reviewer Claude crea y lee el temporal del consumidor con espacios'
 else
-    fail 'reviewer Claude no conserva su temporal bajo el cwd del consumidor'
+    fail "reviewer Claude no conserva su temporal bajo el cwd del consumidor: $claude_reviewer_output"
 fi
 if git -C "$reviewer_consumer" check-ignore -q .mefisto/pipeline/tmp/reviewer-decompiled/Cosmos.EventSourcing.CritterStack.decompiled.cs; then
     pass 'el temporal decompilado del reviewer no entra al commit'

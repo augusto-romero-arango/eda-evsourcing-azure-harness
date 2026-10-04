@@ -6,17 +6,56 @@ REGISTRY="$ROOT/src/published/contract/mcp-servers.json"
 FILTER="$ROOT/src/published/scripts/lib/source-verification.jq"
 REPORT="$ROOT/src/published/scripts/validate-source-verification.sh"
 FIXTURE="$ROOT/src/published/scripts/tests/fixtures/source-verification/role-metadata.json"
+PINS_FIXTURE="$ROOT/src/published/scripts/tests/fixtures/source-verification/domain-scaffolder-pins.json"
+DOMAIN_AGENT="$ROOT/src/published/agents/domain-scaffolder.md"
 PASS=0 FAIL=0
 pass() { printf '  PASS: %s\n' "$1"; PASS=$((PASS + 1)); }
 fail() { printf '  FAIL: %s\n' "$1"; FAIL=$((FAIL + 1)); }
 
 printf '[contrato y metadata]\n'
-jq empty "$MATRIX" "$FIXTURE" >/dev/null 2>&1 && pass 'JSON valido' || fail 'JSON invalido'
+jq empty "$MATRIX" "$FIXTURE" "$PINS_FIXTURE" >/dev/null 2>&1 && pass 'JSON valido' || fail 'JSON invalido'
 bash -n "$REPORT" && pass 'entrypoint tiene sintaxis valida' || fail 'entrypoint invalido'
 if jq -e '.schemaVersion == 1 and (.roles | length) == 22 and ([.roles[].id] | length == (unique | length)) and all(.roles[]; (.evidence | length) > 0)' "$MATRIX" >/dev/null; then
     pass 'matriz clasifica exactamente los 22 roles con evidencia'
 else
     fail 'matriz incompleta, duplicada o sin evidencia'
+fi
+
+if jq -e '
+    def package($id): .packages[] | select(.id == $id);
+    (.schemaVersion == 1 and (.packages | length) == 3) and
+    (package("Microsoft.Azure.Functions.Worker.OpenTelemetry") as $worker |
+        ($worker.index.versions | index($worker.requiredVersion)) != null and
+        $worker.index.versions[-1] == $worker.requiredVersion and
+        any($worker.nuspec.dependencies[];
+            .id == "Microsoft.Azure.Functions.Worker.Core" and .version == "[2.52.0, )")) and
+    (package("OpenTelemetry.Extensions.Hosting") as $otel |
+        ($otel.index.versions | index($otel.requiredVersion)) != null and
+        $otel.index.versions[-1] == $otel.requiredVersion) and
+    (package("FluentValidation.DependencyInjectionExtensions") as $fluent |
+        ($fluent.index.versions | index($fluent.requiredVersion)) != null and
+        $fluent.index.versions[-1] == "12.0.0" and
+        [$fluent.index.versions[] | select((split(".")[0] | tonumber) == $fluent.requiredMajor)][-1] == $fluent.requiredVersion)
+' "$PINS_FIXTURE" >/dev/null; then
+    pass 'fixture deriva existencia, latest, dependencia de nuspec y limite major de FluentValidation'
+else
+    fail 'fixture de pines no distingue existencia, latest y dependencia efectiva'
+fi
+
+domain_policy_ok=1
+for statement in \
+    'No consultes red automaticamente ni sustituyas un pin por `latest`.' \
+    'fuente oficial publica de **la version y linea requeridas** con WebFetch/WebSearch' \
+    'pero no demuestra el grafo del `.nuspec`.' \
+    'informa **NO VERIFICADO**' \
+    'no uses `curl` como sustituto' \
+    'nunca configuracion del consumidor, secretos ni payloads.'; do
+    grep -Fq "$statement" "$DOMAIN_AGENT" || domain_policy_ok=0
+done
+if [ "$domain_policy_ok" -eq 1 ]; then
+    pass 'domain-scaffolder conserva fallback local, fuente oficial, degradacion y consultas sanitizadas'
+else
+    fail 'domain-scaffolder perdio una regla de reverificacion externa'
 fi
 
 actual='[]'
@@ -45,7 +84,7 @@ if [ "$rc" -eq 0 ] && jq -e '
     any(.cases[]; .id == "planner" and .caseId == "microsoft-platform" and .status == "declared") and
     any(.cases[]; .id == "planner" and .caseId == "non-microsoft-official" and .status == "declared") and
     any(.cases[]; .id == "domain-scaffolder" and .caseId == "nuget-version" and .status == "declared") and
-    any(.cases[]; .id == "domain-scaffolder" and .caseId == "nuget-api" and .status == "capability-missing") and
+    any(.cases[]; .id == "domain-scaffolder" and .caseId == "nuget-api" and .status == "declared") and
     any(.cases[]; .id == "infra-writer" and .caseId == "provider-pin" and .status == "external-unobserved") and
     any(.cases[]; .id == "infra-reviewer" and .caseId == "provider-argument" and .status == "capability-missing") and
     any(.cases[]; .id == "apim-gateway-scaffolder" and .caseId == "workos-discovery" and .status == "declared") and
@@ -87,11 +126,22 @@ else
 fi
 
 if jq -e '
-    [.roles[] | select(.id == "domain-scaffolder" or .id == "mcp-scaffolder" or .id == "projections-scaffolder") | .cases[] | select(.caseId == "nuget-version")] as $pins |
-    ($pins | length) == 3 and all($pins[]; (.subject | contains("pin") and contains("no la ultima absoluta")) and (.options == [{"kind":"package-cli","reference":"dotnet package search --exact-match para el id y el pin requeridos"}]))' "$MATRIX" >/dev/null; then
-    pass 'NuGet consulta id y pin exactos sin convertir latest absoluto en criterio'
+    .roles[] | select(.id == "domain-scaffolder") |
+    any(.cases[]; .caseId == "nuget-version" and (.subject | contains("exacta") and contains("no la ultima absoluta")) and .onMissing == "not-verified" and (.options | map(.kind) | sort) == ["package-cli","web"]) and
+    any(.cases[]; .caseId == "nuget-api" and (.subject | contains("dependencia efectiva")) and .onMissing == "not-verified" and .options == [{"kind":"web","reference":".nuspec versionado de NuGet o documentacion/codigo oficial del SDK"}])
+' "$MATRIX" >/dev/null; then
+    pass 'domain-scaffolder distingue existencia, latest y dependencia efectiva del pin exacto'
 else
-    fail 'casos NuGet no conservan pin exacto frente a latest absoluto'
+    fail 'casos NuGet de domain-scaffolder no conservan la politica de reverificacion'
+fi
+
+domain_without_web="$(jq -c '(.roles[] | select(.id == "domain-scaffolder")).capabilities -= ["web"] | .requiredCases += ["domain-scaffolder/nuget-api"]' <<< "$envelope")"
+domain_local_status="$(printf '%s' "$domain_without_web" | jq -r -f "$FILTER" | jq -r '.cases[] | select(.id == "domain-scaffolder" and .caseId == "local-scaffold") | .status')"
+domain_nuspec_status="$(printf '%s' "$domain_without_web" | jq -r -f "$FILTER" | jq -r '.cases[] | select(.id == "domain-scaffolder" and .caseId == "nuget-api") | .status')"
+if [ "$domain_local_status" = declared ] && [ "$domain_nuspec_status" = capability-missing ]; then
+    pass 'fixture offline conserva el scaffold local y marca la reverificacion externa como no disponible'
+else
+    fail "fixture offline inesperado: local=$domain_local_status, nuspec=$domain_nuspec_status"
 fi
 
 if jq -e '
