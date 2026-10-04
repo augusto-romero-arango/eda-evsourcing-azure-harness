@@ -1,0 +1,42 @@
+[
+  {
+    "name": "macOS defaults",
+    "platform": "darwin",
+    "xdgDataHome": null,
+    "xdgConfigHome": null,
+    "opencodeConfigDir": null,
+    "mefistoSuffix": "/Library/Application Support/mefisto",
+    "configSuffix": "/.config/opencode",
+    "runtimeSuffix": "/.local/share/opencode"
+  },
+  {
+    "name": "Linux defaults with empty XDG",
+    "platform": "linux",
+    "xdgDataHome": "",
+    "xdgConfigHome": "",
+    "opencodeConfigDir": null,
+    "mefistoSuffix": "/.local/share/mefisto",
+    "configSuffix": "/.config/opencode",
+    "runtimeSuffix": "/.local/share/opencode"
+  },
+  {
+    "name": "XDG roots with spaces",
+    "platform": "darwin",
+    "xdgDataHome": "{{XDG_DATA}}",
+    "xdgConfigHome": "{{XDG_CONFIG}}",
+    "opencodeConfigDir": null,
+    "mefistoSuffix": null,
+    "configSuffix": null,
+    "runtimeSuffix": null
+  },
+  {
+    "name": "explicit config override",
+    "platform": "linux",
+    "xdgDataHome": "{{XDG_DATA}}",
+    "xdgConfigHome": "{{XDG_CONFIG}}",
+    "opencodeConfigDir": "{{CONFIG_OVERRIDE}}",
+    "mefistoSuffix": null,
+    "configSuffix": null,
+    "runtimeSuffix": null
+  }
+]

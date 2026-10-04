@@ -472,6 +472,37 @@ La regresión vive en `scripts/tests/test-resource-paths.sh`; compara su corpus
 de relativos con `node:path.relative` solo durante pruebas. Node no es una
 dependencia productiva de la biblioteca.
 
+## Descubrimiento de raíces OpenCode
+
+`scripts/adapters/lib/opencode-resource-roots.sh` es una biblioteca pura que se
+carga después de `scripts/lib/resource-paths.sh` y expone
+`opencode_resource_roots <loaded-release-root>`. Recibe por stdin un
+envelope JSON versión 1 con `platform`, `osHome`, `home`, los overrides XDG y
+`opencodeConfigDir`; `null` expresa ausencia y el string vacío conserva su
+semántica. `osHome` es la observación del sistema y nunca se sustituye por
+`home`. La salida contiene raíces lógicas/físicas observadas, la release que
+cargó el caller y el estado del ledger propio; retorna 0 para `resolved`, 1
+para `conflict` con envelope válido y 2 para protocolo inválido.
+
+La tabla verificada para OpenCode 1.18.29 usa `XDG_DATA_HOME/mefisto` o el
+fallback de Mefisto por plataforma; los datos del runtime son
+`XDG_DATA_HOME/opencode` o `osHome/.local/share/opencode`, también en macOS.
+La única clase candidata de lectura global es su `tool-output/`, cuyo registro
+lleva `exists: false` si falta y que nunca se crea ni enumera. Configuración usa
+primero `OPENCODE_CONFIG_DIR`, luego `XDG_CONFIG_HOME/opencode` y finalmente
+`osHome/.config/opencode`; overrides vacíos, relativos o no representables son
+conflictos. Esta observación no lee `opencode.json`, proveedores, credenciales,
+logs ni sesiones y no sustituye una admisión de recursos (MEF-ADR-0031).
+
+La release se verifica contra su propio `mefisto-manifest.json` y debe ser la
+release física del almacén efectivo. `active` solo produce diagnóstico de
+deriva: nunca reemplaza la release cargada. El ledger se lee sin invocar el
+proyector y solo se siguen metadatos de los enlaces que declara, incluido su
+target canónico mediante `active`; `absent`,
+`drift` y `conflict` no equivalen a alineación ni reparan el estado. Es una
+instantánea sin defensa contra TOCTOU; una versión futura del runtime con otra
+semántica de raíces requiere revalidación antes de reutilizar este oráculo.
+
 ## Validación
 
 ```bash
