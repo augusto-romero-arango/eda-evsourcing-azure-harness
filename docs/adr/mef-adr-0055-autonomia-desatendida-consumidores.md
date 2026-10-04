@@ -27,11 +27,11 @@ La autorizacion se expresa por funcion y recurso, no como una lista universal de
 | Funcion | Autorizacion objetivo |
 |---|---|
 | Desarrollo | Lectura de release, ADRs, Skills, fuentes del consumidor y dependencias; edicion en scope; restore, build, test, cobertura, formato y toolchains declarados. |
-| Coordinacion | Entrada, agentes delegados, etapas, worktrees registrados, temporales, tool-output, logs, summaries y reanudacion. |
+| Coordinacion | Entrada, agentes delegados, etapas, worktrees registrados, temporales, tool-output, logs y summaries propios del pipeline, y reanudacion. |
 | Entrega | Git en ramas de trabajo; PR, revision, merge, observacion y reintentos de CI ya autorizados, sujetos a permisos remotos y politica del repo. |
 | Administracion acotada | Bootstrap, auth, registro/cableado de secretos, mantenimiento y purgas enumerados previamente por operacion, entorno y recurso. Una entrada generica «administrar» no basta. |
 
-Leer la release es capacidad basica: cubre macOS con espacios, Linux, roots XDG/config efectivos, cache de paquetes y salidas del runtime, sin conceder lectura de auth stores. Los decompilados son estado propio del consumidor. La release es solo lectura para desarrollo; mantenimiento autorizado puede instalar una release inmutable, cambiar el puntero o podar versiones no usadas, pero nunca editar su contenido ni modificar la release cargada por una corrida.
+Leer la release es capacidad basica: cubre macOS con espacios, Linux y la resolucion de roots XDG/config efectivos para ubicar los recursos autorizados, ademas del cache de paquetes y las salidas del runtime, sin conceder lectura general de esas raices ni de auth stores. Los decompilados son estado propio del consumidor. La release es solo lectura para desarrollo; mantenimiento autorizado puede instalar una release inmutable, cambiar el puntero o podar versiones no usadas, pero nunca editar su contenido ni modificar la release cargada por una corrida.
 
 `tool-output` autoriza lectura de todo el directorio global de resultados del runtime, incluso resultados de otras sesiones o proyectos del mismo usuario. Es un riesgo residual aceptado: ese contenido puede ser sensible. No concede escritura ni lectura de auth stores, logs, bases de sesiones ni el resto de datos/configuracion del runtime. La retencion y aplicacion corresponden a #1846/#1847.
 
@@ -69,7 +69,7 @@ El worker aislado de #1824 es una evolucion posterior: workspace y caches propio
 
 Sin perfil nuevo, Claude conserva flujo, argumentos, modelos, herramientas/Skills, delegacion, fallbacks y reanudacion; no requiere instalar ni configurar OpenCode ni una migracion silenciosa. Una compensacion exclusiva de OpenCode no altera Claude. Todo cambio neutral declara su delta y exige pruebas en ambos adaptadores: regenerar artefactos no prueba no regresion funcional.
 
-Las implementaciones futuras deben aportar tests deterministas de contratos y regresiones, sin LLM ni red real; smoke separado y controlado de release instalada; control TDD equivalente de Claude hasta verificaciones/PR; y coexistencia sin contaminacion. Los invariantes incluyen consumidor solo Claude, contratos legacy, eventos conocidos y desconocidos, y coexistencia de adaptadores. #1827 registrara plataformas, versiones, casos, evidencia y limitaciones. Este ADR fija la obligacion, no afirma certificacion runtime realizada.
+Las implementaciones futuras deben aportar tests deterministas de contratos y regresiones, sin LLM ni red real; un smoke separado y controlado de la release instalada con OpenCode; un control TDD equivalente de Claude hasta verificaciones/PR; y coexistencia sin contaminacion. Los invariantes incluyen consumidor solo Claude, contratos legacy, eventos conocidos y desconocidos, y coexistencia de adaptadores. #1827 registrara plataformas, versiones, casos, evidencia y limitaciones. Este ADR fija la obligacion, no afirma certificacion runtime realizada.
 
 ## Alternativas consideradas
 

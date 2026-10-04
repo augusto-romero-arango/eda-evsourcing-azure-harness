@@ -143,7 +143,7 @@ mismas ubicaciones canonicas: declaracion neutral en
 `.mefisto/harness.config.json` y estado/evidencia por corrida en
 `.mefisto/pipeline/`. MEF-ADR-0055 complementa esta decision sin cambiar la
 lectura legacy, la no mutacion de configuracion global ni la instalacion
-inmutable de esta decision.
+inmutable de releases fijada por esta decision.
 
 #### Enmienda transitoria: mirror de identidad de release del adaptador Claude (#1099)
 
