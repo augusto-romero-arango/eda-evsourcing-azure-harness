@@ -2,35 +2,55 @@
 # Gestion local, explicita y previa a etapas del consentimiento de autonomia.
 set -uo pipefail
 export LC_ALL=C
+umask 077
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 VALIDATOR="$SCRIPT_DIR/../src/published/contract/autonomy-profile.validate.jq"
 
 fail() { printf 'ERROR: %s\n' "$1" >&2; exit 2; }
 usage() { fail 'uso: autonomy-profile.sh <preview|approve|revoke|inspect> --project-root <raiz> [--expected-digest <sha256>]'; }
-sha256() { if command -v shasum >/dev/null 2>&1; then shasum -a 256 "$1" | cut -d ' ' -f 1; else sha256sum "$1" | cut -d ' ' -f 1; fi; }
+hash_stdin() {
+    if command -v shasum >/dev/null 2>&1; then shasum -a 256 | cut -d ' ' -f 1
+    elif command -v sha256sum >/dev/null 2>&1; then sha256sum | cut -d ' ' -f 1
+    else fail 'no se encontro una implementacion de SHA-256'
+    fi
+}
+git_common_dir() {
+    local root="$1" common
+    common="$(git -C "$root" rev-parse --git-common-dir 2>/dev/null)" || return 1
+    case "$common" in
+        /*) cd "$common" 2>/dev/null && pwd -P ;;
+        *) cd "$root/$common" 2>/dev/null && pwd -P ;;
+    esac
+}
 
 OPERATION="${1:-}"; [ $# -gt 0 ] && shift
 PROJECT_ROOT=""; EXPECTED_DIGEST=""
+SEEN_PROJECT_ROOT=0; SEEN_EXPECTED_DIGEST=0
 while [ $# -gt 0 ]; do
     case "$1" in
-        --project-root) [ $# -ge 2 ] || usage; PROJECT_ROOT="$2"; shift 2 ;;
-        --expected-digest) [ $# -ge 2 ] || usage; EXPECTED_DIGEST="$2"; shift 2 ;;
+        --project-root) [ $# -ge 2 ] && [ "$SEEN_PROJECT_ROOT" -eq 0 ] || usage; PROJECT_ROOT="$2"; SEEN_PROJECT_ROOT=1; shift 2 ;;
+        --expected-digest) [ $# -ge 2 ] && [ "$SEEN_EXPECTED_DIGEST" -eq 0 ] || usage; EXPECTED_DIGEST="$2"; SEEN_EXPECTED_DIGEST=1; shift 2 ;;
         *) usage ;;
     esac
 done
 case "$OPERATION" in preview|approve|revoke|inspect) ;; *) usage ;; esac
 [ -n "$PROJECT_ROOT" ] || usage
+[ "$OPERATION" = approve ] || [ "$SEEN_EXPECTED_DIGEST" -eq 0 ] || usage
 [ -x "$(command -v jq 2>/dev/null || true)" ] || fail 'jq no esta instalado'
+[ -x "$(command -v shasum 2>/dev/null || command -v sha256sum 2>/dev/null || true)" ] || fail 'no se encontro una implementacion de SHA-256'
 [ -f "$VALIDATOR" ] || fail 'no se encontro el validador de perfil publicado'
 
 PROJECT_ROOT="$(cd "$PROJECT_ROOT" 2>/dev/null && pwd -P)" || fail 'la raiz de proyecto no existe'
-git -C "$PROJECT_ROOT" rev-parse --show-toplevel >/dev/null 2>&1 || fail 'la raiz indicada no es un repositorio Git'
+PROJECT_TOP="$(git -C "$PROJECT_ROOT" rev-parse --show-toplevel 2>/dev/null)" || fail 'la raiz indicada no es un repositorio Git'
+PROJECT_TOP="$(cd "$PROJECT_TOP" 2>/dev/null && pwd -P)" || fail 'la raiz Git no es accesible'
+[ "$PROJECT_ROOT" = "$PROJECT_TOP" ] || fail 'project-root debe ser la raiz del worktree o repositorio'
 [ ! -f "$PROJECT_ROOT/.claude-plugin/plugin.json" ] || fail 'autonomy-profile.sh es del plugin publicado y solo aplica al consumidor'
 CONFIG="$PROJECT_ROOT/.mefisto/harness.config.json"
 LEGACY_CONFIG="$PROJECT_ROOT/.claude/harness.config.json"
 HAS_CANONICAL=0
-if [ -f "$CONFIG" ] && [ ! -L "$CONFIG" ]; then
+if [ -e "$CONFIG" ] || [ -L "$CONFIG" ]; then
+    [ -f "$CONFIG" ] && [ ! -L "$CONFIG" ] || fail 'la configuracion canonica no es un archivo regular propio'
     HAS_CANONICAL=1
 elif [ -f "$LEGACY_CONFIG" ]; then
     # El fallback legacy se mantiene deshabilitado: no se interpreta ni migra.
@@ -42,20 +62,25 @@ fi
 
 # El git-dir comun identifica el proyecto compartido por sus worktrees. Su hash
 # evita exponer una ruta local y no depende de la rama actualmente checkout.
-COMMON_DIR="$(git -C "$PROJECT_ROOT" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" || fail 'no se pudo resolver la identidad Git comun'
-COMMON_DIR="$(cd "$COMMON_DIR" 2>/dev/null && pwd -P)" || fail 'la identidad Git comun no es accesible'
-PROJECT_ID="project-$(printf '%s' "$COMMON_DIR" | (command -v shasum >/dev/null 2>&1 && shasum -a 256 || sha256sum) | cut -c1-24)"
+COMMON_DIR="$(git_common_dir "$PROJECT_ROOT")" || fail 'no se pudo resolver la identidad Git comun'
+PROJECT_ID="project-$(printf '%s' "$COMMON_DIR" | hash_stdin | cut -c1-24)"
+
+# Un lector lanzado desde un worktree solo puede consultar la raiz explicita
+# del mismo repositorio comun. Esto evita heredar una raiz de estado ajena.
+if [ "$OPERATION" = inspect ]; then
+    CALLER_TOP="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+    if [ -n "$CALLER_TOP" ]; then
+        CALLER_COMMON="$(git_common_dir "$CALLER_TOP")" || fail 'no se pudo verificar la identidad Git del caller'
+        [ "$CALLER_COMMON" = "$COMMON_DIR" ] || fail 'project-root no pertenece al proyecto del worktree caller'
+    fi
+fi
 
 if [ "$HAS_CANONICAL" -eq 1 ]; then
-    PROFILE="$(jq -cS '.autonomy // null' "$CONFIG" 2>/dev/null)" || fail 'la declaracion canonica no es JSON valido'
+    PROFILE="$(jq -cS 'if has("autonomy") then .autonomy else null end' "$CONFIG" 2>/dev/null)" || fail 'la declaracion canonica no es JSON valido'
 else
     PROFILE='null'
 fi
-if [ "$PROFILE" = 'null' ]; then
-    DIGEST="$(printf 'null' | (command -v shasum >/dev/null 2>&1 && shasum -a 256 || sha256sum) | cut -d ' ' -f 1)"
-else
-    DIGEST="$(printf '%s' "$PROFILE" | (command -v shasum >/dev/null 2>&1 && shasum -a 256 || sha256sum) | cut -d ' ' -f 1)"
-fi
+DIGEST="$(printf '%s' "$PROFILE" | hash_stdin)"
 CATALOG="$(for command in "$SCRIPT_DIR/../commands"/*.md; do [ -f "$command" ] || continue; basename "$command" .md | sed 's/^mefisto://' ; done | jq -R . | jq -scS 'sort')" || fail 'no se pudo construir el catalogo publicado'
 
 CONSENT_PATH="$PROJECT_ROOT/.mefisto/pipeline/autonomy/consent.json"
@@ -68,9 +93,11 @@ safe_consent_path() {
     return 0
 }
 safe_consent_path || fail 'el destino de consentimiento atraviesa un enlace simbolico'
-if [ -e "$CONSENT_PATH" ]; then
+if [ "$OPERATION" = preview ]; then
+    CONSENT='null'
+elif [ -e "$CONSENT_PATH" ]; then
     [ -f "$CONSENT_PATH" ] && [ ! -L "$CONSENT_PATH" ] || fail 'el registro de consentimiento no es un archivo regular'
-    CONSENT="$(jq -cS . "$CONSENT_PATH" 2>/dev/null)" || fail 'el registro de consentimiento no es JSON valido'
+    CONSENT="$(jq -cS . "$CONSENT_PATH" 2>/dev/null)" || CONSENT='"invalid-consent-record"'
 else
     CONSENT='null'
 fi
@@ -96,12 +123,21 @@ case "$OPERATION" in
         [ "$(printf '%s' "$RESULT" | jq -r '.status')" != conflict ] || fail "registro incompatible: $(printf '%s' "$RESULT" | jq -r '.reasonCode')"
         PREVIEW="$(validate null)"
         [ "$(printf '%s' "$PREVIEW" | jq -r '.status')" != conflict ] || fail "declaracion invalida: $(printf '%s' "$PREVIEW" | jq -r '.reasonCode')"
+        if [ "$(printf '%s' "$RESULT" | jq -r '.status')" = ready ]; then
+            printf '%s\n' "$CONSENT"
+            exit 0
+        fi
         ;;
     revoke)
         [ "$(printf '%s' "$RESULT" | jq -r '.status')" != conflict ] || fail "registro incompatible: $(printf '%s' "$RESULT" | jq -r '.reasonCode')"
-        [ "$PROFILE" = null ] && exit 0
         PREVIEW="$(validate null)"
         [ "$(printf '%s' "$PREVIEW" | jq -r '.status')" != conflict ] || fail "declaracion invalida: $(printf '%s' "$PREVIEW" | jq -r '.reasonCode')"
+        if [ "$CONSENT" != null ] && [ "$(printf '%s' "$CONSENT" | jq -r '.decision // empty')" = revoked ] \
+          && [ "$(printf '%s' "$CONSENT" | jq -r '.projectId // empty')" = "$PROJECT_ID" ] \
+          && [ "$(printf '%s' "$CONSENT" | jq -r '.profileDigest // empty')" = "$DIGEST" ]; then
+            printf '%s\n' "$CONSENT"
+            exit 0
+        fi
         ;;
 esac
 

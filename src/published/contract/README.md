@@ -135,6 +135,12 @@ ni reemplaza sus validaciones de entorno, recurso o plan. `revoke` es idempotent
 y solo impide admisiones nuevas; snapshots ya admitidos y la política de parada
 conservan su ciclo propio.
 
+Cuando `inspect` se ejecuta dentro de un checkout o worktree, la raíz explícita
+debe compartir su directorio Git común normalizado. Un worktree puede consultar
+la raíz principal aprobada del mismo proyecto, pero no reutilizar el registro de
+otro clon o repositorio. Las operaciones de operador pueden ejecutarse desde un
+directorio ajeno a Git, manteniendo siempre `--project-root` explícito.
+
 Los adaptadores y etapas son lectores: usan exclusivamente `inspect`, cuya salida
 estándar es el JSON neutral del validador. Sus códigos son 0 para `disabled` o
 `ready`, 1 para `needs-approval` o `conflict`, y 2 para errores de uso o ejecución.

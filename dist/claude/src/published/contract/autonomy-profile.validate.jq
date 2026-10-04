@@ -80,16 +80,16 @@ elif (.context | valid_context | not) then
   result("conflict"; "INVALID_CONTEXT"; (.context // {}); null)
 elif (.catalog | valid_catalog | not) then
   result("conflict"; "INVALID_CATALOG"; .context; null)
+elif (.consent != null and (.consent | valid_consent | not)) then
+  result("conflict"; "INVALID_CONSENT"; .context; .profile)
+elif (.consent != null and .consent.projectId != .context.projectId) then
+  result("conflict"; "PROJECT_MISMATCH"; .context; .profile)
 elif .profile == null then
   result("disabled"; "NO_PROFILE"; .context; null)
 elif (.profile as $profile | .catalog as $catalog | ($profile | valid_profile($catalog) | not)) then
   result("conflict"; "INVALID_PROFILE"; .context; null)
 elif .consent == null then
   result("needs-approval"; "CONSENT_REQUIRED"; .context; .profile)
-elif (.consent | valid_consent | not) then
-  result("conflict"; "INVALID_CONSENT"; .context; .profile)
-elif .consent.projectId != .context.projectId then
-  result("conflict"; "PROJECT_MISMATCH"; .context; .profile)
 elif .consent.profileDigest != .context.profileDigest then
   result("needs-approval"; "CONSENT_DIGEST_MISMATCH"; .context; .profile)
 elif .consent.decision == "revoked" then
