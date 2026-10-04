@@ -13,6 +13,7 @@ FIELD_NOTE_SOURCE="$REPO_ROOT/scripts/field-note.sh"
 FIELD_NOTE_OPENCODE="$REPO_ROOT/dist/opencode/scripts/field-note.sh"
 FIELD_NOTE_CLAUDE="$REPO_ROOT/dist/claude/scripts/field-note.sh"
 GENERATOR="$REPO_ROOT/src/published/scripts/generate-published-adapters.sh"
+SOURCE_FIXTURES="$HERE/fixtures/planner-sources/cases.json"
 PASS=0; FAIL=0
 pass() { printf '  PASS: %s\n' "$1"; PASS=$((PASS + 1)); }
 fail() { printf '  FAIL: %s\n' "$1"; FAIL=$((FAIL + 1)); }
@@ -22,8 +23,8 @@ absent() { case "$1" in *"$2"*) fail "$3" ;; *) pass "$3" ;; esac; }
 echo '[fuente] contrato neutral, perfil, skill y mcp'
 if bash "$REPO_ROOT/src/published/scripts/validate-published-artifacts.sh" "$SOURCE" >/dev/null; then pass 'la fuente valida'; else fail 'la fuente no valida'; fi
 metadata="$(awk 'NR == 1 { next } $0 == "---" { exit } { print }' "$SOURCE")"
-if printf '%s' "$metadata" | jq -e '.kind == "agent" and .id == "planner" and .mode == "all" and .profile == "deep" and (.capabilities | index("read") != null and index("edit") != null and index("shell") != null) and .skills == ["projections"] and .mcp == ["microsoft-learn"]' >/dev/null; then
-    pass 'metadata declara agent/planner/all/deep/skills-projections/mcp-microsoft-learn'
+if printf '%s' "$metadata" | jq -e '.kind == "agent" and .id == "planner" and .mode == "all" and .profile == "deep" and (.capabilities | index("read") != null and index("edit") != null and index("shell") != null and index("web") != null) and .skills == ["projections"] and .mcp == ["microsoft-learn"]' >/dev/null; then
+    pass 'metadata declara agent/planner/all/deep/web/skills-projections/mcp-microsoft-learn'
 else
     fail 'metadata neutral invalida'
 fi
@@ -41,6 +42,25 @@ absent "$body" '.claude/' 'fuente no referencia rutas .claude/'
 absent "$body" 'CLAUDE_' 'fuente no referencia variables CLAUDE_*'
 absent "$body" 'PLUGIN_ROOT' 'fuente no reconstruye PLUGIN_ROOT a mano'
 
+echo '[fuentes] matriz de rutas verificables'
+if jq -e '
+    .schemaVersion == 1 and (.cases | length) == 4 and
+    any(.cases[]; .id == "adr-local" and .expected == "local-artifact") and
+    any(.cases[]; .id == "microsoft-bundleado" and .expected == "bundled-mcp") and
+    any(.cases[]; .id == "marten-wolverine-workos" and .expected == "web") and
+    any(.cases[]; .id == "mcp-y-web-ausentes" and .expected == "NO VERIFICADO")
+' "$SOURCE_FIXTURES" >/dev/null 2>&1; then
+    pass 'fixture cubre ADR local, Microsoft, terceros y ausencia de fuentes'
+else
+    fail 'fixture de rutas verificables incompleta'
+fi
+contains "$body" 'Microsoft Learn bundleado' 'Microsoft usa MCP bundleado'
+contains "$body" 'documentacion oficial publica no Microsoft' 'Marten/Wolverine/WorkOS usan solo web oficial'
+contains "$body" 'MCP bundleado no esta disponible' 'web es fallback condicional para Microsoft'
+contains "$body" '**NO VERIFICADO**' 'ausencia de fuente requerida se marca sin certificar'
+contains "$body" 'nunca envias instrucciones o configuracion del consumidor, tokens, secretos ni payloads' 'web no recibe datos del consumidor'
+contains "$body" 'No uses shell, curl ni otra llamada de red' 'no sustituye fuentes con shell o curl'
+
 echo '[salidas] adaptadores y mirror'
 for file in "$CLAUDE" "$OPENCODE"; do [ -f "$file" ] && pass "existe ${file#"$REPO_ROOT/"}" || fail "falta ${file#"$REPO_ROOT/"}"; done
 claude_body="$(< "$CLAUDE")"
@@ -50,10 +70,13 @@ contains "$claude_body" 'name: "planner"' 'Claude expone el id del agente'
 contains "$claude_body" 'model: "opus"' 'Claude materializa el perfil deep como opus'
 contains "$claude_body" 'skills: ["projections"]' 'Claude declara el Skill projections'
 contains "$claude_body" 'mcp__plugin_mefisto_microsoft-learn__*' 'Claude declara el matcher MCP scoped de microsoft-learn (plugin bundleado)'
+contains "$claude_body" 'WebFetch, WebSearch' 'Claude concede el par de herramientas web al planner'
 absent "$opencode_body" 'model:' 'OpenCode no emite model (hereda la configuracion interactiva del usuario)'
 contains "$opencode_body" 'mode: "all"' 'OpenCode conserva mode all'
 contains "$opencode_body" 'mefisto-projections' 'OpenCode solicita la carga nativa de mefisto-projections'
 contains "$opencode_body" '"microsoft-learn_*":true' 'OpenCode habilita las tools de microsoft-learn'
+contains "$opencode_body" '"webfetch":"allow"' 'OpenCode permite webfetch solo al planner'
+contains "$opencode_body" '"websearch":"allow"' 'OpenCode permite websearch solo al planner'
 contains "$opencode_body" '"terraform_*":false' 'OpenCode deniega las tools de terraform (no solicitado)'
 
 # El preambulo compartido de resolucion de MEFISTO_PACKAGE_ROOT/MEFISTO_CONFIG_PATH

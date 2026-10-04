@@ -43,7 +43,7 @@ out="$(bash "$REPORT" \
 if [ "$rc" -eq 0 ] && jq -e '
     all(.cases[]; has("subject") and (.status as $status | ["declared","capability-missing","external-unobserved","not-required"] | index($status))) and
     any(.cases[]; .id == "planner" and .caseId == "microsoft-platform" and .status == "declared") and
-    any(.cases[]; .id == "planner" and .caseId == "non-microsoft-official" and .status == "capability-missing") and
+    any(.cases[]; .id == "planner" and .caseId == "non-microsoft-official" and .status == "declared") and
     any(.cases[]; .id == "domain-scaffolder" and .caseId == "nuget-version" and .status == "declared") and
     any(.cases[]; .id == "domain-scaffolder" and .caseId == "nuget-api" and .status == "capability-missing") and
     any(.cases[]; .id == "infra-writer" and .caseId == "provider-pin" and .status == "external-unobserved") and
@@ -66,6 +66,16 @@ if [ "$status_without" = capability-missing ] && [ "$status_web" = declared ]; t
     pass 'Terraform ausente bloquea y web declarado actua como fallback alternativo'
 else
     fail "fallback Terraform inesperado: sin MCP=$status_without, con web=$status_web"
+fi
+
+planner_without_mcp="$(jq -c '(.roles[] | select(.id == "planner")).mcp=[]' <<< "$envelope")"
+planner_without_sources="$(jq -c '(.roles[] | select(.id == "planner")).mcp=[] | (.roles[] | select(.id == "planner")).capabilities -= ["web"]' <<< "$envelope")"
+planner_mcp_absent_status="$(printf '%s' "$planner_without_mcp" | jq -r -f "$FILTER" | jq -r '.cases[] | select(.id == "planner" and .caseId == "microsoft-platform") | .status')"
+planner_without_sources_status="$(printf '%s' "$planner_without_sources" | jq -r -f "$FILTER" | jq -r '.cases[] | select(.id == "planner" and .caseId == "microsoft-platform") | .status')"
+if [ "$planner_mcp_absent_status" = declared ] && [ "$planner_without_sources_status" = capability-missing ]; then
+    pass 'Microsoft usa web como fallback del MCP ausente y la ausencia total no se certifica'
+else
+    fail "fallback Microsoft inesperado: MCP ausente=$planner_mcp_absent_status, sin fuentes=$planner_without_sources_status"
 fi
 
 if jq -e '
