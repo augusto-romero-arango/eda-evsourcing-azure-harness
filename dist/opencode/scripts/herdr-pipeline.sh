@@ -163,6 +163,96 @@ resolve_report_runtime() {
         || abort "No se pudo preparar el pool canonico de panes Herdr."
 }
 
+# --- Preflight de autonomia (issue #1873, MEF-ADR-0055) ---
+# Gate de CONSULTA antes de tocar el workspace herdr (acquire_report_pane, split, close,
+# reservas de hijos): delega en autonomy-preflight.sh (#1870) UN plan cerrado con todos los
+# issues ruteables de la invocacion, derivado del routing ya resuelto (nunca del texto del
+# issue). `legacy` sin contexto conserva el flujo previo; blocked, incomplete, busy, salida
+# invalida o evaluador ausente abortan con 0 panes, 0 procesos y 0 markers, y nunca caen a
+# legacy. Corre una sola vez por invocacion: reusar un pane libre no exime del plan y el
+# reintento tras marker no confirmado (dispatch_to_pane) conserva la misma decision sin
+# reevaluar. El marker `.started` es handshake del despachador, nunca admision. --refresh-agents,
+# --collapse-panes y --help no inician issues y no consultan.
+HERDR_PLAN_LAUNCH=""
+HERDR_PLAN_ITEMS=()
+HERDR_PREFLIGHT_DONE=0
+# 1 solo para --scaffold: el catalogo de #1870 aun no admite pipelineKind scaffold bajo
+# launchKind pane (el evaluador rechaza el plan con exit 2). Sin contexto transportado ese
+# rechazo de protocolo no bloquea (conserva el flujo previo); con contexto sigue fallando cerrado.
+HERDR_PLAN_SCAFFOLD_GAP=0
+PREFLIGHT_STATUS=""
+PREFLIGHT_DIAG=""
+PREFLIGHT_DEFERRED=""
+
+# herdr_autonomy_preflight <launchKind> <numero:pipelineKind>...
+# 0 = legacy|ready-to-dispatch; 1 = no se puede lanzar (PREFLIGHT_STATUS/DIAG con codigos).
+herdr_autonomy_preflight() {
+    local launch="$1" bin plan out rc=0 src=direct args
+    shift
+    PREFLIGHT_STATUS=""; PREFLIGHT_DIAG=""; PREFLIGHT_DEFERRED=""
+    bin="$SCRIPT_DIR/autonomy-preflight.sh"
+    args=(--project-root "$PROJECT_ROOT" --runtime "$HERDR_RUNTIME")
+    if [ -n "${MEFISTO_EXECUTION_CONTEXT:-}" ]; then
+        src=command
+        args+=(--context "$MEFISTO_EXECUTION_CONTEXT")
+    fi
+    if [ ! -f "$bin" ]; then
+        PREFLIGHT_STATUS="unavailable"; PREFLIGHT_DIAG="PREFLIGHT_UNAVAILABLE"
+        return 1
+    fi
+    plan=$(jq -cn --arg s "$src" --arg l "$launch" '{schemaVersion:1,launchKind:$l,source:$s,requestedOperations:[],
+        issues:[$ARGS.positional[] | split(":") | {number:(.[0]|tonumber),pipelineKind:.[1]}]}' --args "$@" 2>/dev/null) \
+        || { PREFLIGHT_STATUS="unavailable"; PREFLIGHT_DIAG="PREFLIGHT_PLAN_INVALID"; return 1; }
+    out=$(printf '%s' "$plan" | bash "$bin" "${args[@]}" 2>/dev/null) || rc=$?
+    PREFLIGHT_STATUS=$(printf '%s' "$out" | jq -r '.status // empty' 2>/dev/null) || PREFLIGHT_STATUS=""
+    PREFLIGHT_DIAG=$(printf '%s' "$out" | jq -r '[.diagnostics[]? | select(type == "string" and test("^[A-Za-z0-9_#:.-]+$"))] | join(",")' 2>/dev/null) || PREFLIGHT_DIAG=""
+    PREFLIGHT_DEFERRED=$(printf '%s' "$out" | jq -r '[.checks[]? | select(.state == "deferred" and (.code|type) == "string" and (.owner|type) == "string") | "\(.code)@\(.owner)"] | map(select(test("^[A-Za-z0-9_#:./@-]+$"))) | join(",")' 2>/dev/null) || PREFLIGHT_DEFERRED=""
+    if [ "$rc" -eq 2 ] && [ -z "$PREFLIGHT_STATUS" ] && [ "$HERDR_PLAN_SCAFFOLD_GAP" = 1 ] && [ "$src" = direct ]; then
+        PREFLIGHT_STATUS="legacy"
+        return 0
+    fi
+    if [ "$rc" -eq 0 ]; then
+        case "$PREFLIGHT_STATUS" in
+            legacy)
+                # Un contexto transportado nunca degrada a legacy.
+                [ "$src" = command ] || return 0
+                PREFLIGHT_STATUS="invalid"; PREFLIGHT_DIAG="PREFLIGHT_LEGACY_WITH_CONTEXT"; return 1 ;;
+            ready-to-dispatch)
+                if printf '%s' "$out" | jq -e '(.checks | type == "array") and all(.checks[];
+                        (.state | IN("pass","deferred","not-applicable"))
+                        and (.state != "deferred" or ((.owner | type) == "string" and (.owner | length) > 0)))' >/dev/null 2>&1; then
+                    return 0
+                fi
+                PREFLIGHT_STATUS="invalid"; PREFLIGHT_DIAG="PREFLIGHT_CHECKS_INCONSISTENT"; return 1 ;;
+        esac
+    fi
+    if [ "$rc" -eq 75 ]; then
+        PREFLIGHT_STATUS="busy"; PREFLIGHT_DIAG="${PREFLIGHT_DIAG:-PREFLIGHT_BUSY}"
+    else
+        case "$PREFLIGHT_STATUS" in
+            blocked|incomplete) ;;
+            *) PREFLIGHT_STATUS="invalid"; PREFLIGHT_DIAG="${PREFLIGHT_DIAG:-PREFLIGHT_RC_$rc}" ;;
+        esac
+    fi
+    return 1
+}
+
+# herdr_preflight_gate: ejecuta el plan fijado por el cmd_* una sola vez; aborta (exit 1)
+# sin tocar tmux si no hay admision. Sin plan fijado no hace nada.
+herdr_preflight_gate() {
+    [ "$HERDR_PREFLIGHT_DONE" = 1 ] && return 0
+    [ ${#HERDR_PLAN_ITEMS[@]} -gt 0 ] || return 0
+    HERDR_PREFLIGHT_DONE=1
+    if herdr_autonomy_preflight "$HERDR_PLAN_LAUNCH" "${HERDR_PLAN_ITEMS[@]}"; then
+        if [ "$PREFLIGHT_STATUS" = "ready-to-dispatch" ]; then
+            log "Preflight de autonomia: $PREFLIGHT_STATUS"
+            [ -z "$PREFLIGHT_DEFERRED" ] || log "Verificaciones diferidas al guard del hijo (no es permiso efectivo futuro): $PREFLIGHT_DEFERRED"
+        fi
+        return 0
+    fi
+    abort "Preflight de autonomia: ${PREFLIGHT_STATUS} [${PREFLIGHT_DIAG:-sin-detalle}]. No se creo, dividio ni cerro ningun pane herdr ni se inicio ningun pipeline."
+}
+
 # --- Helpers de panes ---
 
 # pane_exists <pane_id> -- 0 si el pane sigue vivo en el servidor.
@@ -728,6 +818,10 @@ cmd_single() {
     fi
     resolved="$(plugin_script "$resolved")"
 
+    HERDR_PLAN_LAUNCH="pane"
+    HERDR_PLAN_ITEMS=("$issue:$(orchestrator_kind_for_script "$resolved")")
+    herdr_preflight_gate
+
     local pipeline_name
     pipeline_name=$(basename "$resolved" .sh)
     local title="${pipeline_name%-pipeline} #$issue"
@@ -763,6 +857,9 @@ cmd_tooling() {
     # distingue el titulo del pane cuando hay variante (dos corridas del mismo
     # issue en panes separados, cada una identificable en la barra lateral).
     local variant="${4:-}"
+    HERDR_PLAN_LAUNCH="pane"
+    HERDR_PLAN_ITEMS=("$issue:tooling")
+    herdr_preflight_gate
     local title="tooling #$issue"
     [ -n "$variant" ] && title="tooling #$issue ($variant)"
     if [ -n "$models" ] && [ -n "$variant" ]; then
@@ -783,6 +880,9 @@ cmd_tooling() {
 cmd_infra() {
     local issue="$1"
     local extra_args="${2:-}"
+    HERDR_PLAN_LAUNCH="pane"
+    HERDR_PLAN_ITEMS=("$issue:iac")
+    herdr_preflight_gate
     # shellcheck disable=SC2086
     dispatch_to_pane "infra #$issue" "$issue" "$SCRIPT_DIR/iac-pipeline.sh" "$issue" $extra_args
 }
@@ -812,6 +912,11 @@ cmd_scaffold() {
         | sed 's/\([a-z0-9]\)\([A-Z]\)/\1-\2/g' \
         | tr '[:upper:]' '[:lower:]')
 
+    HERDR_PLAN_LAUNCH="pane"
+    HERDR_PLAN_ITEMS=("${issue:-1}:scaffold")
+    HERDR_PLAN_SCAFFOLD_GAP=1
+    herdr_preflight_gate
+
     local args=()
     [ -n "$issue" ] && args+=("$issue")
     args+=(--domain "$domain")
@@ -835,6 +940,18 @@ cmd_batch() {
     if [ ${#issues[@]} -eq 0 ]; then
         abort "Debes especificar al menos un issue. Uso: --batch 42 43 44"
     fi
+
+    local b_issue b_resolved b_kind
+    HERDR_PLAN_LAUNCH="sequential"
+    HERDR_PLAN_ITEMS=()
+    for b_issue in "${issues[@]}"; do
+        b_resolved=$(resolve_pipeline "$b_issue" "$pipeline_override" 2>/dev/null) || continue
+        [[ "$b_resolved" == SKIP:* ]] && continue
+        b_kind="$(orchestrator_kind_for_script "$b_resolved")"
+        [ -n "$b_kind" ] || continue
+        HERDR_PLAN_ITEMS+=("$b_issue:$b_kind")
+    done
+    herdr_preflight_gate
 
     local issues_csv
     issues_csv=$(IFS=','; echo "${issues[*]}")
@@ -917,6 +1034,17 @@ cmd_parallel() {
     if [ "$projection_count" -gt 1 ]; then
         abort "$projection_count issues tipo:projection en el lote: comparten el worker de proyecciones (MEF-ADR-0034) y en modo pane no se serializan entre si. Usa /sequential, o parallel-pipeline.sh directo (su scheduler si los serializa)."
     fi
+
+    # Todos los issues ruteables se comprueban antes de tocar un solo pane.
+    local p_i p_kind
+    HERDR_PLAN_LAUNCH="pane"
+    HERDR_PLAN_ITEMS=()
+    for p_i in "${!resolved_issues[@]}"; do
+        p_kind="$(orchestrator_kind_for_script "${resolved_pipelines[$p_i]}")"
+        [ -n "$p_kind" ] || continue
+        HERDR_PLAN_ITEMS+=("${resolved_issues[$p_i]}:$p_kind")
+    done
+    herdr_preflight_gate
 
     # Pane 1: el pane de ejecucion de la derecha (reutilizado o creado; los
     # libres sobrantes se colapsan ahi mismo, asi el apilado arranca de UNO).
