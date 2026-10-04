@@ -123,15 +123,15 @@ Busca en el mismo archivo un `azurerm_role_assignment` con `role_definition_name
 
 **Nunca** toques ni agregues un `azurerm_role_assignment` de `Key Vault Secrets Officer`: ese rol es exclusivo del SP de CI (mecanismo M1, MEF-ADR-0022) y ya se auto-asigna en el `main.tf` del entorno -- fuera del alcance de este skill.
 
-### 7. Formatear y validar (si `terraform` esta instalado)
+### 7. Formatear y validar (si `command -v terraform` confirma que esta instalado)
 
 ```bash
-terraform -chdir=infra/environments/<env> fmt -recursive ../..
-terraform -chdir=infra/environments/<env> init -backend=false
-terraform -chdir=infra/environments/<env> validate
+(cd "infra/environments/<env>" && terraform fmt -recursive ../..)
+(cd "infra/environments/<env>" && terraform init -backend=false)
+(cd "infra/environments/<env>" && terraform validate)
 ```
 
-Si `terraform validate` falla, corrige el HCL insertado y vuelve a validar. Si `terraform` no esta instalado, avisa y deja el formateo/validacion como paso manual pendiente -- no es motivo para detenerte. **Nunca** ejecutes `terraform plan` ni `terraform apply`: el `apply` real (el que siembra el valor del secreto) corre en CI al mergear el PR (MEF-ADR-0021, MEF-ADR-0022).
+Si `terraform validate` falla, corrige el HCL insertado y vuelve a validar. Si `command -v terraform` no encuentra la herramienta, avisa y deja el formateo/validacion como paso manual pendiente -- no es motivo para detenerte. **Nunca** ejecutes `terraform plan` ni `terraform apply`: el `apply` real (el que siembra el valor del secreto) corre en CI al mergear el PR (MEF-ADR-0021, MEF-ADR-0022).
 
 ### 8. Commitear
 
