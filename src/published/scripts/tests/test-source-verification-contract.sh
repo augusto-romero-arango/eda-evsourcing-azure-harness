@@ -6,17 +6,29 @@ REGISTRY="$ROOT/src/published/contract/mcp-servers.json"
 FILTER="$ROOT/src/published/scripts/lib/source-verification.jq"
 REPORT="$ROOT/src/published/scripts/validate-source-verification.sh"
 FIXTURE="$ROOT/src/published/scripts/tests/fixtures/source-verification/role-metadata.json"
+PINS_FIXTURE="$ROOT/src/published/scripts/tests/fixtures/source-verification/domain-scaffolder-pins.json"
 PASS=0 FAIL=0
 pass() { printf '  PASS: %s\n' "$1"; PASS=$((PASS + 1)); }
 fail() { printf '  FAIL: %s\n' "$1"; FAIL=$((FAIL + 1)); }
 
 printf '[contrato y metadata]\n'
-jq empty "$MATRIX" "$FIXTURE" >/dev/null 2>&1 && pass 'JSON valido' || fail 'JSON invalido'
+jq empty "$MATRIX" "$FIXTURE" "$PINS_FIXTURE" >/dev/null 2>&1 && pass 'JSON valido' || fail 'JSON invalido'
 bash -n "$REPORT" && pass 'entrypoint tiene sintaxis valida' || fail 'entrypoint invalido'
 if jq -e '.schemaVersion == 1 and (.roles | length) == 22 and ([.roles[].id] | length == (unique | length)) and all(.roles[]; (.evidence | length) > 0)' "$MATRIX" >/dev/null; then
     pass 'matriz clasifica exactamente los 22 roles con evidencia'
 else
     fail 'matriz incompleta, duplicada o sin evidencia'
+fi
+
+if jq -e '
+    (.pins | length) == 3 and
+    any(.pins[]; .id == "Microsoft.Azure.Functions.Worker.OpenTelemetry" and .version == "1.2.0" and .effectiveDependencies == ["Microsoft.Azure.Functions.Worker.Core >= 2.52.0"]) and
+    any(.pins[]; .id == "OpenTelemetry.Extensions.Hosting" and .version == "1.15.3") and
+    any(.pins[]; .id == "FluentValidation.DependencyInjectionExtensions" and .version == "11.12.0" and .latestPublished == "12.0.0" and .requiredMajor == 11)
+' "$PINS_FIXTURE" >/dev/null; then
+    pass 'fixture fija Worker/OTel, dependencia de nuspec y limite major de FluentValidation'
+else
+    fail 'fixture de pines no distingue existencia, latest y dependencia efectiva'
 fi
 
 actual='[]'

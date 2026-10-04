@@ -3,7 +3,7 @@
   "roles": [
     {"id":"apim-gateway-scaffolder","capabilities":["read","edit","shell","web"],"skills":[],"mcp":[]},
     {"id":"bug-investigator","capabilities":["read","edit","shell","web"],"skills":[],"mcp":[]},
-    {"id":"domain-scaffolder","capabilities":["read","edit","shell"],"skills":[],"mcp":[]},
+    {"id":"domain-scaffolder","capabilities":["read","edit","shell","web"],"skills":[],"mcp":[]},
     {"id":"historiador","capabilities":["read","edit","shell"],"skills":[],"mcp":[]},
     {"id":"implementer","capabilities":["read","edit","shell"],"skills":[],"mcp":[]},
     {"id":"infra-base-scaffolder","capabilities":["read","edit","shell"],"skills":[],"mcp":[]},
