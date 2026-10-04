@@ -6,13 +6,38 @@ def closed($allowed):
   . as $object | ($object | type) == "object" and (($object | keys | sort) == ($allowed | sort));
 def allowed($allowed):
   . as $object | ($object | type) == "object" and ((($object | keys) - $allowed) | length == 0);
-def valid_string: type == "string" and length > 0;
 def valid_catalog:
   type == "array" and length > 0 and all(.[]; kebab) and (length as $count | unique | length == $count);
+
+def leap_year:
+  (. % 4 == 0 and . % 100 != 0) or . % 400 == 0;
+def days_in_month($year; $month):
+  if $month == 2 then (if ($year | leap_year) then 29 else 28 end)
+  elif [4, 6, 9, 11] | index($month) != null then 30
+  else 31 end;
+def valid_timestamp:
+  if type != "string" then false
+  else
+    "^(?<year>[0-9]{4})-(?<month>[0-9]{2})-(?<day>[0-9]{2})T(?<hour>[0-9]{2}):(?<minute>[0-9]{2}):(?<second>[0-9]{2})(?:\\.[0-9]+)?(?<zone>Z|[+-][0-9]{2}:[0-9]{2})$" as $pattern
+    | if test($pattern) | not then false
+      else
+        capture($pattern)
+        | .year |= tonumber | .month |= tonumber | .day |= tonumber
+        | .hour |= tonumber | .minute |= tonumber | .second |= tonumber
+        | (.month >= 1 and .month <= 12)
+          and (.day >= 1 and .day <= days_in_month(.year; .month))
+          and (.hour <= 23 and .minute <= 59 and .second <= 59)
+          and (if .zone == "Z" then true
+               else (.zone[1:3] | tonumber) <= 23 and (.zone[4:6] | tonumber) <= 59
+               end)
+      end
+  end;
 
 def valid_grant($commands):
   . as $grant
   | allowed(["action", "command", "environment", "planDigest", "resources"])
+  and all(["action", "command", "environment", "resources"][];
+          . as $field | $grant | has($field))
   and ($grant.command as $command | ($command | kebab) and ($commands | index($command) != null))
   and ($grant.action | kebab)
   and ($grant.environment | kebab)
@@ -41,11 +66,13 @@ def valid_consent:
   and (.projectId | kebab)
   and (.profileDigest | sha256)
   and (.decision == "approved" or .decision == "revoked")
-  and (.recordedAt | type == "string" and test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]+)?(?:Z|[+-][0-9]{2}:[0-9]{2})$"));
+  and (.recordedAt | valid_timestamp);
 
 def result($status; $reason; $context; $profile):
   {schemaVersion: 1, status: $status, reasonCode: $reason,
-   projectId: ($context.projectId // null), profileDigest: ($context.profileDigest // null), profile: $profile};
+   projectId: (if ($context | type) == "object" then ($context.projectId // null) else null end),
+   profileDigest: (if ($context | type) == "object" then ($context.profileDigest // null) else null end),
+   profile: $profile};
 
 if (type != "object" or (keys | sort) != ["catalog", "consent", "context", "profile"]) then
   result("conflict"; "INVALID_ENVELOPE"; {}; null)

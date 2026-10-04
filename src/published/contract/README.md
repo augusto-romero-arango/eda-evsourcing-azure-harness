@@ -92,14 +92,17 @@ aprueba; un proyecto ajeno o datos malformados son conflicto.
 El caller calcula `profileDigest` sobre los bytes UTF-8, sin salto final, de:
 
 ```bash
-jq -cS '.autonomy' .mefisto/harness.config.json
+jq -j -cS '.autonomy' .mefisto/harness.config.json
 ```
 
-`-cS` produce JSON compacto con las claves ordenadas del subobjeto válido. No
+`-cS` produce JSON compacto con las claves ordenadas del subobjeto válido y
+`-j` evita que `jq` agregue un salto final. Se calcula SHA-256 directamente
+sobre esos bytes; no sobre la salida habitual de `jq -cS`, que termina en
+salto de línea. La normalización no
 incluye el resto del config, timestamps, rutas de worktree ni la release. Por
 tanto un cambio ajeno a `autonomy` conserva el digest, mientras que una
 revisión, comando o grant distinto lo cambia. Los fixtures sintéticos y su hash
-estable están en `scripts/tests/fixtures/autonomy/`; los cambios de release o
+estable están en `src/published/scripts/tests/fixtures/autonomy/`; los cambios de release o
 recursos técnicos se revalidan aparte y no equivalen por sí mismos a nuevo
 consentimiento.
 
