@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "cases": [
+    {"id":"local-pins-intactos","queryTerms":[],"expected":"sin-red-extra"},
+    {"id":"nuget-pin-exacto","version":"1.6.0","queryTerms":["Microsoft.Azure.Functions.Worker.Extensions.Mcp","1.6.0"],"expected":"version-exacta-no-latest"},
+    {"id":"oauth-versionado","queryTerms":["WorkOS AuthKit","version requerida","OAuth"],"expected":"fuente-oficial-versionada"},
+    {"id":"fuente-ausente","queryTerms":[],"expected":"NO VERIFICADO"}
+  ]
+}
