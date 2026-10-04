@@ -23,6 +23,98 @@ ROOT="$(data_root)"
 RELEASES="$ROOT/releases"
 ACTIVE="$ROOT/active"
 
+# El registro comparte el mutex de lifecycle; nunca adquiere un segundo lock.
+release_use_library() {
+    local base
+    for base in "$SCRIPT_DIR" "$SCRIPT_DIR/src/published/scripts"; do
+        if [ -f "$base/lib/release-use-process.sh" ] && [ -f "$base/adapters/lib/opencode-release-use.sh" ]; then
+            source "$base/lib/release-use-process.sh"
+            source "$base/adapters/lib/opencode-release-use.sh"
+            return 0
+        fi
+    done
+    return 1
+}
+
+lifecycle_response_ok() { jq -e '.status == "ok"' >/dev/null 2>&1 <<<"$1"; }
+lifecycle_inspect_locked() {
+    local request
+    request="$(jq -cn --arg id "install-${LOCK_TOKEN}" '{schemaVersion:1,requestId:$id,operation:"inspect",id:null,release:null}')" || return 1
+    RELEASE_USE_LOCK_TOKEN="$LOCK_TOKEN" opencode_release_use_inspect_locked "$ROOT" "$request"
+}
+lifecycle_reconcile_locked() {
+    local inspected request response revision
+    inspected="$(lifecycle_inspect_locked)" || return 1
+    lifecycle_response_ok "$inspected" || return 1
+    revision="$(jq -r .revision <<<"$inspected")" || return 1
+    request="$(jq -cn --arg id "reconcile-${LOCK_TOKEN}" --argjson revision "$revision" '{schemaVersion:1,requestId:$id,operation:"reconcile",expectedRevision:$revision}')" || return 1
+    response="$(RELEASE_USE_LOCK_TOKEN="$LOCK_TOKEN" opencode_release_use_reconcile_locked "$ROOT" "$request")" || return $?
+    lifecycle_response_ok "$response"
+}
+lifecycle_busy() {
+    local inspected ids
+    inspected="$1"
+    ids="$(jq -r '[.executionBlockers[] | .id] | join(",")' <<<"$inspected" 2>/dev/null)"
+    printf 'MEFISTO_LIFECYCLE_BUSY: referencias activas (%s); finalice o reconcilie evidencia verificable y reintente.\n' "${ids:-desconocidas}" >&2
+    return 75
+}
+lifecycle_release_identity() {
+    local release version commit
+    release="$(cd "$SCRIPT_DIR" 2>/dev/null && pwd -P)" || return 1
+    case "$release" in "$RELEASES"/*)
+        version="${release#"$RELEASES/"}";;
+    *)
+        version="$(active_version 2>/dev/null)" || return 1
+        release="$(cd "$RELEASES/$version" 2>/dev/null && pwd -P)" || return 1;;
+    esac
+    valid_version "$version" && manifest_valid "$release" "$version" && release_immutable "$release" || return 1
+    commit="$(jq -er '.commit' "$release/mefisto-manifest.json")" || return 1
+    jq -cn --arg root "$release" --arg version "$version" --arg commit "$commit" '{root:$root,version:$version,commit:$commit}'
+}
+lifecycle_finish_maintenance_locked() {
+    local inspected revision request response
+    [ -n "${LIFECYCLE_MAINTENANCE_ID:-}" ] || return 0
+    inspected="$(lifecycle_inspect_locked)" || return 1
+    lifecycle_response_ok "$inspected" || return 1
+    revision="$(jq -r .revision <<<"$inspected")" || return 1
+    request="$(jq -cn --arg request "finish-${LOCK_TOKEN}" --arg id "$LIFECYCLE_MAINTENANCE_ID" --argjson revision "$revision" --argjson pid "$$" \
+        '{schemaVersion:1,requestId:$request,operation:"finish",expectedRevision:$revision,id:$id,ownerPid:$pid,reason:"maintenance-finished"}')" || return 1
+    response="$(RELEASE_USE_LOCK_TOKEN="$LOCK_TOKEN" opencode_release_use_finish_locked "$ROOT" "$request")" || return 1
+    lifecycle_response_ok "$response" || return 1
+    LIFECYCLE_MAINTENANCE_ID=''
+}
+lifecycle_mutation_guard_locked() {
+    local inspected revision identity request response rc operation
+    release_use_library || { printf 'ERROR: no se encontro el protocolo de referencias de release.\n' >&2; return 1; }
+    lifecycle_reconcile_locked; rc=$?
+    [ "$rc" -eq 0 ] || { [ "$rc" -eq 75 ] && lifecycle_busy "$(lifecycle_inspect_locked 2>/dev/null || printf '{}')"; return "$rc"; }
+    inspected="$(lifecycle_inspect_locked)" || return 1
+    lifecycle_response_ok "$inspected" || return 1
+    jq -e '.executionBlockers | length == 0' >/dev/null 2>&1 <<<"$inspected" || { lifecycle_busy "$inspected"; return $?; }
+    # Una instalacion inicial no tiene una identidad de release que la API pueda
+    # referenciar; el lock ya impide que exista una admision concurrente valida.
+    identity="$(lifecycle_release_identity 2>/dev/null)" || return 0
+    revision="$(jq -r .revision <<<"$inspected")" || return 1
+    operation="$(command cat "$LOCK/operation" 2>/dev/null)" || return 1
+    LIFECYCLE_MAINTENANCE_ID="maintenance-${LOCK_TOKEN}"
+    request="$(jq -cn --arg request "acquire-${LOCK_TOKEN}" --arg id "$LIFECYCLE_MAINTENANCE_ID" --argjson revision "$revision" \
+        --argjson release "$identity" --argjson pid "$$" --arg operation "$operation" \
+        '{schemaVersion:1,requestId:$request,operation:"acquire",expectedRevision:$revision,id:$id,kind:"maintenance",release:$release,ownerPid:$pid,runId:("maintenance-"+$operation),projectId:"mefisto-installation",parentId:null,coverage:"complete",bindingDigest:null,owner:null,startToken:null}')" || return 1
+    response="$(RELEASE_USE_LOCK_TOKEN="$LOCK_TOKEN" opencode_release_use_acquire_locked "$ROOT" "$request")"; rc=$?
+    if [ "$rc" -eq 75 ]; then LIFECYCLE_MAINTENANCE_ID=''; lifecycle_busy "$(lifecycle_inspect_locked 2>/dev/null || printf '{}')"; return 75; fi
+    [ "$rc" -eq 0 ] && lifecycle_response_ok "$response" || { LIFECYCLE_MAINTENANCE_ID=''; return 1; }
+}
+
+caller_release_version() {
+    local physical version
+    physical="$(cd "$SCRIPT_DIR" 2>/dev/null && pwd -P)" || return 1
+    case "$physical" in "$RELEASES"/*)
+        version="${physical#"$RELEASES/"}"; valid_version "$version" || return 1
+        manifest_valid "$physical" "$version" && release_immutable "$physical" || return 1
+        printf '%s\n' "$version";;
+    *) return 1;; esac
+}
+
 lock_owner_description() {
     local operation pid
     operation="$(command cat "$LOCK/operation" 2>/dev/null || true)"
@@ -39,6 +131,7 @@ release_lock() {
     fi
     if [ -n "${LOCK:-}" ] && [ -n "${LOCK_TOKEN:-}" ] && [ -f "$LOCK/owner" ] \
         && [ "$(command cat "$LOCK/owner" 2>/dev/null || true)" = "$LOCK_TOKEN" ]; then
+        lifecycle_finish_maintenance_locked >/dev/null 2>&1 || true
         rm -rf "$LOCK"
     fi
 }
@@ -300,11 +393,15 @@ package_root() {
 }
 
 prune() {
-    local keep="$1" assume_yes="$2" active previous entry version i retained_count=0
+    local keep="$1" assume_yes="$2" active previous entry version caller i retained_count=0
     local kb=0 entry_kb marker confirmation candidate_count=0
     local -a protected candidates
     [ -d "$RELEASES" ] && [ ! -L "$RELEASES" ] || { printf 'No hay releases instaladas para podar.\n'; return 0; }
     acquire_lock prune
+    release_use_library || error 'no se encontro el protocolo de referencias de release'
+    lifecycle_reconcile_locked || error 'el registro de referencias no se puede reconciliar de forma verificable; no se podara'
+    lifecycle_inspected="$(lifecycle_inspect_locked)" || error 'no se pudo inspeccionar el registro de referencias; no se podara'
+    lifecycle_response_ok "$lifecycle_inspected" || error 'el registro de referencias es invalido; no se podara'
     active="$(active_version)"
     VALID_RELEASES_INITIALIZED=false
     for entry in "$RELEASES"/.[!.]* "$RELEASES"/..?* "$RELEASES"/*; do
@@ -325,6 +422,11 @@ prune() {
     [ "$i" -gt 0 ] && previous="${VALID_RELEASES[$((i - 1))]}"
     protected=( "$active" )
     [ -n "$previous" ] && protected=( "${protected[@]}" "$previous" )
+    caller="$(caller_release_version 2>/dev/null || true)"
+    if [ -n "$caller" ]; then case " ${protected[*]} " in *" $caller "*) ;; *) protected=( "${protected[@]}" "$caller" );; esac; fi
+    while IFS= read -r version; do
+        if [ -n "$version" ]; then case " ${protected[*]} " in *" $version "*) ;; *) protected=( "${protected[@]}" "$version" );; esac; fi
+    done < <(jq -r '.retainedReleases[]?.version' <<<"$lifecycle_inspected")
     retained_count="${#protected[@]}"
     for ((i=${#VALID_RELEASES[@]} - 1; i >= 0 && retained_count < keep; i--)); do
         version="${VALID_RELEASES[$i]}"
@@ -374,9 +476,9 @@ parse_prune() {
 
 command -v jq >/dev/null 2>&1 || error 'jq es requerido para validar el manifiesto'
 case "${1:-}" in
-    bootstrap) [ "$#" -eq 2 ] || usage; acquire_lock bootstrap; bootstrap_remote "$2" ;;
-    install) [ "$#" -eq 2 ] || usage; acquire_lock install; install "$2" ;;
-    activate) [ "$#" -eq 2 ] || usage; acquire_lock activate; activate "$2" ;;
+    bootstrap) [ "$#" -eq 2 ] || usage; acquire_lock bootstrap; lifecycle_mutation_guard_locked || exit $?; bootstrap_remote "$2" ;;
+    install) [ "$#" -eq 2 ] || usage; acquire_lock install; lifecycle_mutation_guard_locked || exit $?; install "$2" ;;
+    activate) [ "$#" -eq 2 ] || usage; acquire_lock activate; lifecycle_mutation_guard_locked || exit $?; activate "$2" ;;
     prune) shift; parse_prune "$@" ;;
     project) [ "$#" -eq 1 ] || usage; exec "$SCRIPT_DIR/project-opencode-release.sh" project ;;
     deactivate) [ "$#" -eq 1 ] || usage; exec "$SCRIPT_DIR/project-opencode-release.sh" deactivate ;;
