@@ -1039,7 +1039,7 @@ conocida); (5) solo entonces invoca el runner con sus argumentos originales mas
 del CLI antes del modelo. `--resume-session` exige `bind-session` en modo `resume` del broker y
 metadata SDK de la sesion (mismo `directory`); nunca degrada a sesion nueva.
 
-Salida: stdout es el del runner; el exit despues de iniciar es el del runner (cancelacion: 143).
+Salida: stdout es el del runner; el exit despues de iniciar es el del runner (cancelacion: 143); una cancelacion antes de entregar el prompt aborta el preflight con 78 `not-started`.
 Preflight no iniciado: 78; contexto/reserva ocupados: 75. Al cierre confirma el cierre del
 servicio por PID/identidad propios (`runtime_service_stop`); si queda desconocido registra
 `cleanup: unknown` y conserva la referencia hija. La referencia padre nunca se libera aqui (hold/

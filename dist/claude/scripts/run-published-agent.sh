@@ -148,6 +148,19 @@ if [ "$EC_RC" -eq 75 ]; then write_result not-started BUSY; printf 'ERROR: conte
 [ "$EC_RC" -eq 0 ] && [ "$(printf '%s' "$EC_OUT" | jq -r '.status // empty')" = ready ] \
     || { write_result not-started CONTEXT_INVALID; printf 'ERROR: contexto no valido (CONTEXT_INVALID)\n' >&2; exit 78; }
 
+# Cancelacion: antes de entregar el prompt aborta el preflight (78, sin runner); despues
+# solo senaliza al runner propio por su PID y deja que el cierre normal registre el desenlace.
+on_signal() {
+    CANCELLED="${1:-TERM}"
+    if [ "$STARTED" = 0 ]; then
+        [ -z "${MEFISTO_RUNTIME_SERVICE_PID:-}" ] || SERVICE_UP=1
+        fail_preflight CANCELLED
+    fi
+    if [ -n "$RUNNER_PID" ]; then kill -TERM "$RUNNER_PID" 2>/dev/null || true; fi
+}
+trap 'on_signal TERM' TERM
+trap 'on_signal INT' INT
+
 # --- reserva del intento hijo antes del spawn -------------------------------
 CHILD="ctx-$ATTEMPT"
 EXEC_ROOT_REAL="$CWD"
@@ -174,13 +187,6 @@ WORK="$(mktemp -d "$LAUNCH_DIR/work.XXXXXX" 2>/dev/null)" || fail_preflight WORK
 export MEFISTO_RUNTIME_LIB_DIR="$RUNTIME_LIB_DIR"
 # shellcheck source=/dev/null
 source "$RUNTIME_LIB_DIR/mefisto-runtime.sh" || fail_preflight RUNTIME_LIB_UNAVAILABLE
-
-on_signal() {
-    CANCELLED="${1:-TERM}"
-    if [ -n "$RUNNER_PID" ]; then kill -TERM "$RUNNER_PID" 2>/dev/null || true; fi
-}
-trap 'on_signal TERM' TERM
-trap 'on_signal INT' INT
 
 MEFISTO_EXECUTION_CONTEXT="$CHILD_PATH" MEFISTO_EXECUTION_DIGEST="$CHILD_DIGEST" MEFISTO_LOADED_RELEASE_ROOT="$RELEASE_ROOT"
 export MEFISTO_EXECUTION_CONTEXT MEFISTO_EXECUTION_DIGEST MEFISTO_LOADED_RELEASE_ROOT

@@ -204,21 +204,25 @@ check "cancelacion: aborta la sesion propia" grep -q 'POST /session/ses_abc/abor
 check "cancelacion: no libera referencias si el cierre es desconocido" bash -c "! grep -q '^finish$' '$LOG/ops'"
 kill "$(cat "$LOG/service-pid")" 2>/dev/null; wait 2>/dev/null
 
-# 8. CA-3: un fallback del CLI al agente por defecto lo rechaza el guard antes del modelo.
-GUARD="$TMP/guard.sh"
-cat > "$GUARD" <<'EOF'
-#!/usr/bin/env bash
-# doble del guard chat.params: compara el agente efectivo con el esperado.
-effective="$1"; expected="$2"
-[ "$effective" = "$expected" ] || { echo rejected >> "$STUB_LOG/guard"; exit 9; }
-echo model >> "$STUB_LOG/model-calls"
-EOF
-chmod +x "$GUARD"
-mkdir -p "$LOG"
-STUB_LOG="$LOG" "$GUARD" build autonomy-tooling-writer; GRC=$?
-check "guard: fallback a default rechazado antes del modelo" bash -c "[ $GRC -eq 9 ] && [ ! -e '$LOG/model-calls' ]"
+# 8. Cancelacion durante el preflight: aborta sin runner, 78 y servicio propio cerrado.
+rm -rf "$LOG"; mkdir -p "$LOG"; rm -rf "$PROJ/.mefisto/pipeline/autonomy/runs/run-1/launcher"
+find "$CTXDIR" -mindepth 1 ! -name ctx-parent.json -exec rm -rf {} + 2>/dev/null
+STUB_LOG="$LOG" STUB_READY=absent "$REL/scripts/run-published-agent.sh" "${STD[@]}" --startup-timeout 20 "${RUNARGS[@]}" >"$TMP/out" 2>"$TMP/err" &
+LPID=$!
+for _ in $(seq 100); do [ -s "$LOG/service-pid" ] && break; sleep 0.1; done
+sleep 0.3; kill -TERM "$LPID"; wait "$LPID"; CRC=$?
+check "cancelacion en preflight: exit 78" test "$CRC" -eq 78
+check "cancelacion en preflight: cero prompts" test "$(prompts)" = 0
+check "cancelacion en preflight: not-started protegido" test "$(result_status)" = not-started
+check "cancelacion en preflight: cierra el servicio propio" test -s "$LOG/stops"
+
+# 9. CA-3: el launcher entrega el par rol logico + alias tecnico; el rechazo del
+# fallback a default lo certifica el guard real chat.params en
+# src/published/scripts/tests/test-opencode-binding-guard.sh (caso defaultFallback).
 launch -- "${STD[@]}" "${RUNARGS[@]}"
-check "guard: el launcher entrega el alias exacto, no solo un string" bash -c "STUB_LOG='$LOG' '$GUARD' \"\$(grep -x autonomy-tooling-writer '$LOG/runner-argv')\" autonomy-tooling-writer"
+check "CA-3: --execution-agent seguido del alias exacto" bash -c "grep -A1 -x -- --execution-agent '$LOG/runner-argv' | tail -1 | grep -qx autonomy-tooling-writer"
+check "CA-3: --agent conserva el rol logico" bash -c "grep -A1 -x -- --agent '$LOG/runner-argv' | tail -1 | grep -qx tooling-writer"
+check "CA-3: el guard real cubre el fallback a default" grep -q 'defaultFallback' "$REPO/src/published/scripts/tests/test-opencode-binding-guard.sh"
 
 echo "RESULTADO run-published-agent: $PASS pasaron, $FAIL fallaron"
 [ "$FAIL" -eq 0 ]
