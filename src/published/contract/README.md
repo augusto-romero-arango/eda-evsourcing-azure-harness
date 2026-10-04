@@ -998,3 +998,16 @@ flujo previo. `published_execution_close <outcome>` cierra solo el uso propio.
 Dependencias abiertas: el registro/recuperador de #1852 aporta la reserva y
 retención del `leaseId`; este broker solo lo referencia y deja el recibo
 incompleto como `unknown`, sin habilitar recuperación automática.
+
+## Binding OpenCode del snapshot de recursos (#1847)
+
+`plugins/mefisto-command-entry.js` es el unico propietario del binding. Con
+contexto de ejecucion (`MEFISTO_EXECUTION_CONTEXT=<runId>:<contextId>` y
+`MEFISTO_EXECUTION_DIGEST`, definidos antes de cargar el plugin) instala los
+alias `autonomy-<id>`, escribe `runtime-ready.json` (junto al contexto, en
+`<contextId>/`) y activa los hooks `chat.params`, `chat.message`,
+`tool.execute.before` y `shell.env`. Sin contexto conserva el flujo legacy. El
+guard no es sandbox ni cubre la interpolacion previa del comando. El pin
+`MEFISTO_LOADED_RELEASE_ROOT` viaja solo por llamada y el preambulo OpenCode
+aborta si hay contexto sin pin valido. Pruebas:
+`src/published/scripts/tests/test-opencode-binding-guard.sh`.

@@ -38,6 +38,12 @@ if [ "${OPENCODE_CONFIG_DIR+x}" = x ]; then
     fi
 else MEFISTO_LIFECYCLE_CONFIG_ROOT="${XDG_CONFIG_HOME:-$HOME/.config}/opencode"; fi
 MEFISTO_LIFECYCLE_LAUNCHER="$MEFISTO_LIFECYCLE_DATA_ROOT/active/bin/mefisto-opencode"
+if [ -n "${MEFISTO_EXECUTION_CONTEXT:-}" ] || [ -n "${MEFISTO_EXECUTION_DIGEST:-}" ]; then
+    case "${MEFISTO_LOADED_RELEASE_ROOT:-}" in
+        /*) MEFISTO_LIFECYCLE_LAUNCHER="$MEFISTO_LOADED_RELEASE_ROOT/bin/mefisto-opencode" ;;
+        *) printf '%s\n' 'Estado OpenCode: contexto de ejecucion sin pin de release cargada; no se elige la release activa.' >&2; MEFISTO_LIFECYCLE_LAUNCHER='' ;;
+    esac
+fi
 if [ ! -f "$MEFISTO_LIFECYCLE_LAUNCHER" ] || [ -L "$MEFISTO_LIFECYCLE_LAUNCHER" ] || [ ! -x "$MEFISTO_LIFECYCLE_LAUNCHER" ]; then
     printf 'Estado OpenCode: unavailable (no hay launcher estable disponible). Raiz efectiva: %s\n' "$MEFISTO_LIFECYCLE_CONFIG_ROOT" >&2
 fi
