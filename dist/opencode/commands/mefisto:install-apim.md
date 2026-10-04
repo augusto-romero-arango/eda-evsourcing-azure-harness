@@ -241,6 +241,7 @@ CONFIG=$(printf '%s' "$SETTER_RESULT" | jq -er '.configPath') || exit 1
 TENANCY_TOKEN_FLIPPED=$(printf '%s' "$SETTER_RESULT" | jq -r 'if (.changed | type) == "boolean" then .changed else error("changed debe ser booleano") end') || exit 1
 ```
 
+- Conserva como datos de la sesion los valores exactos devueltos en `configPath` y `changed`; llamalos `<SETTER_CONFIG_PATH>` y `<SETTER_CHANGED>`. Los bloques Bash se pueden ejecutar en shells distintos: no asumas que `CONFIG`, `TENANCY_TOKEN_FLIPPED` ni `SETTER_RESULT` sobreviven hasta el paso 10.
 - Si `changed` es `false`: no toques el archivo. Repórtalo "ya en etapa (b)" y segui directo al 9.3 -- puede haber dominios scaffoldeados entre corridas que todavia no se migraron.
 - El setter actualiza exclusivamente el config canónico, conserva los demas campos de `tenancy` y devuelve la ruta realmente escrita en `configPath`.
 - Si no hay config efectivo o si solo existe el legacy, el setter termina con un error bloqueante antes del 9.3. En el segundo caso migra primero el archivo completo a `.mefisto/harness.config.json`; este skill nunca crea, copia ni modifica el config legacy.
@@ -638,6 +639,12 @@ dotnet test "tests/<RootNamespace>.{PascalCase}.Tests" --filter "FullyQualifiedN
 Solo si el paso 9 tuvo al menos un cambio (token flip, scaffold de la biblioteca, o algun dominio migrado):
 
 ```bash
+CONFIG="<SETTER_CONFIG_PATH exacto devuelto por el setter en 9.2>"
+TENANCY_TOKEN_FLIPPED="<SETTER_CHANGED exacto devuelto por el setter en 9.2>"
+case "$TENANCY_TOKEN_FLIPPED" in
+  true|false) ;;
+  *) echo "ERROR: no se rehidrato el booleano changed devuelto por el setter en 9.2."; exit 1 ;;
+esac
 if [ "$TENANCY_TOKEN_FLIPPED" = true ]; then
   git add "$CONFIG"
 fi

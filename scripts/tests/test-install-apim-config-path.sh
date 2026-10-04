@@ -10,6 +10,8 @@ required=(
     '{{mefisto:run set-harness-tenancy.sh --strategy multi-tenant-header}}'
     "CONFIG=\$(printf '%s' \"\$SETTER_RESULT\" | jq -er '.configPath')"
     "TENANCY_TOKEN_FLIPPED=\$(printf '%s' \"\$SETTER_RESULT\" | jq -r 'if (.changed | type) == \"boolean\" then .changed else error(\"changed debe ser booleano\") end')"
+    'CONFIG="<SETTER_CONFIG_PATH exacto devuelto por el setter en 9.2>"'
+    'TENANCY_TOKEN_FLIPPED="<SETTER_CHANGED exacto devuelto por el setter en 9.2>"'
     'git add "$CONFIG"'
 )
 for marker in "${required[@]}"; do
@@ -19,5 +21,16 @@ if grep -Fq 'source "$COMMON"' "$COMMAND" || grep -Fq 'TMP=$(mktemp)' "$COMMAND"
     echo 'FAIL: install-apim conserva el escritor duplicado' >&2
     exit 1
 fi
-echo 'PASS: install-apim rehidrata configPath/changed y conserva el staging condicional'
-exec bash "$HERE/test-set-harness-tenancy.sh"
+STEP10="$(awk '
+    $0 == "### 10. Commitear la migracion de tenancy" { found=1; next }
+    found && /^```bash$/ { inside=1; next }
+    found && inside && /^```$/ { exit }
+    inside { print }
+' "$COMMAND")"
+if grep -Fq 'CONFIG="<SETTER_CONFIG_PATH exacto devuelto por el setter en 9.2>"' <<< "$STEP10" \
+    && grep -Fq 'TENANCY_TOKEN_FLIPPED="<SETTER_CHANGED exacto devuelto por el setter en 9.2>"' <<< "$STEP10"; then
+    echo 'PASS: install-apim rehidrata configPath/changed en el bloque que los consume'
+else
+    echo 'FAIL: install-apim depende de variables de un shell anterior' >&2
+    exit 1
+fi

@@ -42,7 +42,20 @@ if ! command -v jq >/dev/null 2>&1; then
     exit 1
 fi
 
-CURRENT="$(jq -r '.tenancy.strategy // "mono-tenant-transitorio"' "$CONFIG")"
+if ! CURRENT=$(jq -er '
+    if ((.tenancy? // {}) | type) != "object" then
+        error("tenancy debe ser un objeto")
+    elif (.tenancy.strategy? // null) == null then
+        "mono-tenant-transitorio"
+    elif .tenancy.strategy == "mono-tenant-transitorio" or .tenancy.strategy == "multi-tenant-header" then
+        .tenancy.strategy
+    else
+        error("tenancy.strategy no pertenece al enum soportado")
+    end
+' "$CONFIG"); then
+    echo "ERROR: tenancy.strategy no es valido en $CONFIG." >&2
+    exit 1
+fi
 if [ "$CURRENT" = "$STRATEGY" ]; then
     jq -cn --arg configPath "$CONFIG" --arg strategy "$STRATEGY" \
         '{schemaVersion: 1, configPath: $configPath, strategy: $strategy, changed: false}'

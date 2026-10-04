@@ -13,5 +13,3 @@ else
     echo 'FAIL: onboard no delega exclusivamente al setter publicado' >&2
     exit 1
 fi
-
-exec bash "$HERE/test-set-harness-tenancy.sh"

@@ -29,6 +29,8 @@ contains "$body" '{{mefisto:launch-agent apim-gateway-scaffolder ' 'delegacion p
 contains "$body" 'Servidores MCP a exponer:' 'el mensaje conserva los servidores MCP'
 contains "$body" 'authorization_server_url' 'el mensaje conserva authorization_server_url'
 contains "$body" '{{mefisto:run set-harness-tenancy.sh --strategy multi-tenant-header}}' 'flip delegado al setter publicado'
+contains "$body" 'CONFIG="<SETTER_CONFIG_PATH exacto devuelto por el setter en 9.2>"' 'configPath se rehidrata en el bloque consumidor'
+contains "$body" 'TENANCY_TOKEN_FLIPPED="<SETTER_CHANGED exacto devuelto por el setter en 9.2>"' 'changed se rehidrata en el bloque consumidor'
 contains "$body" '{{mefisto:instructions-path}}' 'RootNamespace se lee de instructions-path'
 for cmd in install-workos scaffold scaffold-mcp infra-base onboard; do contains "$body" "{{mefisto:command $cmd}}" "remite a $cmd via command"; done
 contains "$body" '{{mefisto:package-root}}/agents/domain-scaffolder.md' 'molde de agente por package-root'

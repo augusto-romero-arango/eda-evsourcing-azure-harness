@@ -32,7 +32,7 @@ guards="$(grep -cF '{{mefisto:assert-consumer-repo}}' "$SOURCE")"
 [ "$guards" -eq 1 ] && pass 'guard de consumidor una sola vez' || fail "guard de consumidor aparece $guards veces"
 for rt in claude opencode; do
     out="$claude_body"; [ "$rt" = opencode ] && out="$opencode_body"
-    for s in onboard-diagnose.sh onboard-migrate-directives.sh setup-github-labels.sh setup-github-ci.sh bootstrap-backend.sh; do
+    for s in onboard-diagnose.sh onboard-migrate-directives.sh setup-github-labels.sh setup-github-ci.sh bootstrap-backend.sh set-harness-tenancy.sh; do
         contains "$out" "MEFISTO_RUNTIME=$rt \"\${MEFISTO_PACKAGE_ROOT}/scripts/$s\"" "$rt invoca $s"
     done
     contains "$out" "onboard-migrate-directives.sh\" --preview" "$rt usa --preview"
@@ -63,7 +63,7 @@ check_order 'pregunta si desea aplicar' 'onboard-migrate-directives.sh --apply}}
 check_order '¿Quieres que los provisione ahora?' 'setup-github-labels.sh 2>&1}}'
 check_order '¿Quieres que lo configure ahora? [si/no]' 'bootstrap-backend.sh --subscription'
 check_order '¿Quieres que lo configure ahora? [si/no]' 'setup-github-ci.sh <subscription-id>}}'
-check_order '¿Confirmas? [si/no]' 'ESTRATEGIA="<'
+check_order '¿Confirmas? [si/no]' '{{mefisto:run set-harness-tenancy.sh --strategy <mono-tenant-transitorio|multi-tenant-header>}}'
 check_order '¿Quieres que corra' 'command-doc scaffold-projections}}'
 
 echo '[f] mirror y salidas'

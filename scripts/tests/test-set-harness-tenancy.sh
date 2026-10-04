@@ -49,7 +49,22 @@ MISSING="$WORK/missing"; new_repo "$MISSING"
 if ! run_setter "$MISSING" "$SCRIPT" --strategy multi-tenant-header \
     && [ ! -e "$MISSING/.mefisto/harness.config.json" ]; then pass 'config ausente no se crea'; else fail 'config ausente fue creado'; fi
 
-echo '[4] Valor vigente y error de temporal no reescriben'
+echo '[4] Token ausente conserva el default o materializa el cambio solicitado'
+DEFAULTED="$WORK/defaulted"; new_repo "$DEFAULTED"; copy_config without-token.json "$DEFAULTED/.mefisto/harness.config.json"
+DEFAULTED_BEFORE="$(cksum "$DEFAULTED/.mefisto/harness.config.json")"
+if run_setter "$DEFAULTED" "$SCRIPT" --strategy mono-tenant-transitorio \
+    && jq -e '.strategy == "mono-tenant-transitorio" and .changed == false' "$WORK/out" >/dev/null \
+    && [ "$DEFAULTED_BEFORE" = "$(cksum "$DEFAULTED/.mefisto/harness.config.json")" ]; then
+    pass 'token ausente equivale al default sin reescribir'
+else fail "token ausente/default: $(<"$WORK/err")"; fi
+ABSENT="$WORK/absent"; new_repo "$ABSENT"; copy_config without-token.json "$ABSENT/.mefisto/harness.config.json"
+if run_setter "$ABSENT" "$SCRIPT" --strategy multi-tenant-header \
+    && jq -e '.changed == true' "$WORK/out" >/dev/null \
+    && jq -e '.tenancy.strategy == "multi-tenant-header" and .other.value == true' "$ABSENT/.mefisto/harness.config.json" >/dev/null; then
+    pass 'token ausente se crea cuando cambia respecto del default'
+else fail "token ausente/cambio: $(<"$WORK/err")"; fi
+
+echo '[5] Valor vigente y errores no reescriben ni emiten exito'
 CURRENT="$WORK/current"; new_repo "$CURRENT"; copy_config current.json "$CURRENT/.mefisto/harness.config.json"
 CURRENT_BEFORE="$(cksum "$CURRENT/.mefisto/harness.config.json")"
 if run_setter "$CURRENT" "$SCRIPT" --strategy multi-tenant-header \
@@ -58,7 +73,35 @@ if run_setter "$CURRENT" "$SCRIPT" --strategy multi-tenant-header \
 BROKEN="$WORK/broken"; new_repo "$BROKEN"; copy_config canonical.json "$BROKEN/.mefisto/harness.config.json"; touch "$BROKEN/state-file"
 BROKEN_BEFORE="$(cksum "$BROKEN/.mefisto/harness.config.json")"
 if ! (cd "$BROKEN" && MEFISTO_STATE_DIR="$BROKEN/state-file" bash "$SCRIPT" --strategy multi-tenant-header) >"$WORK/out" 2>"$WORK/err" \
-    && [ "$BROKEN_BEFORE" = "$(cksum "$BROKEN/.mefisto/harness.config.json")" ]; then pass 'fallo de temporal no altera el destino'; else fail 'fallo de temporal altero el destino'; fi
+    && [ "$BROKEN_BEFORE" = "$(cksum "$BROKEN/.mefisto/harness.config.json")" ] \
+    && ! jq -e '.schemaVersion == 1' "$WORK/out" >/dev/null 2>&1; then pass 'fallo de temporal no altera el destino ni emite exito'; else fail 'fallo de temporal altero el destino o emitio exito'; fi
+
+FAKE_BIN="$WORK/fake-bin"; mkdir -p "$FAKE_BIN"
+printf '%s\n' '#!/bin/sh' 'exit 73' > "$FAKE_BIN/mv"
+chmod +x "$FAKE_BIN/mv"
+MOVE_FAIL="$WORK/move-fail"; new_repo "$MOVE_FAIL"; copy_config canonical.json "$MOVE_FAIL/.mefisto/harness.config.json"
+MOVE_BEFORE="$(cksum "$MOVE_FAIL/.mefisto/harness.config.json")"
+if ! (cd "$MOVE_FAIL" && PATH="$FAKE_BIN:$PATH" bash "$SCRIPT" --strategy multi-tenant-header) >"$WORK/out" 2>"$WORK/err" \
+    && [ "$MOVE_BEFORE" = "$(cksum "$MOVE_FAIL/.mefisto/harness.config.json")" ] \
+    && [ -z "$(git -C "$MOVE_FAIL" status --porcelain --untracked-files=all -- .mefisto/pipeline)" ] \
+    && ! jq -e '.schemaVersion == 1' "$WORK/out" >/dev/null 2>&1; then
+    pass 'fallo de sustitucion conserva el destino y limpia su temporal'
+else fail "fallo de sustitucion: $(<"$WORK/err")"; fi
+
+BAD_VALUE="$WORK/bad-value"; new_repo "$BAD_VALUE"; copy_config canonical.json "$BAD_VALUE/.mefisto/harness.config.json"
+jq '.tenancy.strategy = "desconocida"' "$BAD_VALUE/.mefisto/harness.config.json" > "$BAD_VALUE/config.tmp"
+mv "$BAD_VALUE/config.tmp" "$BAD_VALUE/.mefisto/harness.config.json"
+BAD_BEFORE="$(cksum "$BAD_VALUE/.mefisto/harness.config.json")"
+if ! run_setter "$BAD_VALUE" "$SCRIPT" --strategy multi-tenant-header \
+    && [ "$BAD_BEFORE" = "$(cksum "$BAD_VALUE/.mefisto/harness.config.json")" ]; then pass 'enum vigente invalido se rechaza'; else fail 'enum vigente invalido fue aceptado'; fi
+
+if ! run_setter "$CANON" "$SCRIPT" --strategy otro \
+    && ! jq -e '.schemaVersion == 1' "$WORK/out" >/dev/null 2>&1; then pass 'argumento fuera del enum se rechaza sin JSON de exito'; else fail 'argumento fuera del enum fue aceptado'; fi
+
+PLUGIN="$WORK/plugin"; new_repo "$PLUGIN"; mkdir -p "$PLUGIN/.claude-plugin" "$PLUGIN/.mefisto"
+copy_config canonical.json "$PLUGIN/.mefisto/harness.config.json"; printf '{}\n' > "$PLUGIN/.claude-plugin/plugin.json"
+if ! run_setter "$PLUGIN" "$SCRIPT" --strategy multi-tenant-header \
+    && grep -Fq 'solo aplica al consumidor' "$WORK/err"; then pass 'guard impide ejecutar sobre Mefisto'; else fail 'guard de consumidor no bloqueo'; fi
 
 printf 'RESULTADO: %s pasaron, %s fallaron\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

@@ -196,7 +196,11 @@ Ofrece este paso siempre (a diferencia de labels/CI, no depende de que el diagno
 3. **Solo si el usuario confirma**, ejecuta el setter publicado; valida el contrato, preserva el resto del archivo y devuelve su resultado JSON:
 
 ```bash
-MEFISTO_RUNTIME=claude "${MEFISTO_PACKAGE_ROOT}/scripts/set-harness-tenancy.sh" --strategy <mono-tenant-transitorio|multi-tenant-header>
+if SETTER_RESULT=$( MEFISTO_RUNTIME=claude "${MEFISTO_PACKAGE_ROOT}/scripts/set-harness-tenancy.sh" --strategy <mono-tenant-transitorio|multi-tenant-header> ); then
+  printf '%s\n' "$SETTER_RESULT"
+else
+  echo "ERROR: no se pudo actualizar tenancy.strategy; continua con los demas pasos independientes de onboard."
+fi
 ```
 
 4. **Reporta el resultado al usuario.** El JSON indica `configPath`, `strategy` y si `changed` fue `true`; con `false` informa que ya tenia ese valor. Si escribio el token, recuerdale que `domain-scaffolder` (Paso 0) solo lo lee en el **proximo** dominio que scaffoldee -- no re-scaffoldea dominios ya existentes. Si el proyecto tiene dominios en etapa (a) y acaba de declarar la etapa (b), reemplazar el `ITenantResolver` de esos dominios existentes sigue siendo manual (ver el `// TODO(tenancy etapa b)` que `domain-scaffolder` deja en `TenantResolverMonoTenantPorDefecto.cs`, MEF-ADR-0028). Si el camino elegido fue **(A) crecer**, suma el puntero al orquestador (CA-3): tras `/mefisto:infra-base` y `/mefisto:scaffold <dominio>`, el siguiente paso es correr `/mefisto:install-auth` para instalar WorkOS+APIM (MEF-ADR-0032, issue #342) -- encadena `/mefisto:install-workos` y `/mefisto:install-apim` con el gate humano en medio, sin que tengas que conocer el orden ni invocar cada skill de capa por separado.
