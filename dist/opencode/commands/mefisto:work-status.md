@@ -1,5 +1,7 @@
 ---
 description: "Muestra el dashboard de los pipelines del consumidor (TDD, Tooling, Infra y pr-sync) y responde preguntas de drill-down sobre sus logs."
+agent: "command-entry-work-status"
+subtask: false
 ---
 <!-- GENERADO por src/published/scripts/generate-published-adapters.sh desde src/published/commands/work-status.md. No editar a mano. -->
 ```bash

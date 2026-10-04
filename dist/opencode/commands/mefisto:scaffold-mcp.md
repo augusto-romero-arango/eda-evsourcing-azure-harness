@@ -1,5 +1,7 @@
 ---
 description: "Genera el proyecto de un servidor MCP (RootNamespace.Mcp.Proposito) delegando en mcp-scaffolder: identidad, OAuth app-side, Terraform, deploy y SmokeTests."
+agent: "command-entry-scaffold-mcp"
+subtask: false
 ---
 <!-- GENERADO por src/published/scripts/generate-published-adapters.sh desde src/published/commands/scaffold-mcp.md. No editar a mano. -->
 ```bash

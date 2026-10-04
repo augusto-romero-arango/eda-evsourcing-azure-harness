@@ -1,5 +1,7 @@
 ---
 description: "Lanza el pipeline TDD del consumidor para un issue de GitHub dentro de una sesion tmux."
+agent: "command-entry-implement"
+subtask: false
 ---
 <!-- GENERADO por src/published/scripts/generate-published-adapters.sh desde src/published/commands/implement.md. No editar a mano. -->
 ```bash

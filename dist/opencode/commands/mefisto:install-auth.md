@@ -1,5 +1,7 @@
 ---
 description: "Orquesta el camino completo de auth: install-workos, gate humano de credenciales e install-apim."
+agent: "command-entry-install-auth"
+subtask: false
 ---
 <!-- GENERADO por src/published/scripts/generate-published-adapters.sh desde src/published/commands/install-auth.md. No editar a mano. -->
 ```bash

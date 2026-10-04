@@ -1,5 +1,7 @@
 ---
 description: "Invoca al historiador para poner al dia la bitacora y encadena merge sobre el PR resultante."
+agent: "command-entry-bitacora"
+subtask: false
 ---
 <!-- GENERADO por src/published/scripts/generate-published-adapters.sh desde src/published/commands/bitacora.md. No editar a mano. -->
 ```bash

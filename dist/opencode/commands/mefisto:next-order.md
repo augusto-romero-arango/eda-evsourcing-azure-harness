@@ -1,5 +1,7 @@
 ---
 description: "Calcula el orden topologico de lanzamiento de los issues estado:listo del consumidor y deja lista la linea de sequential."
+agent: "command-entry-next-order"
+subtask: false
 ---
 <!-- GENERADO por src/published/scripts/generate-published-adapters.sh desde src/published/commands/next-order.md. No editar a mano. -->
 ```bash

@@ -1,5 +1,7 @@
 ---
 description: "Mergea uno o varios PRs del consumidor a main via pr-sync."
+agent: "command-entry-merge"
+subtask: false
 ---
 <!-- GENERADO por src/published/scripts/generate-published-adapters.sh desde src/published/commands/merge.md. No editar a mano. -->
 ```bash

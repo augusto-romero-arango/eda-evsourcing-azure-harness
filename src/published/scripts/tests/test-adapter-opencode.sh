@@ -48,7 +48,7 @@ assert_not_contains "$command_path" 'mefisto-command' 'no usa id interno mefisto
 assets="$($ADAPTER assets)"; rc=$?
 [ "$rc" -eq 0 ] && pass 'enumera assets de Skills publicados' || fail 'no enumero assets de Skills publicados'
 skill_file_count="$(find "$REPO_ROOT/skills" -type f | wc -l | tr -d '[:space:]')"
-jq -e --argjson count "$skill_file_count" 'length == ($count + 8) and ([.[] | select(.source == "skills/projections/SKILL.md" and .destination == "skills/mefisto-projections/SKILL.md")] | length) == 1 and ([.[] | select(.id == "interactive-observability" and .source == "src/published/hooks/interactive-hooks.json" and .destination == "plugins/mefisto-observability.js" and .mode == "0644")] | length) == 1 and ([.[] | select(.id == "mcp-config" and .source == "src/published/contract/mcp-servers.json" and .destination == "plugins/mefisto-mcp.js" and .mode == "0644")] | length) == 1 and ([.[] | select(.id == "command-entry-manifest" and .destination == "command-entry-manifest.json")] | length) == 1 and ([.[] | select(.id == "agent-execution-manifest" and .destination == "agent-execution-manifest.json")] | length) == 1 and ([.[] | select(.id == "release-use" and .destination == "release-use.sh" and .mode == "0755")] | length) == 1 and ([.[] | select(.id == "resources-entry" and .destination == "scripts/resolve-opencode-resources.sh" and .mode == "0755")] | length) == 1 and ([.[] | select(.id == "resources-lib" and .source == .destination and .destination == "src/published/scripts/adapters/lib/opencode-resources.sh")] | length) == 1 and ([.[] | select(.id == "resource-roots-lib" and .source == .destination and .destination == "src/published/scripts/adapters/lib/opencode-resource-roots.sh")] | length) == 1 and ([.[] | select(.destination == "mefisto-manifest.json")] | length) == 0' <<< "$assets" >/dev/null && pass 'assets preservan Skills, observabilidad, MCP, lifecycle y manifests sin usurpar el manifiesto del packager' || fail 'inventario de assets incompleto'
+jq -e --argjson count "$skill_file_count" 'length == ($count + 9) and ([.[] | select(.source == "skills/projections/SKILL.md" and .destination == "skills/mefisto-projections/SKILL.md")] | length) == 1 and ([.[] | select(.id == "interactive-observability" and .source == "src/published/hooks/interactive-hooks.json" and .destination == "plugins/mefisto-observability.js" and .mode == "0644")] | length) == 1 and ([.[] | select(.id == "mcp-config" and .source == "src/published/contract/mcp-servers.json" and .destination == "plugins/mefisto-mcp.js" and .mode == "0644")] | length) == 1 and ([.[] | select(.id == "command-entry-plugin" and .destination == "plugins/mefisto-command-entry.js" and .mode == "0644")] | length) == 1 and ([.[] | select(.id == "command-entry-manifest" and .destination == "command-entry-manifest.json")] | length) == 1 and ([.[] | select(.id == "agent-execution-manifest" and .destination == "agent-execution-manifest.json")] | length) == 1 and ([.[] | select(.id == "release-use" and .destination == "release-use.sh" and .mode == "0755")] | length) == 1 and ([.[] | select(.id == "resources-entry" and .destination == "scripts/resolve-opencode-resources.sh" and .mode == "0755")] | length) == 1 and ([.[] | select(.id == "resources-lib" and .source == .destination and .destination == "src/published/scripts/adapters/lib/opencode-resources.sh")] | length) == 1 and ([.[] | select(.id == "resource-roots-lib" and .source == .destination and .destination == "src/published/scripts/adapters/lib/opencode-resource-roots.sh")] | length) == 1 and ([.[] | select(.destination == "mefisto-manifest.json")] | length) == 0' <<< "$assets" >/dev/null && pass 'assets preservan Skills, observabilidad, MCP, lifecycle y manifests sin usurpar el manifiesto del packager' || fail 'inventario de assets incompleto'
 "$ADAPTER" render-asset interactive-observability "$REPO_ROOT/src/published/hooks/interactive-hooks.json" > "$WORK/mefisto-observability.js"; rc=$?
 [ "$rc" -eq 0 ] && grep -q 'session.model-observed' "$WORK/mefisto-observability.js" && grep -q 'session.idle' "$WORK/mefisto-observability.js" && pass 'renderiza el plugin de observabilidad desde el contrato' || fail 'plugin de observabilidad no renderizado'
 "$ADAPTER" render-asset skills/projections/SKILL.md "$REPO_ROOT/skills/projections/SKILL.md" > "$WORK/projections-skill.md"; rc=$?
@@ -81,7 +81,7 @@ assert_skill_failure() {
 }
 write_future_skill
 future_assets="$("$FIXTURE_ADAPTER" assets)"; rc=$?
-[ "$rc" -eq 0 ] && jq -e 'length == 10 and ([.[] | select(.source == "skills/futuro/SKILL.md" and .destination == "skills/mefisto-futuro/SKILL.md")] | length) == 1 and ([.[] | select(.destination == "skills/mefisto-futuro/detalle.md")] | length) == 1 and ([.[] | select(.id == "interactive-observability")] | length) == 1 and ([.[] | select(.id == "mcp-config")] | length) == 1 and ([.[] | select(.id == "command-entry-manifest")] | length) == 1 and ([.[] | select(.id == "agent-execution-manifest")] | length) == 1 and ([.[] | select(.id == "release-use")] | length) == 1' <<< "$future_assets" >/dev/null && pass 'un Skill futuro converge sin inventario hardcodeado' || fail 'un Skill futuro no fue enumerado'
+[ "$rc" -eq 0 ] && jq -e 'length == 11 and ([.[] | select(.source == "skills/futuro/SKILL.md" and .destination == "skills/mefisto-futuro/SKILL.md")] | length) == 1 and ([.[] | select(.destination == "skills/mefisto-futuro/detalle.md")] | length) == 1 and ([.[] | select(.id == "interactive-observability")] | length) == 1 and ([.[] | select(.id == "mcp-config")] | length) == 1 and ([.[] | select(.id == "command-entry-manifest")] | length) == 1 and ([.[] | select(.id == "agent-execution-manifest")] | length) == 1 and ([.[] | select(.id == "release-use")] | length) == 1' <<< "$future_assets" >/dev/null && pass 'un Skill futuro converge sin inventario hardcodeado' || fail 'un Skill futuro no fue enumerado'
 "$FIXTURE_ADAPTER" render-asset skills/futuro/SKILL.md "$SKILL_REPO/skills/futuro/SKILL.md" > "$WORK/futuro-rendered.md"
 awk 'NR == 2 { print "name: mefisto-futuro"; next } { print }' "$SKILL_REPO/skills/futuro/SKILL.md" > "$WORK/futuro-expected.md"
 cmp -s "$WORK/futuro-expected.md" "$WORK/futuro-rendered.md" && pass 'render futuro cambia exclusivamente name' || fail 'render futuro altero campos o body'
@@ -120,8 +120,8 @@ else
     fail 'snapshot byte a byte de comando delegado'
 fi
 comando="$(< "$WORK/comando.md")"
-assert_not_contains "$comando" 'agent:' 'agent no se infiere de launch-agent'
-assert_not_contains "$comando" 'subtask' 'launch-agent puntual no emite subtask'
+assert_not_contains "$comando" 'agent: "mefisto' 'agent no se infiere de launch-agent'
+assert_not_contains "$comando" 'subtask: true' 'launch-agent puntual no emite subtask'
 assert_contains "$comando" 'este mensaje: Analiza el estado actual y resume.' 'comando delegado lleva el mensaje explicito'
 assert_not_contains "$comando" 'permission:' 'comando sin campo permission'
 assert_not_contains "$comando" 'model:' 'comando hereda modelo'
@@ -455,8 +455,8 @@ assert_contains "$completo_o" 'agent: "agent-completo"' 'frontmatter agent emite
 assert_contains "$completo_o" 'subtask: true' 'frontmatter agent emite subtask'
 mk_cmd cmd-puntual '{"kind":"command","id":"cmd-puntual","description":"x"}' 'Paso 1: pregunta al usuario.' '{{mefisto:launch-agent agent-completo Escribe el ambiente dev y el proposito Facturas}}' 'Paso 3: crea el PR.'
 puntual_o="$(render "$WORK/cmd-puntual.md")"
-assert_not_contains "$puntual_o" 'subtask' 'puntual no convierte el comando en subtask'
-assert_not_contains "$puntual_o" 'agent:' 'puntual no infiere agent'
+assert_not_contains "$puntual_o" 'subtask: true' 'puntual no convierte el comando en subtask'
+assert_not_contains "$puntual_o" 'agent: "mefisto' 'puntual no infiere agent'
 assert_contains "$puntual_o" 'invoca la tool `task` con el agente `agent-completo` y este mensaje: Escribe el ambiente dev y el proposito Facturas.' 'puntual invoca task con el mensaje dado'
 assert_not_contains "$puntual_o" 'ARGUMENTS' 'puntual no pasa $ARGUMENTS'
 assert_contains "$puntual_o" 'Paso 3: crea el PR.' 'el comando continua tras la delegacion'
@@ -464,7 +464,7 @@ mk_cmd cmd-alt '{"kind":"command","id":"cmd-alt","description":"x"}' 'Si aplica 
 alt_o="$(render "$WORK/cmd-alt.md")"
 assert_contains "$alt_o" 'este mensaje: Mensaje A.' 'alternativa A traducida'
 assert_contains "$alt_o" 'este mensaje: Mensaje B.' 'alternativa B traducida'
-assert_not_contains "$alt_o" 'subtask' 'alternativas no generan subtask'
+assert_not_contains "$alt_o" 'subtask: true' 'alternativas no generan subtask'
 printf '%s\n' '---' '{"kind":"command","id":"consulta-mcp","description":"x"}' '---' '{{mefisto:assert-consumer-repo}}' '{{mefisto:launch-agent ejecutor-mcp}}' > "$MCP_ROOT/src/published/commands/consulta-mcp.md"
 out="$("$MCP_ARTIFACT_VALIDATOR" "$MCP_ROOT/src/published/commands/consulta-mcp.md" 2>&1)"; rc=$?
 [ "$rc" -ne 0 ] && assert_contains "$out" 'directiva mefisto mal formada' 'rechaza launch-agent sin mensaje' || fail 'launch-agent sin mensaje debio fallar'

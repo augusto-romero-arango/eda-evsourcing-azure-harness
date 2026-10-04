@@ -1,5 +1,7 @@
 ---
 description: "Instala/actualiza el gateway APIM, cablea las GitHub variables y ejecuta la transicion a->b de tenancy."
+agent: "command-entry-install-apim"
+subtask: false
 ---
 <!-- GENERADO por src/published/scripts/generate-published-adapters.sh desde src/published/commands/install-apim.md. No editar a mano. -->
 ```bash

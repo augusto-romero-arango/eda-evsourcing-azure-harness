@@ -1,5 +1,7 @@
 ---
 description: "Genera la infraestructura base del consumidor (modulos Terraform + esqueleto del entorno + infra-cd.yml) delegando en infra-base-scaffolder."
+agent: "command-entry-infra-base"
+subtask: false
 ---
 <!-- GENERADO por src/published/scripts/generate-published-adapters.sh desde src/published/commands/infra-base.md. No editar a mano. -->
 ```bash

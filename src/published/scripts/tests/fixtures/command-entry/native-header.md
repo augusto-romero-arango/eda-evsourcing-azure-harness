@@ -1,6 +1,6 @@
 ---
 description: "binding nativo"
-command-entry-id: "batch-stop"
+agent: "command-entry-batch-stop"
 subtask: false
 ---
 Cuerpo estable.

@@ -1,5 +1,7 @@
 ---
 description: "Actualiza Mefisto en el runtime activo y alinea el par de adaptadores ya adherido o, con una confirmacion, lo habilita."
+agent: "command-entry-upgrade"
+subtask: false
 ---
 <!-- GENERADO por src/published/scripts/generate-published-adapters.sh desde src/published/commands/upgrade.md. No editar a mano. -->
 ```bash

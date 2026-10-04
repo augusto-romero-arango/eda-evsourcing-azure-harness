@@ -1,5 +1,7 @@
 ---
 description: "Registra un secreto nuevo post-greenfield y cablea su referencia Key Vault versionless en la Function App de un dominio."
+agent: "command-entry-seed-secret"
+subtask: false
 ---
 <!-- GENERADO por src/published/scripts/generate-published-adapters.sh desde src/published/commands/seed-secret.md. No editar a mano. -->
 ```bash

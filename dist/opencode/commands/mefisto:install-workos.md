@@ -1,5 +1,7 @@
 ---
 description: "Guia el dashboard de WorkOS AuthKit y cablea el adapter de identidad y la custodia de la API key."
+agent: "command-entry-install-workos"
+subtask: false
 ---
 <!-- GENERADO por src/published/scripts/generate-published-adapters.sh desde src/published/commands/install-workos.md. No editar a mano. -->
 ```bash

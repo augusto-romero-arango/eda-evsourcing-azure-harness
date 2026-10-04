@@ -1,5 +1,7 @@
 ---
 description: "Resuelve los comentarios de revision de un PR del consumidor: triaje, plan, ejecucion, respuestas y mejora continua."
+agent: "command-entry-fix-review"
+subtask: false
 ---
 <!-- GENERADO por src/published/scripts/generate-published-adapters.sh desde src/published/commands/fix-review.md. No editar a mano. -->
 ```bash

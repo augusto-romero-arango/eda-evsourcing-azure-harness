@@ -1,5 +1,7 @@
 ---
 description: "Consulta y administra la proyeccion de los adaptadores instalados de Mefisto."
+agent: "command-entry-runtimes"
+subtask: false
 ---
 <!-- GENERADO por src/published/scripts/generate-published-adapters.sh desde src/published/commands/runtimes.md. No editar a mano. -->
 
