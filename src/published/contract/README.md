@@ -159,6 +159,53 @@ jq -c -f src/published/contract/autonomy-profile.validate.jq envelope.json
 src/published/scripts/tests/test-autonomy-profile-contract.sh
 ```
 
+### Plan preautorizado de fix-review
+
+`fix-review-plan.validate.jq` (issue #1886) es el contrato puro del plan
+revisable de `/fix-review` y de su huella; no consulta GitHub, no aprueba
+perfiles, no publica respuestas ni cambia el comando. Recibe por stdin
+`{"plan": <plan>, "grants": null|[<grant>], "context": {"projectId": <kebab>}}`
+y responde `{schemaVersion,status,reasonCode,canonical,requiredActions,authorization}`:
+`status` es `valid`/`invalid` con `reasonCode` estable (`PLAN_VALID`,
+`INVALID_*`, `PROJECT_MISMATCH`, `FORK_NOT_SUPPORTED`, `DUPLICATE_COMMENT_ID`,
+`TRIAGE_SNAPSHOT_MISMATCH`, `SENSITIVE_CONTENT`); un plan malformado nunca se normaliza.
+El ejemplo sintetico versionado es `fix-review-plan.example.json`.
+
+El plan es JSON `schemaVersion: 1` de claves cerradas: `projectId` (el de `inspect`),
+`repoSlug`, `prNumber`, `baseRef`, `headRefName`, `headRepository` (igual a `repoSlug`
+en este corte; un fork se rechaza), `expectedHeadSha` (40 hex), `commentSnapshot`
+(`{id,bodyDigest,path,line,originalLine,inReplyToId}`, sin body), `triage` uno a uno
+por `commentId` con `category` `corregir|explicar|resuelto|investigar` (solo `corregir`
+lleva `edits:[{path,change,impact}]`, rutas relativas seguras y nunca workflows, config,
+adaptadores o infra), `verification` (`["dotnet build","dotnet test"]` si hay
+correcciones, `[]` si no), `planTextDigest` (SHA-256 del plan Markdown mostrado al
+operador), `secondary` (`replyPolicy`, `consumerIssues`, `harnessDrafts`,
+`localImprovementClasses` entre `consumer-adr|consumer-directives|consumer-test-helper`),
+`limits` (`drafts`, `consumerIssues`, `localFiles`: cero si la clase no se habilita,
+positivo si se habilita) y `planDigest`. Los secundarios dan discrecion sobre el texto de
+respuestas y mejoras nuevas solo dentro de esas clases y cupos; no amplian `triage.edits`.
+
+`canonical` es el JSON con claves ordenadas, sin `planDigest`, con `commentSnapshot` y
+`triage` ordenados por id y `localImprovementClasses` ordenadas. El caller calcula
+`planDigest` como SHA-256 de esos bytes UTF-8 sin salto final:
+
+```bash
+jq -c -f src/published/contract/fix-review-plan.validate.jq envelope.json | jq -j .canonical | shasum -a 256
+```
+
+`planDigest` no incluye hora, modelo, token, bodies ni URLs de auth, y no es firma de
+identidad humana ni sandbox: `planTextDigest` solo vincula el texto mostrado.
+
+Con `grants` no nulo, `authorization` es `{status: authorized|unauthorized, missing}`.
+Cada accion requerida (`fix-review-correct`, `-reply`, `-consumer-issue`,
+`-harness-draft`, `-local-improvement`, derivadas de triage/secondary; nunca un
+`fix-review-all`) exige un grant con `command: fix-review`, `environment: repository`,
+`planDigest` igual al del plan (obligatorio aqui aunque el validador general lo admita
+opcional) y recursos `pr:<n>` mas su scope (`scope:planned-files`,
+`scope:review-comments`, `scope:consumer-issue`, `scope:harness-draft`,
+`scope:consumer-docs`). No cambia el schema de `autonomy-profile.validate.jq` ni confiere
+RBAC de GitHub. Prueba: `src/published/scripts/tests/test-fix-review-plan-contract.sh`.
+
 ## Permisos Bash de OpenCode
 
 La capacidad neutral `shell` genera `permission.bash` con `"*": "deny"`.

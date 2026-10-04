@@ -89,6 +89,8 @@ TOOLING_CLOSURE_ASSETS=(
     'src/published/scripts/adapters/lib/opencode-release-use.sh|0755'
     'src/published/scripts/opencode-release-use.sh|0755'
     'src/published/contract/autonomy-profile.validate.jq|0644'
+    'src/published/contract/fix-review-plan.validate.jq|0644'
+    'src/published/contract/fix-review-plan.example.json|0644'
     'src/published/contract/agent-execution.json|0644'
     'src/published/contract/mcp-servers.json|0644'
     'src/published/contract/source-verification.json|0644'
