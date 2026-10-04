@@ -43,7 +43,7 @@ absent 'CLAUDE_CONFIG_DIR' 'no inspecciona stores privados'
 absent 'bypassPermissions' 'no fija permisos de un runtime'
 absent 'output-format' 'no fija formatos de stream de un runtime'
 absent 'kill -9' 'no conserva watchdog propio'
-contains 'if "$RUN_AGENT_BIN" "${args[@]}"' 'invoca el runner con un array, sin eval'
+contains 'pipeline_run_runner "$RUN_AGENT_BIN" "${args[@]}"' 'invoca el runner con un array, sin eval'
 contains 'log_agent_model_invocation "$agent" "$model"' 'anuncia el modelo resuelto antes de invocar writer, reviewer o merge'
 contains '[ -n "$model" ] && args+=(--model "$model")' 'conserva intacto el argv condicional del runner'
 contains 'case "$agent" in reviewer) agent_id="tooling-reviewer"; profile="deep"; model="$MODEL_REVIEWER" ;; *) agent_id="tooling-writer"; profile="balanced"; model="$MODEL_WRITER" ;; esac' 'el anuncio usa el modelo ya resuelto por rol'
@@ -275,6 +275,8 @@ log() { :; }
 warn() { :; }
 abort() { return 1; }
 update_status() { :; }
+pipeline_run_runner() { local bin="$1"; shift; "$bin" "$@"; }
+pipeline_runner_started_or_abort() { :; }
 log_agent_model_invocation() { :; }
 mefisto_state_path() { mkdir -p "$CTX_TMP/state/$(dirname "$1")"; printf '%s\n' "$CTX_TMP/state/$1"; }
 derive_stage_log_from_stream() { :; }

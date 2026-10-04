@@ -2769,3 +2769,88 @@ caffeinate_prefix() {
         printf '%s' "caffeinate -i"
     fi
 }
+
+# --- Ejecucion preparada de los pipelines de agentes (issue #1860, MEF-ADR-0055) ---
+# Una unica referencia de ejecucion abarca el pipeline completo (tambien hold,
+# retry y los espacios entre stages): se abre una vez antes del worktree y se
+# cierra en la finalizacion existente. Sin contexto transportado ni perfil
+# autorizado (o con runtime Claude) el camino previo no cambia: sin servicio ni
+# lease nuevos.
+PIPELINE_EXEC_KIND=""
+PIPELINE_EXEC_PKG=""
+PIPELINE_RUNNER_NOT_STARTED=0
+
+# pipeline_execution_open <kind> <project-root> <package-root> <runtime-lib-dir> <default-runner>
+# Retorna 1 cuando no debe admitirse trabajo controlado. La release fisica es la
+# del propio script; un entorno heredado nunca es autoridad.
+pipeline_execution_open() {
+    local kind="${1:-}" project_root="${2:-}" pkg="${3:-}" lib_dir="${4:-}" default_runner="${5:-}"
+    local controlled=0 lib="$pkg/scripts/_execution-context.sh"
+    if [ -n "${MEFISTO_EXECUTION_CONTEXT:-}" ] || [ -n "${MEFISTO_EXECUTION_DIGEST:-}" ]; then controlled=1; fi
+    PIPELINE_EXEC_KIND=""; PIPELINE_EXEC_PKG=""
+    if [ "$controlled" = 1 ]; then
+        case "${MEFISTO_EXECUTION_CONTEXT:-}" in
+            /*) ;;
+            *) echo "ERROR: ruta de contexto no absoluta o ambigua; no se admite trabajo controlado" >&2; return 1 ;;
+        esac
+        if [ -n "${MEFISTO_RUN_AGENT_BIN:-}" ] && [ "$MEFISTO_RUN_AGENT_BIN" != "$default_runner" ]; then
+            echo "ERROR: override del runner incompatible con la ejecucion controlada" >&2; return 1
+        fi
+        if [ -n "${MEFISTO_RUNTIME_LIB_DIR:-}" ]; then
+            local inherited
+            inherited="$(cd "$MEFISTO_RUNTIME_LIB_DIR" 2>/dev/null && pwd -P)" || inherited=""
+            if [ "$inherited" != "$lib_dir" ]; then
+                echo "ERROR: la ruta heredada de la libreria de runtime no coincide con la release fisica del script" >&2; return 1
+            fi
+        fi
+        [ -f "$lib" ] && [ -x "$pkg/scripts/run-published-agent.sh" ] \
+            || { echo "ERROR: la release no contiene la clausura de ejecucion preparada" >&2; return 1; }
+    elif [ ! -f "$lib" ]; then
+        return 0
+    fi
+    # shellcheck source=/dev/null
+    source "$lib" || return 1
+    if ! MEFISTO_RUNTIME="${MEFISTO_RESOLVED_RUNTIME:-${MEFISTO_RUNTIME:-}}" published_execution_open "$kind" "$project_root" "$pkg"; then
+        echo "ERROR: no se pudo abrir la ejecucion del pipeline (contexto invalido, ocupado o revocado)" >&2
+        return 1
+    fi
+    if [ "${MEFISTO_EXECUTION_ENABLED:-0}" = 1 ]; then
+        PIPELINE_EXEC_KIND="$kind"; PIPELINE_EXEC_PKG="$pkg"
+    fi
+    return 0
+}
+
+# pipeline_run_runner <runner-bin> <argv del runner...>
+# Unica frontera hacia el agente: rama controlada -> launcher #1858; rama
+# legacy -> el runner con el argv actual. Exit 75/78 del launcher marcan
+# PIPELINE_RUNNER_NOT_STARTED (el modelo no se ejecuto).
+pipeline_run_runner() {
+    local bin="$1" rc=0; shift
+    PIPELINE_RUNNER_NOT_STARTED=0
+    if [ "${MEFISTO_EXECUTION_ENABLED:-0}" != 1 ] || [ -z "$PIPELINE_EXEC_KIND" ]; then
+        if "$bin" "$@"; then rc=0; else rc=$?; fi
+        return "$rc"
+    fi
+    if "$PIPELINE_EXEC_PKG/scripts/run-published-agent.sh" --pipeline "$PIPELINE_EXEC_KIND" \
+        --context "$MEFISTO_EXECUTION_CONTEXT" --context-digest "$MEFISTO_EXECUTION_DIGEST" -- "$@"; then rc=0; else rc=$?; fi
+    case "$rc" in 75|78) PIPELINE_RUNNER_NOT_STARTED=1 ;; esac
+    return "$rc"
+}
+
+# Fallo de protocolo no recuperable: ni build verde ni trabajo previo ni un
+# event-log viejo lo convierten en exito, y no se fabrican denegaciones.
+pipeline_runner_started_or_abort() {
+    [ "${PIPELINE_RUNNER_NOT_STARTED:-0}" = 1 ] || return 0
+    abort "${1:-agente}: la etapa publicada no inicio (preflight/busy del launcher); fallo de protocolo no recuperable, el modelo no se ejecuto"
+}
+
+# pipeline_execution_close <exit-code>: solo el uso propio; nunca altera el exit.
+pipeline_execution_close() {
+    local code="${1:-1}" outcome=failed
+    [ "${MEFISTO_EXECUTION_ENABLED:-0}" = 1 ] || return 0
+    command -v published_execution_close >/dev/null 2>&1 || return 0
+    case "$code" in 0) outcome=succeeded ;; 130|143) outcome=aborted ;; esac
+    published_execution_close "$outcome" >/dev/null 2>&1 \
+        || echo "WARN: cierre de la ejecucion preparada incierto; queda para reconciliacion" >&2
+    return 0
+}

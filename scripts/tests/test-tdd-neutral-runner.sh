@@ -221,6 +221,8 @@ ISSUE_LOG_TAG=1360
 PIPELINE_TMP_DIR="$TMP/pipeline"
 WORKTREE_PATH="$WT"
 RUN_AGENT_BIN="$TMP/runner"
+pipeline_run_runner() { local bin="$1"; shift; "$bin" "$@"; }
+pipeline_runner_started_or_abort() { :; }
 MEFISTO_RUNTIME_RESUELTO=fake
 MEFISTO_AGENT_TIMEOUT_SECONDS=60
 EVENTS_LOG_ABS="$TMP/events"
@@ -466,6 +468,8 @@ PIPELINE_TMP_DIR="$CTX_PIPELINE_TMP"
 WORKTREE_PATH="$CTX_WT"
 SNAPSHOT_COMMIT="$CTX_SNAPSHOT"
 RUN_AGENT_BIN="$CTX_TMP/run-agent-double"
+pipeline_run_runner() { local bin="$1"; shift; "$bin" "$@"; }
+pipeline_runner_started_or_abort() { :; }
 MEFISTO_RUNTIME_RESUELTO='fake'
 MEFISTO_AGENT_TIMEOUT_SECONDS=60
 EVENTS_LOG_ABS="$CTX_TMP/events.log"
@@ -526,6 +530,8 @@ PIPELINE_TMP_DIR="$TMP/pipeline-once"
 MEFISTO_RUNTIME_RESUELTO=fake
 WORKTREE_PATH="$WT"
 RUN_AGENT_BIN="$TMP/runner"
+pipeline_run_runner() { local bin="$1"; shift; "$bin" "$@"; }
+pipeline_runner_started_or_abort() { :; }
 EVENTS_LOG_ABS="$TMP/events-once"
 MEFISTO_AGENT_TIMEOUT_SECONDS=60
 LAST_AGENT_DURATION=0
@@ -568,6 +574,8 @@ MEFISTO_RUNTIME_RESUELTO=fake
 MEFISTO_AGENT_TIMEOUT_SECONDS=60
 WORKTREE_PATH="$WT"
 RUN_AGENT_BIN="$TMP/runner"
+pipeline_run_runner() { local bin="$1"; shift; "$bin" "$@"; }
+pipeline_runner_started_or_abort() { :; }
 EVENTS_LOG_ABS="$TMP/events-stage-zero"
 LOG_DIR_ABS="$TMP/logs-stage-zero"
 PIPELINE_DIR_ABS="$TMP/state-stage-zero"
@@ -628,6 +636,8 @@ MEFISTO_RUNTIME_RESUELTO=fake
 MEFISTO_AGENT_TIMEOUT_SECONDS=60
 WORKTREE_PATH="$WT"
 RUN_AGENT_BIN="$TMP/runner"
+pipeline_run_runner() { local bin="$1"; shift; "$bin" "$@"; }
+pipeline_runner_started_or_abort() { :; }
 EVENTS_LOG_ABS="$TMP/events-remediation"
 PIPELINE_DIR_ABS="$TMP/state-remediation"
 TIMESTAMP=20260914-120000

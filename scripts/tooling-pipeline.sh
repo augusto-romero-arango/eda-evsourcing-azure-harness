@@ -128,6 +128,7 @@ finalize_pipeline_exit() {
         record_failed_history
     fi
 
+    pipeline_execution_close "$exit_code"
     cleanup_pipeline_temporaries
     exit "$exit_code"
 }
@@ -333,6 +334,9 @@ HARNESS_IDENTITY_JSON="$(get_harness_identity_json "$MEFISTO_RUNTIME_RESUELTO")"
 if ! runtime_cli_available "$MEFISTO_RUNTIME_RESUELTO"; then
     abort "Falta el CLI del runtime resuelto ('$MEFISTO_RUNTIME_RESUELTO')"
 fi
+# Ejecucion preparada (#1860): una referencia para todo el pipeline, antes del worktree.
+pipeline_execution_open tooling "$(git rev-parse --show-toplevel)" "$(cd "$SCRIPT_DIR/.." && pwd -P)" "$RUNTIME_LIB_DIR" "$RUN_AGENT_BIN_DEFAULT" \
+    || abort "No se pudo abrir la ejecucion preparada del pipeline tooling"
 
 # --- Preparar directorio de pipeline ---
 mkdir -p "$LOG_DIR"
@@ -541,7 +545,8 @@ run_agent() {
         local args=(--runtime "$MEFISTO_RUNTIME_RESUELTO" --agent "$agent_id" --cwd "$WORKTREE_PATH" --prompt-file "$attempt_prompt" --system-file "$system_file" --event-log "$events_file" --events-log "$EVENTS_LOG_ABS" --redact-observability --timeout "$MEFISTO_AGENT_TIMEOUT_SECONDS")
         [ -n "$model" ] && args+=(--model "$model")
         [ -n "$resume_session" ] && args+=(--resume-session "$resume_session")
-        if "$RUN_AGENT_BIN" "${args[@]}" >"$runner_file" 2>&1; then run_exit=0; else run_exit=$?; fi
+        if pipeline_run_runner "$RUN_AGENT_BIN" "${args[@]}" >"$runner_file" 2>&1; then run_exit=0; else run_exit=$?; fi
+        pipeline_runner_started_or_abort "$agent"
         [ "$attempt_prompt" = "$prompt_file" ] || rm -f "$attempt_prompt"
         elapsed=$(( $(date +%s) - start_ts ))
         derive_stage_log_from_stream "$events_file" "" "$log_stage"
