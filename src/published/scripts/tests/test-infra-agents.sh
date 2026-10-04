@@ -42,9 +42,10 @@ echo '[fuentes] fallback condicional y degradacion verificable'
 if jq -e '
     .schemaVersion == 1 and (.cases | length) == 4 and
     any(.cases[]; .id == "adr-schema-local" and .expected == "local-artifact") and
-    any(.cases[]; .id == "provider-v4-versus-latest-v5" and .lockVersion == "4.81.0" and .latestVersion == "5.0.1" and .expected == "version-locked-official-docs") and
-    any(.cases[]; .id == "external-source-absent" and .expected == "NO VERIFICADO") and
-    any(.cases[]; .id == "official-docs-available" and .expected == "semantic-review")
+    any(.cases[]; .id == "provider-v4-versus-latest-v5" and .lockVersion == "4.81.0" and .constraint == "~> 4.0" and .latestVersion == "5.0.1" and (.queryTerms | index("4.81.0")) != null and (.queryTerms | index("5.0.1")) == null and .expected == "version-locked-official-docs") and
+    any(.cases[]; .id == "external-source-absent" and (.queryTerms | length) > 0 and .expected == "NO VERIFICADO") and
+    any(.cases[]; .id == "official-docs-available" and (.source | startswith("https://registry.terraform.io/providers/hashicorp/azurerm/4.81.0/")) and .expected == "semantic-review") and
+    all(.cases[].queryTerms[]; IN("hashicorp azurerm", "4.81.0", "linux_function_app application_stack"))
 ' "$SOURCE_FIXTURES" >/dev/null 2>&1; then
     pass 'fixture cubre ADR/schema local, version v4 frente a latest v5, ausencia y fuente oficial'
 else
@@ -53,13 +54,14 @@ fi
 reviewer_body="$(body "$REPO_ROOT/src/published/agents/infra-reviewer.md")"
 for statement in \
     'ADRs del proyecto, el HCL y el schema/provider local son las primeras fuentes' \
-    'version fijada en `.terraform.lock.hcl` o permitida por el constraint del proyecto' \
+    'version fijada en `.terraform.lock.hcl`; solo si el lock no existe, usa la linea permitida por el constraint del proyecto' \
     'documentacion `latest` de otra major' \
-    'Nunca envies HCL completo, configuracion del consumidor, identificadores, tokens, secretos ni payloads' \
+    'Nunca envies HCL completo, configuracion ni identificadores del consumidor, tokens, secretos o payloads' \
     'no demuestra conectividad ni que exista una fuente para la version requerida' \
-    'marca la fila del argumento como **NO VERIFICADO** y no apruebes su semantica' \
+    'marca ese argumento como **NO VERIFICADO** en el resumen y no apruebes su semantica' \
     'no convierte la revision local en una consulta de red obligatoria' \
-    'MCP de Terraform al reviewer'; do
+    'MCP de Terraform al reviewer' \
+    'contrato de fuentes de #1822 y MEF-ADR-0055'; do
     contains "$reviewer_body" "$statement" "reviewer conserva la regla de fuente: $statement"
 done
 
@@ -88,7 +90,8 @@ contains "$claude_writer" 'mcp__terraform__*' 'Claude writer expone el matcher c
 contains "$claude_writer" 'mcp__plugin_terraform_terraform__*' 'Claude writer expone el matcher scoped del plugin terraform'
 contains "$claude_writer" 'model: "sonnet"' 'Claude writer materializa perfil balanced'
 contains "$claude_reviewer" 'model: "opus"' 'Claude reviewer materializa perfil deep'
-contains "$claude_reviewer" 'WebFetch, WebSearch' 'Claude reviewer expone solo el par web adicional'
+contains "$claude_reviewer" 'tools: "Read, Glob, Grep, Edit, Write, Bash, WebFetch, WebSearch"' 'Claude reviewer conserva Read/Edit/Bash y suma solo el par web'
+absent "$claude_reviewer" 'Skill' 'Claude reviewer conserva la ausencia previa de Skills'
 absent "$claude_reviewer" 'mcp__' 'Claude reviewer no expone ningun matcher MCP'
 opencode_writer="$(< "$WORK/dist/opencode/agents/infra-writer.md")"
 opencode_reviewer="$(< "$WORK/dist/opencode/agents/infra-reviewer.md")"
@@ -96,6 +99,9 @@ contains "$opencode_writer" '"terraform_*":true' 'OpenCode writer habilita terra
 contains "$opencode_reviewer" '"terraform_*":false' 'OpenCode reviewer deniega terraform_*'
 contains "$opencode_reviewer" '"webfetch":"allow"' 'OpenCode reviewer permite WebFetch'
 contains "$opencode_reviewer" '"websearch":"allow"' 'OpenCode reviewer permite WebSearch'
+contains "$opencode_reviewer" '"skill":"deny"' 'OpenCode reviewer conserva la ausencia previa de Skills'
+contains "$opencode_reviewer" '"list":"allow","glob":"allow","grep":"allow","bash"' 'OpenCode reviewer conserva lectura y shell'
+contains "$opencode_reviewer" '"edit":{"*":"allow"' 'OpenCode reviewer conserva edicion'
 contains "$opencode_writer" '"webfetch":"deny"' 'OpenCode writer no recibe web'
 absent "$opencode_writer" 'model:' 'OpenCode writer no fija model'
 absent "$opencode_reviewer" 'model:' 'OpenCode reviewer no fija model'

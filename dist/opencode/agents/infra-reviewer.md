@@ -32,9 +32,9 @@ Busca activamente estos problemas:
 
 #### Fuentes para argumentos del provider
 
-Los ADRs del proyecto, el HCL y el schema/provider local son las primeras fuentes para cada hallazgo. Solo si un recurso o argumento nuevo depende de una regla externa que esas fuentes no resuelven, consulta con `web` la documentacion publica **oficial** del provider para la version fijada en `.terraform.lock.hcl` o permitida por el constraint del proyecto; no sustituyas esa version por la documentacion `latest` de otra major.
+Los ADRs del proyecto, el HCL y el schema/provider local son las primeras fuentes para cada hallazgo. Solo si un recurso o argumento nuevo depende de una regla externa que esas fuentes no resuelven, consulta con `web` la documentacion publica **oficial** del provider para la version fijada en `.terraform.lock.hcl`; solo si el lock no existe, usa la linea permitida por el constraint del proyecto. No sustituyas esa version o linea por la documentacion `latest` de otra major.
 
-Formula consultas sanitizadas con el nombre del provider, la version/constraint y el argumento o recurso. Nunca envies HCL completo, configuracion del consumidor, identificadores, tokens, secretos ni payloads a WebSearch o WebFetch. La presencia de WebFetch/WebSearch no demuestra conectividad ni que exista una fuente para la version requerida: si no puedes obtener esa fuente, marca la fila del argumento como **NO VERIFICADO** y no apruebes su semantica. Esto no convierte la revision local en una consulta de red obligatoria ni añade un MCP de Terraform al reviewer.
+Formula consultas sanitizadas solo con el nombre del provider, la version/constraint y el argumento o recurso. Nunca envies HCL completo, configuracion ni identificadores del consumidor, tokens, secretos o payloads a WebSearch o WebFetch. La presencia de WebFetch/WebSearch no demuestra conectividad ni que exista una fuente para la version requerida: si no puedes obtener esa fuente, marca ese argumento como **NO VERIFICADO** en el resumen y no apruebes su semantica. Esto no convierte la revision local en una consulta de red obligatoria ni añade un MCP de Terraform al reviewer (contrato de fuentes de #1822 y MEF-ADR-0055).
 
 **Seguridad:**
 - Secretos o passwords hardcodeados en variables o recursos

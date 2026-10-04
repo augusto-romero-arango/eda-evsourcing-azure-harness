@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
   "cases": [
-    {"id":"adr-schema-local","input":"ADR y schema local resuelven el argumento","expected":"local-artifact"},
-    {"id":"provider-v4-versus-latest-v5","lockVersion":"4.81.0","latestVersion":"5.0.1","input":"argumento nuevo solo documentado externamente","expected":"version-locked-official-docs"},
-    {"id":"external-source-absent","input":"WebFetch disponible sin fuente de la version requerida","expected":"NO VERIFICADO"},
-    {"id":"official-docs-available","input":"documentacion oficial de la version requerida disponible","expected":"semantic-review"}
+    {"id":"adr-schema-local","input":"ADR y schema local resuelven el argumento","queryTerms":[],"expected":"local-artifact"},
+    {"id":"provider-v4-versus-latest-v5","lockVersion":"4.81.0","constraint":"~> 4.0","latestVersion":"5.0.1","input":"argumento nuevo solo documentado externamente","queryTerms":["hashicorp azurerm","4.81.0","linux_function_app application_stack"],"expected":"version-locked-official-docs"},
+    {"id":"external-source-absent","input":"WebFetch disponible sin fuente de la version requerida","queryTerms":["hashicorp azurerm","4.81.0","linux_function_app application_stack"],"expected":"NO VERIFICADO"},
+    {"id":"official-docs-available","input":"documentacion oficial de la version requerida disponible","queryTerms":["hashicorp azurerm","4.81.0","linux_function_app application_stack"],"source":"https://registry.terraform.io/providers/hashicorp/azurerm/4.81.0/docs/resources/linux_function_app","expected":"semantic-review"}
   ]
 }
