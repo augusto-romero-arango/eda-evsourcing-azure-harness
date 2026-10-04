@@ -1,6 +1,14 @@
 {
   "$comment": "Corpus cerrado del recolector ShellTool de OpenCode v1.18.29. La caracterizacion estatica sigue tree-sitter-bash v0.25.0 y web-tree-sitter v0.25.10; no ejecuta Bash ni descarga un parser.",
   "runtime": {"opencode": "1.18.29", "treeSitterBash": "0.25.0", "webTreeSitter": "0.25.10"},
+  "inventory": {
+    "operational": "Todas las directivas mefisto:run de src/published/commands y src/published/agents; el gate deriva y compara el inventario completo.",
+    "humanInstruction": [{"artifact":"commands/install-auth.md","snippet":"gh auth login","reason":"comando mostrado para que lo ejecute el humano"}],
+    "generatedCi": [{"artifact":"agents/infra-base-scaffolder.md","snippet":"run: terraform init -input=false","reason":"codigo emitido para GitHub Actions, no una invocacion local del agente"}]
+  },
+  "allowedScripts": [
+    "appinsights-query.sh", "azure-account-info.sh", "bootstrap-backend.sh", "field-note.sh", "herdr-pipeline.sh", "next-order.sh", "onboard-diagnose.sh", "onboard-migrate-directives.sh", "pr-sync.sh", "purge-store.sh", "register-harness-secret.sh", "render-eraser-diagram.sh", "resolve-nuget-resources.sh", "seed-secret.sh", "set-harness-tenancy.sh", "setup-github-ci.sh", "setup-github-labels.sh", "tmux-pipeline.sh", "upgrade.sh", "validate-dockerfile.sh", "work-status-collect.sh"
+  ],
   "scriptCalls": [
     {"artifact":"commands/next-order.md","candidate":"MEFISTO_RUNTIME=opencode \"${MEFISTO_PACKAGE_ROOT}/scripts/next-order.sh\" --launch-command \"/mefisto:sequential\"","source":"next-order run"},
     {"artifact":"commands/upgrade.md","candidate":"MEFISTO_RUNTIME=opencode \"${MEFISTO_PACKAGE_ROOT}/scripts/upgrade.sh\" --status","source":"upgrade status"},
@@ -25,24 +33,23 @@
     {"artifact":"agents/projections-scaffolder.md","candidate":"MEFISTO_RUNTIME=opencode \"${MEFISTO_PACKAGE_ROOT}/scripts/validate-dockerfile.sh\" src/<RootNamespace>.Projections/Dockerfile","source":"docker validation"},
     {"artifact":"agents/infra-base-scaffolder.md","candidate":"MEFISTO_RUNTIME=opencode \"${MEFISTO_PACKAGE_ROOT}/scripts/register-harness-secret.sh\" \"marten-connection\" \"composite\" \"marten-connection\"","source":"secret registration"}
   ],
-  "candidates": [
-    {"snippet":"MEFISTO_RUNTIME=opencode \"${MEFISTO_PACKAGE_ROOT}/scripts/next-order.sh\" --launch-command \"/mefisto:sequential\"","node":"command","candidate":"MEFISTO_RUNTIME=opencode \"${MEFISTO_PACKAGE_ROOT}/scripts/next-order.sh\" --launch-command \"/mefisto:sequential\"","expected":"allow","source":"run canonical"},
-    {"snippet":"CLOSED=$(MEFISTO_RUNTIME=opencode \"${MEFISTO_PACKAGE_ROOT}/scripts/herdr-pipeline.sh\" --collapse-panes 2>/dev/null || true)","node":"redirected_statement > command","candidate":"MEFISTO_RUNTIME=opencode \"${MEFISTO_PACKAGE_ROOT}/scripts/herdr-pipeline.sh\" --collapse-panes 2>/dev/null","expected":"allow","source":"merge list/substitution"},
-    {"snippet":"\"$mefisto_opencode_launcher\" package-root","node":"command","candidate":"\"$mefisto_opencode_launcher\" package-root","expected":"allow","source":"package-root preamble"},
-    {"snippet":"\"$MEFISTO_LIFECYCLE_LAUNCHER\" projection-status","node":"command","candidate":"\"$MEFISTO_LIFECYCLE_LAUNCHER\" projection-status","expected":"allow","source":"runtimes lifecycle"},
-    {"snippet":"pgrep -f \"[s]cripts/batch-pipeline\\.sh\" >/dev/null 2>&1","node":"redirected_statement > command","candidate":"pgrep -f \"[s]cripts/batch-pipeline\\.sh\" >/dev/null 2>&1","expected":"allow","source":"batch-stop"},
-    {"snippet":"sleep 15","node":"command","candidate":"sleep 15","expected":"allow","source":"purge-store polling"},
-    {"snippet":"terraform init -backend=false -input=false","node":"command","candidate":"terraform init -backend=false -input=false","expected":"allow","source":"Terraform local"},
-    {"snippet":"terraform init -backend=false -backend=true","node":"command","candidate":"terraform init -backend=false -backend=true","expected":"deny","source":"negative Terraform"},
-    {"snippet":"MEFISTO_RUNTIME=claude \"${MEFISTO_PACKAGE_ROOT}/scripts/next-order.sh\"","node":"command","candidate":"MEFISTO_RUNTIME=claude \"${MEFISTO_PACKAGE_ROOT}/scripts/next-order.sh\"","expected":"deny","source":"negative runtime"},
-    {"snippet":"MEFISTO_RUNTIME=opencode \"${MEFISTO_PACKAGE_ROOT}/scripts/autonomy-profile.sh\" approve","node":"command","candidate":"MEFISTO_RUNTIME=opencode \"${MEFISTO_PACKAGE_ROOT}/scripts/autonomy-profile.sh\" approve","expected":"deny","source":"unregistered release script"}
+  "cases": [
+    {"snippet":"MEFISTO_RUNTIME=opencode \"${MEFISTO_PACKAGE_ROOT}/scripts/next-order.sh\" --launch-command \"/mefisto:sequential\"","nodes":[{"type":"command","template":"{{candidate}}","candidate":"MEFISTO_RUNTIME=opencode \"${MEFISTO_PACKAGE_ROOT}/scripts/next-order.sh\" --launch-command \"/mefisto:sequential\"","expected":"allow"}],"source":"run canonical"},
+    {"snippet":"CLOSED=$(MEFISTO_RUNTIME=opencode \"${MEFISTO_PACKAGE_ROOT}/scripts/herdr-pipeline.sh\" --collapse-panes 2>/dev/null || true)","nodes":[{"type":"redirected_statement (parent of command)","template":"CLOSED=$({{candidate}} || true)","candidate":"MEFISTO_RUNTIME=opencode \"${MEFISTO_PACKAGE_ROOT}/scripts/herdr-pipeline.sh\" --collapse-panes 2>/dev/null","expected":"allow"},{"type":"command","template":"CLOSED=$(MEFISTO_RUNTIME=opencode \"${MEFISTO_PACKAGE_ROOT}/scripts/herdr-pipeline.sh\" --collapse-panes 2>/dev/null || {{candidate}})","candidate":"true","expected":"allow"}],"source":"merge list/substitution/redirection"},
+    {"snippet":"export VALUE=$(printf x)","nonCandidate":"declaration_command","nodes":[{"type":"command descendant","template":"export VALUE=$({{candidate}})","candidate":"printf x","expected":"allow"}],"source":"declaration with substitution"},
+    {"snippet":"[ -f archivo ] && printf x","nonCandidate":"test_command","nodes":[{"type":"command sibling","template":"[ -f archivo ] && {{candidate}}","candidate":"printf x","expected":"allow"}],"source":"bracket test and list"},
+    {"snippet":"cd dir; printf x | sort","nodes":[{"type":"command excluded by CWD handling","template":"{{candidate}}; printf x | sort","candidate":"cd dir","expected":"excluded","evaluate":false},{"type":"command","template":"cd dir; {{candidate}} | sort","candidate":"printf x","expected":"allow"},{"type":"command","template":"cd dir; printf x | {{candidate}}","candidate":"sort","expected":"allow"}],"source":"cwd and pipe"},
+    {"snippet":"f() { printf x; }; f","nonCandidate":"function_definition","nodes":[{"type":"command descendant","template":"f() { {{candidate}}; }; f","candidate":"printf x","expected":"allow"},{"type":"command invocation","template":"f() { printf x; }; {{candidate}}","candidate":"f","expected":"deny"}],"source":"function static traversal"},
+    {"snippet":"literal='$(curl ejemplo)'","nonCandidate":"variable_assignment; single-quoted text has no command descendant","nodes":[],"source":"single quoted literal"},
+    {"snippet":"MEFISTO_CONFIG_PATH=valor","nonCandidate":"variable_assignment","nodes":[],"source":"assignment without command"},
+    {"snippet":"\"$mefisto_opencode_launcher\" package-root","nodes":[{"type":"command","template":"{{candidate}}","candidate":"\"$mefisto_opencode_launcher\" package-root","expected":"allow"}],"source":"package-root preamble"},
+    {"snippet":"\"$MEFISTO_LIFECYCLE_LAUNCHER\" projection-status","nodes":[{"type":"command","template":"{{candidate}}","candidate":"\"$MEFISTO_LIFECYCLE_LAUNCHER\" projection-status","expected":"allow"}],"source":"runtimes lifecycle"},
+    {"snippet":"pgrep -f \"[s]cripts/batch-pipeline\\.sh\" >/dev/null 2>&1","nodes":[{"type":"redirected_statement (parent of command)","template":"{{candidate}}","candidate":"pgrep -f \"[s]cripts/batch-pipeline\\.sh\" >/dev/null 2>&1","expected":"allow"}],"source":"batch-stop"},
+    {"snippet":"sleep 15","nodes":[{"type":"command","template":"{{candidate}}","candidate":"sleep 15","expected":"allow"}],"source":"purge-store polling"},
+    {"snippet":"terraform init -backend=false -input=false","nodes":[{"type":"command","template":"{{candidate}}","candidate":"terraform init -backend=false -input=false","expected":"allow"}],"source":"Terraform local"},
+    {"snippet":"terraform init -backend=false -backend=true","nodes":[{"type":"command","template":"{{candidate}}","candidate":"terraform init -backend=false -backend=true","expected":"deny"}],"source":"negative Terraform"},
+    {"snippet":"MEFISTO_RUNTIME=claude \"${MEFISTO_PACKAGE_ROOT}/scripts/next-order.sh\"","nodes":[{"type":"command","template":"{{candidate}}","candidate":"MEFISTO_RUNTIME=claude \"${MEFISTO_PACKAGE_ROOT}/scripts/next-order.sh\"","expected":"deny"}],"source":"negative runtime"},
+    {"snippet":"MEFISTO_RUNTIME=opencode \"${MEFISTO_PACKAGE_ROOT}/scripts/autonomy-profile.sh\" approve","nodes":[{"type":"command","template":"{{candidate}}","candidate":"MEFISTO_RUNTIME=opencode \"${MEFISTO_PACKAGE_ROOT}/scripts/autonomy-profile.sh\" approve","expected":"deny"}],"source":"unregistered release script"}
   ],
-  "nonCandidates": [
-    {"snippet":"MEFISTO_CONFIG_PATH=valor","node":"variable_assignment","source":"assignment without command"},
-    {"snippet":"export VALUE=$(printf x)","node":"declaration_command; nested command is printf x","source":"declaration with substitution"},
-    {"snippet":"[ -f archivo ] && printf x","node":"test_command; nested command is printf x","source":"bracket test"},
-    {"snippet":"cd dir; printf x | sort","node":"commands are cd dir, printf x and sort","source":"cwd and pipe"},
-    {"snippet":"literal='$(curl ejemplo)'","node":"variable_assignment; no command substitution under single quotes","source":"single quoted literal"},
-    {"snippet":"f() { printf x; }; f","node":"function_definition contains printf x; invocation f is command","source":"function static traversal"}
-  ]
+  "negativeCandidates": ["bash -c x", "sh -c x", "env x", "eval x", "source ./x", "curl x", "sudo x", "ssh x", "scp x", "terraform plan", "terraform apply", "terraform destroy", "terraform init", "terraform init -backend=false -input=false -backend=true", "sleep 30", "rm -f \"$TMP\""]
 }

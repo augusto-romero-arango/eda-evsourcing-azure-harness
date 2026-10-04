@@ -130,7 +130,13 @@ assert_not_contains "$comando" '## Projections' 'comando no copia doctrina del S
 
 render "$FIXTURES/agent-completo.md" > "$WORK/completo.md"; rc=$?
 [ "$rc" -eq 0 ] && pass 'render de capacidades combinadas' || fail 'render de capacidades combinadas'
-[ "$rc" -eq 0 ] && pass 'render de agente con varios Skills' || fail 'render de agente con varios Skills'
+awk '!/^permission: /' "$WORK/completo.md" > "$WORK/completo-sin-permission.md"
+awk '!/^permission: /' "$FIXTURES/expected-agent-completo.md" > "$WORK/expected-completo-sin-permission.md"
+if [ "$rc" -eq 0 ] && cmp -s "$WORK/expected-completo-sin-permission.md" "$WORK/completo-sin-permission.md"; then
+    pass 'snapshot byte a byte del agente salvo permission, validado por contrato'
+else
+    fail 'snapshot del agente derivo fuera de permission'
+fi
 completo="$(< "$WORK/completo.md")"
 assert_contains "$completo" 'description: "Lee, \"edita\" y ejecuta."' 'description queda escapada como YAML valido'
 assert_contains "$completo" '"edit":{"*":"allow"' 'edicion sobre alcance consumidor'

@@ -225,6 +225,7 @@ published_opencode_translate_body() {
 lifecycle_launcher_preamble() {
     cat <<'EOF'
 ```bash
+# Cada llamada bash que use $MEFISTO_LIFECYCLE_LAUNCHER o $MEFISTO_LIFECYCLE_CONFIG_ROOT debe incluir este bloque antes de sus comandos: no se asume estado de shell persistente entre llamadas.
 if [ -n "${XDG_DATA_HOME:-}" ]; then MEFISTO_LIFECYCLE_DATA_ROOT="$XDG_DATA_HOME/mefisto"
 elif [ "${OSTYPE%%[0-9.]*}" = darwin ]; then MEFISTO_LIFECYCLE_DATA_ROOT="$HOME/Library/Application Support/mefisto"
 else MEFISTO_LIFECYCLE_DATA_ROOT="$HOME/.local/share/mefisto"; fi
