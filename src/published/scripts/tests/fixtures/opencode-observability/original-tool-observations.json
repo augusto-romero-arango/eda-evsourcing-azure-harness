@@ -1,0 +1,6 @@
+{
+  "test": { "command": "context-prefix SENTINELA dotnet test", "marker": { "family": "test", "subcommand": "test" } },
+  "terraform": { "command": "context-prefix SENTINELA terraform init", "marker": { "family": "terraform", "subcommand": "init" } },
+  "unclassified": { "command": "context-prefix SENTINELA dotnet test", "marker": null },
+  "invalid": { "command": "terraform apply SENTINELA", "marker": { "family": "terraform", "subcommand": "destroy" } }
+}
