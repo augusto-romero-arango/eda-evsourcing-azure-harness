@@ -432,6 +432,17 @@ neutral ni en este contrato.
 
 ## Validación
 
+## Matriz de entrada de comandos
+
+`command-entry.json` declara exclusivamente las necesidades directas de los 27
+comandos publicados. `command-entry.jq` comprueba ids, campos cerrados,
+referencias `command-doc` y `launch-agent`, ciclos y calcula la clausura de
+composición. La clausura une necesidades de comandos compuestos; nunca hereda
+las de un agente delegado ni interpreta `{{mefisto:command ...}}` como llamada.
+El adaptador OpenCode emite `command-entry-manifest.json`: hashes SHA-256 del
+contenido Markdown renderizado y recortado por el loader, sin incluir cuerpos.
+Su huella técnica permite revalidar snapshots, no equivale a consentimiento.
+
 ```bash
 src/published/scripts/validate-published-artifacts.sh [archivo...]
 ```
