@@ -14,7 +14,7 @@ Este ADR documenta decisiones acordadas. No implementa permisos, preflight, work
 
 ### 1. Perfil por proyecto y entrada controlada
 
-La autonomia se activa **explicitamente por proyecto**, no por tool call ni por lote. El perfil neutral vive en `.mefisto/harness.config.json` y declara capacidades, recursos y operaciones, sin secretos. La evidencia y el estado de autorizacion/ejecucion viven en `.mefisto/pipeline/`. El schema y el formato del registro se materializaran en los issues de implementacion.
+La autonomia se activa **explicitamente por proyecto**, no por tool call ni por lote. El perfil neutral vive en `.mefisto/harness.config.json` y declara capacidades, recursos y operaciones, sin secretos. La evidencia y el estado de autorizacion/ejecucion viven en `.mefisto/pipeline/`. Los schemas y formatos operativos pertenecen a los artefactos contractuales correspondientes; este ADR fija sus invariantes sin reproducirlos.
 
 La declaracion versionada no es consentimiento por si sola: antes de la etapa se captura una autorizacion aprobada y su revision. No sirven como autorizacion nueva una edicion del worktree, texto de issue ni una respuesta del agente. La configuracion efectiva se comprueba con la precedencia real del runtime; una restriccion ajena explicita en conflicto se diagnostica y no se sobreescribe.
 
@@ -81,20 +81,22 @@ en quiescencia; no es permiso para interrumpir trabajo ni para transformar una
 etapa en mantenimiento. `busy` es una respuesta de coordinación, no éxito ni
 autorización para forzar una operación.
 
-| Evidencia observada | Cambio de `active` o proyección | Poda de su release | Recuperación automática |
-|---|---|---|---|
-| `execute` vivo | `busy` | No | No |
-| `retain` idle | Puede proceder | No | No aplica |
-| Muerte comprobada de propietario y todo descendiente pertinente | Puede proceder tras liberar el uso recuperado | Según las demás retenciones | Sí |
-| Hijo o metadata desconocidos | Retener | No | No |
-| Consentimiento revocado | No admitir una nueva corrida | No otorga excepción | No |
+| Evidencia observada | Cambio de `active` o proyección | Poda de su release | Recuperación automática | Admisión de corrida |
+|---|---|---|---|---|
+| `execute` vivo | `busy` | No | No | Sin cambio |
+| `retain` idle | Puede proceder | No | No aplica | Sin cambio |
+| Muerte comprobada de propietario y todo descendiente pertinente | Puede proceder tras liberar el uso recuperado | Según las demás retenciones | Sí | Sin cambio |
+| Hijo o metadata desconocidos | Retener | No | No | Sin cambio |
+| Consentimiento revocado | No lo bloquea por sí solo | Según los usos registrados | No | No admitir una nueva corrida |
 
 La recuperación automática exige demostrar que el propietario y los
 descendientes pertinentes terminaron. Registra identidad de host y boot,
 identidad estable de cada proceso, relaciones de lanzamiento y cobertura del
 grafo; reobserva esa evidencia antes de recuperar. Un TTL, un PID aislado, el
 PPID actual, una sesión idle o `exit 0` no prueban por sí solos la terminación
-ni la completitud. Ante incertidumbre conserva la retención. La recuperación no
+ni la completitud: POSIX limita la señal 0 a comprobar existencia y permiso
+sobre un PID, y `wait` a observar hijos del proceso llamador [6][7]. Ante
+incertidumbre conserva la retención. La recuperación no
 envía señales a procesos ni poda por su cuenta, y no promete recuperar un mutex
 legado abandonado cuando no haya evidencia suficiente.
 
@@ -152,7 +154,7 @@ flujo existente del adaptador Claude, ni la administración acotada de este ADR.
 - El acceso a `tool-output` global conserva el riesgo residual de contenido sensible de otras sesiones.
 - Local primero no proporciona aislamiento frente al host.
 - Una corrida admitida puede fallar por condiciones externas; el contrato exige evidencia y recuperabilidad, no exito artificial.
-- Los mecanismos ejecutables y la certificacion quedan deliberadamente pendientes de los issues dependientes.
+- Esta enmienda no acredita la implementacion del lease, el guard o la recuperacion, ni la certificacion integral; esos resultados requieren evidencia en sus issues de entrega.
 
 ## Referencias
 
@@ -168,6 +170,8 @@ flujo existente del adaptador Claude, ni la administración acotada de este ADR.
 - [3] OpenCode, [carga de plugins y disparo de configuración](https://github.com/anomalyco/opencode/blob/v1.18.29/packages/opencode/src/plugin/index.ts), versión 1.18.29; un fallo de configuración no es evidencia de que el guard se aplicó.
 - [4] OpenCode, [fallback de la CLI `run`](https://github.com/anomalyco/opencode/blob/v1.18.29/packages/opencode/src/cli/cmd/run.ts), versión 1.18.29; la instancia efectiva puede diferir del valor preparado.
 - [5] OpenCode, [parámetros efectivos de petición de chat](https://github.com/anomalyco/opencode/blob/v1.18.29/packages/opencode/src/session/llm/request.ts), versión 1.18.29; fundamento para observar la petición de la misma instancia.
+- [6] The Open Group, POSIX.1-2024, [`kill`](https://pubs.opengroup.org/onlinepubs/9799919799/functions/kill.html); la señal 0 comprueba el PID y los permisos sin enviar una señal.
+- [7] The Open Group, POSIX.1-2024, [`wait`](https://pubs.opengroup.org/onlinepubs/9799919799/functions/wait.html); su alcance son procesos hijo del proceso llamador, no un grafo arbitrario.
 - Issue #1820: origen y decisiones del mantenedor; #1821--#1827: implementacion y certificacion posteriores.
 
 ## Control de cambios
