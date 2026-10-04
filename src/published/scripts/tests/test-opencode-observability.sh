@@ -52,6 +52,10 @@ import missingPlugin from "./runtime-missing/plugins/mefisto-observability.mjs";
 const root = process.argv[2];
 const logs = [];
 const client = { app: { log: async (value) => logs.push(value) } };
+const observationIdentity = JSON.parse(process.env.OBSERVATION_IDENTITY);
+const observations = new Map();
+globalThis[Symbol.for("mefisto.original-tool-observation.v1")] = observations;
+const mark = (context, input, value, identity = observationIdentity) => observations.set(JSON.stringify([identity[0], identity[1], context.project?.id, context.directory, input.sessionID, input.callID]), value);
 const hooks = await plugin({ worktree: "", directory: root, client });
 await hooks.event({ event: { type: "project.updated", properties: { value: "SENTINELA-EVENTO" } } });
 await hooks.event({ event: { type: "session.created", properties: { info: { id: "s" } } } });
@@ -70,6 +74,28 @@ await hooks["tool.execute.after"]({ tool: "shell", args: { command: "terraform p
 await hooks["tool.execute.after"]({ tool: "bash", args: { command: "terraform validate SENTINELA" } }, { title: "", output: "", metadata: {} });
 await hooks["tool.execute.after"]({ tool: "bash", args: { command: "echo SENTINELA" } }, { exitCode: 0 });
 await hooks["tool.execute.after"]({ tool: "bash", args: { command: "echo dotnet test SENTINELA" } }, { metadata: { exitCode: 0 } });
+const projectA = { directory: root, project: { id: "project-a" }, client };
+const projectB = { directory: root, project: { id: "project-b" }, client };
+const observedA = await plugin(projectA);
+const observedB = await plugin(projectB);
+const testCall = { sessionID: "same-session", callID: "same-call", tool: "bash", args: { command: "context-prefix SENTINELA dotnet test" } };
+const terraformCall = { sessionID: "same-session", callID: "same-call", tool: "shell", args: { command: "context-prefix SENTINELA terraform init" } };
+mark(projectA, testCall, { family: "test", subcommand: "test" });
+mark(projectB, terraformCall, { family: "terraform", subcommand: "init" });
+await observedA["tool.execute.after"](testCall, { metadata: { exitCode: 1 } });
+await observedB["tool.execute.after"](terraformCall, { metadata: { exitCode: 0 } });
+const unclassified = { sessionID: "null-session", callID: "null-call", tool: "bash", args: { command: "context-prefix SENTINELA dotnet test" } };
+mark(projectA, unclassified, null);
+await observedA["tool.execute.after"](unclassified, { metadata: { exitCode: 0 } });
+const invalid = { sessionID: "invalid-session", callID: "invalid-call", tool: "shell", args: { command: "context-prefix SENTINELA terraform apply" } };
+mark(projectA, invalid, { family: "terraform", subcommand: "destroy" });
+await observedA["tool.execute.after"](invalid, { metadata: { exitCode: 0 } });
+const repeated = { sessionID: "repeat-session", callID: "repeat-call", tool: "shell", args: { command: "context-prefix SENTINELA terraform apply" } };
+mark(projectA, repeated, { family: "terraform", subcommand: "apply" });
+await observedA["tool.execute.after"](repeated, { metadata: { exitCode: 1 } });
+await observedA["tool.execute.after"](repeated, { metadata: { exitCode: 0 } });
+const otherRelease = ["SENTINELA-OTRA-RELEASE", observationIdentity[1]];
+mark(projectA, repeated, { family: "terraform", subcommand: "plan" }, otherRelease);
 await hooks.event({ event: { type: "session.created", properties: {} } });
 
 const degradedRoot = `${root}-manifest-degradado`;
@@ -106,15 +132,17 @@ console.log(JSON.stringify({
   events: await fs.readFile(path.join(root, ".mefisto/pipeline/events.log"), "utf8"),
   pluginRoot: await fs.readFile(path.join(root, ".mefisto/pipeline/.plugin-root"), "utf8"),
   degraded: await fs.readFile(path.join(degradedRoot, ".mefisto/pipeline/sessions.jsonl"), "utf8"),
-  missing: await fs.readFile(path.join(missingRoot, ".mefisto/pipeline/sessions.jsonl"), "utf8"),
-  logs,
+   missing: await fs.readFile(path.join(missingRoot, ".mefisto/pipeline/sessions.jsonl"), "utf8"),
+   otherReleaseMarkerRemains: observations.has(JSON.stringify([otherRelease[0], otherRelease[1], projectA.project.id, projectA.directory, repeated.sessionID, repeated.callID])),
+   logs,
 }));
 EOF
 ROOT="$WORK/repo sin git y con espacios"; mkdir -p "$ROOT"
-result="$(node "$WORK/probe.mjs" "$ROOT")"; rc=$?
+result="$(OBSERVATION_IDENTITY="$(jq -c '[.version, .commit]' "$REPO_ROOT/src/published/release-identity.json")" node "$WORK/probe.mjs" "$ROOT")"; rc=$?
 [ "$rc" -eq 0 ] && pass 'callbacks toleran repo no Git y paths con espacios' || fail 'callbacks fallaron'
 jq -e '.sessions | split("\n") | map(select(length > 0) | fromjson) | length == 3 and .[0] == {record_type:"session.started",session_id:"s",transcript_path:null,cwd:$root,source:null,timestamp:.[0].timestamp,runtime:"opencode",model:null,harness_version:.[0].harness_version,harness_commit:.[0].harness_commit} and [.[].model] == [null,"azure/a","azure/b"] and all(.[].timestamp; test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"))' --arg root "$ROOT" <<< "$result" >/dev/null && pass 'inicio null y modelos concurrente/repetido/cambiado respetan la allowlist' || fail 'sesiones o deduplicacion invalidas'
-jq -e '.events | split("\n") | map(select(length > 0) | fromjson) | length == 7 and .[0].file_path == "src/con espacios.cs" and .[1].file_path == "(desconocido)" and .[2].result == "PASS" and .[3].result == "FAIL" and .[4] == {time:.[4].time,family:"terraform",terraform_subcommand:"apply",result:"ERROR"} and .[5].terraform_subcommand == "plan" and .[5].result == "OK" and .[6].terraform_subcommand == "validate" and .[6].result == "ERROR"' <<< "$result" >/dev/null && pass 'herramientas resumen success/error y defaults seguros sin comando/output' || fail 'resumen de herramientas invalido'
+jq -e '.events | split("\n") | map(select(length > 0) | fromjson) | length == 10 and .[0].file_path == "src/con espacios.cs" and .[1].file_path == "(desconocido)" and .[2].result == "PASS" and .[3].result == "FAIL" and .[4] == {time:.[4].time,family:"terraform",terraform_subcommand:"apply",result:"ERROR"} and .[5].terraform_subcommand == "plan" and .[5].result == "OK" and .[6].terraform_subcommand == "validate" and .[6].result == "ERROR" and .[7] == {time:.[7].time,family:"test",result:"FAIL"} and .[8] == {time:.[8].time,family:"terraform",terraform_subcommand:"init",result:"OK"} and .[9] == {time:.[9].time,family:"terraform",terraform_subcommand:"apply",result:"ERROR"}' <<< "$result" >/dev/null && pass 'marcadores preservan familia, resultado y consumo unico sin inspeccionar el prefijo' || fail 'resumen de herramientas invalido'
+jq -e '.otherReleaseMarkerRemains == true' <<< "$result" >/dev/null && pass 'claves de release y proyecto no mezclan marcadores iguales' || fail 'marcadores de identidad se mezclaron'
 EXPECTED_RUNTIME="$(cd "$WORK/runtime" && pwd -P)"
 jq -e '.pluginRoot == $expected' --arg expected "$EXPECTED_RUNTIME" <<< "$result" >/dev/null && [ ! -e "$ROOT/.claude" ] && pass 'plugin-root identifica la release cargada sin mirror legacy' || fail 'identidad de release activa incorrecta'
 jq -e 'all(.degraded,.missing; split("\n") | map(select(length > 0) | fromjson) | .[0].harness_version == null and .[0].harness_commit == null)' <<< "$result" >/dev/null && pass 'manifiesto ausente o malformado degrada identidad a null' || fail 'manifiesto degradado invento identidad'
