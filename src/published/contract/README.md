@@ -472,6 +472,28 @@ La regresión vive en `scripts/tests/test-resource-paths.sh`; compara su corpus
 de relativos con `node:path.relative` solo durante pruebas. Node no es una
 dependencia productiva de la biblioteca.
 
+## Descubrimiento de recursos NuGet
+
+`scripts/resolve-nuget-resources.sh --worktree-root <raíz-absoluta>` consulta
+la carpeta `global-packages` con el único argv documentado de la CLI y observa
+los `obj/project.assets.json` v3 del worktree. Puede sumar
+`--assets-file <archivo-absoluto>` para layouts personalizados. Devuelve un
+envelope JSON versión 1 con `resolved`, `unavailable` o `conflict`, las roots
+lógicas/físicas deduplicadas y su procedencia, hashes y rutas relativas de los
+assets, sin volcar configuración, endpoints ni salida cruda de la CLI.
+
+La cobertura `global-only` no certifica un restore; `observed-assets` describe
+solamente las carpetas registradas por esos assets en ese instante. El resolver
+no ejecuta restore, build ni evaluación de proyectos, no lee configuración de
+NuGet y no crea directorios. Rechaza roots amplias y assets explícitos ausentes,
+corruptos o fuera del worktree físico. Se distribuye junto con
+`src/published/scripts/lib/resource-paths.sh`, que conserva su ruta relativa
+para que el script sea una clausura autocontenida (MEF-ADR-0031 y MEF-ADR-0053).
+Invoca exclusivamente `dotnet nuget locals global-packages --list
+--force-english-output`, por argumentos y desde la raíz física indicada. Usa 0
+para `resolved`, 1 para `unavailable`/`conflict` con envelope JSON y 2 para uso
+o protocolo inválido; nunca sustituye una consulta fallida por el home.
+
 ## Descubrimiento de raíces OpenCode
 
 `scripts/adapters/lib/opencode-resource-roots.sh` es una biblioteca pura que se
