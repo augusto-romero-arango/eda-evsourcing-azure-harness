@@ -79,6 +79,7 @@ manifest_valid() {
     [ -f "$release/install.sh" ] && [ ! -L "$release/install.sh" ] && [ -x "$release/install.sh" ] || return 1
     [ -f "$release/project-opencode-release.sh" ] && [ ! -L "$release/project-opencode-release.sh" ] && [ -x "$release/project-opencode-release.sh" ] || return 1
     [ -f "$release/diagnose-installation-identity.sh" ] && [ ! -L "$release/diagnose-installation-identity.sh" ] && [ -x "$release/diagnose-installation-identity.sh" ] || return 1
+    [ -f "$release/release-use.sh" ] && [ ! -L "$release/release-use.sh" ] && [ -x "$release/release-use.sh" ] || return 1
     [ -f "$release/bin/mefisto-opencode" ] && [ ! -L "$release/bin/mefisto-opencode" ] && [ -x "$release/bin/mefisto-opencode" ] || return 1
     [ -z "$(find "$release" -type l -print -quit)" ] || return 1
     [ -z "$(find "$release" ! -type f ! -type d -print -quit)" ] || return 1

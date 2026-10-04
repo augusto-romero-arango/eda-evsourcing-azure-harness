@@ -86,6 +86,8 @@ TOOLING_CLOSURE_ASSETS=(
     'scripts/resolve-nuget-resources.sh|0755'
     'src/published/scripts/lib/resource-paths.sh|0755'
     'src/published/scripts/lib/release-use-process.sh|0755'
+    'src/published/scripts/adapters/lib/opencode-release-use.sh|0755'
+    'src/published/scripts/opencode-release-use.sh|0755'
     'src/published/contract/autonomy-profile.validate.jq|0644'
     'src/published/contract/agent-execution.json|0644'
     'src/published/contract/mcp-servers.json|0644'
