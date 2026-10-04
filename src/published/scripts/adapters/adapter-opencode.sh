@@ -132,15 +132,18 @@ mcp_tools_json() {
 }
 
 command_entry_catalog() {
-    local command_file agent_file commands='[]' agents='[]' item
+    local command_file agent_file command_body commands='[]' agents='[]' item
     [ -f "$COMMAND_ENTRY" ] && [ -f "$COMMAND_ENTRY_FILTER" ] || { error 'command-entry: contrato o helper ausente'; return 1; }
     for command_file in "$REPO_ROOT"/src/published/commands/*.md; do
         [ -f "$command_file" ] || continue
-        item="$(jq -cn --arg id "$(basename "$command_file" .md)" --rawfile body "$command_file" '{id:$id,body:($body | sub("^[^\\n]*\\n.*?\\n---\\r?\\n"; ""))}')" || return 1
+        command_body="$(body "$command_file")" || return 1
+        item="$(jq -cn --arg id "$(basename "$command_file" .md)" --arg body "$command_body" '{id:$id,body:$body}')" || return 1
         commands="$(jq -cn --argjson items "$commands" --argjson item "$item" '$items + [$item]')" || return 1
     done
     for agent_file in "$REPO_ROOT"/src/published/agents/*.md; do
-        [ -f "$agent_file" ] && agents="$(jq -cn --argjson items "$agents" --arg id "$(basename "$agent_file" .md)" '$items + [$id]')"
+        if [ -f "$agent_file" ]; then
+            agents="$(jq -cn --argjson items "$agents" --arg id "$(basename "$agent_file" .md)" '$items + [$id]')" || return 1
+        fi
     done
     jq -cn --slurpfile matrix "$COMMAND_ENTRY" --argjson commands "$commands" --argjson agents "$agents" '{matrix:$matrix[0],commands:$commands,agents:$agents}' | jq -c -f "$COMMAND_ENTRY_FILTER"
 }
@@ -152,17 +155,21 @@ trimmed_sha256() {
 }
 
 render_command_entry_manifest() {
-    local catalog source rendered hash templates='[]' delegated='[]' command agent
+    local catalog source rel marker rendered hash templates='[]' delegated='[]' command agent
     catalog="$(command_entry_catalog)" || return 1
     while IFS= read -r command; do
         source="$REPO_ROOT/src/published/commands/$command.md"
-        rendered="$(render "$source" '<!-- GENERADO por command-entry-manifest. No editar a mano. -->')" || return 1
+        rel="${source#"$REPO_ROOT/"}"
+        marker="<!-- GENERADO por src/published/scripts/generate-published-adapters.sh desde $rel. No editar a mano. -->"
+        rendered="$(render "$source" "$marker")" || return 1
         hash="$(printf '%s' "$rendered" | body /dev/stdin | trimmed_sha256)" || return 1
         templates="$(jq -cn --argjson prior "$templates" --arg id "$command" --arg sha256 "$hash" '$prior + [{kind:"command",id:$id,sha256:$sha256}]')" || return 1
         while IFS= read -r agent; do
             [ -n "$agent" ] || continue
             source="$REPO_ROOT/src/published/agents/$agent.md"
-            rendered="$(render "$source" '<!-- GENERADO por command-entry-manifest. No editar a mano. -->')" || return 1
+            rel="${source#"$REPO_ROOT/"}"
+            marker="<!-- GENERADO por src/published/scripts/generate-published-adapters.sh desde $rel. No editar a mano. -->"
+            rendered="$(render "$source" "$marker")" || return 1
             hash="$(printf '%s' "$rendered" | body /dev/stdin | trimmed_sha256)" || return 1
             delegated="$(jq -cn --argjson prior "$delegated" --arg command "$command" --arg agent "$agent" --arg sha256 "$hash" '$prior + [{command:$command,agent:$agent,sha256:$sha256}]')" || return 1
         done < <(jq -r --arg id "$command" '.commands[] | select(.id == $id) | .delegates[]' <<< "$catalog")
