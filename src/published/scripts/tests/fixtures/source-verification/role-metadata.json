@@ -15,7 +15,7 @@
     {"id":"pr-sync","capabilities":["shell"],"skills":[],"mcp":[]},
     {"id":"projection-implementer","capabilities":["read","edit","shell","skill"],"skills":["projections"],"mcp":[]},
     {"id":"projection-test-writer","capabilities":["read","edit","shell","skill"],"skills":["projections"],"mcp":[]},
-    {"id":"projections-scaffolder","capabilities":["read","edit","shell"],"skills":[],"mcp":[]},
+    {"id":"projections-scaffolder","capabilities":["read","edit","shell","web"],"skills":[],"mcp":[]},
     {"id":"reviewer","capabilities":["read","edit","shell","skill"],"skills":["projections","comment-cleanup"],"mcp":[]},
     {"id":"smoke-test-writer","capabilities":["read","edit","shell","skill"],"skills":["projections"],"mcp":[]},
     {"id":"test-writer","capabilities":["read","edit","shell"],"skills":[],"mcp":[]},
