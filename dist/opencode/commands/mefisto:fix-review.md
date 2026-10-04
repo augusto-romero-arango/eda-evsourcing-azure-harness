@@ -50,7 +50,19 @@ Antes de continuar, aborta si existe `src/internal/scripts/generate-internal-ada
 
 El numero de PR esta en: $ARGUMENTS
 
-Si `$ARGUMENTS` esta vacio, responde: `Uso: /mefisto:fix-review <numero-de-PR>`
+Si `$ARGUMENTS` esta vacio, responde: `Uso: /mefisto:fix-review <numero-de-PR> [--prepare | --apply-approved <plan-id-sha256>]`
+
+### Formas de `$ARGUMENTS` (cerradas)
+
+Solo se aceptan tres formas. Valida `$ARGUMENTS` **antes** de ejecutar `gh` o editar nada:
+
+| Forma | Modo |
+|---|---|
+| `<PR>` | **Interactivo**: el flujo de las Fases 1 a 5 de abajo, con sus gates humanos. Es el unico modo sin perfil ni consentimiento previo. |
+| `<PR> --prepare` | **Preparar**: triaje y plan exactos con el usuario **fuera de lote** (ver "Modo preparar"). |
+| `<PR> --apply-approved <plan-id-sha256>` | **Aprobado**: consume exclusivamente un plan ya aprobado (ver "Modo aprobado"). |
+
+`<PR>` es un entero positivo y `<plan-id-sha256>` son 64 caracteres hex en minuscula. Cualquier otro argumento, flag desconocido, flags mezclados o SHA malformado se rechaza con el mensaje de uso, sin tocar `gh` ni archivos. Que exista un perfil `autonomy` no activa el modo aprobado: solo lo activa `--apply-approved`. Las Fases 1 a 5 describen el modo interactivo; los modos `--prepare` y `--apply-approved` solo siguen sus secciones propias.
 
 ---
 
@@ -414,6 +426,55 @@ Estructura:
 
 ---
 
+## Modo preparar (`<PR> --prepare`)
+
+Prepara triaje y plan para que el operador los apruebe **fuera de este stage**. No aprueba nada ni modifica el perfil.
+
+1. Lee `gh pr view <PR> --json title,body,state,headRefName,headRefOid,baseRefName,url` y **todas las paginas** de los review comments (`gh api --paginate repos/{owner}/{repo}/pulls/<PR>/comments`). Si el PR no existe o esta cerrado, informa y detente.
+2. Exige un worktree limpio (`git status --porcelain` vacio) cuyo `HEAD` coincida con `headRefOid`. Si no, informa y detente. **No** hagas `git checkout`, edicion, commit, push, respuesta ni draft.
+3. Lee el codigo referenciado y clasifica cada comentario como en 1.3.
+4. Redacta el plan JSON del contrato de `${MEFISTO_PACKAGE_ROOT}/src/published/contract/fix-review-plan.example.json` (cada `commentId`, categoria, archivos, cambio, acciones secundarias y cupos; `triage.edits` lista exactamente los cambios de comentarios `corregir`) y su Markdown equivalente. Escribe ambos bajo `.mefisto/pipeline/` (ignorado por git).
+5. Registra el snapshot:
+
+```bash
+MEFISTO_RUNTIME=opencode "${MEFISTO_PACKAGE_ROOT}/scripts/fix-review-prepare.sh" --project-root <raiz-del-worktree> --pr <PR> --plan-file <plan.json> --plan-text <plan.md>
+```
+
+6. Muestra triaje, plan Markdown exacto, `planDigest` y `requiredGrants`, y termina con las acciones para el operador: versionar los grants en `${MEFISTO_CONFIG_PATH}` mediante un PR previo del consumidor y ejecutar `autonomy-profile.sh preview` y `approve` de forma explicita. **No invoques `approve`** ni edites el perfil. Si cambia el triaje o el plan, se prepara otro id y requiere nueva aprobacion. No esperes respuesta dentro del stage.
+
+---
+
+## Modo aprobado (`<PR> --apply-approved <plan-id-sha256>`)
+
+Sin preguntas dentro del stage: no hay gates humanos ni fallback al modo interactivo. La politica es cooperativa (no aisla el host): cada fase se verifica con evidencia y se aborta si el plan deja de corresponder. No leas tool calls de otra sesion como permiso.
+
+Consulta antes de cada fase (la salida es JSON con `status` `authorized`, `blocked` o `incomplete`; solo `authorized` permite continuar):
+
+```bash
+MEFISTO_RUNTIME=opencode "${MEFISTO_PACKAGE_ROOT}/scripts/fix-review-admission.sh" check --project-root <raiz-del-worktree> --pr <PR> --plan-id <plan-id> --phase pre-edit
+```
+
+Las demas fases usan el mismo comando con `--phase pre-push`, `--phase pre-reply --comment-id <id>`, `--phase pre-improvement --action <categoria>` y `--phase finish`.
+
+1. **pre-edit**: ejecuta el check `pre-edit`. Exige `planMarkdown` con digest verificado, inspect `ready` y grants exactos para correcciones y para las acciones opcionales del plan. Si el plan selecciona respuestas y falta el grant `fix-review-reply`, bloquea **antes de editar**.
+2. **Cambios de codigo**: solo los comentarios `corregir` listados en `triage.edits`, en los archivos y con el cambio del plan. Un archivo nuevo fuera de ese conjunto requiere un plan nuevo. Cotejar el diff con el plan: si no puedes justificar un cambio semantico, no lo publiques.
+3. **Verificar**: `dotnet build` y `dotnet test` antes del commit. Si fallan, no hagas push.
+4. **pre-push**: ejecuta el check `pre-push`; commit en el idioma de las convenciones del repo, push a la rama del PR (nunca a `main`) y registra el recibo antes de seguir:
+
+```bash
+printf '%s' '<json-de-la-transicion>' | MEFISTO_RUNTIME=opencode "${MEFISTO_PACKAGE_ROOT}/scripts/fix-review-receipts.sh" record-push --project-root <raiz-del-worktree> --plan-id <plan-id>
+```
+
+   El SHA propio del push, registrado por recibo, no invalida la aprobacion; un SHA nuevo ajeno si.
+5. **Respuestas**: si el plan declara `replyPolicy: freeform-factual` y el grant vigente, ejecuta el check `pre-reply` por comentario, redacta segun los hechos reales y la categoria (en el idioma del comentario) y publica **una sola respuesta por `commentId` aprobado**, sin confirmacion humana. Registra cada una con `record-reply`. La libertad es textual: no alegues tests, commits ni issues que no ocurrieron, no incluyas secretos y no respondas a comentarios nuevos. Si el plan declara `replyPolicy: none`, no publiques y reporta la salida parcial pactada.
+6. **Mejoras**: con grants y cupos vigentes y el check `pre-improvement`, puedes crear un issue de seguimiento en el consumidor (comentario `investigar` o gap nuevo de este PR; `record-consumer-issue`), un draft **solo** en el repo de Mefisto para un gap del harness (como en 5.4; `record-harness-draft`) o editar clases locales `consumer-adr`, `consumer-directives` o `consumer-test-helper` segun el perfil, en la misma rama y en un commit separado. Esta prohibido editar la release o los agentes del harness, `src` productivo no planeado, infra, workflows, config o consentimiento, crear otro tipo de issue o cerrar/refinar issues de Mefisto. Sin grant o cupo, o fuera de clase, anota el ajuste en la field note como **pendiente** sin ejecutarlo.
+7. **Field note**: se genera siempre como en 5.5; incluye lo pendiente.
+8. **finish**: ejecuta el check `finish` y reporta el resultado.
+
+**Detencion**: una revision o comentario nuevo o editado por un tercero, PR cerrado, permiso remoto ausente, plan desviado, error de un helper, `blocked`/`incomplete` o recibo incierto (`unknown`) -> detente **sin preguntar**, reporta el progreso y la accion para re-preparar o reautorizar fuera del lote, y no repitas a ciegas una salida remota con recibo incierto. Nunca amplies categorias, archivos ni cupos y nunca resuelvas threads.
+
+---
+
 ## Reglas
 
 - **Nunca publiques una respuesta sin aprobacion del usuario.** Los borradores siempre se presentan primero.
@@ -425,3 +486,4 @@ Estructura:
 - **Las mejoras a agentes/skills del harness se enrutan como draft (`estado:borrador`) al repo de Mefisto via `gh -R`**, no se editan en la rama del PR del consumidor: esos archivos viven en la release instalada del plugin (read-only). Solo los ajustes a archivos que viven en el consumidor (ADR local, convenciones de su `AGENTS.md`, fixtures propios) se editan en-rama, en commit separado y nunca directo a `main`.
 - **La field note siempre se genera**, incluso si no hubo mejoras a agentes — el registro del review tiene valor historico.
 - Comunica en espanol. Las respuestas a los comentarios del PR se redactan en el mismo idioma del comentario original.
+- **Los modos `--prepare` y `--apply-approved` no publican nada que el plan aprobado no liste** y nunca preguntan dentro del stage; el modo interactivo conserva todas las reglas anteriores.

@@ -20,7 +20,7 @@ pos() { local pre="${1%%"$2"*}"; [ "$pre" = "$1" ] && echo -1 || echo "${#pre}";
 echo '[fuente] contrato neutral'
 if bash "$REPO_ROOT/src/published/scripts/validate-published-artifacts.sh" "$SOURCE" >/dev/null; then pass 'la fuente valida'; else fail 'la fuente no valida'; fi
 metadata="$(awk 'NR == 1 { next } $0 == "---" { exit } { print }' "$SOURCE")"
-if printf '%s' "$metadata" | jq -e '.kind == "command" and .id == "fix-review" and .profile == "deep" and .arguments == "<numero-de-PR>" and (keys | sort) == ["arguments", "description", "id", "kind", "profile"]' >/dev/null; then pass 'metadata sin agent ni capabilities'; else fail 'metadata neutral invalida'; fi
+if printf '%s' "$metadata" | jq -e '.kind == "command" and .id == "fix-review" and .profile == "deep" and .arguments == "<numero-de-PR> [--prepare | --apply-approved <plan-id-sha256>]" and (keys | sort) == ["arguments", "description", "id", "kind", "profile"]' >/dev/null; then pass 'metadata sin agent ni capabilities'; else fail 'metadata neutral invalida'; fi
 body="$(awk 'NR == 1 { next } $0 == "---" && !seen { seen=1; next } seen { print }' "$SOURCE")"
 contains "$body" '{{mefisto:assert-consumer-repo}}' 'guard consumidor presente'
 for forbidden in 'EnterPlanMode' 'ExitPlanMode' 'Co-Authored-By' 'Claude Opus' 'Claude' 'OpenCode' '.claude/' '.opencode/' 'CLAUDE_' '.plugin-root' 'plugins/cache' 'model:' 'tools:' 'allowed-tools:' 'permission:' '`Read`' '`Edit`' '`Write`'; do absent "$body" "$forbidden" "fuente no publica token prohibido: $forbidden"; done
