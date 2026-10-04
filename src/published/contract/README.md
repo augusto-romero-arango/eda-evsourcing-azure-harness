@@ -333,6 +333,17 @@ scripts/fix-review-admission.sh check --project-root <approved-root> --pr <N> --
 
 Prueba: `src/published/scripts/tests/test-fix-review-admission.sh`.
 
+### Cableado de los modos preautorizados en `/fix-review`
+
+`src/published/commands/fix-review.md` (issue #1821) acepta solo tres formas: `<PR>` (modo
+interactivo vigente, sin perfil), `<PR> --prepare` (triaje y plan fuera de lote; invoca
+`fix-review-prepare.sh` y entrega el handoff al operador, sin `approve`) y
+`<PR> --apply-approved <planDigest>` (consume el plan sellado: `fix-review-admission.sh` antes de
+cada fase y `fix-review-receipts.sh` tras cada salida remota; se detiene sin preguntar ante
+`blocked`/`incomplete`/`unknown`). Son las unicas tres referencias `{{mefisto:run ...}}` nuevas y
+por eso los unicos scripts sumados al mapping de OpenCode; `autonomy-profile.sh` sigue sin patron.
+Prueba: `src/published/scripts/tests/test-fix-review-command.sh`.
+
 ## Permisos Bash de OpenCode
 
 La capacidad neutral `shell` genera `permission.bash` con `"*": "deny"`.
