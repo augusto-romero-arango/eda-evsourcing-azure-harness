@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 # render-eraser-diagram.sh -- Renderiza un payload Eraser validado del consumidor.
-# Uso: render-eraser-diagram.sh --payload-file <ruta bajo .mefisto/pipeline/tmp/>
+# Interfaz: render-eraser-diagram.sh --payload-file <ruta bajo .mefisto/pipeline/tmp/>
+# Lee ERASER_API_TOKEN solo del entorno. En exito imprime exclusivamente un
+# objeto JSON con imageUrl y createEraserFileUrl; los errores salen por stderr.
 set -uo pipefail
 set +x
 export LC_ALL=C
 
-ENDPOINT='https://app.eraser.io/api/render/elements'
+readonly ENDPOINT='https://app.eraser.io/api/render/elements'
 
 error() {
     printf 'ERROR: %s\n' "$1" >&2
@@ -43,8 +45,9 @@ jq -e '
 token="${ERASER_API_TOKEN:-}"
 [ -n "$token" ] || error 'falta ERASER_API_TOKEN; muestra el DSL y pegalo en https://app.eraser.io'
 case "$token" in *$'\n'*|*$'\r'*) error 'ERASER_API_TOKEN no es valido' ;; esac
-escaped_token="$(printf '%s' "$token" | sed 's/[\\"]/\\&/g')"
+escaped_token="${token//\\/\\\\}"
+escaped_token="${escaped_token//\"/\\\"}"
 
-response="$(printf 'header = "Authorization: Bearer %s"\n' "$escaped_token" | curl --disable --silent --show-error --fail --connect-timeout 5 --max-time 60 --request POST --url "$ENDPOINT" --header 'Content-Type: application/json' --header 'X-Skill-Source: mefisto' --data-binary "@$payload" --config - 2>/dev/null)" || error 'no se pudo renderizar el diagrama por transporte o HTTP'
+response="$(printf 'header = "Authorization: Bearer %s"\n' "$escaped_token" | env -u ERASER_API_TOKEN curl --disable --silent --show-error --fail --proto '=https' --connect-timeout 5 --max-time 60 --max-redirs 0 --request POST --url "$ENDPOINT" --header 'Content-Type: application/json' --header 'X-Skill-Source: mefisto' --data-binary "@$payload" --config - 2>/dev/null)" || error 'no se pudo renderizar el diagrama por transporte o HTTP'
 printf '%s' "$response" | jq -ce '{imageUrl, createEraserFileUrl} | (.imageUrl | type == "string" and length > 0) and (.createEraserFileUrl | type == "string" and length > 0)' >/dev/null 2>&1 || error 'Eraser devolvio una respuesta incompleta'
 printf '%s' "$response" | jq -c '{imageUrl, createEraserFileUrl}'

@@ -28,6 +28,7 @@ contains "$body" 'incluyas `ERASER_API_TOKEN` en el archivo' 'no escribe el toke
 contains "$body" 'Si falla por falta de `ERASER_API_TOKEN`, muestra el DSL' 'degradacion visible sin token'
 absent "$body" 'echo "$ERASER_API_TOKEN' 'el token no se imprime'
 absent "$body" '${ERASER_API_TOKEN}" >' 'el token no se escribe a archivo'
+absent "$body" 'curl ' 'el comando neutral no ejecuta curl directamente'
 for t in sequence-diagram cloud-architecture-diagram flowchart-diagram entity-relationship-diagram bpmn-diagram; do contains "$body" "$t" "sintaxis de $t"; done
 for forbidden in '.claude' '.plugin-root' 'plugins/cache' 'PLUGIN_SCRIPTS' 'CLAUDE_'; do absent "$body" "$forbidden" "fuente sin token prohibido: $forbidden"; done
 
