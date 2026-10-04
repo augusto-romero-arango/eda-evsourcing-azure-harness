@@ -206,6 +206,38 @@ opcional) y recursos `pr:<n>` mas su scope (`scope:planned-files`,
 `scope:consumer-docs`). No cambia el schema de `autonomy-profile.validate.jq` ni confiere
 RBAC de GitHub. Prueba: `src/published/scripts/tests/test-fix-review-plan-contract.sh`.
 
+### Preparación del snapshot revisable de fix-review
+
+`scripts/fix-review-prepare.sh` (issue #1887) captura lecturas verificables de GitHub y
+deja un plan sellado para revisión humana; no aprueba, no ejecuta `/fix-review` y no
+hace checkout ni escrituras en GitHub:
+
+```bash
+scripts/fix-review-prepare.sh --project-root <Git-root> --pr <n> \
+  --plan-file .mefisto/pipeline/summaries/plan.json --plan-text .mefisto/pipeline/summaries/plan.md
+```
+
+- Exige el PR abierto del repositorio consumidor activo, con cabeza en el mismo repo (un fork
+  ajeno solo da diagnóstico), un worktree propio en la rama del PR, con `HEAD == headRefOid` y
+  sin cambios versionados. Si falta, el operador prepara el worktree; el script nunca lo crea.
+- Lee `gh pr view` y los review comments con `--paginate` (no `/issues/{n}/comments`), repite
+  cabeza y comentarios antes de sellar y compara el snapshot del plan (hash de body, path,
+  line/original_line) tras ordenar por id; cualquier omisión, agregado o edición es `conflict`.
+- `--plan-file` y `--plan-text` deben estar bajo `.mefisto/pipeline/summaries/`; el Markdown con
+  material sensible se rechaza hasta que esté redactado. El script calcula `planTextDigest` y
+  `planDigest` con `fix-review-plan.validate.jq` y rechaza digests declarados que no coincidan.
+- Persiste (0700/0600, sin symlinks, atómico, idempotente) el plan sellado en
+  `.mefisto/pipeline/autonomy/fix-review/<planDigest>.json` y la copia redactada del Markdown en
+  `.mefisto/pipeline/summaries/fix-review/<planDigest>.md` (su SHA-256 es `planTextDigest`); ambos
+  ignorados por Git.
+- Responde `{schemaVersion,status:prepared|conflict,pr,expectedHeadSha,planDigest,
+  commentSnapshotDigest,planPath,requiredGrants,diagnostics}` sin bodies.
+
+Handoff del operador (el hash no es consentimiento): revisar el Markdown, incorporar los
+`requiredGrants` exactos a `autonomy.administration[]` con `planDigest` mediante un PR del
+consumidor y, fuera de la etapa del lote, ejecutar `autonomy-profile.sh preview` y `approve`.
+Prueba: `src/published/scripts/tests/test-fix-review-prepare.sh`.
+
 ## Permisos Bash de OpenCode
 
 La capacidad neutral `shell` genera `permission.bash` con `"*": "deny"`.
