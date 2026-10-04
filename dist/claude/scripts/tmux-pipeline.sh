@@ -508,7 +508,7 @@ cmd_single() {
     ensure_events_log
 
     TMUX_PLAN_LAUNCH="pane"
-    TMUX_PLAN_ITEMS=("$issue:$(orchestrator_kind_for_script "$resolved" | sed 's/^$/tdd/')")
+    TMUX_PLAN_ITEMS=("$issue:$(orchestrator_kind_for_script "$resolved")")
     handle_session_conflict "$session"
 
     log "Creando sesion tmux '$session' para issue #$issue ($pipeline_name)..."
