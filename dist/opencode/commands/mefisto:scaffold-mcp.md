@@ -148,10 +148,19 @@ Se va a generar el servidor MCP <RootNamespace>.Mcp.{Proposito} con mefisto <VER
                                                coercionados a fecha/GUID por la extension MCP;
                                                siempre generado y siempre cableado, sin importar
                                                tenancy.strategy, Azure/azure-functions-mcp-extension#129)
+      SesionUsuario.cs, DerivadorIdentidadTenantMcp.cs, IdentidadTenantMcpMiddleware.cs,
+      IdentidadTenantMcpMensajes.resx
+                                              (identidad derivada del token: org_id -> tenant,
+                                               sub -> usuario, rechazo .resx si el Bearer no es
+                                               validable; solo con multi-tenant-header, que suma
+                                               la ProjectReference a <RootNamespace>.TenantResolver,
+                                               MEF-ADR-0047 decisiones 3/6/7, #1934)
     MetadataRecursoProtegido/MetadataRecursoProtegidoFunction.cs
                                               (PRM RFC 9728 anonimo, MEF-ADR-0032 seccion 9)
     VersionCheck.cs / ReadyCheck.cs          (endpoints de gate, MEF-ADR-0048 seccion 3)
     Ejemplo/                                 (tool de ejemplo con el patron completo)
+    Sesion/ObtenerSesionTool.cs              (tool obtener_sesion: origen sesion | tenant_fijo;
+                                              solo con multi-tenant-header, #1934)
     README.md                                (onboarding del servidor)
 
   tests/<RootNamespace>.Mcp.{Proposito}.Tests/
@@ -163,13 +172,19 @@ Se va a generar el servidor MCP <RootNamespace>.Mcp.{Proposito} con mefisto <VER
                                               (nunca lanza, degrada a "no valido", #819)
     Infraestructura/ArgumentosCrudosMcpMiddlewareTests.cs
                                               (nucleo RestaurarTextoOriginal, nivel 1 sin host)
+    Infraestructura/IdentidadTenantMcpMiddlewareTests.cs, Sesion/ObtenerSesionToolTests.cs
+                                              (solo multi-tenant-header: el middleware publica
+                                               identidad ambiente y sesion sin sembrar el contexto,
+                                               rechazos, obtener_sesion en ambos origenes, #1934)
 
   tests/<RootNamespace>.Mcp.{Proposito}.SmokeTests/
     Fixtures/McpFixture.cs                   (sesion MCP real con ModelContextProtocol.Core)
     Handshake/ ComposicionDelHost/ Ejemplo/ Seguridad/
                                              (nivel 3: las cinco verificaciones canonicas de
                                               MEF-ADR-0048 seccion 2 -- handshake, tools/list
-                                              vivo, tool call, error path del .resx, 401 sin key)
+                                              vivo, tool call, error path del .resx, 401 sin key;
+                                              con multi-tenant-header suma Identidad/: obtener_sesion
+                                              sin Bearer responde origen tenant_fijo, #1934)
 
   infra/environments/dev/mcp-{proposito-kebab}.tf
     Storage + App Service Plan + Function App dedicados (modulos base del consumidor), con las

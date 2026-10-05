@@ -79,6 +79,27 @@ for text_var in claude_body opencode_body; do
     absent "$text" 'export MEFISTO_INSTRUCTIONS_PATH="AGENTS.md"' "$text_var sin resolucion manual fija"
 done
 
+echo '[identidad] identidad derivada del token (issue #1934)'
+contains "$body" 'internal async Task Ejecutar(' 'CA-1/2: IdentidadTenantMcpMiddleware con nucleo testeable'
+contains "$body" 'tool.TryGetHttpTransport(out var transporte)' 'CA-1: lee el Bearer del transporte de ToolInvocationContext'
+contains "$body" 'DerivadorIdentidadTenantMcp' 'CA-1: derivador org_id/sub'
+contains "$body" 'builder.UseMiddleware<IdentidadTenantMcpMiddleware>();' 'CA-1: Program.cs registra el middleware de identidad'
+contains "$body" 'despues de AutorizacionMcpMiddleware' 'CA-1: orden tras AutorizacionMcpMiddleware'
+contains "$body" '<ProjectReference Include="..\<RootNamespace>.TenantResolver\' 'CA-1: ProjectReference a TenantResolver'
+contains "$body" 'public async Task<ClaimsPrincipal?> ValidarAsync(' 'CA-1: validador expone el ClaimsPrincipal'
+contains "$body" 'TenantExecutionContext.SetDerivedIdentity(' 'CA-2: publica identidad ambiente'
+contains "$body" 'items[SesionUsuario.ClaveEnContexto]' 'CA-2: publica la sesion'
+contains "$body" 'ErrorTokenSinOrganizacionOUsuario' 'CA-2: rechazo con mensaje resx'
+contains "$body" 'Fallback explicito del camino SIN Bearer' 'CA-3: fallback explicito'
+absent "$body" 'TODO(tenancy etapa b' 'CA-3: sin TODO de identidad derivada'
+absent "$body" 'llegan a este worker SIN header Authorization' 'CA-3: ya no afirma que el Authorization nunca llega'
+contains "$body" 'internal const string NombreTool = "obtener_sesion";' 'CA-4: tool obtener_sesion'
+contains "$body" '"tenant_fijo"' 'CA-4: origen tenant_fijo'
+contains "$body" 'Ejecutar_PublicaIdentidadAmbienteYSesion_CuandoElBearerEsValido' 'CA-5: test del middleware publica identidad y sesion'
+contains "$body" 'Ejecutar_Rechaza_CuandoElTokenNoTraeOrgIdOSub' 'CA-5: rechazo sin org_id/sub'
+contains "$body" 'ObtenerSesionTool.NombreTool' 'CA-5: composicion pinnea obtener_sesion'
+contains "$body" 'ObtenerSesion_Responde_TenantFijo_CuandoSeInvocaConSystemKeySinBearer' 'CA-6: smoke obtener_sesion'
+
 echo '[c] cada comando ejecutable casa una regla allow de OpenCode'
 permission="$(awk 'NR == 1 { next } /^permission: / { sub(/^permission: /, ""); print; exit }' "$OPENCODE")"
 allowed() {
