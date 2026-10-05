@@ -73,7 +73,7 @@ jobs:
           if-no-files-found: warn
 
   # Solo 'schedule' notifica (#1773): un workflow_dispatch manual es exploratorio y no abre ni cierra el issue.
-  # Permisos por job: solo este job tiene 'issues: write'; 'tests' conserva 'contents: read'.
+  # Permisos por job: solo este job tiene 'issues: write' y 'actions: read' (log del paso fallido); 'tests' conserva 'contents: read'.
   #   https://docs.github.com/en/actions/writing-workflows/choosing-what-your-workflow-does/controlling-permissions-for-github_token
   # Notificacion de fallos de workflows programados (va al usuario que creo/edito por ultima vez el cron):
   #   https://docs.github.com/en/actions/monitoring-and-troubleshooting-workflows/notifications-for-workflow-runs
@@ -87,6 +87,7 @@ jobs:
     permissions:
       contents: read
       issues: write
+      actions: read
     env:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
@@ -110,7 +111,24 @@ jobs:
           case "$TESTS_RESULT" in
             failure|cancelled|timed_out)
               body_file="$RUNNER_TEMP/nightly-body.md"
-              src/internal/scripts/mefisto-nightly-report.sh "$RUNNER_TEMP/test-suite-logs" "$RUN_URL" "$GITHUB_SHA" > "$body_file"
+              # Evidencia del paso fallido (#1969). El run sigue en curso mientras corre 'notify', y
+              # 'gh run view <run> --log-failed' rechaza un run en curso: se pide el log del job
+              # 'tests' (ya terminado) con --job y, si gh lo rechaza igual, se cae al endpoint REST
+              # del log del job, prefijado con el formato '<job>\t<paso>\t<linea>' de --log-failed:
+              #   https://docs.github.com/en/rest/actions/workflow-jobs#download-job-logs-for-a-workflow-run
+              # Cualquier fallo deja el archivo vacio y el reporte se publica sin esa seccion.
+              failed_log="$RUNNER_TEMP/failed-steps.log"
+              : > "$failed_log"
+              job_id="$(gh run view "$GITHUB_RUN_ID" --json jobs --jq '.jobs[] | select(.name == "tests") | .databaseId' 2>/dev/null || true)"
+              if [ -n "$job_id" ]; then
+                gh run view --job "$job_id" --log-failed > "$failed_log" 2>/dev/null || : > "$failed_log"
+                if [ ! -s "$failed_log" ]; then
+                  failed_step="$(gh api "repos/$GH_REPO/actions/jobs/$job_id" --jq '[.steps[] | select(.conclusion == "failure") | .name] | join(", ")' 2>/dev/null || true)"
+                  { gh api "repos/$GH_REPO/actions/jobs/$job_id/logs" 2>/dev/null \
+                      | awk -v s="${failed_step:-desconocido}" '{print "tests\t" s "\t" $0}' > "$failed_log"; } || : > "$failed_log"
+                fi
+              fi
+              src/internal/scripts/mefisto-nightly-report.sh "$RUNNER_TEMP/test-suite-logs" "$RUN_URL" "$GITHUB_SHA" "$failed_log" > "$body_file"
               if [ -n "$open_number" ]; then
                 gh issue comment "$open_number" --body-file "$body_file"
               else
