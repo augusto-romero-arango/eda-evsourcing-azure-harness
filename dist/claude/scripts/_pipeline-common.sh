@@ -980,6 +980,71 @@ run_tests_projects() {
     return $combined_rc
 }
 
+# _red_method_body <metodo>   (stdin: fuente C#)
+#
+# Imprime el bloque del primer metodo cuya firma contiene "<metodo>(": desde la
+# linea de la firma hasta que las llaves balancean (o hasta el ';' de un cuerpo
+# con '=>'). Sin coincidencia no imprime nada.
+_red_method_body() {
+    awk -v m="$1" '
+        !found && $0 ~ ("[[:space:]]" m "[[:space:]]*\\(") { found=1; arrow=($0 ~ /=>/) }
+        found && !done {
+            print
+            line=$0
+            if (!seen && arrow && line !~ /\{/) { if (line ~ /;[[:space:]]*$/) done=1; next }
+            n=gsub(/\{/,"{",line); c=gsub(/\}/,"}",line)
+            depth+=n-c
+            if (n>0) seen=1
+            if (seen && depth<=0) done=1
+        }
+    '
+}
+
+# detect_preexisting_red_tests <worktree> <snapshot_commit> <test_output>
+#
+# Issue #1937: tras la fase roja, identifica tests en rojo que YA existian en
+# <snapshot_commit> y cuyo cuerpo el test-writer NO modifico (candidatos a pin
+# desactualizado, o a stub sobre codigo existente). Mecanismo:
+#   1. Parsea de <test_output> las lineas de fallo de Microsoft Testing Platform
+#      ("failed <Nombre> (<dur>)"); toma el ultimo segmento punteado sin parametros.
+#   2. Localiza el metodo en tests/**/*.cs del arbol de <snapshot_commit>
+#      (git grep, sin recompilar). Si no existe ahi, es un test nuevo: se ignora.
+#   3. Compara el bloque del metodo en el snapshot contra el archivo actual; si es
+#      identico, se reporta. Si cambio, o ya no esta, no se reporta.
+# Imprime una linea "<test>\t<archivo>" por cada test reportado.
+# Exit: 0 analisis completo (con o sin reportes); 2 salida no parseable o fallo
+# del analisis. Nunca aborta: el llamador degrada a warn.
+detect_preexisting_red_tests() {
+    local worktree="$1" snapshot="$2" output="$3"
+    local names name method hit file old new seen=" "
+    names=$(printf '%s\n' "$output" | sed 's/\x1b\[[0-9;]*m//g' \
+        | sed -nE 's/^[[:space:]]*(failed|✗|×)[[:space:]]+([^[:space:]]+).*/\2/p') || return 2
+    [ -n "$names" ] || return 2
+    git -C "$worktree" rev-parse --verify -q "${snapshot}^{commit}" >/dev/null 2>&1 || return 2
+    while IFS= read -r name; do
+        [ -n "$name" ] || continue
+        method="${name%%(*}"
+        method="${method##*.}"
+        [[ "$method" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
+        case "$seen" in *" $method "*) continue ;; esac
+        seen+="$method "
+        hit=$(git -C "$worktree" grep -l -E "[[:space:]]${method}[[:space:]]*\\(" "$snapshot" -- 'tests/*.cs' 2>/dev/null) || continue
+        while IFS= read -r file; do
+            [ -n "$file" ] || continue
+            file="${file#"$snapshot":}"
+            old=$(git -C "$worktree" show "$snapshot:$file" 2>/dev/null | _red_method_body "$method")
+            [ -n "$old" ] || continue
+            [ -f "$worktree/$file" ] || continue
+            new=$(_red_method_body "$method" < "$worktree/$file")
+            if [ "$old" = "$new" ]; then
+                printf '%s\t%s\n' "$method" "$file"
+                break
+            fi
+        done <<< "$hit"
+    done <<< "$names"
+    return 0
+}
+
 # --- Derivacion de log legible desde eventos de agente ----------------------
 
 # derive_stage_log_from_stream <events_file> <legacy_stderr_file> <out_file>

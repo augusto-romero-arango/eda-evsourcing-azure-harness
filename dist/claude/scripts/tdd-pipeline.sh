@@ -985,6 +985,33 @@ PROHIBIDO hacer 'git push' o 'gh pr create' (ni ninguna operacion de publicacion
             abort "Stage 1 fallido: no se encontraron tests para ejecutar (exit code: 8) — el $STAGE1_AGENT no genero tests validos"
         else
             log "Fase roja confirmada (exit code: $g1_rc)"
+            # Aviso (no aborta) de tests preexistentes en rojo sin modificar (issue #1937).
+            # Solo write-side; cualquier fallo del analisis degrada a warn (CA-4).
+            if [ "$IS_PROJECTION" = false ]; then
+                PREEXISTING_RED_WARN_PATH=$(mefisto_state_path "preexisting-red-warning.md" "$WORKTREE_PATH" 2>/dev/null) || PREEXISTING_RED_WARN_PATH=""
+                [ -n "$PREEXISTING_RED_WARN_PATH" ] && rm -f "$PREEXISTING_RED_WARN_PATH"
+                pre_red_rc=0
+                PRE_RED_LIST=$(detect_preexisting_red_tests "$WORKTREE_PATH" "$SNAPSHOT_COMMIT" "$TEST_OUTPUT_G1" 2>/dev/null) || pre_red_rc=$?
+                if [ "$pre_red_rc" -ne 0 ]; then
+                    warn "No se pudo analizar si hay tests preexistentes en rojo (salida no parseable o snapshot no disponible); se continua"
+                elif [ -n "$PRE_RED_LIST" ] && [ -n "$PREEXISTING_RED_WARN_PATH" ]; then
+                    warn "Tests PREEXISTENTES en rojo que el $STAGE1_AGENT no modifico (no se aborta):"
+                    while IFS=$'\t' read -r pr_test pr_file; do
+                        [ -n "$pr_test" ] && warn "  - $pr_test ($pr_file)"
+                    done <<< "$PRE_RED_LIST"
+                    {
+                        echo "## Tests preexistentes en rojo sin modificar"
+                        echo
+                        echo "Hipotesis: pin o test preexistente que quiza el test-writer debia actualizar, o stub sobre codigo existente."
+                        echo
+                        echo "| Test | Archivo |"
+                        echo "|------|---------|"
+                        while IFS=$'\t' read -r pr_test pr_file; do
+                            [ -n "$pr_test" ] && echo "| \`$pr_test\` | \`$pr_file\` |"
+                        done <<< "$PRE_RED_LIST"
+                    } > "$PREEXISTING_RED_WARN_PATH" 2>/dev/null || warn "No se pudo escribir el aviso de tests preexistentes en rojo"
+                fi
+            fi
         fi
     fi
 
