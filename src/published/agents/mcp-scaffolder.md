@@ -2441,6 +2441,12 @@ on:
     types: [completed]
   workflow_dispatch:
 
+# Piso para los jobs que no declaran los suyos. Los permisos de un job reemplazan por completo
+# a los del workflow (GitHub Docs, "Assigning permissions to jobs"), asi que las concesiones
+# de cada job (id-token: write, pull-requests: read, actions: read) siguen vigentes.
+permissions:
+  contents: read
+
 jobs:
   # El apply de infra (infra-cd.yml, MEF-ADR-0022) y el deploy de codigo pueden correr en el
   # mismo push a main. Encadenar por workflow_run (en vez de un 'push' que dispare ambos)
