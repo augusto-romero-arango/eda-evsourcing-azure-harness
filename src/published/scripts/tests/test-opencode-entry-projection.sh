@@ -131,8 +131,8 @@ rm "$SHELLS"
 run < <(envelope config); rc_is 'sin plantillas shell de #1819 no se admite' x 1
 assert 'SHELL_TEMPLATES_UNAVAILABLE sin catalogo parcial' 'any(.diagnostics[]; .code=="SHELL_TEMPLATES_UNAVAILABLE") and (.bindings|length)==27 and all(.bindings[]; .admitted==false)'
 cp "$REPO_ROOT/dist/opencode/src/published/contract/command-shell-templates.json" "$SHELLS"
-run < <(envelope config)
-assert 'contrato empaquetado: ninguna fila emite SHELL_TEMPLATES_UNAVAILABLE' 'all(.diagnostics[]?; .code != "SHELL_TEMPLATES_UNAVAILABLE")'
+run < <(envelope config); rc_is 'contrato empaquetado de #1944: config ready' x 0
+assert 'contrato empaquetado: ninguna fila emite SHELL_TEMPLATES_UNAVAILABLE' '(.diagnostics|type)=="array" and all(.diagnostics[]; .code != "SHELL_TEMPLATES_UNAVAILABLE") and (.bindings|length)==27'
 rm -rf "$RELEASE/src/published/scripts/adapters/lib/opencode-command-entry.jq"
 run < <(envelope config); rc_is 'clausura incompleta: protocolo' x 2
 
