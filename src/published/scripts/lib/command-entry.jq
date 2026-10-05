@@ -34,7 +34,7 @@ def classify_execution($command_id; $arguments):
     else fail("forma de upgrade no canonica") end
   else {kind:"execute",operation:"query"} end;
 def valid_entry($entry_id):
-  (type == "object") and (keys | sort) == required and (.id | identifier) and
+  (type == "object") and ((keys - ["shellExtra"]) | sort) == required and ((has("shellExtra") | not) or (.shellExtra | type == "array" and all(.[]; type == "string"))) and (.id | identifier) and
   (.capabilities | string_set and all(.[]; . == "read" or . == "edit" or . == "shell" or . == "web" or . == "task")) and
   (.composes | string_set and all(.[]; identifier)) and
   (.delegates | string_set and all(.[]; identifier)) and
