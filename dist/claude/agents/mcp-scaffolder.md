@@ -153,9 +153,11 @@ mkdir -p "$REPO_ROOT/src/<RootNamespace>.Mcp.{Proposito}/Ejemplo"
     <Nullable>enable</Nullable>
   </PropertyGroup>
 
-  <!-- Cero ProjectReference (MEF-ADR-0047 decision 3): este servidor es un cliente HTTP puro de
-       las Function Apps del BC. Los contratos upstream se redeclaran en Infraestructura/ como
-       una isla propia -- la verdad viaja en el JSON del endpoint, no en un tipo compartido. -->
+  <!-- Cero ProjectReference al BC (MEF-ADR-0047 decision 3): este servidor es un cliente HTTP puro
+       de las Function Apps del BC. Los contratos upstream se redeclaran en Infraestructura/ como
+       una isla propia -- la verdad viaja en el JSON del endpoint, no en un tipo compartido. La
+       unica excepcion documentada es la biblioteca <RootNamespace>.TenantResolver, solo con
+       tenancy.strategy = multi-tenant-header (ver abajo). -->
   <ItemGroup>
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
     <PackageReference Include="Azure.Monitor.OpenTelemetry.Exporter" Version="1.8.3" />
@@ -186,6 +188,14 @@ mkdir -p "$REPO_ROOT/src/<RootNamespace>.Mcp.{Proposito}/Ejemplo"
   </ItemGroup>
 
 </Project>
+```
+
+**Excepcion `TenantResolver` (MEF-ADR-0047 decision 3, issue #1934):** solo si el Paso 0 resolvio `{TenancyStrategy}` = `multi-tenant-header` (la biblioteca `src/<RootNamespace>.TenantResolver/` existe porque el flip a->b de `/install-apim` la genero), agrega al `.csproj` este `ItemGroup`, como **unica** `ProjectReference` permitida -- contiene solo la identidad ambiente (`TenantExecutionContext` sobre `AsyncLocal`), sin dominio, aggregates, eventos ni contratos del BC. En `mono-tenant-transitorio` no se agrega: cero `ProjectReference`.
+
+```xml
+  <ItemGroup>
+    <ProjectReference Include="..\<RootNamespace>.TenantResolver\<RootNamespace>.TenantResolver.csproj" />
+  </ItemGroup>
 ```
 
 **2. `host.json`** -- `extensions.mcp` es de alcance de instancia de Function App (MEF-ADR-0047 decision 1): coincide 1:1 con este proyecto.
@@ -337,9 +347,9 @@ public static class ConfiguracionClientesHttp
 namespace <RootNamespace>.Mcp.{Proposito}.Infraestructura;
 
 /// <summary>
-/// Identidad propagada a las Function Apps del BC en cada request saliente (MEF-ADR-0047 decision
-/// 6). Interina mientras el servidor no reciba Authorization de una tool call (decision 7): un
-/// valor fijo por despliegue, nunca derivado del cliente MCP conectado.
+/// Identidad FIJA por despliegue (MEF-ADR-0047 decision 6): el fallback explicito del camino sin
+/// Authorization Bearer (smoke con system key, desarrollo local). Con un Bearer valido la
+/// identidad sale del token (org_id -> tenant, sub -> usuario) y no pasa por este record.
 /// </summary>
 public sealed record IdentidadTenant(string TenantId, string UserId);
 ```
@@ -360,11 +370,10 @@ public static class ConfiguracionIdentidadTenant
 {
     public static IServiceCollection ConfigurarIdentidadTenant(this IServiceCollection services, IConfiguration configuration)
     {
-        // TODO(tenancy etapa b / identidad derivada del token, MEF-ADR-0047 decision 6): el
-        // worker no recibe el Authorization de una tool call (decision 7), asi que el tenant y el
-        // usuario son un valor FIJO por despliegue, leido de app settings -- nunca derivado del
-        // cliente MCP conectado. Reemplazarlo por identidad derivada del token es evolucion fuera
-        // de alcance de este scaffold.
+        // Fallback explicito del camino SIN Bearer (smoke con system key, desarrollo local,
+        // MEF-ADR-0047 decision 6): tenant y usuario fijos por despliegue, leidos de app settings.
+        // Con un Bearer valido la identidad se deriva del token en IdentidadTenantMcpMiddleware
+        // (item 7e) y este valor no se usa; un Bearer invalido se rechaza, nunca cae aqui.
         var identidad = new IdentidadTenant(
             TenantId: configuration["Identidad:TenantIdInterino"] ?? "tenant-interino-sin-configurar",
             UserId: configuration["Identidad:UserIdInterino"] ?? "mcp-sin-usuario-autenticado");
@@ -399,6 +408,41 @@ public sealed class PropagadorIdentidadTenantHandler(IdentidadTenant identidad) 
         request.Headers.TryAddWithoutValidation("X-User-Id", identidad.UserId);
 
         return base.SendAsync(request, cancellationToken);
+    }
+}
+```
+
+**Variante con `{TenancyStrategy}` = `multi-tenant-header` (issue #1934)** -- el handler lee primero la identidad ambiente que `IdentidadTenantMcpMiddleware` (item 7e) publica por invocacion y cae a la identidad fija solo cuando no hay ninguna publicada (camino sin Bearer). Sustituye la declaracion y el `SendAsync` del handler por esta version (mismos `using`/namespace) y agrega a `ConfigurarIdentidadTenant` (item 6b) `using <RootNamespace>.TenantResolver;` y `services.AddSingleton<TenantExecutionContext>();`:
+
+```csharp
+public sealed class PropagadorIdentidadTenantHandler(
+    IdentidadTenant identidadFija,
+    TenantExecutionContext identidadAmbiente) : DelegatingHandler
+{
+    protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+    {
+        var identidad = Resolver();
+
+        request.Headers.Remove("X-Tenant-Id");
+        request.Headers.TryAddWithoutValidation("X-Tenant-Id", identidad.TenantId);
+        request.Headers.Remove("X-User-Id");
+        request.Headers.TryAddWithoutValidation("X-User-Id", identidad.UserId);
+
+        return base.SendAsync(request, cancellationToken);
+    }
+
+    // Los getters de TenantExecutionContext lanzan si nadie publico identidad en esta invocacion
+    // (MEF-ADR-0028 seccion 4): ese es exactamente el camino sin Bearer, que usa el tenant fijo.
+    private IdentidadTenant Resolver()
+    {
+        try
+        {
+            return new IdentidadTenant(identidadAmbiente.TenantId, identidadAmbiente.UserId);
+        }
+        catch (InvalidOperationException)
+        {
+            return identidadFija;
+        }
     }
 }
 ```
@@ -447,6 +491,7 @@ public static class ConfiguracionObservabilidadMcp
 
 ```csharp
 using System.IdentityModel.Tokens.Jwt;
+using System.Security.Claims;
 using Microsoft.IdentityModel.Protocols;
 using Microsoft.IdentityModel.Protocols.OpenIdConnect;
 using Microsoft.IdentityModel.Tokens;
@@ -460,7 +505,7 @@ namespace <RootNamespace>.Mcp.{Proposito}.Infraestructura;
 /// Authority = dominio AuthKit del entorno (MEF-ADR-0032 B12), nunca el issuer de login
 /// user_management/{client_id} -- re-verificar contra el discovery doc en vivo por consumidor.
 /// </summary>
-public sealed class ValidadorTokenAuthKit(IConfigurationManager<OpenIdConnectConfiguration>? configManager)
+public sealed class ValidadorTokenAuthKit(IConfigurationManager<OpenIdConnectConfiguration>? configManager) : IValidadorToken
 {
     // Sin authorization server resoluble -- app setting ausente, o todavia el placeholder que el
     // Terraform siembra hasta que existe el API de APIM del servidor -- el validador degrada a
@@ -472,10 +517,16 @@ public sealed class ValidadorTokenAuthKit(IConfigurationManager<OpenIdConnectCon
                 new OpenIdConnectConfigurationRetriever()))
             : new ValidadorTokenAuthKit(configManager: null);
 
-    public async Task<bool> EsValidoAsync(string token, CancellationToken ct)
+    public async Task<bool> EsValidoAsync(string token, CancellationToken ct) =>
+        await ValidarAsync(token, ct) is not null;
+
+    // Devuelve el ClaimsPrincipal ya validado (null si no es valido): fuente de la identidad
+    // derivada del token (MEF-ADR-0047 decision 6). MapInboundClaims = false conserva los nombres
+    // crudos del JWT (org_id, sub, email, sid) en vez de mapearlos a ClaimTypes.*.
+    public async Task<ClaimsPrincipal?> ValidarAsync(string token, CancellationToken ct)
     {
         if (configManager is null)
-            return false;
+            return null;
 
         try
         {
@@ -490,17 +541,23 @@ public sealed class ValidadorTokenAuthKit(IConfigurationManager<OpenIdConnectCon
                 ValidateLifetime = true
             };
 
-            new JwtSecurityTokenHandler().ValidateToken(token, parametros, out _);
-            return true;
+            return new JwtSecurityTokenHandler { MapInboundClaims = false }
+                .ValidateToken(token, parametros, out _);
         }
         catch (Exception)
         {
             // Defensa en profundidad: cualquier fallo (token malformado, discovery doc no
             // alcanzable, firma invalida) se trata como "no valido", nunca propaga -- este
             // validador jamas debe tumbar el pipeline (MEF-ADR-0047 decision 7).
-            return false;
+            return null;
         }
     }
+}
+
+/// <summary>Contrato minimo del validador, para sustituirlo por un doble en los tests del middleware de identidad.</summary>
+public interface IValidadorToken
+{
+    Task<ClaimsPrincipal?> ValidarAsync(string token, CancellationToken ct);
 }
 ```
 
@@ -515,14 +572,13 @@ using Microsoft.Extensions.Logging;
 namespace <RootNamespace>.Mcp.{Proposito}.Infraestructura;
 
 /// <summary>
-/// Defensa en profundidad, NUNCA el gate primario (MEF-ADR-0047 decision 7): las tool calls de un
-/// cliente MCP contra /runtime/webhooks/mcp llegan a este worker SIN header Authorization -- lo
-/// sirve el paquete del host de la extension MCP, que no lo reenvia. Intentar exigirlo aqui
-/// produce, en el mejor caso, un gate que nunca se activa, y en el peor, un rechazo universal
-/// porque el header buscado no existe nunca en ese punto. El gate real vive en la politica
-/// dedicada de APIM (MEF-ADR-0032 seccion 9). Este middleware solo registra, con Warning, un
-/// Authorization presente pero invalido en las superficies HTTP que si lo reciben (p. ej. un
-/// endpoint propio fuera del protocolo MCP) -- nunca bloquea el pipeline.
+/// Defensa en profundidad, NUNCA el gate primario (MEF-ADR-0047 decision 7): el gate real vive en
+/// la politica dedicada de APIM (MEF-ADR-0032 seccion 9). El Authorization de una tool call contra
+/// /runtime/webhooks/mcp NO llega por HttpContext (GetHttpContext() no lo ve en ese punto), pero
+/// si por el transporte HTTP de ToolInvocationContext: de ahi lo lee, y lo valida para derivar
+/// identidad, IdentidadTenantMcpMiddleware (item 7e). Este middleware solo registra, con Warning,
+/// un Authorization presente pero invalido en las superficies HTTP donde HttpContext si lo trae
+/// (p. ej. un endpoint propio fuera del protocolo MCP) -- nunca bloquea el pipeline.
 /// </summary>
 public sealed class AutorizacionMcpMiddleware(
     ValidadorTokenAuthKit validador,
@@ -670,6 +726,151 @@ public sealed class ArgumentosCrudosMcpMiddleware : IFunctionsWorkerMiddleware
 }
 ```
 
+**7e. Identidad derivada del token (solo `{TenancyStrategy}` = `multi-tenant-header`, issue #1934, MEF-ADR-0047 decisiones 6-7)** -- cuatro archivos en `Infraestructura/`. Con `mono-tenant-transitorio` **no se generan** (dependen de la biblioteca `TenantResolver`, que ahi no existe): `Program.cs` deja la propuesta comentada (item 8). El middleware publica identidad ambiente y sesion **en el mismo punto y desde el mismo `ClaimsPrincipal`**, para que no puedan divergir.
+
+`Infraestructura/SesionUsuario.cs`:
+
+```csharp
+namespace <RootNamespace>.Mcp.{Proposito}.Infraestructura;
+
+/// <summary>
+/// Sesion del usuario conectado, derivada del mismo token que la identidad ambiente: correo,
+/// organizacion (empresa) y sid. La publica IdentidadTenantMcpMiddleware en Items del contexto de
+/// la funcion; la lee la tool obtener_sesion.
+/// </summary>
+public sealed record SesionUsuario(string? Correo, string Organizacion, string? SessionId)
+{
+    public const string ClaveEnContexto = "Mcp.SesionUsuario";
+
+    public static SesionUsuario? De(IDictionary<object, object> items) =>
+        items.TryGetValue(ClaveEnContexto, out var valor) ? valor as SesionUsuario : null;
+}
+```
+
+`Infraestructura/DerivadorIdentidadTenantMcp.cs`:
+
+```csharp
+using System.Security.Claims;
+
+namespace <RootNamespace>.Mcp.{Proposito}.Infraestructura;
+
+public sealed record IdentidadDerivada(IdentidadTenant Identidad, SesionUsuario Sesion);
+
+/// <summary>
+/// Deriva identidad y sesion del ClaimsPrincipal ya validado (MEF-ADR-0047 decision 6): org_id es
+/// el tenant y sub es el usuario. La doctrina fija solo esos dos claims; cualquier claim adicional
+/// (p. ej. organization_membership_id) es extension local del consumidor.
+/// </summary>
+public static class DerivadorIdentidadTenantMcp
+{
+    public static IdentidadDerivada? Derivar(ClaimsPrincipal principal)
+    {
+        var organizacion = principal.FindFirst("org_id")?.Value;
+        var usuario = principal.FindFirst("sub")?.Value;
+
+        if (string.IsNullOrWhiteSpace(organizacion) || string.IsNullOrWhiteSpace(usuario))
+            return null;
+
+        return new IdentidadDerivada(
+            new IdentidadTenant(organizacion, usuario),
+            new SesionUsuario(principal.FindFirst("email")?.Value, organizacion, principal.FindFirst("sid")?.Value));
+    }
+}
+```
+
+`Infraestructura/IdentidadTenantMcpMiddleware.cs`:
+
+```csharp
+using System.Resources;
+using Microsoft.Azure.Functions.Worker;
+using Microsoft.Azure.Functions.Worker.Extensions.Mcp;
+using Microsoft.Azure.Functions.Worker.Middleware;
+using <RootNamespace>.TenantResolver;
+
+namespace <RootNamespace>.Mcp.{Proposito}.Infraestructura;
+
+/// <summary>
+/// Deriva la identidad del token del usuario conectado (MEF-ADR-0047 decisiones 6-7). El
+/// Authorization NO llega por FunctionContext.GetHttpContext(); si esta en el transporte HTTP del
+/// propio ToolInvocationContext (extension 1.6.0). Sin Bearer no publica nada: el propagador usa
+/// el tenant fijo (smoke con system key, desarrollo local). Bearer no validable, o validable pero
+/// sin org_id/sub, RECHAZA la invocacion -- nunca cae al tenant fijo: una escritura quedaria
+/// registrada en la empresa equivocada.
+/// </summary>
+public sealed class IdentidadTenantMcpMiddleware(IValidadorToken validador) : IFunctionsWorkerMiddleware
+{
+    // Mismo valor que Constants.ToolInvocationContextKey de la extension (internal). Debe correr
+    // DESPUES de ArgumentosCrudosMcpMiddleware, que reemplaza ese item conservando el Transport.
+    private const string ClaveContextoTool = "ToolInvocationContext";
+
+    // Invoke delega en Ejecutar SIN ser async: la mutacion del AsyncLocal (SetDerivedIdentity)
+    // ocurre dentro del mismo flujo que luego awaitea 'siguiente', asi la ve toda la funcion. Si la
+    // mutacion viviera en un metodo async propio que retorna ANTES de invocar 'siguiente', el CLR
+    // restauraria el contexto al retornar y la identidad se perderia (regresion real del
+    // consumidor piloto, #807).
+    public Task Invoke(FunctionContext context, FunctionExecutionDelegate next) =>
+        Ejecutar(
+            LeerAuthorization(context.Items.TryGetValue(ClaveContextoTool, out var item) ? item as ToolInvocationContext : null),
+            context.Items,
+            () => next(context),
+            context.CancellationToken);
+
+    // internal: los tests recorren este nucleo con un validador falso, sin sembrar el contexto a
+    // mano (FunctionContext no es instanciable fuera de un host real).
+    internal async Task Ejecutar(
+        string? authorization, IDictionary<object, object> items, Func<Task> siguiente, CancellationToken ct)
+    {
+        var token = authorization?.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase) == true
+            ? authorization["Bearer ".Length..].Trim()
+            : null;
+
+        if (string.IsNullOrWhiteSpace(token))
+        {
+            await siguiente();
+            return;
+        }
+
+        var principal = await validador.ValidarAsync(token, ct)
+            ?? throw new InvalidOperationException(Mensajes.ErrorTokenNoValido);
+        var derivada = DerivadorIdentidadTenantMcp.Derivar(principal)
+            ?? throw new InvalidOperationException(Mensajes.ErrorTokenSinOrganizacionOUsuario);
+
+        TenantExecutionContext.SetDerivedIdentity(derivada.Identidad.TenantId, derivada.Identidad.UserId);
+        items[SesionUsuario.ClaveEnContexto] = derivada.Sesion;
+
+        await siguiente();
+    }
+
+    private static string? LeerAuthorization(ToolInvocationContext? tool) =>
+        tool is not null && tool.TryGetHttpTransport(out var transporte)
+            && transporte.Headers.TryGetValue("Authorization", out var valor)
+            ? valor?.ToString()
+            : null;
+
+    private static readonly ResourceManager ResourceManager = new(
+        "<RootNamespace>.Mcp.{Proposito}.Infraestructura.IdentidadTenantMcpMensajes",
+        typeof(IdentidadTenantMcpMiddleware).Assembly);
+
+    internal static class Mensajes
+    {
+        public static string ErrorTokenNoValido => ResourceManager.GetString(nameof(ErrorTokenNoValido))!;
+
+        public static string ErrorTokenSinOrganizacionOUsuario => ResourceManager.GetString(nameof(ErrorTokenSinOrganizacionOUsuario))!;
+    }
+}
+```
+
+`Infraestructura/IdentidadTenantMcpMensajes.resx` -- mismo encabezado (`xsd:schema` + `resheader`) que `EjemploListarToolMensajes.resx` del Paso 3 (MEF-ADR-0009), con estos `data`:
+
+```xml
+  <data name="ErrorTokenNoValido" xml:space="preserve">
+    <value>No se pudo validar tu sesion. Vuelve a autenticarte e intenta de nuevo.</value>
+  </data>
+  <data name="ErrorTokenSinOrganizacionOUsuario" xml:space="preserve">
+    <value>Tu sesion no identifica una organizacion o un usuario. Vuelve a autenticarte eligiendo una organizacion.</value>
+  </data>
+```
+
 **8. `Program.cs`** -- invoca los seams, nada mas (MEF-ADR-0029). Los componentes OAuth app-side (items 7a/7b) se cablean solo si el Paso 0 resolvio `{TenancyStrategy}` = `multi-tenant-header`; en `mono-tenant-transitorio` quedan como comentario-propuesta (CA-2 del issue #819) -- el propagador de identidad (items 6a-6c) y el middleware de restauracion de argumentos (item 7d), en cambio, **siempre** se cablean, sin importar la etapa.
 
 Si `{TenancyStrategy}` es `multi-tenant-header`:
@@ -697,9 +898,15 @@ builder.Services.ConfigurarObservabilidadMcp();
 // Sin Mcp__AuthorizationServer resoluble el validador degrada a "todo token es invalido"; no
 // fail-fast de arranque, a diferencia de las base URLs de los clientes tipados: aquellas sin las
 // que ninguna tool puede responder, esta solo apaga una defensa secundaria.
-builder.Services.AddSingleton(
-    ValidadorTokenAuthKit.ParaAuthorizationServer(builder.Configuration["Mcp:AuthorizationServer"]));
+var validador = ValidadorTokenAuthKit.ParaAuthorizationServer(builder.Configuration["Mcp:AuthorizationServer"]);
+builder.Services.AddSingleton(validador);
+builder.Services.AddSingleton<IValidadorToken>(validador);
 builder.UseMiddleware<AutorizacionMcpMiddleware>();
+
+// Identidad derivada del token (MEF-ADR-0047 decisiones 6-7, issue #1934): publica identidad
+// ambiente y sesion por invocacion. Despues de AutorizacionMcpMiddleware y de
+// ArgumentosCrudosMcpMiddleware (conserva el Transport del contexto de la tool).
+builder.UseMiddleware<IdentidadTenantMcpMiddleware>();
 
 await builder.Build().RunAsync();
 ```
@@ -729,8 +936,16 @@ builder.Services.ConfigurarObservabilidadMcp();
 // tiene ValidadorTokenAuthKit y AutorizacionMcpMiddleware generados y compilando -- corre
 // /install-auth y vuelve a scaffoldear (o cablea a mano las dos lineas de abajo) cuando el BC
 // adopte el camino WorkOS+APIM:
-// builder.Services.AddSingleton(ValidadorTokenAuthKit.ParaAuthorizationServer(builder.Configuration["Mcp:AuthorizationServer"]));
+// var validador = ValidadorTokenAuthKit.ParaAuthorizationServer(builder.Configuration["Mcp:AuthorizationServer"]);
+// builder.Services.AddSingleton(validador);
+// builder.Services.AddSingleton<IValidadorToken>(validador);
 // builder.UseMiddleware<AutorizacionMcpMiddleware>();
+//
+// Identidad derivada del token y tool obtener_sesion (issue #1934): tampoco se generan aqui --
+// dependen de la biblioteca <RootNamespace>.TenantResolver, que el flip a->b de /install-apim
+// crea. Corre /install-auth y vuelve a scaffoldear (o cablealos a mano) cuando el BC adopte
+// multi-tenant-header: IdentidadTenantMcpMiddleware se registra con
+// builder.UseMiddleware<IdentidadTenantMcpMiddleware>(); despues de AutorizacionMcpMiddleware.
 
 await builder.Build().RunAsync();
 ```
@@ -965,6 +1180,53 @@ public partial class EjemploListarTool
     <value>'fecha_referencia' debe tener formato yyyy-MM-dd; llego '{0}'.</value>
   </data>
 </root>
+```
+
+**3b. Tool `obtener_sesion` (solo `{TenancyStrategy}` = `multi-tenant-header`, issue #1934, CA-4)** -- dice con que sesion opera el usuario: `origen: "sesion"` con correo y organizacion (empresa) cuando hay Bearer valido, u `origen: "tenant_fijo"` con el tenant configurado cuando no (smoke con system key). No registra nada (`readOnlyHint: true`). Misma regla de probe de idempotencia que la tool de ejemplo: si `Sesion/ObtenerSesionTool.cs` existe, omite este item. Con `mono-tenant-transitorio` no se genera. `cerrar_sesion` queda fuera (issue #1800).
+
+`Sesion/ObtenerSesionTool.cs`:
+
+```csharp
+using <RootNamespace>.Mcp.{Proposito}.Infraestructura;
+using Microsoft.Azure.Functions.Worker;
+using Microsoft.Azure.Functions.Worker.Extensions.Mcp;
+
+namespace <RootNamespace>.Mcp.{Proposito}.Sesion;
+
+public partial class ObtenerSesionTool(IdentidadTenant identidadFija)
+{
+    internal const string NombreTool = "obtener_sesion";
+
+    [Function("ObtenerSesion")]
+    public string Run(
+        [McpToolTrigger(
+            NombreTool,
+            "Dice con que sesion de autenticacion estas operando: el correo y la organizacion (empresa) "
+            + "de la sesion, o, si no hay una sesion de usuario, la organizacion fija del servidor. "
+            + "No registra nada.")]
+        [McpMetadata("""{"readOnlyHint": true}""")]
+        ToolInvocationContext context,
+        FunctionContext functionContext) =>
+        Responder(SesionUsuario.De(functionContext.Items));
+
+    internal string Responder(SesionUsuario? sesion) => sesion is null
+        ? RespuestaJson.Serializar(new RespuestaSesion("tenant_fijo", null, identidadFija.TenantId, Mensajes.NotaTenantFijo))
+        : RespuestaJson.Serializar(new RespuestaSesion("sesion", sesion.Correo, sesion.Organizacion, Mensajes.NotaSesion));
+}
+
+/// <summary>Respuesta de obtener_sesion: origen "sesion" | "tenant_fijo".</summary>
+public sealed record RespuestaSesion(string Origen, string? Correo, string Organizacion, string Nota);
+```
+
+`Sesion/ObtenerSesionTool.Mensajes.cs` (mismo patron que `EjemploListarTool.Mensajes.cs`, `ResourceManager` sobre `<RootNamespace>.Mcp.{Proposito}.Sesion.ObtenerSesionToolMensajes`, propiedades `NotaSesion` y `NotaTenantFijo`) y `Sesion/ObtenerSesionToolMensajes.resx` (mismo encabezado que el del Paso 3) con:
+
+```xml
+  <data name="NotaSesion" xml:space="preserve">
+    <value>Estas operando con tu sesion de usuario, en la organizacion indicada.</value>
+  </data>
+  <data name="NotaTenantFijo" xml:space="preserve">
+    <value>No hay sesion de usuario: se usa la organizacion fija configurada para este servidor.</value>
+  </data>
 ```
 
 ---
@@ -1536,6 +1798,164 @@ public class ArgumentosCrudosMcpMiddlewareTests
 }
 ```
 
+**10. Tests de identidad derivada (solo `{TenancyStrategy}` = `multi-tenant-header`, issue #1934, CA-5)** -- el test del **middleware** recorre `IdentidadTenantMcpMiddleware.Ejecutar` con un validador falso y **observa dentro de `siguiente`** lo que la funcion veria: no siembra `TenantExecutionContext` ni la sesion a mano. Es la leccion del consumidor piloto (#807): una regresion perdio la escritura de la sesion en el contexto y los tests de las tools no la detectaron porque sembraban el contexto a mano (MEF-ADR-0047, MEF-ADR-0048).
+
+`Infraestructura/IdentidadTenantMcpMiddlewareTests.cs`:
+
+```csharp
+using System.Net;
+using System.Security.Claims;
+using AwesomeAssertions;
+using <RootNamespace>.Mcp.{Proposito}.Infraestructura;
+using <RootNamespace>.TenantResolver;
+
+namespace <RootNamespace>.Mcp.{Proposito}.Tests.Infraestructura;
+
+public class IdentidadTenantMcpMiddlewareTests
+{
+    private sealed class ValidadorFalso(ClaimsPrincipal? resultado) : IValidadorToken
+    {
+        public Task<ClaimsPrincipal?> ValidarAsync(string token, CancellationToken ct) => Task.FromResult(resultado);
+    }
+
+    private static ClaimsPrincipal Principal(params (string Tipo, string Valor)[] claims) =>
+        new(new ClaimsIdentity(claims.Select(c => new Claim(c.Tipo, c.Valor)), "prueba"));
+
+    [Fact]
+    public async Task Ejecutar_PublicaIdentidadAmbienteYSesion_CuandoElBearerEsValido()
+    {
+        TenantExecutionContext.SetDerivedIdentity(null, null);
+        var items = new Dictionary<object, object>();
+        string? tenantVisto = null, usuarioVisto = null;
+        SesionUsuario? sesionVista = null;
+        var middleware = new IdentidadTenantMcpMiddleware(new ValidadorFalso(Principal(
+            ("org_id", "org_123"), ("sub", "user_456"), ("email", "ana@empresa.co"), ("sid", "sesion_789"))));
+
+        await middleware.Ejecutar("Bearer token-valido", items, () =>
+        {
+            var ambiente = new TenantExecutionContext();
+            tenantVisto = ambiente.TenantId;
+            usuarioVisto = ambiente.UserId;
+            sesionVista = SesionUsuario.De(items);
+            return Task.CompletedTask;
+        }, TestContext.Current.CancellationToken);
+
+        tenantVisto.Should().Be("org_123");
+        usuarioVisto.Should().Be("user_456");
+        sesionVista.Should().Be(new SesionUsuario("ana@empresa.co", "org_123", "sesion_789"));
+    }
+
+    [Fact]
+    public async Task Ejecutar_PropagaLaIdentidadDelToken_CuandoElBearerEsValido()
+    {
+        TenantExecutionContext.SetDerivedIdentity(null, null);
+        HttpRequestMessage? requestCapturado = null;
+        var middleware = new IdentidadTenantMcpMiddleware(new ValidadorFalso(Principal(("org_id", "org_123"), ("sub", "user_456"))));
+        var handler = new PropagadorIdentidadTenantHandler(new IdentidadTenant("tenant-fijo", "usuario-fijo"), new TenantExecutionContext())
+        {
+            InnerHandler = new HandlerCapturador(r => requestCapturado = r)
+        };
+        var cliente = new HttpClient(handler) { BaseAddress = new Uri("https://dominio.falso.local") };
+
+        await middleware.Ejecutar(
+            "Bearer token-valido",
+            new Dictionary<object, object>(),
+            () => cliente.GetAsync("api/recurso", TestContext.Current.CancellationToken),
+            TestContext.Current.CancellationToken);
+
+        requestCapturado!.Headers.GetValues("X-Tenant-Id").Should().ContainSingle().Which.Should().Be("org_123");
+        requestCapturado.Headers.GetValues("X-User-Id").Should().ContainSingle().Which.Should().Be("user_456");
+    }
+
+    [Fact]
+    public async Task Ejecutar_NoPublicaNada_CuandoNoHayBearer()
+    {
+        TenantExecutionContext.SetDerivedIdentity(null, null);
+        var items = new Dictionary<object, object>();
+        var siguienteInvocado = false;
+        var middleware = new IdentidadTenantMcpMiddleware(new ValidadorFalso(null));
+
+        await middleware.Ejecutar(null, items, () => { siguienteInvocado = true; return Task.CompletedTask; },
+            TestContext.Current.CancellationToken);
+
+        siguienteInvocado.Should().BeTrue();
+        SesionUsuario.De(items).Should().BeNull();
+        new TenantExecutionContext().Invoking(c => c.TenantId).Should().Throw<InvalidOperationException>();
+    }
+
+    [Fact]
+    public async Task Ejecutar_Rechaza_CuandoElBearerNoEsValido()
+    {
+        var siguienteInvocado = false;
+        var middleware = new IdentidadTenantMcpMiddleware(new ValidadorFalso(null));
+
+        var act = () => middleware.Ejecutar("Bearer token-invalido", new Dictionary<object, object>(),
+            () => { siguienteInvocado = true; return Task.CompletedTask; }, TestContext.Current.CancellationToken);
+
+        await act.Should().ThrowAsync<InvalidOperationException>();
+        siguienteInvocado.Should().BeFalse("un Bearer no validable nunca cae al tenant fijo");
+    }
+
+    [Theory]
+    [InlineData("org_id")]
+    [InlineData("sub")]
+    public async Task Ejecutar_Rechaza_CuandoElTokenNoTraeOrgIdOSub(string claimFaltante)
+    {
+        var claims = new[] { ("org_id", "org_123"), ("sub", "user_456") }.Where(c => c.Item1 != claimFaltante).ToArray();
+        var siguienteInvocado = false;
+        var middleware = new IdentidadTenantMcpMiddleware(new ValidadorFalso(Principal(claims)));
+
+        var act = () => middleware.Ejecutar("Bearer token-valido", new Dictionary<object, object>(),
+            () => { siguienteInvocado = true; return Task.CompletedTask; }, TestContext.Current.CancellationToken);
+
+        await act.Should().ThrowAsync<InvalidOperationException>();
+        siguienteInvocado.Should().BeFalse();
+    }
+}
+```
+
+`HandlerCapturador` ya existe en `PropagadorIdentidadTenantHandlerTests.cs` (item 7, mismo namespace). En esta variante el primer test de ese archivo construye el handler con `new PropagadorIdentidadTenantHandler(new IdentidadTenant("tenant-123", "usuario-456"), new TenantExecutionContext())` (sin identidad ambiente publicada cae a la fija, que es lo que afirma).
+
+`Sesion/ObtenerSesionToolTests.cs` -- `obtener_sesion` en ambos origenes, sobre el nucleo `Responder` (nivel 1):
+
+```csharp
+using System.Text.Json;
+using AwesomeAssertions;
+using <RootNamespace>.Mcp.{Proposito}.Infraestructura;
+using <RootNamespace>.Mcp.{Proposito}.Sesion;
+
+namespace <RootNamespace>.Mcp.{Proposito}.Tests.Sesion;
+
+public class ObtenerSesionToolTests
+{
+    private static readonly ObtenerSesionTool Tool = new(new IdentidadTenant("tenant-fijo", "usuario-fijo"));
+
+    [Fact]
+    public void Responder_IndicaOrigenSesionConCorreoYOrganizacion_CuandoHaySesion()
+    {
+        using var json = JsonDocument.Parse(Tool.Responder(new SesionUsuario("ana@empresa.co", "org_123", "sesion_789")));
+        var raiz = json.RootElement;
+
+        raiz.GetProperty("origen").GetString().Should().Be("sesion");
+        raiz.GetProperty("correo").GetString().Should().Be("ana@empresa.co");
+        raiz.GetProperty("organizacion").GetString().Should().Be("org_123");
+    }
+
+    [Fact]
+    public void Responder_IndicaOrigenTenantFijoConElTenantConfigurado_CuandoNoHaySesion()
+    {
+        using var json = JsonDocument.Parse(Tool.Responder(null));
+        var raiz = json.RootElement;
+
+        raiz.GetProperty("origen").GetString().Should().Be("tenant_fijo");
+        raiz.GetProperty("organizacion").GetString().Should().Be("tenant-fijo");
+        raiz.TryGetProperty("correo", out _).Should().BeFalse();
+    }
+}
+```
+
+**Test de composicion (nivel 2):** con `multi-tenant-header`, el pin de nombres de `ComposicionDelServidorTests` (item 2) pasa de `ContainSingle` a `nombres.Should().BeEquivalentTo([EjemploListarTool.NombreTool, ObtenerSesionTool.NombreTool], o => o.WithoutStrictOrdering());` (con `using <RootNamespace>.Mcp.{Proposito}.Sesion;`): pinnea `obtener_sesion` junto a la tool de ejemplo. Los demas tests de ese archivo (`Function`, `readOnlyHint`, descripciones) ya la cubren porque iteran todas las tools.
+
 ---
 
 ## Paso 5 - Wiring en la solucion y `global.json` (CA-6)
@@ -1601,14 +2021,26 @@ ningun proyecto del BC.
 ## Identidad y gate OAuth (MEF-ADR-0047 decisiones 6-7, MEF-ADR-0032 seccion 9)
 
 - **Propagador de identidad, siempre activo**: cada HttpClient tipado hacia una Function App del
-  BC inyecta `X-Tenant-Id`/`X-User-Id` via `PropagadorIdentidadTenantHandler`. El valor es
-  interino por app settings (`Identidad__TenantIdInterino`/`Identidad__UserIdInterino`) mientras
-  el servidor no reciba identidad real de una tool call -- ver el `// TODO` en
-  `Infraestructura/ConfiguracionIdentidadTenant.cs`.
-- **Limite estructural del host**: las tool calls contra `/runtime/webhooks/mcp` llegan a este
-  worker **sin** header `Authorization` -- lo sirve el paquete del host de la extension MCP, que
-  no lo reenvia. Ningun middleware del worker puede exigirlo. El gate OAuth real de este servidor
-  vive exclusivamente en el borde (Azure API Management, variante MCP/Connect).
+  BC inyecta `X-Tenant-Id`/`X-User-Id` via `PropagadorIdentidadTenantHandler`. Sin `Authorization`
+  Bearer (smoke con system key, desarrollo local) el valor es el fallback explicito fijo por app
+  settings (`Identidad__TenantIdInterino`/`Identidad__UserIdInterino`,
+  `Infraestructura/ConfiguracionIdentidadTenant.cs`).
+- **Identidad derivada del token** (solo si al scaffoldear este servidor `tenancy.strategy` ya era
+  `multi-tenant-header`): `IdentidadTenantMcpMiddleware` lee el Bearer del transporte HTTP de
+  `ToolInvocationContext` (no de `HttpContext`), lo valida con `ValidadorTokenAuthKit` y
+  `DerivadorIdentidadTenantMcp` deriva `org_id` -> tenant y `sub` -> usuario. Publica en el mismo
+  punto la identidad ambiente (`TenantExecutionContext`) y la sesion (`SesionUsuario`: correo,
+  organizacion, `sid`). Un Bearer no validable, o sin `org_id`/`sub`, **rechaza** la invocacion:
+  nunca cae al tenant fijo. La tool `obtener_sesion` responde `origen: "sesion"` (correo y
+  organizacion) u `origen: "tenant_fijo"`. Es la unica `ProjectReference` permitida: la biblioteca
+  `<RootNamespace>.TenantResolver` (MEF-ADR-0047 decision 3). Con `mono-tenant-transitorio` queda
+  como propuesta comentada en `Program.cs`: corre `/install-auth` y cablealo a mano, o vuelve a
+  scaffoldear.
+- **Limite del host**: el `Authorization` de una tool call contra `/runtime/webhooks/mcp` no llega
+  por `HttpContext`, pero si por el transporte HTTP de `ToolInvocationContext` (extension 1.6.0,
+  hecho verificado por el consumidor piloto: reverificalo si cambias de version). El gate OAuth
+  primario sigue en el borde (Azure API Management, variante MCP/Connect); el worker valida el
+  token solo para derivar identidad y como defensa en profundidad.
 - **`AutorizacionMcpMiddleware`/`ValidadorTokenAuthKit`**: defensa en profundidad, `ValidateAudience
   = false` (la audiencia ya la exige la politica de APIM). Se generan siempre; si al scaffoldear
   este servidor `tenancy.strategy` ya era `multi-tenant-header`, `Program.cs` los cablea. Si no,
@@ -1922,10 +2354,10 @@ module "function_app_mcp_{proposito_snake}" {
   # punto 6): una linea por dominio ya scaffoldeado que este servidor consume. Agregar una tool
   # nueva que consuma otro dominio exige agregar aqui su linea a mano, igual que en el codigo.
   #
-  # Identidad__* (Paso 1 punto 6b, MEF-ADR-0047 decision 6): valor interino por despliegue,
-  # TODO(tenancy etapa b / identidad derivada del token). En etapa (b) el BC ya filtra por tenant:
-  # este valor tiene que pasar a ser un tenant real del entorno o toda tool call consultara un
-  # tenant inexistente y devolvera vacio sin error.
+  # Identidad__* (Paso 1 punto 6b, MEF-ADR-0047 decision 6): fallback explicito del camino sin
+  # Bearer (smoke con system key); con Bearer valido la identidad sale del token. En etapa (b) el
+  # BC ya filtra por tenant: este valor tiene que ser un tenant real del entorno o el camino sin
+  # Bearer consultara un tenant inexistente y devolvera vacio sin error.
   # Mcp__* (Paso 1 puntos 7a/7c, MEF-ADR-0047 decision 7, MEF-ADR-0032 seccion 9): placeholders --
   # ResourceUri debe coincidir byte a byte con el PRM y el <audiences> de la politica dedicada de
   # APIM; AuthorizationServer es el dominio AuthKit del entorno (MEF-ADR-0032 B12), nunca el
@@ -2590,6 +3022,36 @@ public class SeguridadSmokeTests(McpFixture mcp)
 }
 ```
 
+**8b. `Identidad/ObtenerSesionSmokeTests.cs` (solo `{TenancyStrategy}` = `multi-tenant-header`, issue #1934, CA-6)** -- sexta verificacion: `obtener_sesion` invocada con la system key (sin Bearer) responde `origen: "tenant_fijo"`. Observa e2e el fallback del camino sin Bearer. Con esta variante, el pin de `tools/list` del item 6 pasa a esperar las dos tools (`ejemplo_listar` y `obtener_sesion`, `BeEquivalentTo` con `WithoutStrictOrdering`) en vez de `ContainSingle`.
+
+```csharp
+using System.Text.Json;
+using AwesomeAssertions;
+using <RootNamespace>.Mcp.{Proposito}.SmokeTests.Fixtures;
+using ModelContextProtocol.Protocol;
+
+namespace <RootNamespace>.Mcp.{Proposito}.SmokeTests.Identidad;
+
+public class ObtenerSesionSmokeTests(McpFixture mcp)
+{
+    // La suite se conecta con la system key y sin Bearer: el servidor debe usar el tenant fijo.
+    [Fact]
+    [Trait("Category", "Smoke")]
+    public async Task ObtenerSesion_Responde_TenantFijo_CuandoSeInvocaConSystemKeySinBearer()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var resultado = await mcp.Cliente.CallToolAsync(
+            "obtener_sesion", new Dictionary<string, object?>(), cancellationToken: ct);
+
+        resultado.IsError.Should().NotBeTrue();
+        using var json = JsonDocument.Parse(resultado.Content.OfType<TextContentBlock>().Single().Text);
+
+        json.RootElement.GetProperty("origen").GetString().Should().Be("tenant_fijo");
+        json.RootElement.GetProperty("organizacion").GetString().Should().NotBeNullOrWhiteSpace();
+    }
+}
+```
+
 **9. Blindar `appsettings.local.json` (CA-2: la key jamas en un archivo versionado).** El
 `appsettings.json` de arriba deja la key vacia a proposito y el `.csproj` copia
 `appsettings.local.json` solo si existe -- pero ese archivo local es justamente donde un humano
@@ -2923,9 +3385,10 @@ Cierra el reporte con lo que queda **fuera** de tu alcance y el usuario tiene qu
 6. **Identidad y OAuth (CA-3 del issue #819) -- repite esto siempre, incluso si todo lo demas ya
    existia**: el gate OAuth de este servidor vive exclusivamente en el borde (Azure API
    Management, variante MCP/Connect, MEF-ADR-0032 seccion 9) -- las tool calls contra
-   `/runtime/webhooks/mcp` llegan a este worker sin header `Authorization` (limite estructural del
-   host, MEF-ADR-0047 decision 7), asi que `AutorizacionMcpMiddleware`/`ValidadorTokenAuthKit`
-   nunca son el gate primario, solo defensa en profundidad. Reporta si `{TenancyStrategy}` resulto
+   `/runtime/webhooks/mcp` no traen el `Authorization` por `HttpContext`, pero si por el transporte
+   de `ToolInvocationContext` (MEF-ADR-0047 decision 7, enmendada), asi que el worker lo valida para
+   derivar identidad y `AutorizacionMcpMiddleware`/`ValidadorTokenAuthKit` nunca son el gate
+   primario, solo defensa en profundidad. Reporta si `{TenancyStrategy}` resulto
    `multi-tenant-header` (componentes cableados en `Program.cs`) o `mono-tenant-transitorio`
    (quedaron como propuesta comentada -- corre `/install-auth` y cablealos, o vuelve a scaffoldear,
    cuando el BC adopte WorkOS+APIM). En cualquiera de los dos casos, `Mcp__ResourceUri`/
@@ -2939,9 +3402,12 @@ Cierra el reporte con lo que queda **fuera** de tu alcance y el usuario tiene qu
    `/well-known/oauth-protected-resource/<path-del-servidor>` (sin punto inicial por restriccion de
    APIM); y `Mcp__ResourceUri` debe quedar byte a byte igual al `<audiences>` de la politica
    dedicada (MEF-ADR-0032 seccion 9).
-7. **Identidad interina en etapa (b) (CA-1)**: `Identidad__TenantIdInterino` se genera con un
-   marcador (`tenant-interino-mcp-...`), no con un tenant real. Si el BC ya esta en
-   `multi-tenant-header`, avisa que un humano debe reemplazarlo por un tenant real del entorno:
-   el BC filtra por ese header, asi que un tenant inexistente devuelve respuestas vacias sin error
-   -- exactamente el fallo silencioso que MEF-ADR-0047 decision 6 acepta como interinidad, no como
-   estado final.
+7. **Identidad fija (fallback sin Bearer) y derivada del token (issue #1934)**:
+   `Identidad__TenantIdInterino` se genera con un marcador (`tenant-interino-mcp-...`), no con un
+   tenant real; es el fallback explicito del camino sin Bearer (smoke con system key). Si el BC ya
+   esta en `multi-tenant-header`, avisa que un humano debe reemplazarlo por un tenant real del
+   entorno (el BC filtra por ese header: un tenant inexistente devuelve respuestas vacias sin
+   error) y que con un Bearer valido la identidad sale del token (`org_id` -> tenant, `sub` ->
+   usuario) via `IdentidadTenantMcpMiddleware`; la tool `obtener_sesion` permite confirmar en que
+   empresa quedo la sesion. En `mono-tenant-transitorio` esa derivacion queda como propuesta
+   comentada en `Program.cs`.
