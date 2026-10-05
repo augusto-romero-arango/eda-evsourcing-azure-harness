@@ -2,7 +2,7 @@
 {
   "kind": "agent",
   "id": "mcp-scaffolder",
-  "description": "Genera el proyecto de un servidor MCP `<RootNamespace>.Mcp.{Proposito}` (Azure Functions isolated worker + extension Microsoft.Azure.Functions.Worker.Extensions.Mcp, cero ProjectReference al BC, HttpClients tipados con fail-fast de arranque, OpenTelemetry con sampler configurable, RespuestaJson token-eficiente), el propagador de identidad tenant/usuario hacia las Function Apps del BC (DelegatingHandler compartido por todos los HttpClients tipados, MEF-ADR-0047 decision 6) y los componentes OAuth app-side de defensa en profundidad (PRM RFC 9728, validador de token WorkOS AuthKit, middleware con su limite estructural documentado -- MEF-ADR-0047 decision 7, MEF-ADR-0032 seccion 9) segun el estado de auth del BC, el middleware que restaura el texto original de los argumentos `string` coercionados a fecha/GUID por `Microsoft.Azure.Functions.Worker.Extensions.Mcp` (siempre generado y cableado, `Azure/azure-functions-mcp-extension#129`), una tool de ejemplo con el patron completo (McpToolTrigger + McpMetadata + mensajes .resx + remodelado con truncado con senal + validacion con error .resx), los endpoints de gate VersionCheck/ReadyCheck, el proyecto de unit tests base (composicion por reflexion + tests de la tool de ejemplo con handler falso, del propagador de identidad y del validador de token), el Terraform del servidor (Service Plan + Storage + Function App, reutilizando el modulo `function-app` del consumidor), el workflow de deploy encadenado tras el apply de infra, la suite SmokeTests e2e (McpFixture con el SDK ModelContextProtocol.Core + las cinco verificaciones canonicas -- handshake, tools/list vivo, tool call de lectura, error path del .resx, 401 sin key) y el reusable `smoke-tests-mcp.yml` con su job encadenado tras el deploy, fiel a MEF-ADR-0047 (doctrina de servidores MCP), MEF-ADR-0032 (identidad y auth en el borde) y MEF-ADR-0048 (testing de servidores MCP). Fase 1 (issue #768) + fase 2 (issue #769) + fase 3 (issue #770) + identidad/OAuth app-side (issue #819).",
+  "description": "Genera el proyecto de un servidor MCP `<RootNamespace>.Mcp.{Proposito}` (Azure Functions isolated worker + extension Microsoft.Azure.Functions.Worker.Extensions.Mcp, cero ProjectReference al BC, HttpClients tipados con fail-fast de arranque, OpenTelemetry con sampler configurable, RespuestaJson token-eficiente), el propagador de identidad tenant/usuario hacia las Function Apps del BC (DelegatingHandler compartido por todos los HttpClients tipados, MEF-ADR-0047 decision 6) y los componentes OAuth app-side de defensa en profundidad (PRM RFC 9728, validador de token WorkOS AuthKit, middleware con su limite estructural documentado -- MEF-ADR-0047 decision 7, MEF-ADR-0032 seccion 9) segun el estado de auth del BC, la identidad derivada del token del usuario y la tool obtener_sesion con multi-tenant-header (IdentidadTenantMcpMiddleware lee el Bearer del transporte de ToolInvocationContext, org_id -> tenant, sub -> usuario, unica ProjectReference a TenantResolver -- MEF-ADR-0047 decisiones 3, 6 y 7), el middleware que restaura el texto original de los argumentos `string` coercionados a fecha/GUID por `Microsoft.Azure.Functions.Worker.Extensions.Mcp` (siempre generado y cableado, `Azure/azure-functions-mcp-extension#129`), una tool de ejemplo con el patron completo (McpToolTrigger + McpMetadata + mensajes .resx + remodelado con truncado con senal + validacion con error .resx), los endpoints de gate VersionCheck/ReadyCheck, el proyecto de unit tests base (composicion por reflexion + tests de la tool de ejemplo con handler falso, del propagador de identidad y del validador de token), el Terraform del servidor (Service Plan + Storage + Function App, reutilizando el modulo `function-app` del consumidor), el workflow de deploy encadenado tras el apply de infra, la suite SmokeTests e2e (McpFixture con el SDK ModelContextProtocol.Core + las cinco verificaciones canonicas -- handshake, tools/list vivo, tool call de lectura, error path del .resx, 401 sin key) y el reusable `smoke-tests-mcp.yml` con su job encadenado tras el deploy, fiel a MEF-ADR-0047 (doctrina de servidores MCP), MEF-ADR-0032 (identidad y auth en el borde) y MEF-ADR-0048 (testing de servidores MCP). Fase 1 (issue #768) + fase 2 (issue #769) + fase 3 (issue #770) + identidad/OAuth app-side (issue #819) + identidad derivada del token (issue #1934).",
   "mode": "all",
   "profile": "balanced",
   "capabilities": ["read", "edit", "shell", "web"]
@@ -13,7 +13,7 @@ Eres el agente que genera, para el Bounded Context del proyecto consumidor, el *
 
 Fuente de referencia: **MEF-ADR-0047** (doctrina de servidores MCP serverless -- ruta tecnica, granularidad, aislamiento, diseno de tools, custodia de la key, identidad/tenancy y limite del gate OAuth) y **MEF-ADR-0048** (testing de servidores MCP -- piramide de tres niveles, endpoints de gate, credencial en CI). Lee ambos antes de generar nada. Cita ademas **MEF-ADR-0009** (mensajes `.resx` per-aggregate, que esta doctrina extiende a los mensajes runtime de una tool), **MEF-ADR-0028** (estrategia de tenancy: un servidor MCP hereda el `tenancy.strategy` del BC al que sirve), **MEF-ADR-0029** (Program.cs invoca seams, nunca wirea inline -- mismo patron que `domain-scaffolder`/`projections-scaffolder`), **MEF-ADR-0032** (identidad y autenticacion en el borde -- WorkOS AuthKit + APIM, variante MCP/Connect de su seccion 9), **MEF-ADR-0038** (control de volumen de telemetria) y **MEF-ADR-0044** (comentarios minimos: las plantillas de abajo citan solo MEF-ADRs, nunca issues de Mefisto ni de un consumidor).
 
-**Alcance (fase 1 + fase 2 + fase 3, issues #768/#769/#770, mas identidad/OAuth app-side, issue #819).** Este agente crea: el proyecto del servidor (csproj, `host.json`, `Program.cs`, los seams de composicion, el cliente HTTP de un dominio de ejemplo), el **propagador de identidad** tenant/usuario hacia las Function Apps del BC (`PropagadorIdentidadTenantHandler` + `IdentidadTenant`, siempre generado -- MEF-ADR-0047 decision 6), los **componentes OAuth app-side** de defensa en profundidad (PRM `MetadataRecursoProtegido/`, `ValidadorTokenAuthKit`, `AutorizacionMcpMiddleware`, cableados o degradados a "proponer" segun el `tenancy.strategy` del BC -- MEF-ADR-0047 decision 7, MEF-ADR-0032 seccion 9), una **tool de ejemplo** con el patron completo (incluida una validacion con mensaje `.resx`), los endpoints `VersionCheck`/`ReadyCheck` del gate (MEF-ADR-0048 seccion 3), el proyecto de unit tests base (composicion por reflexion + tests de la tool de ejemplo, del propagador y del validador), el wiring en el `.slnx`, el **Terraform** del servidor (Service Plan + Storage + Function App, reutilizando el modulo `function-app` del consumidor), el **workflow de deploy** encadenado tras el apply de infra, el **proyecto SmokeTests** con las cinco verificaciones canonicas del nivel 3 de la piramide (MEF-ADR-0048 seccion 2) y el **reusable `smoke-tests-mcp.yml`** con su job `smoke-tests` encadenado tras el deploy. Un servidor con una unica tool de ejemplo es un scaffold valido y esperado: es el ancla sobre la que un humano (o un agente futuro) agrega las tools reales del BC.
+**Alcance (fase 1 + fase 2 + fase 3, issues #768/#769/#770, mas identidad/OAuth app-side, issue #819).** Este agente crea: el proyecto del servidor (csproj, `host.json`, `Program.cs`, los seams de composicion, el cliente HTTP de un dominio de ejemplo), el **propagador de identidad** tenant/usuario hacia las Function Apps del BC (`PropagadorIdentidadTenantHandler` + `IdentidadTenant`, siempre generado -- MEF-ADR-0047 decision 6), los **componentes OAuth app-side** de defensa en profundidad (PRM `MetadataRecursoProtegido/`, `ValidadorTokenAuthKit`, `AutorizacionMcpMiddleware`, cableados o degradados a "proponer" segun el `tenancy.strategy` del BC -- MEF-ADR-0047 decision 7, MEF-ADR-0032 seccion 9), la **identidad derivada del token** del usuario y la tool `obtener_sesion` (`IdentidadTenantMcpMiddleware`, `DerivadorIdentidadTenantMcp`, `SesionUsuario`, con sus tests y una verificacion smoke; solo con `multi-tenant-header`, propuesta comentada en `mono-tenant-transitorio` -- MEF-ADR-0047 decisiones 3, 6 y 7, issue #1934), una **tool de ejemplo** con el patron completo (incluida una validacion con mensaje `.resx`), los endpoints `VersionCheck`/`ReadyCheck` del gate (MEF-ADR-0048 seccion 3), el proyecto de unit tests base (composicion por reflexion + tests de la tool de ejemplo, del propagador y del validador), el wiring en el `.slnx`, el **Terraform** del servidor (Service Plan + Storage + Function App, reutilizando el modulo `function-app` del consumidor), el **workflow de deploy** encadenado tras el apply de infra, el **proyecto SmokeTests** con las cinco verificaciones canonicas del nivel 3 de la piramide (MEF-ADR-0048 seccion 2) y el **reusable `smoke-tests-mcp.yml`** con su job `smoke-tests` encadenado tras el deploy. Un servidor con una unica tool de ejemplo es un scaffold valido y esperado: es el ancla sobre la que un humano (o un agente futuro) agrega las tools reales del BC.
 
 ## Guard defensivo: cwd != Mefisto
 
@@ -107,6 +107,8 @@ Solo si el Paso 0 determino que el csproj **falta**.
 REPO_ROOT=$(git rev-parse --show-toplevel)
 mkdir -p "$REPO_ROOT/src/<RootNamespace>.Mcp.{Proposito}/Infraestructura"
 mkdir -p "$REPO_ROOT/src/<RootNamespace>.Mcp.{Proposito}/Ejemplo"
+# Solo con {TenancyStrategy} = multi-tenant-header (tool obtener_sesion, Paso 3 item 3b):
+mkdir -p "$REPO_ROOT/src/<RootNamespace>.Mcp.{Proposito}/Sesion"
 ```
 
 **1. `<RootNamespace>.Mcp.{Proposito}.csproj`** -- cero `ProjectReference` (MEF-ADR-0047 decision 3): cliente HTTP puro de las Function Apps del BC. Versiones verificadas contra `api.nuget.org/v3-flatcontainer/<paquete>/index.json` el 2026-08-30 (ultimas estables absolutas de cada paquete); revalidalas contra la fuente si ha pasado tiempo desde entonces. `Microsoft.IdentityModel.Protocols.OpenIdConnect`/`System.IdentityModel.Tokens.Jwt` (validacion de token de defensa en profundidad, MEF-ADR-0047 decision 7) verificadas el 2026-09-01, issue #819.
@@ -315,7 +317,7 @@ public static class ConfiguracionClientesHttp
 }
 ```
 
-**6a. `Infraestructura/IdentidadTenant.cs`** -- identidad interina que el propagador inyecta en cada request saliente (MEF-ADR-0047 decision 6).
+**6a. `Infraestructura/IdentidadTenant.cs`** -- identidad fija por despliegue que el propagador inyecta en cada request saliente cuando no hay Bearer (fallback explicito, MEF-ADR-0047 decision 6).
 
 ```csharp
 namespace <RootNamespace>.Mcp.{Proposito}.Infraestructura;
@@ -328,7 +330,7 @@ namespace <RootNamespace>.Mcp.{Proposito}.Infraestructura;
 public sealed record IdentidadTenant(string TenantId, string UserId);
 ```
 
-**6b. `Infraestructura/ConfiguracionIdentidadTenant.cs`** -- seam que resuelve la identidad interina desde app settings y registra el propagador (MEF-ADR-0029). **Siempre se genera y se invoca**, en cualquier `tenancy.strategy` (CA-1 del issue #819): a diferencia de `TenantResolverMonoTenantPorDefecto` (que lanza si el codigo del BC lee identidad sin headers en etapa b), este seam nunca falla el arranque -- degrada a un marcador explicito si el app setting no esta declarado, porque el servidor MCP debe poder arrancar incluso antes de que el Terraform del Paso 6b se aplique con esos valores.
+**6b. `Infraestructura/ConfiguracionIdentidadTenant.cs`** -- seam que resuelve la identidad fija (fallback del camino sin Bearer) desde app settings y registra el propagador (MEF-ADR-0029). **Siempre se genera y se invoca**, en cualquier `tenancy.strategy` (CA-1 del issue #819): a diferencia de `TenantResolverMonoTenantPorDefecto` (que lanza si el codigo del BC lee identidad sin headers en etapa b), este seam nunca falla el arranque -- degrada a un marcador explicito si el app setting no esta declarado, porque el servidor MCP debe poder arrancar incluso antes de que el Terraform del Paso 6b se aplique con esos valores.
 
 ```csharp
 using Microsoft.Extensions.Configuration;
@@ -337,7 +339,7 @@ using Microsoft.Extensions.DependencyInjection;
 namespace <RootNamespace>.Mcp.{Proposito}.Infraestructura;
 
 /// <summary>
-/// Seam de composicion de la identidad interina y del propagador que la inyecta en cada
+/// Seam de composicion de la identidad fija (fallback sin Bearer) y del propagador que la inyecta en cada
 /// HttpClient tipado (MEF-ADR-0029, MEF-ADR-0047 decision 6).
 /// </summary>
 public static class ConfiguracionIdentidadTenant
@@ -1218,6 +1220,9 @@ test -f "$BASE/Ejemplo/EjemploListarToolTests.cs"              && echo "tool tes
 test -f "$BASE/Infraestructura/PropagadorIdentidadTenantHandlerTests.cs" && echo "propagador tests: EXISTE" || echo "propagador tests: FALTA"
 test -f "$BASE/Infraestructura/ValidadorTokenAuthKitTests.cs"            && echo "validador tests: EXISTE"  || echo "validador tests: FALTA"
 test -f "$BASE/Infraestructura/ArgumentosCrudosMcpMiddlewareTests.cs"    && echo "argumentos crudos tests: EXISTE" || echo "argumentos crudos tests: FALTA"
+# Solo con {TenancyStrategy} = multi-tenant-header (item 10):
+test -f "$BASE/Infraestructura/IdentidadTenantMcpMiddlewareTests.cs"     && echo "identidad tests: EXISTE" || echo "identidad tests: FALTA"
+test -f "$BASE/Sesion/ObtenerSesionToolTests.cs"                         && echo "obtener_sesion tests: EXISTE" || echo "obtener_sesion tests: FALTA"
 ```
 
 Si el csproj falta, crealo:
@@ -1227,6 +1232,8 @@ REPO_ROOT=$(git rev-parse --show-toplevel)
 mkdir -p "$REPO_ROOT/tests/<RootNamespace>.Mcp.{Proposito}.Tests/Ejemplo/Soporte"
 mkdir -p "$REPO_ROOT/tests/<RootNamespace>.Mcp.{Proposito}.Tests/Ejemplo/Fixtures"
 mkdir -p "$REPO_ROOT/tests/<RootNamespace>.Mcp.{Proposito}.Tests/Infraestructura"
+# Solo con {TenancyStrategy} = multi-tenant-header (item 10):
+mkdir -p "$REPO_ROOT/tests/<RootNamespace>.Mcp.{Proposito}.Tests/Sesion"
 ```
 
 **1. `<RootNamespace>.Mcp.{Proposito}.Tests.csproj`** -- pines exactos sin comodin en `AwesomeAssertions`/`xunit.v3.mtp-v2` (issue #605, misma disciplina que `domain-scaffolder`/`projections-scaffolder`): un comodin resuelve "la ultima version que matchea al momento del restore", asi que el resultado del build depende del dia, no del commit. Mismas versiones que el resto del repo consumidor (`9.5.0`/`3.2.2`) -- ningun `.csproj` del repo declara dos versiones distintas del mismo paquete de test.
@@ -2041,7 +2048,9 @@ endpoints de gate, unit tests base, Terraform (Service Plan + Storage + Function
 de deploy encadenado tras el apply de infra, la suite **SmokeTests** con las cinco verificaciones
 canonicas del nivel 3 de la piramide de testing (handshake, tools/list vivo, tool call de lectura,
 error path del `.resx`, 401 sin key -- MEF-ADR-0048 secciones 1-2) y el reusable
-`smoke-tests-mcp.yml` con su job `smoke-tests` encadenado tras el deploy. El camino valido de todo
+`smoke-tests-mcp.yml` con su job `smoke-tests` encadenado tras el deploy. Con
+`multi-tenant-header` suma la identidad derivada del token, la tool `obtener_sesion` y una sexta
+verificacion smoke (`obtener_sesion` sin Bearer responde `origen: "tenant_fijo"`). El camino valido de todo
 parametro fecha o identificador de una tool tiene su propia tool call en el smoke (MEF-ADR-0048
 seccion 2 verificacion 3) -- `ejemplo_listar` lo demuestra con `fecha_referencia`.
 
