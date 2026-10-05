@@ -932,20 +932,6 @@ public async Task AgregarServiciosControlHoras_CongelaElAliasDeTurnoCreado()
 
 Autoridad completa (mecanica del alias, `EventNamingStyle`, las tres proscripciones de registro): **MEF-ADR-0036**. Esta seccion no la duplica — solo enseña donde y como se congela el guardrail.
 
-### 6h. Pines de catalogo: actualizalos en el mismo commit
-
-Un **pin de catalogo** es un test que fija el conteo o los nombres de un catalogo enumerable: tools MCP, endpoints, eventos registrados. Cuando agregas una pieza a ese catalogo, tu stub ya lo cambia: el pin viejo queda en rojo por una razon equivocada, la compuerta roja lo acepta como "fase roja confirmada" y el `implementer`, que no puede tocar tests, no puede ponerlo verde -- el pipeline muere en la fase verde.
-
-**Regla**: al agregar una pieza (tool, endpoint, evento registrado) busca en `tests/` los pines de conteo y de nombres de ese catalogo -- unitarios **y** smoke -- y actualizalos en el mismo commit, aunque el issue no los liste.
-
-**Como encontrarlos** (no dependas de "Impacto en archivos"):
-- Busca por el nombre del catalogo o del tipo (`grep -rn "ComposicionDelServidor\|Tools\|TiposPersistidos" tests/`).
-- Busca por el conteo numerico actual, en cifra **y en palabras**: `29`, `Veintinueve`, `LasVeintinueveTools`, `TreintaTools`. Un nombre de test o de metodo suele llevar el conteo escrito.
-
-**Ejemplo MCP**: agregar la tool `aplicar_plantilla_semanal_por_grupo` a un servidor con 29 tools exige actualizar **dos** pines: el de composicion por reflexion (`ComposicionDelServidorTests.ServidorMcp_ExponeLasVeintinueveTools_CuandoSeInspeccionaElEnsamblado` pasa a 30 tools, incluyendo el renombrado a `...LasTreintaTools...`) y el del smoke (`MaterializaLasTreintaTools`). Actualizar solo uno deja el otro en rojo para siempre (MEF-ADR-0048, nivel 2).
-
-Registra cada pin actualizado en el resumen (paso 9, "Pines de catalogo actualizados").
-
 ### 6g. FunctionEndpointTests: assertar el codigo de exito exacto del contrato (MEF-ADR-0043)
 
 El campo "Contrato HTTP del comando" del Definition of Ready (MEF-ADR-0011, enmendado por MEF-ADR-0043) declara, para todo endpoint HTTP de comando, cuatro elementos: verbo, ruta, el paso del test de precedencia de MEF-ADR-0043 seccion 2 que se aplico, y el **codigo de exito** de la respuesta sincrona. Lee ese contrato del issue antes de escribir `FunctionEndpointTests.cs` -- **nunca asumas un codigo por default, y nunca asumas `AcceptedResult`**: fue la practica universal del marco antes de que MEF-ADR-0004 (enmendada por el issue #849) corrigiera esa premisa, y sigue siendo el error mas facil de heredar por copiar un test viejo.
@@ -1081,6 +1067,20 @@ public class FunctionEndpointTests
 El comentario del ultimo ejemplo es el unico que sobrevive el umbral doble de MEF-ADR-0044 en este archivo: el nombre del test dice `202`, pero no dice **que** queda pendiente -- y sin esa razon un mantenedor futuro podria "corregir" el `202` a `204`. Se escribe con la razon concreta que trae el issue, nunca copiando esta; si el issue no trae ninguna, el contrato no admite `202` (tabla de arriba) y este test no se escribe.
 
 ---
+
+### 6h. Pines de catalogo: actualizalos en el mismo commit
+
+Un **pin de catalogo** es un test que fija el conteo o los nombres de un catalogo enumerable: tools MCP, endpoints, eventos registrados. Cuando agregas una pieza a ese catalogo, tu stub ya lo cambia: el pin viejo queda en rojo por una razon equivocada, la compuerta roja lo acepta como "fase roja confirmada" y el `implementer`, que no puede tocar tests, no puede ponerlo verde -- el pipeline muere en la fase verde.
+
+**Regla**: al agregar una pieza (tool, endpoint, evento registrado) busca en `tests/` los pines de conteo y de nombres de ese catalogo -- unitarios **y** smoke -- y actualizalos en el mismo commit, aunque el issue no los liste.
+
+**Como encontrarlos** (no dependas de "Impacto en archivos"):
+- Busca por el nombre del catalogo o del tipo (`grep -rn "ComposicionDelServidor\|Tools\|TiposPersistidos" tests/`).
+- Busca por el conteo numerico actual, en cifra **y en palabras**: `29`, `Veintinueve`, `LasVeintinueveTools`. Un nombre de test o de metodo suele llevar el conteo escrito.
+
+**Ejemplo MCP**: agregar la tool `aplicar_plantilla_semanal_por_grupo` a un servidor con 29 tools exige actualizar **dos** pines: el de composicion por reflexion (`ComposicionDelServidorTests.ServidorMcp_ExponeLasVeintinueveTools_CuandoSeInspeccionaElEnsamblado` pasa a 30 tools, incluyendo el renombrado a `...LasTreintaTools...`) y el del smoke (`MaterializaLasTreintaTools`). Actualizar solo uno deja el otro en rojo para siempre (MEF-ADR-0048, nivel 2).
+
+Registra cada pin actualizado en el resumen (paso 9, "Pines de catalogo actualizados").
 
 ### 7. Verificar que compila
 
