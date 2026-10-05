@@ -1,6 +1,6 @@
 // GENERADO por src/published/scripts/adapters/adapter-opencode.sh desde src/published/contract/command-entry.json. No editar a mano.
 const CATALOG = ["batch-stop","bitacora","bug","draft","eraser-diagram","fix-review","health-check","implement","infra","infra-base","install-apim","install-auth","install-workos","merge","next-order","onboard","parallel","purge-store","runtimes","scaffold","scaffold-mcp","scaffold-projections","seed-secret","sequential","tooling","upgrade","work-status"];
-const IDENTITY = {"version":"0.40.2","commit":"c3c4a3d065cd99d1648d500d0ea03c6460ec5bee"};
+const IDENTITY = {"version":"0.41.0","commit":"bfc58b987bb97bd51cf87366cc798dffe8fd5640"};
 const RESOLVER = "scripts/resolve-opencode-entry.sh";
 import { execFile } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from "node:fs";
