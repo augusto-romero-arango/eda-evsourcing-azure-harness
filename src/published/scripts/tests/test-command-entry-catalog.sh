@@ -82,5 +82,11 @@ agent_rendered="$($ADAPTER render "$agent_source" "$agent_marker")"
 agent_hash="$(printf '%s' "$agent_rendered" | body /dev/stdin | trimmed_sha256)"
 delegated_hash="$(jq -r '.delegatedPrompts[] | select(.command == "bitacora" and .agent == "historiador") | .sha256' <<< "$manifest")"
 [ "$agent_hash" = "$delegated_hash" ] && pass 'manifest identifica el prompt delegado distribuido' || fail 'hash del prompt delegado'
+printf '%s\n' '[shellExtra]'
+mutated_rc() { jq -c --argjson v "$1" '.matrix.commands[0].shellExtra = $v' <<< "$(catalog_input)" | jq -c -f "$FILTER" >/dev/null 2>&1; }
+mutated_rc '["git status*"]' && pass 'shellExtra array de strings aceptado' || fail 'shellExtra valido rechazado'
+mutated_rc '[]' && pass 'shellExtra vacio aceptado' || fail 'shellExtra vacio rechazado'
+mutated_rc '"git status*"' && fail 'shellExtra no-array aceptado' || pass 'shellExtra no-array rechazado'
+mutated_rc '["git status*", 3]' && fail 'shellExtra con elemento no-string aceptado' || pass 'shellExtra con elementos no-string rechazado'
 [ "$FAIL" -eq 0 ] && exit 0
 exit 1
