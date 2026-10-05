@@ -35,7 +35,7 @@ Si el guard dispara, detente sin escribir nada.
 
 ## Paso 0 - Resolver tokens y derivar nombres
 
-**El proposito del servidor** te llega en el mensaje del usuario (via `/scaffold-mcp <proposito>`), ya normalizado a PascalCase -- ej. `Consultas`, `Comandos`, `ConsultasTurnos`. Extraelo del mensaje; llamalo `{Proposito}` en todo lo que sigue.
+**El proposito del servidor** te llega en el mensaje del usuario (via `/scaffold-mcp <proposito>`), ya normalizado a PascalCase -- `General` cuando se invoco sin argumento (servidor unico del BC), o el de un servidor adicional nombrado por su razon de existir, ej. `Auditoria` (MEF-ADR-0047 decision 2). Extraelo del mensaje; llamalo `{Proposito}` en todo lo que sigue.
 
 
 **Tokens del archivo efectivo de instrucciones** (seccion "Tokens del harness", lee con tu tool `Read` la ruta `{{mefisto:instructions-path}}`):
@@ -1564,9 +1564,10 @@ ningun proyecto del BC.
 
 ## Proposito y limites
 
-- **Un servidor MCP por Bounded Context y por proposito**, nunca por dominio (MEF-ADR-0047
-  seccion 2). Este es el de **{Proposito}**; si el BC necesita la particion Consultas/Comandos
-  (CQS), el otro proposito es un servidor y una key separados.
+- **`General` es el servidor del BC**; los servidores adicionales son especializados y se crean
+  solo por necesidad demostrada, nunca por dominio (MEF-ADR-0047 seccion 2). Este es el de
+  **{Proposito}**: si es `General`, cubre el BC completo; si no, atiende solo la razon de
+  existir que su nombre expresa.
 - **Tools 100% stateless**: el contexto conversacional vive en el cliente MCP, nunca aqui.
 - **Respuestas remodeladas para token-eficiencia**: cada tool poda campos internos y trunca
   listas largas con senal para que el asistente refine el filtro.
