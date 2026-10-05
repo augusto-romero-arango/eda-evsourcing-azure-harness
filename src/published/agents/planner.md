@@ -743,7 +743,7 @@ MEF-ADR-0047 decisión 2 fija que un BC empieza con **un único servidor** `<Roo
 
 ### Granularidad: por Bounded Context y propósito, nunca por dominio
 
-Nunca propongas un servidor MCP por dominio. MEF-ADR-0047 decisión 2 fija la granularidad en el BC: un servidor `General` + adicionales por necesidad demostrada: las recetas reales de un asistente cruzan dominios -- la pregunta de negocio típica toca el dominio que registra el hecho y el que custodia el catálogo contra el que se interpreta --, así que un servidor por dominio forzaría al cliente a orquestar N conexiones y N credenciales para responder una sola pregunta.
+Nunca propongas un servidor MCP por dominio. MEF-ADR-0047 decisión 2 fija la granularidad en el BC (un servidor `General` + adicionales por necesidad demostrada): las recetas reales de un asistente cruzan dominios -- la pregunta de negocio típica toca el dominio que registra el hecho y el que custodia el catálogo contra el que se interpreta --, así que un servidor por dominio forzaría al cliente a orquestar N conexiones y N credenciales para responder una sola pregunta.
 
 ### Derivar el catálogo de tools
 
