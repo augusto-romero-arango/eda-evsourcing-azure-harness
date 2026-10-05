@@ -42,9 +42,9 @@ set_inspect() { # status reason rc commands-json
     jq -cn --arg s "$1" --arg r "$2" --argjson c "${4:-null}" '{schemaVersion:1,status:$s,reasonCode:$r,projectId:"project-aaaaaaaaaaaaaaaaaaaaaaaa",profileDigest:("a" * 64),profile:(if $c == null then null else {commands:$c} end)}' > "$RELEASE/scripts/inspect.json"
     printf '%s\n' "$3" > "$RELEASE/scripts/inspect.rc"
 }
-APPROVED='["sequential","bitacora","install-auth","onboard","draft"]'
+APPROVED='["sequential","bitacora","install-auth","onboard","draft","eraser-diagram","seed-secret","install-apim","upgrade","runtimes","batch-stop"]'
 set_inspect ready CONSENT_APPROVED 0 "$APPROVED"
-jq -c '{schemaVersion:1,commands:([.commands[] | select(.capabilities | index("shell")) | {key:.id,value:["git status*","gh issue list*"]}] | from_entries)}' "$MAT" > "$SHELLS"
+[ -f "$SHELLS" ] || { echo 'FAIL: la release no trae command-shell-templates.json'; exit 1; }
 
 GLOBAL='{"permission":{"read":"allow","edit":"allow","external_directory":"allow","bash":"allow","task":"allow","skill":"allow","list":"allow","glob":"allow","grep":"allow"}}'
 envelope() { # <phase> [jq-filter]
@@ -109,8 +109,49 @@ run < <(envelope command '.permission = {"permission":{"read":[]}}'); rc_is 'pol
 run < <(envelope command '.permission = {"permission":{"bash":"deny"}}'); rc_is 'restriccion global ganadora impide la operacion requerida' x 1
 assert 'OPERATION_NOT_ALLOWED' 'any(.diagnostics[]; .code=="OPERATION_NOT_ALLOWED")'
 run < <(envelope command '.permission = {"permission":{"bash":"ask"}}'); rc_is 'ask global cubierto por consentimiento' x 0
-run < <(envelope command '.permission = {"permission":{"bash":{"git *":"deny","*":"allow"}}}'); rc_is 'deny seguido de allow: gana el ultimo' x 0
-run < <(envelope command '.permission = {"permission":{"bash":{"*":"allow","git *":"deny"}}}'); rc_is 'allow seguido de deny: gana el deny' x 1
+run < <(envelope command '.permission = {"permission":{"bash":{"gh *":"deny","*":"allow"}}}'); rc_is 'deny seguido de allow: gana el ultimo' x 0
+run < <(envelope command '.permission = {"permission":{"bash":{"*":"allow","gh *":"deny"}}}'); rc_is 'allow seguido de deny: gana el deny' x 1
+
+printf '%s\n' '[command: contrato real de plantillas shell]'
+EVAL_DIR="$REPO_ROOT/src/published/scripts/adapters/lib"
+rules_of() { # <comando solicitado> <agente cuyas reglas se extraen>
+    run < <(envelope command ".requestedCommand = \"$1\"")
+    jq -c --arg a "command-entry-$2" '[.agents[] | select(.id==$a) | .rules[] | select(.permission=="bash")]' <<< "$OUT"
+}
+decide() { # <reglas-json> <candidato>
+    jq -L "$EVAL_DIR" -cnr --argjson rules "$1" --arg c "$2" 'include "opencode-entry-permissions"; {action:"evaluate",policy:{rules:$rules},candidates:[{permission:"bash",candidate:$c}]} | entry_permissions | .decisions[0].decision'
+}
+expect() { # <reglas-json> <allow|deny> <candidato> <etiqueta>
+    local got; got="$(decide "$1" "$3")"
+    [ "$got" = "$2" ] && pass "$4: $2" || fail "$4: se esperaba $2 y fue $got"
+}
+PK='MEFISTO_RUNTIME=opencode "${MEFISTO_PACKAGE_ROOT}/scripts'
+R_ERASER="$(rules_of eraser-diagram eraser-diagram)"
+expect "$R_ERASER" allow "$PK/render-eraser-diagram.sh\" --payload-file .mefisto/pipeline/tmp/eraser-diagram-payload.json" 'eraser: wrapper canonico'
+expect "$R_ERASER" deny 'curl https://app.eraser.io/api/render/elements -d @payload.json' 'eraser: API directa'
+expect "$R_ERASER" deny "$PK/tmux-pipeline.sh\" x" 'eraser: otro script'
+R_TF="$(rules_of seed-secret seed-secret)"
+expect "$R_TF" allow 'terraform validate' 'terraform: validate normalizado a cwd'
+expect "$R_TF" allow 'terraform init -backend=false -input=false' 'terraform: init sin backend'
+expect "$R_TF" deny 'terraform -chdir=/otra/ruta validate' 'terraform: -chdir a otra ruta'
+expect "$R_TF" deny 'terraform apply' 'terraform: apply'
+expect "$R_TF" deny 'terraform plan' 'terraform: plan'
+R_TEN="$(rules_of install-apim install-apim)"
+expect "$R_TEN" allow "$PK/set-harness-tenancy.sh\" --strategy multi-tenant-header" 'tenancy: setter canonico'
+expect "$R_TEN" deny "$PK/seed-secret.sh\" --strategy multi-tenant-header" 'tenancy: otro script'
+expect "$R_TEN" deny 'MEFISTO_RUNTIME=opencode /tmp/set-harness-tenancy.sh --strategy multi-tenant-header' 'tenancy: ruta fuera del paquete'
+expect "$R_TEN" deny 'curl https://example.com/set-harness-tenancy.sh' 'tenancy: red'
+R_DRAFT="$(rules_of draft draft)"
+for pair in upgrade:"$PK/upgrade.sh\" --status" runtimes:'"$MEFISTO_LIFECYCLE_LAUNCHER" projection-status' batch-stop:'pgrep -f "[s]cripts/batch-pipeline\.sh"'; do
+    id="${pair%%:*}"; cand="${pair#*:}"
+    R_OWN="$(rules_of "$id" "$id")"
+    expect "$R_OWN" allow "$cand" "$id: reglas de su agente"
+    expect "$R_DRAFT" deny "$cand" "$id: reglas de command-entry-draft (sin herencia)"
+done
+expect "$(rules_of upgrade upgrade)" deny 'rm -rf "$HOME"' 'upgrade: borrado arbitrario'
+expect "$(rules_of runtimes runtimes)" deny '"$MEFISTO_LIFECYCLE_LAUNCHER" purge' 'runtimes: accion fuera de contrato'
+expect "$(rules_of batch-stop batch-stop)" deny 'pkill -f batch-pipeline' 'batch-stop: pkill'
+expect "$R_ERASER" deny 'pgrep -f "[s]cripts/batch-pipeline\.sh"' 'entre filas: eraser no hereda pgrep de batch-stop'
 
 printf '%s\n' '[ownership y contexto]'
 run < <(envelope config '.configPolicyKnown = false'); rc_is 'configuracion desconocida: conflict' x 1
@@ -128,7 +169,7 @@ run < <(envelope config '.foreignEntryAgents = ["command-entry-merge"]'); rc_is 
 assert 'filas denegadas ante colision' 'all(.bindings[]; .admitted==false) and (.bindings|length)==27'
 run < <(envelope config '.runtimeContext.directory = "/no/existe"'); rc_is 'directorio no verificable: conflict' x 1
 rm "$SHELLS"
-run < <(envelope config); rc_is 'sin plantillas shell de #1819 no se admite' x 1
+run < <(envelope config); rc_is 'sin plantillas shell de la release no se admite' x 1
 assert 'SHELL_TEMPLATES_UNAVAILABLE sin catalogo parcial' 'any(.diagnostics[]; .code=="SHELL_TEMPLATES_UNAVAILABLE") and (.bindings|length)==27 and all(.bindings[]; .admitted==false)'
 cp "$REPO_ROOT/dist/opencode/src/published/contract/command-shell-templates.json" "$SHELLS"
 run < <(envelope config); rc_is 'contrato empaquetado de #1944: config ready' x 0
