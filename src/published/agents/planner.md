@@ -731,17 +731,19 @@ Aplica esta sección en `explorar` (cuando la idea resulta ser que un asistente 
 El usuario describe una necesidad de **composición asistida** -- ni un cambio de estado ni una vista para un humano en un front -- cuando dice algo como "que un asistente de IA pueda consultar...", "necesito que un agente opere sobre...", "que Copilot/otro asistente ejecute esto por mí", "expón esto para que un cliente MCP lo use". El consumidor es un modelo de lenguaje u otro cliente MCP, nunca un humano leyendo una pantalla.
 
 Preguntas que fuerzan la precisión:
-- ¿El asistente necesita **consultar** un dato, o **ejecutar** una acción que muta estado? Esa respuesta fija de entrada si la tool pertenece a un servidor de Consultas o de Comandos (ver abajo).
+- ¿El asistente necesita **consultar** un dato, o **ejecutar** una acción que muta estado? Esa respuesta **no fija el servidor**: clasifica cada tool como Consulta o Comando en el catálogo, insumo de `readOnlyHint` y del perfil de riesgo (ver abajo).
 - ¿Ya existe la Function HTTP (GET/QUERY o comando) que resuelve esa necesidad? Un servidor MCP es cliente HTTP puro de las Function Apps del BC (MEF-ADR-0047 decisión 3) -- nunca referencia código del BC directamente --, así que la tool nunca es la primera vez que ese dato o esa acción existen. Si el endpoint todavía no existe, tállalo como un issue de dominio previo (`feature`/`projection`), fuera de este patrón.
-- ¿El BC ya tiene un servidor MCP del propósito que hace falta, o este es el primero?
+- ¿El BC ya tiene su servidor `General`, o este es el primero?
 
-### Consultas vs Comandos: el servidor es la credencial
+### Servidor `General` por defecto; separar solo por necesidad demostrada
 
-MEF-ADR-0047 decisión 2 fija CQS (Command-Query Separation) como partición obligatoria cuando ambos propósitos existen: las tools de solo lectura viven en un servidor (`<RootNamespace>.Mcp.Consultas`), las que mutan estado en otro (`<RootNamespace>.Mcp.Comandos`). No es una preferencia estética -- **el servidor es la credencial de acceso** (la system key `mcp_extension`, única por Function App): particionar por Consultas/Comandos es el único mecanismo de *least privilege* real disponible hoy, porque `ToolAnnotations`/`readOnlyHint` son hints que un cliente puede ignorar, nunca un control de acceso (MEF-ADR-0047 decisión 2). Nunca ofrezcas un único issue que mezcle tools de consulta y de comando: emite issues separados por propósito, uno por servidor.
+MEF-ADR-0047 decisión 2 fija que un BC empieza con **un único servidor** `<RootNamespace>.Mcp.General`, de lectura y escritura: por defecto **todas las tools van a `General`**, sin partir issues por consulta/comando. El corte de un servidor sigue la tarea del agente y su perfil de riesgo, no CQS. Solo propón un servidor adicional cuando detectes un criterio de separación de esa decisión: (a) un actor real con otro perfil de autorización (con autorización efectiva por audiencia del token), (b) un perfil de riesgo distinto (p. ej. una sesión solo de lectura limita el daño por prompt injection), o (c) un catálogo que degrada la elección de tools. En ese caso **pregúntalo al usuario** en vez de imponerlo (MEF-ADR-0008: propone, el experto corrige). `ToolAnnotations`/`readOnlyHint` son hints, nunca un control de acceso.
+
+**Si el usuario decide separar tools de un servidor existente**, desglosa la migración con la receta de MEF-ADR-0047 decisión 2: (1) `/scaffold-mcp <proposito>` crea el servidor nuevo; (2) conviven origen y nuevo; (3) las tools migran por lotes como issues normales; (4) se reconectan los clientes y se registra el Resource Indicator del servidor nuevo en WorkOS; (5) se retira del origen lo ya migrado. `General` nunca se renombra ni se retira: solo cede tools.
 
 ### Granularidad: por Bounded Context y propósito, nunca por dominio
 
-Nunca propongas un servidor MCP por dominio. MEF-ADR-0047 decisión 2 fija la granularidad en el BC + el propósito: las recetas reales de un asistente cruzan dominios -- la pregunta de negocio típica toca el dominio que registra el hecho y el que custodia el catálogo contra el que se interpreta --, así que un servidor por dominio forzaría al cliente a orquestar N conexiones y N credenciales para responder una sola pregunta.
+Nunca propongas un servidor MCP por dominio. MEF-ADR-0047 decisión 2 fija la granularidad en el BC (un servidor `General` + adicionales por necesidad demostrada): las recetas reales de un asistente cruzan dominios -- la pregunta de negocio típica toca el dominio que registra el hecho y el que custodia el catálogo contra el que se interpreta --, así que un servidor por dominio forzaría al cliente a orquestar N conexiones y N credenciales para responder una sola pregunta.
 
 ### Derivar el catálogo de tools
 
@@ -763,7 +765,7 @@ Cuando el catálogo esté claro, ofrece convertirlo en issue(s) `tipo:feature` (
 - **Capas de test esperadas** (MEF-ADR-0048 decisión 1): unit tests del remodelado de cada tool (nivel 1, handler falso + fixtures JSON reales del BC) y el pinneo por reflexión de la tool declarada -- nombre, parámetros `required`, hints (nivel 2). El nivel 3 (smoke e2e con las cinco verificaciones canónicas) lo genera `/scaffold-mcp` con el servidor: un issue de tool nueva extiende esa suite, no la crea.
 - **Etiquetado**: `tipo:feature` + `dom:` de **todos los dominios reales** cuyas Function(s) la(s) tool(s) del issue consume(n) -- unión de dominios, nunca un pseudo-dominio para el servidor MCP (mismo razonamiento continente/contenido de MEF-ADR-0011 que ya aplica al worker de proyecciones). Validado empíricamente por el piloto: `tipo:feature` pasó el pipeline TDD sin fricción.
 - **Encabezado `## Modelo de eventos`, conservado con contenido adaptado**: el issue es `tipo:feature`, así que la validación programática de `/implement` (criterio 5 de MEF-ADR-0011) exige la **presencia** de ese encabezado -- un issue de tool MCP que lo omita se bloquea en el gate del DoR aunque su etiquetado sea correcto. Es la misma regla que MEF-ADR-0011 ya fija para el issue de configuración del worker de proyecciones: conserva el encabezado y adapta el *contenido*. Una tool nunca introduce comportamiento de dominio (consume Functions que ya existen -- "Reconocer la señal" arriba), así que ahí se declara qué comando(s)/consulta(s) ya existentes invoca, o explícitamente que no aplica.
-- **Punto de partida si es el primer servidor del propósito**: si el BC todavía no tiene un servidor MCP para el propósito que este issue necesita (Consultas o Comandos), referencia `/scaffold-mcp` en `## Notas tecnicas` como primer paso -- sus tres fases generan el proyecto + unit tests + endpoints de gate, el Terraform + workflow de deploy, y la suite de smoke tests. Este issue se centra en las tools de dominio, no en el andamiaje del servidor.
+- **Punto de partida si es el primer servidor**: si el BC todavía no tiene su servidor `General`, referencia `/scaffold-mcp` sin argumento (crea `General`) en `## Notas tecnicas` como primer paso -- sus tres fases generan el proyecto + unit tests + endpoints de gate, el Terraform + workflow de deploy, y la suite de smoke tests. Este issue se centra en las tools de dominio, no en el andamiaje del servidor.
 
 ---
 
@@ -1055,8 +1057,8 @@ gh issue create \
 (Repite un bloque por tool. Antes de fijar cada nombre, verifica el guardrail anti-sinonimos -- glosario, codigo por rol, `ReadModels`, en ese orden -- de "Derivar el catalogo de tools".)
 
 ## Servidor MCP
-- **Nombre**: `<RootNamespace>.Mcp.{Proposito}` (ej. `Consultas`, `Comandos` -- MEF-ADR-0047 decision 2)
-- **Primer servidor de este proposito**: [si -- este issue referencia `/scaffold-mcp` en Notas tecnicas como punto de partida | no -- el servidor ya existe, este issue solo agrega tools]
+- **Nombre**: `<RootNamespace>.Mcp.General` por defecto; `{Proposito}` solo para un servidor adicional justificado por un criterio de separacion (MEF-ADR-0047 decision 2)
+- **Primer servidor**: [si -- este issue referencia `/scaffold-mcp` sin argumento (crea `General`) en Notas tecnicas como punto de partida | no -- el servidor ya existe, este issue solo agrega tools]
 
 ## Modelo de eventos
 No aplica -- este issue no introduce comportamiento de dominio: la(s) tool(s) consume(n) Functions HTTP que ya existen (ver `## Catalogo de tools propuesto`). [Si alguna tool envuelve un comando, lista aqui el/los comando(s) ya existentes que invoca con su verbo y ruta actuales -- no es un contrato nuevo, es el contrato vigente que la tool llama.]
