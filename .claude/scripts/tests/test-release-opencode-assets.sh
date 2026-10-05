@@ -154,6 +154,14 @@ setup main-advanced; ORIGIN_MAIN_COMMIT=cccccccccccccccccccccccccccccccccccccccc
 [ "$rc" -ne 0 ] && pass 'un main avanzado aborta' || fail 'main avanzado deberia abortar'
 assert_absent "$EVENTS" 'git tag -a' 'no crea tag si HEAD ya no es origin/main'
 
+for oc in plugins/mefisto-observability.js plugins/mefisto-command-entry.js .mefisto-generated-assets.json; do
+    setup "delta-oc-$oc"; DELTA_PATH="dist/opencode/$oc" run_release; rc=$?
+    [ "$rc" -eq 0 ] && pass "admite dist/opencode/$oc en el delta" || fail "debe admitir dist/opencode/$oc"
+done
+setup delta-oc-generic; DELTA_PATH=dist/opencode/scripts/intruso.sh run_release; rc=$?
+[ "$rc" -ne 0 ] && pass 'rechaza dist/opencode generico fuera de las tres rutas' || fail 'dist/opencode generico deberia abortar'
+assert_absent "$EVENTS" 'git tag -a' 'no crea tag con ruta OpenCode ajena'
+
 setup delta-fails; DELTA_PATH=scripts/intruso.sh run_release; rc=$?
 [ "$rc" -ne 0 ] && pass 'un path fuera de allowlist aborta' || fail 'path fuera de allowlist deberia abortar'
 assert_absent "$EVENTS" 'git tag -a' 'no crea tag con delta fuera de allowlist'

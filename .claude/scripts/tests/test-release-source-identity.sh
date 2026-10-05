@@ -57,6 +57,10 @@ if [ "${GENERATOR_RC:-0}" -ne 0 ]; then
 fi
 cp "$TEST_REPO/mefisto-manifest.json" "$TEST_REPO/dist/claude/mefisto-manifest.json"
 printf '%s\n' '{"schemaVersion":1,"assets":[]}' > "$TEST_REPO/dist/claude/.mefisto-generated-assets.json"
+mkdir -p "$TEST_REPO/dist/opencode/plugins"
+printf 'obs\n' > "$TEST_REPO/dist/opencode/plugins/mefisto-observability.js"
+printf 'entry\n' > "$TEST_REPO/dist/opencode/plugins/mefisto-command-entry.js"
+printf '{}\n' > "$TEST_REPO/dist/opencode/.mefisto-generated-assets.json"
 EOF
     cat > "$TEST_REPO/src/published/scripts/package-opencode-release.sh" <<'EOF'
 #!/usr/bin/env bash
@@ -86,7 +90,7 @@ case "$1 ${2:-}" in
     cp "$TEST_REPO/plugin.before" "$TEST_REPO/.claude-plugin/plugin.json"
     cp "$TEST_REPO/identity.before" "$TEST_REPO/src/published/release-identity.json"
     ;;
-  'clean -fd') rm -f "$TEST_REPO/mefisto-manifest.json"; rm -rf "$TEST_REPO/dist/claude" ;;
+  'clean -fd') rm -f "$TEST_REPO/mefisto-manifest.json"; rm -rf "$TEST_REPO/dist/claude" "$TEST_REPO/dist/opencode" ;;
   'switch topic/anterior'|'branch -D') ;;
   *) printf 'git falso no esperaba: %s\n' "$*" >&2; exit 64 ;;
 esac
@@ -131,7 +135,7 @@ jq -e --arg commit "$SOURCE" '. == {schemaVersion:1,runtime:"claude",version:"1.
     && pass 'mirror raiz y salida Claude son semantica y byte-identicos' || fail 'manifiestos Claude divergentes'
 assert_order "$TEST_REPO" 'git rev-parse --verify origin/main^{commit}' 'git switch -c release/v1.2.3 origin/main' 'captura SOURCE_COMMIT antes de crear la rama'
 assert_order "$TEST_REPO" 'git rev-parse HEAD' 'generator' 'verifica la base antes de generar metadata'
-assert_event "$TEST_REPO" 'git add CHANGELOG.md docs/adr/INDICE-TEMATICO.md .claude-plugin/plugin.json src/published/release-identity.json mefisto-manifest.json dist/claude/mefisto-manifest.json dist/claude/.mefisto-generated-assets.json' 'stagea explicitamente toda la metadata'
+assert_event "$TEST_REPO" 'git add CHANGELOG.md docs/adr/INDICE-TEMATICO.md .claude-plugin/plugin.json src/published/release-identity.json mefisto-manifest.json dist/claude/mefisto-manifest.json dist/claude/.mefisto-generated-assets.json dist/opencode/plugins/mefisto-observability.js dist/opencode/plugins/mefisto-command-entry.js dist/opencode/.mefisto-generated-assets.json' 'stagea explicitamente toda la metadata, incluidas las salidas OpenCode de identidad'
 grep -qF "$SOURCE" "$TEST_REPO/pr-body" && grep -qF '1.2.3' "$TEST_REPO/pr-body" \
     && pass 'body del PR informa version y commit fuente' || fail 'body del PR omite identidad'
 assert_no_event "$TEST_REPO" 'git tag -a' 'prepare-only no crea tags'
@@ -156,8 +160,9 @@ assert_event "$TEST_REPO" 'git branch -D release/v1.2.3' 'descarta la rama de ba
 setup generator-fails; GENERATOR_RC=7; export GENERATOR_RC; run_prepare --prepare-only; rc=$?
 [ "$rc" -ne 0 ] && pass 'fallo del generador aborta' || fail 'fallo del generador deberia abortar'
 assert_order "$TEST_REPO" 'generator' 'git reset --hard' 'limpia despues del fallo del generador'
-assert_event "$TEST_REPO" 'git clean -fd -- mefisto-manifest.json dist/claude' 'elimina salidas no trackeadas al descartar'
+assert_event "$TEST_REPO" 'git clean -fd -- mefisto-manifest.json dist/claude dist/opencode/plugins/mefisto-observability.js dist/opencode/plugins/mefisto-command-entry.js dist/opencode/.mefisto-generated-assets.json' 'elimina salidas no trackeadas al descartar'
 [ ! -e "$TEST_REPO/mefisto-manifest.json" ] && [ ! -e "$TEST_REPO/dist/claude" ] \
+    && [ ! -e "$TEST_REPO/dist/opencode" ] \
     && cmp -s "$TEST_REPO/identity.before" "$TEST_REPO/src/published/release-identity.json" \
     && cmp -s "$TEST_REPO/plugin.before" "$TEST_REPO/.claude-plugin/plugin.json" \
     && pass 'fallo no deja metadata parcial' || fail 'fallo dejo salida parcial'
