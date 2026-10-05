@@ -120,9 +120,9 @@ Ejemplos:
 Sin argumento se genera el servidor General del BC (<RootNamespace>.Mcp.General, ruta
 /mcp-general): el servidor unico con el que empieza todo BC. Con argumento se genera un
 servidor adicional, nombrado por su razon de existir (ej. "auditoria"); solo se crea por
-necesidad demostrada (MEF-ADR-0047 seccion 2). El nombre queda fijado en la ruta publica y en
+necesidad demostrada (MEF-ADR-0047 decision 2). El nombre queda fijado en la ruta publica y en
 la audiencia OAuth, asi que elegirlo bien evita reconectar clientes. Se normaliza a
-PascalCase: "consultas-turnos" -> "ConsultasTurnos".
+PascalCase: "auditoria-fiscal" -> "AuditoriaFiscal".
 ```
 
 - Si `$ARGUMENTS` esta vacio, usa `PROPOSITO_PASCAL=General` y marca `ES_GENERAL=1`.
@@ -151,7 +151,7 @@ Si invocaste sin argumento (`PROPOSITO_PASCAL=General`) y ya existe `src/${ROOT_
 
 ```bash
 if [ "${ES_GENERAL:-0}" = "1" ] && [ -d "src/${ROOT_NAMESPACE}.Mcp.General" ]; then
-    echo "El servidor General del BC ya existe (src/${ROOT_NAMESPACE}.Mcp.General/). Para crear un servidor adicional pasa un proposito: /scaffold-mcp <proposito> (MEF-ADR-0047 seccion 2)."
+    echo "El servidor General del BC ya existe (src/${ROOT_NAMESPACE}.Mcp.General/). Para crear un servidor adicional pasa un proposito: /mefisto:scaffold-mcp <proposito> (MEF-ADR-0047 decision 2)."
     exit 1
 fi
 ```
@@ -251,7 +251,7 @@ La lista canonica y autoritativa de artefactos es el parrafo **Alcance** de
 
 Solo despues de que el guard y las pre-condiciones hayan pasado:
 
-invoca la tool `Task` con el agente `mefisto:mcp-scaffolder` y este mensaje: Genera el servidor MCP de proposito <PROPOSITO_PASCAL> (el proposito ya normalizado a PascalCase, por ejemplo ConsultasTurnos). Espera su resultado final y continua con el paso siguiente del comando.
+invoca la tool `Task` con el agente `mefisto:mcp-scaffolder` y este mensaje: Genera el servidor MCP de proposito <PROPOSITO_PASCAL> (el proposito ya normalizado a PascalCase, por ejemplo General o AuditoriaFiscal). Espera su resultado final y continua con el paso siguiente del comando.
 
 ### 3. Tras terminar
 

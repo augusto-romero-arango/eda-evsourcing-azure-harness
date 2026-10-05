@@ -1565,7 +1565,7 @@ ningun proyecto del BC.
 ## Proposito y limites
 
 - **`General` es el servidor del BC**; los servidores adicionales son especializados y se crean
-  solo por necesidad demostrada, nunca por dominio (MEF-ADR-0047 seccion 2). Este es el de
+  solo por necesidad demostrada, nunca por dominio (MEF-ADR-0047 decision 2). Este es el de
   **{Proposito}**: si es `General`, cubre el BC completo; si no, atiende solo la razon de
   existir que su nombre expresa.
 - **Tools 100% stateless**: el contexto conversacional vive en el cliente MCP, nunca aqui.
