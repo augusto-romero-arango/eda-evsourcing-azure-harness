@@ -15,7 +15,8 @@
 # (lineas '<job>\t<paso>\t<timestamp> <texto>'). Si existe y no esta vacio se
 # agrega '### Evidencia del paso fallido': nombre del paso, lineas
 # ERROR:/::error::/FAIL: y las ultimas 40 lineas, sin ANSI ni timestamps, en un
-# bloque de codigo, truncado para que el cuerpo no pase de 60000 caracteres.
+# bloque de codigo con cerco de 4 backticks (un log con ``` no lo rompe),
+# truncado por lineas para que el cuerpo no pase de 60000 caracteres.
 # Neutral a runtime (MEF-ADR-0050): solo bash y coreutils.
 
 set -uo pipefail
@@ -126,7 +127,7 @@ if [ -n "$failed_log" ] && [ -s "$failed_log" ]; then
         echo
         echo "Paso: ${steps:-(desconocido)}"
         echo
-        echo '```'
+        echo '````'
         if grep -qE 'ERROR:|::error::|FAIL:' "$texts"; then
             echo "# Lineas de error"
             grep -E 'ERROR:|::error::|FAIL:' "$texts"
@@ -134,17 +135,18 @@ if [ -n "$failed_log" ] && [ -s "$failed_log" ]; then
         fi
         echo "# Ultimas 40 lineas"
         tail -n 40 "$texts"
-        echo '```'
+        echo '````'
     } > "$section"
     base_size="$(wc -c < "$buf" | tr -d ' ')"
-    note=$'\n(evidencia truncada: se recorto para no superar el limite del cuerpo)\n```'
+    note=$'(evidencia truncada: se recorto para no superar el limite del cuerpo)\n````'
     reserve=$(( ${#note} + 8 ))
     budget=$(( MAX_BODY - base_size - reserve ))
     sec_size="$(wc -c < "$section" | tr -d ' ')"
     if [ $(( base_size + sec_size )) -le "$MAX_BODY" ]; then
         cat "$section"
     elif [ "$budget" -gt 0 ]; then
-        head -c "$budget" "$section"
+        # Corta en el ultimo salto de linea completo: nunca a mitad de linea ni de un caracter UTF-8.
+        head -c "$budget" "$section" | sed '$d'
         printf '%s\n' "$note"
     else
         printf '\n### Evidencia del paso fallido\n\n(evidencia omitida: el cuerpo ya alcanza el limite)\n'

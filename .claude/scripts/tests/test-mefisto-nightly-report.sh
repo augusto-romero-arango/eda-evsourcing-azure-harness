@@ -93,7 +93,7 @@ ESC=$'\033'
 mkdir -p "$TMP/e"
 FL="$TMP/e/failed.log"
 {
-    printf 'tests%sAdaptadores internos sincronizados%s2026-10-04T08:01:02.1234567Z %s[31mERROR:%s [inventario-tests] fuentes canonicas sin shim:\n' "$T" "$T" "$ESC" "$ESC[0m"
+    printf 'tests%sAdaptadores internos sincronizados%s2026-10-04T08:01:02.1234567Z %s[31mERROR:%s [inventario-tests] fuentes canonicas sin shim:\n' "$T" "$T" "$ESC" "${ESC}[0m"
     printf 'tests%sAdaptadores internos sincronizados%s2026-10-04T08:01:02.2234567Z   scripts/tests/test-uno.sh\n' "$T" "$T"
     printf 'tests%sAdaptadores internos sincronizados%s2026-10-04T08:01:02.3234567Z   scripts/tests/test-dos.sh\n' "$T" "$T"
 } > "$FL"
@@ -125,6 +125,13 @@ out="$(bash "$REPORT" "$TMP/b" "$URL" "$SHA" "$TMP/e/enorme.log")"
 size="$(printf '%s' "$out" | wc -c | tr -d ' ')"
 check "[E] enorme: cuerpo <= 60000" "$([ "$size" -le 60000 ] && echo 0 || echo 1)"
 check "[E] enorme: indica truncado" "$(contains "$out" "evidencia truncada")"
+check "[E] enorme: cierra el bloque" "$([ "$(printf '%s\n' "$out" | tail -n 1)" = '````' ] && echo 0 || echo 1)"
+check "[E] enorme: sin linea cortada" "$(printf '%s\n' "$out" | grep -E '^ERROR: linea de error numero [0-9]+' | grep -vqE 'relleno relleno relleno relleno$' && echo 1 || echo 0)"
+
+# shellcheck disable=SC2016 # los backticks son literales del log, no expansion.
+printf 'tests\tPaso md\t2026-10-04T08:00:00.0000000Z ERROR: salida con ```cerco``` markdown\n' > "$TMP/e/md.log"
+out="$(bash "$REPORT" "$TMP/b" "$URL" "$SHA" "$TMP/e/md.log")"
+check "[E] cerco de 4 backticks" "$(contains "$out" '````')"
 
 echo "Resultado: $PASS pass, $FAIL fail"
 [ "$FAIL" -eq 0 ]
