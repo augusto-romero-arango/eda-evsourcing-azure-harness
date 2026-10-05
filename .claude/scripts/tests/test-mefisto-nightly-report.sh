@@ -7,6 +7,8 @@
 #   [B] FAIL en dos carriles: conteos totales/por carril y lista de rutas.
 #   [D] Entradas CANCELLED: se reportan aparte, sin contar como PASS/FAIL.
 #   [C] Directorio sin results.tsv: mensaje explicito de "sin resultados".
+#   [E] 4.o argumento <failed-log> (#1969): evidencia, limpieza ANSI/timestamps,
+#       truncado y compatibilidad sin el argumento.
 #
 # Uso: .claude/scripts/tests/test-mefisto-nightly-report.sh
 # Exit code: 0 si todos los checks pasan, 1 si alguno falla.
@@ -85,6 +87,44 @@ check "[C] enlace al run" "$(contains "$out" "$URL")"
 out="$(bash "$REPORT" "$TMP/no-existe" "$URL" "$SHA")"; rc=$?
 check "[C] dir inexistente sale 0" "$rc"
 check "[C] dir inexistente mensaje" "$(contains "$out" "no produjo resultados")"
+
+# [E] 4.o argumento <failed-log> (issue #1969).
+ESC=$'\033'
+mkdir -p "$TMP/e"
+FL="$TMP/e/failed.log"
+{
+    printf 'tests%sAdaptadores internos sincronizados%s2026-10-04T08:01:02.1234567Z %s[31mERROR:%s [inventario-tests] fuentes canonicas sin shim:\n' "$T" "$T" "$ESC" "$ESC[0m"
+    printf 'tests%sAdaptadores internos sincronizados%s2026-10-04T08:01:02.2234567Z   scripts/tests/test-uno.sh\n' "$T" "$T"
+    printf 'tests%sAdaptadores internos sincronizados%s2026-10-04T08:01:02.3234567Z   scripts/tests/test-dos.sh\n' "$T" "$T"
+} > "$FL"
+out="$(bash "$REPORT" "$TMP/c" "$URL" "$SHA" "$FL")"; rc=$?
+check "[E] sale 0" "$rc"
+check "[E] seccion evidencia" "$(contains "$out" "### Evidencia del paso fallido")"
+check "[E] nombre del paso" "$(contains "$out" "Adaptadores internos sincronizados")"
+check "[E] linea inventario-tests" "$(contains "$out" "ERROR: [inventario-tests] fuentes canonicas sin shim")"
+check "[E] ruta uno" "$(contains "$out" "scripts/tests/test-uno.sh")"
+check "[E] ruta dos" "$(contains "$out" "scripts/tests/test-dos.sh")"
+check "[E] sin ANSI" "$(printf '%s' "$out" | grep -q "$ESC" && echo 1 || echo 0)"
+check "[E] sin timestamps" "$(printf '%s' "$out" | grep -qE '2026-10-04T08' && echo 1 || echo 0)"
+check "[E] sin resultados sigue explicito" "$(contains "$out" "no produjo resultados")"
+
+out="$(bash "$REPORT" "$TMP/b" "$URL" "$SHA" "$FL")"
+check "[E] con results.tsv: conteo" "$(contains "$out" "PASS=3 FAIL=2")"
+check "[E] con results.tsv: evidencia" "$(contains "$out" "[inventario-tests]")"
+
+: > "$TMP/e/vacio.log"
+out_sin="$(bash "$REPORT" "$TMP/b" "$URL" "$SHA")"
+out_vacio="$(bash "$REPORT" "$TMP/b" "$URL" "$SHA" "$TMP/e/vacio.log")"
+out_noex="$(bash "$REPORT" "$TMP/b" "$URL" "$SHA" "$TMP/e/no-existe.log")"
+check "[E] log vacio = sin 4.o argumento" "$([ "$out_sin" = "$out_vacio" ] && echo 0 || echo 1)"
+check "[E] log inexistente = sin 4.o argumento" "$([ "$out_sin" = "$out_noex" ] && echo 0 || echo 1)"
+check "[E] sin 4.o argumento no hay seccion" "$(contains "$out_sin" "Evidencia" | grep -q '^0$' && echo 1 || echo 0)"
+
+awk 'BEGIN{for(i=1;i<=3000;i++) printf "tests\tPaso grande\t2026-10-04T08:00:00.0000000Z ERROR: linea de error numero %d con relleno relleno relleno relleno\n", i}' > "$TMP/e/enorme.log"
+out="$(bash "$REPORT" "$TMP/b" "$URL" "$SHA" "$TMP/e/enorme.log")"
+size="$(printf '%s' "$out" | wc -c | tr -d ' ')"
+check "[E] enorme: cuerpo <= 60000" "$([ "$size" -le 60000 ] && echo 0 || echo 1)"
+check "[E] enorme: indica truncado" "$(contains "$out" "evidencia truncada")"
 
 echo "Resultado: $PASS pass, $FAIL fail"
 [ "$FAIL" -eq 0 ]
