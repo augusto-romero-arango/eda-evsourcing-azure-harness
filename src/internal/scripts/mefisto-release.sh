@@ -306,7 +306,10 @@ discard_release_branch() {
     # el primer release posterior a #1131, por lo que un generador fallido lo
     # dejaria visible al volver a la rama original si no se limpia de forma
     # explicita junto con las salidas Claude que el generador pudo crear.
-    git clean -fd -- mefisto-manifest.json dist/claude >/dev/null 2>&1 || true
+    git clean -fd -- mefisto-manifest.json dist/claude \
+        dist/opencode/plugins/mefisto-observability.js \
+        dist/opencode/plugins/mefisto-command-entry.js \
+        dist/opencode/.mefisto-generated-assets.json >/dev/null 2>&1 || true
     git switch "$original_branch" >/dev/null 2>&1 || true
     git branch -D "$release_branch" >/dev/null 2>&1 || true
 }
@@ -342,7 +345,7 @@ validate_publish_delta() {
     while IFS=$'\t' read -r status path; do
         [ -n "$path" ] || continue
         case "$path" in
-            CHANGELOG.md|docs/adr/INDICE-TEMATICO.md|.claude-plugin/plugin.json|src/published/release-identity.json|mefisto-manifest.json|dist/claude/mefisto-manifest.json|dist/claude/.mefisto-generated-assets.json) ;;
+            CHANGELOG.md|docs/adr/INDICE-TEMATICO.md|.claude-plugin/plugin.json|src/published/release-identity.json|mefisto-manifest.json|dist/claude/mefisto-manifest.json|dist/claude/.mefisto-generated-assets.json|dist/opencode/plugins/mefisto-observability.js|dist/opencode/plugins/mefisto-command-entry.js|dist/opencode/.mefisto-generated-assets.json) ;;
             changelog.d/*.md)
                 [ "$status" = "D" ] && [ "$path" != "changelog.d/README.md" ] \
                     || return 1 ;;
@@ -546,7 +549,10 @@ Una release no se publica con fugas: corrigelas en main via PR de issue (el pipe
     # y con 'set -e' un pathspec sin match abortaria el release entero.
     git add CHANGELOG.md docs/adr/INDICE-TEMATICO.md .claude-plugin/plugin.json \
         src/published/release-identity.json mefisto-manifest.json \
-        dist/claude/mefisto-manifest.json dist/claude/.mefisto-generated-assets.json
+        dist/claude/mefisto-manifest.json dist/claude/.mefisto-generated-assets.json \
+        dist/opencode/plugins/mefisto-observability.js \
+        dist/opencode/plugins/mefisto-command-entry.js \
+        dist/opencode/.mefisto-generated-assets.json
     if [ -d changelog.d ]; then
         git add -A changelog.d/
     fi
