@@ -14,9 +14,11 @@ fail() { printf '  FAIL: %s\n' "$1"; FAIL=$((FAIL + 1)); }
 assert() { local label="$1" filter="$2"; shift 2; jq -e "$@" "$filter" >/dev/null <<< "$OUT" && pass "$label" || { fail "$label"; printf '%s\n' "$OUT" | cut -c1-500 >&2; }; }
 rc_is() { [ "$RC" -eq "$3" ] && pass "$1" || fail "$1 (exit $RC)"; }
 
-OS_HOME="$WORK/os home"; DATA="$WORK/data"; CONFIG_HOME="$WORK/config"
+# Caso macOS (CA-3): store en ~/Library/Application Support (con espacio) y
+# runtime data en ~/.local/share/opencode, sin overrides XDG de datos.
+OS_HOME="$WORK/os home"; DATA="$OS_HOME/Library/Application Support"; CONFIG_HOME="$WORK/config"; RUNTIME_DATA="$OS_HOME/.local/share/opencode"
 STORE="$DATA/mefisto"; RELEASE="$STORE/releases/0.40.2"; CONFIG="$CONFIG_HOME/opencode"; PROJ="$WORK/proj"
-mkdir -p "$OS_HOME" "$STORE/releases" "$CONFIG" "$DATA/opencode/storage" "$PROJ/.mefisto"
+mkdir -p "$OS_HOME" "$STORE/releases" "$CONFIG" "$RUNTIME_DATA/storage" "$RUNTIME_DATA/tool-output/ses_a" "$RUNTIME_DATA/tool-output/ses_b" "$PROJ/.mefisto"
 cp -R "$REPO_ROOT/dist/opencode" "$RELEASE" || { echo 'FAIL: no se pudo copiar la release'; exit 1; }
 jq -n '{schemaVersion:1,runtime:"opencode",version:"0.40.2",commit:"0123456789abcdef0123456789abcdef01234567",minimumRuntimeVersion:"1.18.29"}' > "$RELEASE/mefisto-manifest.json"
 ln -s "$RELEASE" "$STORE/active"
@@ -48,7 +50,7 @@ GLOBAL='{"permission":{"read":"allow","edit":"allow","external_directory":"allow
 envelope() { # <phase> [jq-filter]
     jq -cn --arg phase "$1" --arg os "$OS_HOME" --arg data "$DATA" --arg cfg "$CONFIG_HOME" --arg dir "$PROJ" --argjson global "$GLOBAL" --slurpfile man "$MAN" --slurpfile roles "$RELEASE/agent-execution-manifest.json" '
       {schemaVersion:1,phase:$phase,home:$os,configPolicyKnown:true,
-       runtimeContext:{platform:"linux",osHome:$os,home:$os,xdgDataHome:$data,xdgConfigHome:$cfg,opencodeConfigDir:null,directory:$dir,worktree:$dir},
+       runtimeContext:{platform:"darwin",osHome:$os,home:$os,xdgDataHome:null,xdgConfigHome:$cfg,opencodeConfigDir:null,directory:$dir,worktree:$dir},
        nugetAssetsFiles:[],
        commands:[$man[0].templates[] | select(.kind=="command") | {name:("mefisto:" + .id),sourceDigest:.sha256,agent:("command-entry-" + .id),subtask:false}],
        delegateAgents:([$man[0].delegatedPrompts[] | .agent as $a | {id:$a,available:true,sourceDigest:.sha256,mode:(([$roles[0].roles[] | select(.id==$a) | .mode] | first) // "subagent")}] | unique_by(.id)),
@@ -56,7 +58,8 @@ envelope() { # <phase> [jq-filter]
       + (if $phase == "command" then {requestedCommand:"sequential",sessionPolicyKnown:true,sessionProjectMatches:true,sessionPermission:[]} else {} end)' | jq -c "${2:-.}"
 }
 run() { OUT="$(cd "$WORK" && "$CLI" --project-root "$PROJ" 2>"$WORK/stderr")"; RC=$?; }
-before="$(cd "$WORK" && find . -type f -newer "$RELEASE/scripts/inspect.rc" | sort | shasum)"
+snapshot_tree() { find "$PROJ" "$CONFIG_HOME" "$RUNTIME_DATA" -type f -exec shasum {} + 2>/dev/null | sort | shasum; }
+before="$(snapshot_tree)"
 
 printf '%s\n' '[protocolo]'
 OUT="$(printf '' | "$CLI" --project-root "$PROJ" 2>/dev/null)"; RC=$?; rc_is 'stdin vacio es error de protocolo' x 2
@@ -84,6 +87,10 @@ assert 'bitacora no obtiene task universal ni capacidades del hijo' '[.agents[] 
 assert 'sequential sin task nativo (solo runner shell)' '[.agents[] | select(.id=="command-entry-sequential") | .rules[] | select(.permission=="task" and .value=="allow")] | length==0'
 assert 'orden de reglas conservado: deny base antes que allow del recurso' '.agents[] | select(.id=="command-entry-draft") | .rules | (map(.value) | index("deny")) < (map(.value) | index("allow"))'
 assert 'sin proveedor ni modelo ni secretos' '(tostring | test("apiKey|auth.json|provider|\"model\"") | not)'
+assert 'macOS: read/edit con candidatos relativos al worktree' '[.agents[] | select(.id=="command-entry-draft") | .rules[] | select((.permission=="read" or .permission=="edit") and .value=="allow" and (.pattern|startswith("/")|not))] | length > 0'
+assert 'macOS: external_directory solo con directorios absolutos' '[.agents[] | select(.id=="command-entry-draft") | .rules[] | select(.permission=="external_directory" and .value=="allow") | .pattern] | length > 0 and all(.[]; startswith("/"))'
+assert 'macOS: release bajo Application Support legible por absoluto' '[.agents[] | select(.id=="command-entry-draft") | .rules[] | select(.permission=="external_directory" and .value=="allow" and .pattern==($r + "/*"))] | length > 0' --arg r "$RELEASE"
+assert 'tool-output de cualquier sesion es lectura, nunca edicion' '[.agents[] | select(.id=="command-entry-draft") | .rules[] | select(.pattern==($t + "/*"))] as $r | any($r[]; .permission=="read" and .value=="allow") and all($r[]; .permission!="edit" or .value!="allow")' --arg t "$RUNTIME_DATA/tool-output"
 FIRST="$OUT"
 run < <(envelope config); [ "$OUT" = "$FIRST" ] && pass 'determinista: misma salida' || fail 'salida no determinista'
 
@@ -126,10 +133,10 @@ assert 'SHELL_TEMPLATES_UNAVAILABLE sin catalogo parcial' 'any(.diagnostics[]; .
 rm -rf "$RELEASE/src/published/scripts/adapters/lib/opencode-command-entry.jq"
 run < <(envelope config); rc_is 'clausura incompleta: protocolo' x 2
 
-after="$(cd "$WORK" && find . -type f -newer "$RELEASE/scripts/inspect.rc" | sort | shasum)"
+after="$(snapshot_tree)"
 printf '%s\n' '[sin efectos]'
 grep -q 'resolve-command-entry' "$REPO_ROOT/dist/opencode/.mefisto-generated-assets.json" && pass 'el resolver esta en el inventario generado' || fail 'resolver fuera del inventario'
-[ ! -e "$PROJ/.mefisto/pipeline" ] && pass 'no se escribio consentimiento ni estado' || fail 'se escribieron archivos en el consumidor'
+[ ! -e "$PROJ/.mefisto/pipeline" ] && [ "$before" = "$after" ] && pass 'no se escribio consentimiento, estado, config ni tool-output' || fail 'se escribieron archivos en el consumidor, la config o el runtime'
 bash "$REPO_ROOT/src/published/scripts/generate-published-adapters.sh" --check >/dev/null 2>&1 && pass 'dist coincide con la fuente (agentes, comandos y mirrors Claude sin cambios)' || fail 'dist diverge'
 
 printf '\nResultado: %s PASS, %s FAIL\n' "$PASS" "$FAIL"
