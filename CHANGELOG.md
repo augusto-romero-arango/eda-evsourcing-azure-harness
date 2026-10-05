@@ -4,6 +4,25 @@ Todo cambio notable a este proyecto se documenta aquí. Sigue [Keep a Changelog]
 
 ## [Unreleased]
 
+## [0.41.1] - 2026-10-05
+
+### Added
+
+- Gate 1b de `tdd-pipeline.sh`: advierte (sin abortar) de los tests preexistentes que quedaron en rojo sin que el `test-writer` los modificara y escribe `preexisting-red-warning.md` en el estado del pipeline; el `implementer` lo lee y escala con el camino corto de `blockage-report.md` (#1937).
+- Contrato publicado `command-shell-templates.json` generado por el adaptador OpenCode desde la matriz neutral: campo `shellExtra` en cada fila de `command-entry.json` unido a un patrón estrecho por cada `{{mefisto:run}}`, con gate de cobertura de los bloques bash y sin `SHELL_TEMPLATES_UNAVAILABLE` en la release (#1944).
+
+### Changed
+
+- La suite `test-opencode-entry-projection.sh` usa el `command-shell-templates.json` real empaquetado en la release en lugar de un contrato inventado y cubre, con evaluacion estatica de la politica generada, Eraser, Terraform, tenancy, lifecycle y parada suave (allow/deny y sin herencia entre filas) (#1955).
+- La nightly roja transcribe en el issue la evidencia del paso fallido (nombre del paso, lineas `ERROR:`/`::error::`/`FAIL:` y las ultimas 40 lineas, sin ANSI ni timestamps, en un bloque de codigo truncado por lineas a 60 000 caracteres). El job `notify` (permiso `actions: read` solo en ese job) la obtiene del job `tests` con `gh run view --job <id> --log-failed`, con caida al endpoint REST del log del job porque el run sigue en curso mientras `notify` corre; `mefisto-nightly-report.sh` acepta un 4.o argumento opcional `<failed-log>` (#1969).
+
+### Fixed
+
+- Las plantillas de deploy de `domain-scaffolder`, `mcp-scaffolder` y `projections-scaffolder` declaran `permissions: contents: read` a nivel de workflow (alerta CodeQL `actions/missing-workflow-permissions`); nuevo test `test-workflow-template-permissions.sh` como guardrail sobre todas las plantillas embebidas en `agents/*.md`.
+- Agregados los 11 shims de `scripts/tests/` para las pruebas canonicas publicadas de la linea OpenCode, que la nightly abortaba por falta de cobertura del inventario (#1964).
+- El pipeline de tooling valida al cierre de cada stage (writer y reviewer), tras scope y neutralidad, que toda fuente canonica en `src/published/scripts/tests/` tenga su shim en `scripts/tests/` (`mefisto_test_inventory_check_canonical_coverage`); aborta con la lista de huerfanas, y el prompt del writer exige el shim en el mismo PR.
+- `test-opencode-resources.sh`: la aserción de aislamiento del flujo Claude excluye por ruta exacta `dist/claude/scripts/run-published-agent.sh` (clausura compartida, inerte bajo Claude; #1860) y confirma que sigue rechazando otros runtimes (`RUNTIME_MISMATCH`); cualquier otra mención sigue fallando (#1966).
+
 ## [0.41.0] - 2026-10-05
 
 ### Added
@@ -3063,7 +3082,8 @@ Y reemplazar referencias en `CLAUDE.md` del proyecto: `/eda-evsourcing-azure-har
 - Los agentes `reviewer` e `implementer` mantienen el placeholder literal `ADR-XXXX` en sus plantillas de reporte (no es un bug; el agente lo sustituye en tiempo de ejecución por el número real del ADR aplicable).
 - Los ejemplos de código en `test-writer.md`, `implementer.md` y `smoke-test-writer.md` conservan nombres concretos de un proyecto consumidor (`Programacion`, `ControlHoras`) anotados en el "Contrato con el consumidor" de cada agente como ejemplos pedagógicos.
 
-[Unreleased]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.41.0...HEAD
+[Unreleased]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.41.1...HEAD
+[0.41.1]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.41.0...v0.41.1
 [0.41.0]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.40.2...v0.41.0
 [0.40.2]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.40.1...v0.40.2
 [0.40.1]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.40.0...v0.40.1
