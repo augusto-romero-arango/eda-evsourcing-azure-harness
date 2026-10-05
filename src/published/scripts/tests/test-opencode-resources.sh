@@ -228,7 +228,25 @@ run "$MAIN" "$LINKED" "$(request "$LINKED" "$LINKED" "$WITH_NUGET")"
 [ "$RC" -eq 1 ] && assert_json 'salida NuGet invalida: conflicto sin volcar la salida' '.diagnostics[-1].code=="NUGET_OUTPUT_INVALID" and (tostring | contains("basura") | not)' || fail 'salida invalida'
 
 echo '== Aislamiento del flujo Claude =='
-! grep -rq 'resolve-opencode-resources\|opencode-resources.sh' "$REPO_ROOT/dist/claude" "$REPO_ROOT/agents" "$REPO_ROOT/commands" "$REPO_ROOT/hooks" 2>/dev/null && pass 'dist/claude, mirrors y hooks no dependen del resolver' || fail 'Claude depende del resolver'
+# Excepcion por ruta exacta (#1860/#1966): run-published-agent.sh es parte de la
+# clausura compartida, es solo de ese runtime (RUNTIME_MISMATCH) y bajo Claude
+# no se alcanza: sin contexto transportado se conserva el camino legacy
+# (cubierto en test-pipeline-execution-wiring.sh).
+claude_resolver_refs() {
+    local root="$1"
+    grep -rl 'resolve-opencode-resources\|opencode-resources.sh' "$root/dist/claude" "$root/agents" "$root/commands" "$root/hooks" 2>/dev/null \
+        | grep -vxF "$root/dist/claude/scripts/run-published-agent.sh" || true
+}
+[ -z "$(claude_resolver_refs "$REPO_ROOT")" ] && pass 'dist/claude, mirrors y hooks no dependen del resolver' || fail 'Claude depende del resolver'
+ISO="$WORK/iso"; mkdir -p "$ISO/dist/claude/scripts" "$ISO/agents" "$ISO/commands" "$ISO/hooks"
+printf 'RESOLVE_RES=resolve-opencode-resources.sh\n' > "$ISO/dist/claude/scripts/run-published-agent.sh"
+[ -z "$(claude_resolver_refs "$ISO")" ] && pass 'excepcion exacta: run-published-agent.sh se tolera' || fail 'excepcion no aplicada'
+printf 'x opencode-resources.sh\n' > "$ISO/dist/claude/scripts/otro.sh"
+[ -n "$(claude_resolver_refs "$ISO")" ] && pass 'otra mencion en dist/claude sigue fallando' || fail 'otra mencion en dist/claude tolerada'
+rm -f "$ISO/dist/claude/scripts/otro.sh"
+printf 'resolve-opencode-resources\n' > "$ISO/hooks/h.sh"
+[ -n "$(claude_resolver_refs "$ISO")" ] && pass 'mencion en hooks sigue fallando' || fail 'mencion en hooks tolerada'
+grep -q 'RUNTIME_MISMATCH' "$REPO_ROOT/dist/claude/scripts/run-published-agent.sh" && pass 'la excepcion sigue justificada: RUNTIME_MISMATCH presente' || fail 'run-published-agent.sh sin RUNTIME_MISMATCH'
 ! grep -q 'resolve-opencode-resources\|opencode-resources' "$HERE/test-adapter-claude.sh" && pass 'test-adapter-claude no depende del resolver' || fail 'test-adapter-claude depende del resolver'
 
 echo "Resultado: $PASS passed, $FAIL failed"
