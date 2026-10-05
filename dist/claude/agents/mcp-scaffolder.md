@@ -2469,7 +2469,7 @@ on:
 
 # Piso para los jobs que no declaran los suyos. Los permisos de un job reemplazan por completo
 # a los del workflow (GitHub Docs, "Assigning permissions to jobs"), asi que las concesiones
-# de cada job (id-token: write, pull-requests: read, actions: read) siguen vigentes.
+# de cada job (id-token: write, pull-requests: read) siguen vigentes.
 permissions:
   contents: read
 
