@@ -110,6 +110,20 @@ for pair in "Claude:$CLAUDE_AGENT" "OpenCode:$OPENCODE_AGENT"; do
     fi
 done
 
+for pair in "Claude:$CLAUDE_AGENT" "OpenCode:$OPENCODE_AGENT"; do
+    runtime="${pair%%:*}"; file="${pair#*:}"
+    if grep -qF 'seccion "Impacto en archivos"' "$file" && grep -qF 'cada uno se toca o se justifica' "$file"; then
+        pass "$runtime: el paso 1 lee Impacto en archivos como obligaciones de test"
+    else
+        fail "$runtime: el paso 1 no incorpora la lectura de Impacto en archivos"
+    fi
+    if grep -qF '### 6h. Pines de catalogo' "$file" && grep -qF 'Veintinueve' "$file" && grep -qF 'unitarios **y** smoke' "$file" && grep -qF 'Pines de catalogo actualizados' "$file"; then
+        pass "$runtime: la regla de pines de catalogo y su registro en el resumen estan presentes"
+    else
+        fail "$runtime: falta la regla de pines de catalogo (6h) o su registro en el resumen"
+    fi
+done
+
 echo
 echo "Resumen: $PASS pass, $FAIL fail"
 [ "$FAIL" -eq 0 ]

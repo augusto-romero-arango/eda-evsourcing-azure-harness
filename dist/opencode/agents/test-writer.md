@@ -311,6 +311,7 @@ El prompt que recibes contiene el contexto de la historia de usuario. Leelo comp
 - ¿Que criterios de aceptacion hay?
 - ¿Que casos borde son relevantes?
 - ¿Que comandos, eventos y aggregate roots involucra?
+- ¿Que archivos de **test** lista la seccion "Impacto en archivos" (`Modifica`/`Crea`)? Son **obligaciones**: cada uno se toca o se justifica en la tabla "Desviaciones del plan del planner" del resumen (paso 9). Que el issue no liste un test no te exime de la regla de pines de catalogo (6h).
 
 ### 2. Evaluar tipo de tarea (¿TDD o refactoring puro?)
 
@@ -972,6 +973,20 @@ public async Task AgregarServiciosControlHoras_CongelaElAliasDeTurnoCreado()
 
 Autoridad completa (mecanica del alias, `EventNamingStyle`, las tres proscripciones de registro): **MEF-ADR-0036**. Esta seccion no la duplica — solo enseña donde y como se congela el guardrail.
 
+### 6h. Pines de catalogo: actualizalos en el mismo commit
+
+Un **pin de catalogo** es un test que fija el conteo o los nombres de un catalogo enumerable: tools MCP, endpoints, eventos registrados. Cuando agregas una pieza a ese catalogo, tu stub ya lo cambia: el pin viejo queda en rojo por una razon equivocada, la compuerta roja lo acepta como "fase roja confirmada" y el `implementer`, que no puede tocar tests, no puede ponerlo verde -- el pipeline muere en la fase verde.
+
+**Regla**: al agregar una pieza (tool, endpoint, evento registrado) busca en `tests/` los pines de conteo y de nombres de ese catalogo -- unitarios **y** smoke -- y actualizalos en el mismo commit, aunque el issue no los liste.
+
+**Como encontrarlos** (no dependas de "Impacto en archivos"):
+- Busca por el nombre del catalogo o del tipo (`grep -rn "ComposicionDelServidor\|Tools\|TiposPersistidos" tests/`).
+- Busca por el conteo numerico actual, en cifra **y en palabras**: `29`, `Veintinueve`, `LasVeintinueveTools`, `TreintaTools`. Un nombre de test o de metodo suele llevar el conteo escrito.
+
+**Ejemplo MCP**: agregar la tool `aplicar_plantilla_semanal_por_grupo` a un servidor con 29 tools exige actualizar **dos** pines: el de composicion por reflexion (`ComposicionDelServidorTests.ServidorMcp_ExponeLasVeintinueveTools_CuandoSeInspeccionaElEnsamblado` pasa a 30 tools, incluyendo el renombrado a `...LasTreintaTools...`) y el del smoke (`MaterializaLasTreintaTools`). Actualizar solo uno deja el otro en rojo para siempre (MEF-ADR-0048, nivel 2).
+
+Registra cada pin actualizado en el resumen (paso 9, "Pines de catalogo actualizados").
+
 ### 6g. FunctionEndpointTests: assertar el codigo de exito exacto del contrato (MEF-ADR-0043)
 
 El campo "Contrato HTTP del comando" del Definition of Ready (MEF-ADR-0011, enmendado por MEF-ADR-0043) declara, para todo endpoint HTTP de comando, cuatro elementos: verbo, ruta, el paso del test de precedencia de MEF-ADR-0043 seccion 2 que se aplico, y el **codigo de exito** de la respuesta sincrona. Lee ese contrato del issue antes de escribir `FunctionEndpointTests.cs` -- **nunca asumas un codigo por default, y nunca asumas `AcceptedResult`**: fue la practica universal del marco antes de que MEF-ADR-0004 (enmendada por el issue #849) corrigiera esa premisa, y sigue siendo el error mas facil de heredar por copiar un test viejo.
@@ -1151,6 +1166,9 @@ Crea el archivo `.mefisto/pipeline/summaries/stage-1-test-writer.md`:
 | Criterio de aceptacion | Test(s) |
 |---|---|
 | CA-1: descripcion | `<Sujeto>_<LoQuePasa>_Cuando<Condicion>` |
+
+### Pines de catalogo actualizados
+- `Archivo.cs` / `Test`: catalogo, conteo anterior -> nuevo (o "Ninguno: no se agrego pieza a un catalogo enumerable")
 
 ### Desviaciones del plan del planner
 
