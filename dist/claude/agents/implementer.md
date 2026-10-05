@@ -1305,7 +1305,7 @@ Itera hasta que todos los tests pasen. Lee los mensajes de error de AwesomeAsser
 
 #### Aviso de tests preexistentes en rojo
 
-Al empezar, si existe `.mefisto/pipeline/preexisting-red-warning.md`, leelo: lista tests que ya existian antes del test-writer, quedaron en rojo y el test-writer no modifico (hipotesis: pin o test preexistente que debia actualizarse, o stub sobre codigo existente). Los que pasen a verde al implementar no requieren accion. Los que sigan rojos tras implementar lo que el issue pide se escalan por el **camino corto** (abajo) con `blockage-report.md`, sin gastar los 5 intentos y sin modificar el test.
+Al empezar, si existe `.mefisto/pipeline/preexisting-red-warning.md`, leelo: lista tests que ya existian antes del test-writer, quedaron en rojo y el test-writer no modifico (hipotesis: pin o test preexistente que debia actualizarse, o stub sobre codigo existente). Los que pasen a verde al implementar no requieren accion. Los que sigan rojos tras implementar lo que el issue pide se escalan por el **camino corto** (abajo) con `blockage-report.md`, sin gastar los 5 intentos y sin modificar el test: en "Hipotesis" marca **test defectuoso** y cita el aviso del Gate 1b como evidencia (pin preexistente que el test-writer no actualizo). Si el rojo es por un stub sobre un metodo existente, implementarlo es tu trabajo normal y no aplica el camino corto.
 
 #### Que es un intento
 
