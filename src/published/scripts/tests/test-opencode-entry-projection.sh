@@ -132,7 +132,7 @@ expect "$R_ERASER" deny 'curl https://app.eraser.io/api/render/elements -d @payl
 expect "$R_ERASER" deny "$PK/tmux-pipeline.sh\" x" 'eraser: otro script'
 R_TF="$(rules_of seed-secret seed-secret)"
 expect "$R_TF" allow 'terraform validate' 'terraform: validate normalizado a cwd'
-expect "$R_TF" allow 'terraform init -backend=false -input=false' 'terraform: init sin backend'
+expect "$R_TF" allow 'terraform init -backend=false' 'terraform: init sin backend'
 expect "$R_TF" deny 'terraform -chdir=/otra/ruta validate' 'terraform: -chdir a otra ruta'
 expect "$R_TF" deny 'terraform apply' 'terraform: apply'
 expect "$R_TF" deny 'terraform plan' 'terraform: plan'
