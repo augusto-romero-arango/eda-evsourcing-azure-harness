@@ -1165,12 +1165,12 @@ Corrige las fugas en el worktree ($WORKTREE_PATH) y retoma con:
 # --- Gate de cobertura de shims de pruebas (issue #1965) ---
 # Cierre de stage, tras scope y neutralidad: toda fuente canonica en
 # src/published/scripts/tests/ debe tener su shim homonimo en scripts/tests/
-# (o figurar en el registro de la lib). No ejecuta pruebas, es barato.
+# (o figurar en el registro de la lib). No ejecuta pruebas, es barato. A
+# diferencia de run_neutrality_gate no necesita `git add -A`: la lib recorre el
+# sistema de archivos del worktree, no `git ls-files`.
 run_test_shim_gate() {
     local stage="$1" role="$2"
     local out
-
-    git -C "$WORKTREE_PATH" add -A >/dev/null 2>&1 || true
 
     if out="$(mefisto_test_inventory_check_canonical_coverage "$WORKTREE_PATH" 2>&1)"; then
         success "Gate de shims de pruebas: cobertura completa"

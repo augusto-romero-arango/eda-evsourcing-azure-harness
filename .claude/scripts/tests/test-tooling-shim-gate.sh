@@ -31,7 +31,38 @@ printf '#!/usr/bin/env bash\nexec true\n' > "$FIX/scripts/tests/test-nueva-1965.
 bash -c 'source "$1"; mefisto_test_inventory_check_canonical_coverage "$2"' _ "$LIB" "$FIX" >/dev/null 2>&1 \
     && pass "cobertura completa" || fail "debio pasar con shim"
 
-echo "[C] El pipeline cablea el gate tras la neutralidad y el prompt exige el shim"
+echo "[C] run_test_shim_gate del pipeline aborta con el nombre y la instruccion del shim"
+GATE_FN="$(awk '/^run_test_shim_gate\(\) \{/{f=1} f{print} f&&/^\}/{exit}' "$PIPE")"
+if [ -z "$GATE_FN" ]; then
+    fail "no se pudo extraer run_test_shim_gate del pipeline"
+else
+    run_gate() {
+        bash -c '
+            source "$1"
+            success() { echo "OK: $*"; }
+            abort() { echo "ABORT: $*"; exit 1; }
+            eval "$2"
+            WORKTREE_PATH="$3" ISSUE_NUM=1965 VARIANT_LABEL=""
+            run_test_shim_gate 1 writer
+        ' _ "$LIB" "$GATE_FN" "$FIX" 2>&1
+    }
+    rm -f "$FIX/scripts/tests/test-nueva-1965.sh"
+    out="$(run_gate)"; rc=$?
+    if [ "$rc" -ne 0 ] && case "$out" in *ABORT:*test-nueva-1965.sh*scripts/tests/*) true ;; *) false ;; esac; then
+        pass "sin shim: aborta nombrando la fuente y scripts/tests/"
+    else
+        fail "sin shim: esperaba abort con el nombre (rc=$rc): $out"
+    fi
+    printf '#!/usr/bin/env bash\nexec true\n' > "$FIX/scripts/tests/test-nueva-1965.sh"
+    out="$(run_gate)"; rc=$?
+    if [ "$rc" -eq 0 ] && case "$out" in *OK:*) true ;; *) false ;; esac; then
+        pass "con shim: el gate pasa"
+    else
+        fail "con shim: esperaba exito (rc=$rc): $out"
+    fi
+fi
+
+echo "[D] El pipeline cablea el gate tras la neutralidad y el prompt exige el shim"
 grep -q '^    run_test_shim_gate 1 writer' "$PIPE" && pass "gate en stage 1" || fail "falta gate en stage 1"
 grep -q '^    run_test_shim_gate 2 reviewer' "$PIPE" && pass "gate en stage 2" || fail "falta gate en stage 2"
 grep -q 'mefisto_test_inventory_check_canonical_coverage "\$WORKTREE_PATH"' "$PIPE" && pass "invoca la lib sobre el worktree" || fail "no invoca la lib"
