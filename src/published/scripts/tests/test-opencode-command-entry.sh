@@ -39,12 +39,15 @@ make_release() {
   local root="$1" version="${2:-$VERSION}"
   mkdir -p "$root/plugins" "$root/scripts" "$root/fake"
   cp "$WORK/plugin.js" "$root/plugins/mefisto-command-entry.js"
+  cp "$REPO_ROOT/dist/opencode/command-entry-manifest.json" "$root/command-entry-manifest.json"
   jq -n --arg v "$version" --arg c "$COMMIT" '{schemaVersion:1,runtime:"opencode",version:$v,commit:$c}' > "$root/mefisto-manifest.json"
   cat > "$root/scripts/resolve-command-entry.sh" <<'EOF'
 #!/usr/bin/env bash
 dir="$(cd "$(dirname "$0")/.." && pwd -P)/fake"
-phase="$2"
+request="$(cat)"
+phase="$(jq -r .phase <<< "$request")"
 printf '%s\n' "$*" >> "$dir/argv.log"
+printf '%s\n' "$request" >> "$dir/argv.log"
 [ -f "$dir/$phase.json" ] && cat "$dir/$phase.json"
 exit 0
 EOF
@@ -55,8 +58,8 @@ catalog_ids() { jq -r '.commands[].id' "$SOURCE"; }
 projection() { # status reasonCode admitted-for
   jq -n --arg status "$1" --arg reason "$2" --arg admit "$3" --slurpfile m "$SOURCE" '
     {schemaVersion:1,admissionScope:"entry",status:$status,reasonCode:$reason,snapshotDigest:"snap-1",
-     agents:([$m[0].commands[].id] | map({key:("command-entry-"+.),value:{description:"entrada tecnica",permission:{"*":"deny",task:{"*":"deny"},read:{"/Users/x/Library/Application Support/mefisto/releases/0.40.2/scripts/*":"allow"}}}}) | from_entries),
-     bindings:[$m[0].commands[].id | {command:.,agent:("command-entry-"+.),admitted:(. == $admit)}]}'
+      agents:[$m[0].commands[].id | {id:("command-entry-"+.),rules:[{permission:"read",pattern:"/Users/x/Library/Application Support/mefisto/releases/0.40.2/scripts/*",value:"allow"}]}],
+      bindings:[$m[0].commands[].id | {command:("mefisto:"+.),agent:("command-entry-"+.),admitted:(. == $admit)}]}'
 }
 mkdir -p "$WORK/project"
 cat > "$WORK/run.mjs" <<'EOF'
@@ -89,7 +92,9 @@ if (scenario === "ready") {
   writeFileSync(fake + "/command.json", JSON.stringify({ ...JSON.parse(readFileSync(fake + "/command-denied.json", "utf8")) }));
   out.denied = await attempt(hooks, "mefisto:bitacora");
   const argv = readFileSync(fake + "/argv.log", "utf8");
-  out.argv = argv.includes("--phase config") && argv.includes("--phase command") && argv.includes("sessionPolicyKnown");
+  out.argv = argv.includes("--project-root " + project) && argv.includes("config") && argv.includes("command");
+  const requests = argv.split("\n").filter((line) => line.startsWith("{")).map((line) => JSON.parse(line));
+  out.protocol = requests.some((request) => request.phase === "config" && request.schemaVersion === 1 && request.runtimeContext.directory === project && request.runtimeContext.osHome && request.runtimeContext.home === request.home && request.commands.some((row) => row.name === "mefisto:next-order" && /^[0-9a-f]{64}$/.test(row.sourceDigest))) && requests.some((request) => request.phase === "command" && request.requestedCommand === "bitacora" && request.sessionPolicyKnown === true);
   out.leak = JSON.stringify(logs).includes("secreto");
 }
 if (scenario === "session") {
@@ -101,7 +106,7 @@ if (scenario === "session") {
   await attempt(unknown, "mefisto:bitacora");
   const other = await mk(session([], "/otro")); await other.config(baseConfig());
   await attempt(other, "mefisto:bitacora");
-  const lines = readFileSync(fake + "/argv.log", "utf8").split("\n").filter((l) => l.includes("--phase command"));
+   const lines = readFileSync(fake + "/argv.log", "utf8").split("\n").filter((l) => l.includes('"phase":"command"'));
   out.emptyKnown = lines[0].includes("\"sessionPolicyKnown\":true") && lines[0].includes("\"sessionPermission\":[]");
   out.failedUnknown = lines[1].includes("\"sessionPolicyKnown\":false") && lines[1].includes("\"sessionProjectMatches\":false");
   out.otherProject = lines[2].includes("\"sessionProjectMatches\":false");
@@ -115,6 +120,14 @@ if (scenario === "legacy") {
   out.noAgents = !Object.keys(cfg.agent).some((k) => k.startsWith("command-entry-"));
   const once = JSON.stringify(cfg); await hooks.config(cfg); out.idempotent = once === JSON.stringify(cfg);
   out.passes = await attempt(hooks, "mefisto:bitacora");
+}
+if (scenario === "legacy-real") {
+  const cfg = baseConfig();
+  const hooks = await mk(session([]));
+  await hooks.config(cfg);
+  out.restored = catalog.every((id) => !("agent" in cfg.command["mefisto:" + id]) && !("subtask" in cfg.command["mefisto:" + id]));
+  out.passes = await attempt(hooks, "mefisto:next-order");
+  out.logs = logs.map((e) => e.body?.extra?.reason);
 }
 if (scenario === "deny") {
   const cfg = baseConfig(); const before = JSON.stringify(cfg);
@@ -163,6 +176,7 @@ check 'Grep de la release con ruta macOS con espacios queda en la politica aplic
 check 'aplicacion idempotente' "$out" '.idempotent'
 check 'command: admitted true pasa; comando ajeno se ignora; admitted false rechaza' "$out" '.admitted == "ok" and .notOurs == "ok" and (.denied | startswith("mefisto_entry_not_admitted"))'
 check 'resolver por argv con fases config y command sin fugas' "$out" '.argv and (.leak | not)'
+check 'envelope stdin del resolver nativo conserva identidad y ownership' "$out" '.protocol'
 
 jq -n --slurpfile m "$SOURCE" '{}' >/dev/null
 R="$WORK/r-session"; make_release "$R"; projection ready OK none > "$R/fake/config.json"; projection ready OK bitacora > "$R/fake/command.json"
@@ -170,12 +184,22 @@ out="$(run "$R" session)"
 check 'sesion vacia observada vs no consultable vs otro proyecto' "$out" '.emptyKnown and .failedUnknown and .otherProject'
 
 R="$WORK/r-legacy"; make_release "$R"
-jq -n '{schemaVersion:1,admissionScope:"entry",status:"disabled",reasonCode:"NO_PROFILE",agents:{},bindings:[]}' > "$R/fake/config.json"
+jq -n '{schemaVersion:1,admissionScope:"entry",status:"disabled",reasonCode:"NO_PROFILE",agents:[],bindings:[]}' > "$R/fake/config.json"
 out="$(run "$R" legacy)"
 check 'NO_PROFILE restaura solo routing propio, idempotente, conserva overrides' "$out" '.restored and .foreignKept and .noAgents and .idempotent and .passes == "ok"'
 
+# Sin doble: ejecutar el plugin contra el resolver empaquetado y su protocolo stdin real.
+R="$WORK/r-legacy-real"
+mkdir -p "$WORK/project/.claude"
+printf '{}\n' > "$WORK/project/.claude/harness.config.json"
+git -C "$WORK/project" init -q
+cp -R "$REPO_ROOT/dist/opencode" "$R"
+jq -n --slurpfile identity "$REPO_ROOT/src/published/release-identity.json" '{schemaVersion:1,runtime:"opencode",version:$identity[0].version,commit:$identity[0].commit}' > "$R/mefisto-manifest.json"
+out="$(cd "$WORK/project" && run "$R" legacy-real)"
+check 'sin perfil: resolver real restaura next-order y no deniega la entrada' "$out" '.restored and .passes == "ok" and .logs == []'
+
 R="$WORK/r-revoked"; make_release "$R"
-jq -n '{schemaVersion:1,admissionScope:"entry",status:"disabled",reasonCode:"CONSENT_REVOKED",controlledContext:true,agents:{},bindings:[]}' > "$R/fake/config.json"
+jq -n '{schemaVersion:1,admissionScope:"entry",status:"disabled",reasonCode:"CONSENT_REVOKED",controlledContext:true,agents:[],bindings:[]}' > "$R/fake/config.json"
 out="$(run "$R" deny)"
 check 'CONSENT_REVOKED no activa fallback legacy y rechaza' "$out" '.result | startswith("mefisto_entry_not_admitted")'
 
@@ -185,7 +209,7 @@ for status in needs-approval conflict; do
   check "$status instala agentes denegados y no admite" "$out" '.result | startswith("mefisto_entry_not_admitted")'
 done
 
-R="$WORK/r-noagent"; make_release "$R"; projection ready OK none | jq 'del(.agents["command-entry-sequential"])' > "$R/fake/config.json"
+R="$WORK/r-noagent"; make_release "$R"; projection ready OK none | jq '.agents |= map(select(.id != "command-entry-sequential"))' > "$R/fake/config.json"
 out="$(run "$R" deny)"
 check 'entrada sin agente proyectado falla visible, sin mutar ni heredar' "$out" '.configAfter == "unchanged" and .result == "mefisto_entry_not_admitted:BINDING_INVALID"'
 
@@ -210,7 +234,7 @@ out="$(run "$R" frozen)"
 check 'error ignorado del config no depende de la excepcion: guard rechaza' "$out" '.result | startswith("mefisto_entry_not_admitted:")'
 
 R="$WORK/r-revoke"; make_release "$R"; projection ready OK none > "$R/fake/config.json"; projection ready OK bitacora > "$R/fake/command.json"
-jq -n '{schemaVersion:1,admissionScope:"entry",status:"disabled",reasonCode:"NO_PROFILE",agents:{},bindings:[]}' > "$R/fake/config-disabled.json"
+jq -n '{schemaVersion:1,admissionScope:"entry",status:"disabled",reasonCode:"NO_PROFILE",agents:[],bindings:[]}' > "$R/fake/config-disabled.json"
 out="$(run "$R" revoke)"
 check 'perfil retirado en instancia activada: sin fallback en caliente' "$out" '.result | startswith("mefisto_entry_not_admitted:")'
 

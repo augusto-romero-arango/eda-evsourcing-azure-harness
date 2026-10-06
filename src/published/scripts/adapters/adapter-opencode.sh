@@ -706,6 +706,7 @@ render_command_entry_plugin() {
     printf 'const CATALOG = %s;\nconst IDENTITY = %s;\nconst RESOLVER = "scripts/resolve-command-entry.sh";\n' "$catalog" "$identity"
     cat <<'EOF'
 import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join } from "node:path";
@@ -722,25 +723,51 @@ const log = async (client, event, reason) => {
 };
 const deny = (reason) => new Error("mefisto_entry_not_admitted:" + code(reason, "UNKNOWN"));
 
-const runResolver = (root, args) => new Promise((resolve) => {
-  execFile(join(root, RESOLVER), args, { timeout: 30000, maxBuffer: 1048576, windowsHide: true }, (error, stdout) => {
+const digest = (value) => typeof value === "string" ? createHash("sha256").update(value.trim()).digest("hex") : "";
+const policyFromRules = (rules) => {
+  const permission = {};
+  for (const rule of rules) {
+    if (!plain(rule) || typeof rule.permission !== "string" || typeof rule.pattern !== "string" || !["allow", "ask", "deny"].includes(rule.value)) return null;
+    const patterns = permission[rule.permission] ?? {};
+    delete patterns[rule.pattern];
+    patterns[rule.pattern] = rule.value;
+    permission[rule.permission] = patterns;
+  }
+  return permission;
+};
+const projectResult = (result) => {
+  if (!plain(result) || result.schemaVersion !== 1 || result.admissionScope !== "entry") return null;
+  if (!Array.isArray(result.bindings) || !Array.isArray(result.agents)) return null;
+  const agents = {};
+  for (const row of result.agents) {
+    if (typeof row?.id !== "string" || !Array.isArray(row.rules)) return null;
+    const permission = policyFromRules(row.rules);
+    if (!permission) return null;
+    agents[row.id] = { description: "Entrada tecnica de Mefisto", permission, hidden: true };
+  }
+  return { ...result, reasonCode: result.reasonCode ?? result.diagnostics?.[0]?.code ?? result.status,
+    agents, bindings: result.bindings.map((row) => ({ ...row, command: row.command?.startsWith("mefisto:") ? row.command.slice(8) : row.command })),
+    snapshotDigest: result.projectionDigest, permissionImageDigest: result.projectionDigest,
+    permissionBase: result.resourcesDigest };
+};
+const runResolver = (root, project, request) => new Promise((resolve) => {
+  const child = execFile(join(root, RESOLVER), ["--project-root", project], { timeout: 30000, maxBuffer: 1048576, windowsHide: true }, (error, stdout) => {
     try {
-      const parsed = JSON.parse(String(stdout));
-      resolve(plain(parsed) && parsed.schemaVersion === 1 && parsed.admissionScope === "entry" ? parsed : null);
+      resolve(projectResult(JSON.parse(String(stdout))));
     } catch { resolve(null); }
   });
+  child.stdin?.on?.("error", () => {});
+  child.stdin?.end(JSON.stringify(request));
 });
 
 const runtimeContext = (input) => {
   const env = (name) => (Object.prototype.hasOwnProperty.call(process.env, name) ? process.env[name] : null);
   return {
     platform: process.platform,
-    homedir: homedir(),
-    matcherHome: env("HOME"),
-    xdg: { dataHome: env("XDG_DATA_HOME"), configHome: env("XDG_CONFIG_HOME"), stateHome: env("XDG_STATE_HOME"), cacheHome: env("XDG_CACHE_HOME") },
+    osHome: homedir(), home: env("HOME") ?? homedir(),
+    xdgDataHome: env("XDG_DATA_HOME"), xdgConfigHome: env("XDG_CONFIG_HOME"), opencodeConfigDir: env("OPENCODE_CONFIG_DIR"),
     directory: input.directory,
-    worktree: input.worktree ?? null,
-    nugetAssetsFiles: [],
+    worktree: input.worktree ?? input.directory,
   };
 };
 
@@ -781,7 +808,7 @@ export default async function mefistoCommandEntry(input = {}) {
   const client = input.client;
   const root = LOADED_ROOT ?? join(dirname(fileURLToPath(import.meta.url)), "..");
   const directory = input.directory;
-  const state = { skip: false, failed: null, legacy: false, applied: false, snapshot: null, image: null, rejected: new Set(), ctx: readContextRef(), actor: null, aliases: new Map(), sessions: new Map(), primary: new Set() };
+  const state = { skip: false, failed: null, legacy: false, applied: false, snapshot: null, image: null, observed: null, owned: new Set(), rejected: new Set(), ctx: readContextRef(), actor: null, aliases: new Map(), sessions: new Map(), primary: new Set() };
   if (typeof directory !== "string" || !isAbsolute(directory) ||
       (existsSync(join(directory, "src/published/contract/command-entry.json")) && existsSync(join(directory, ".claude-plugin/plugin.json")))) {
     state.skip = true;
@@ -789,7 +816,22 @@ export default async function mefistoCommandEntry(input = {}) {
     state.failed = "IDENTITY_MISMATCH";
   }
   const context = state.skip ? null : runtimeContext(input);
-  const base = (phase, extra) => ["--phase", phase, "--project-root", directory, "--context", JSON.stringify({ ...extra, runtimeContext: context })];
+  const observe = (cfg) => {
+    const manifest = JSON.parse(readFileSync(join(root, "command-entry-manifest.json"), "utf8"));
+    return { schemaVersion: 1, home: context.home, configPolicyKnown: plain(cfg.permission) || cfg.permission === undefined,
+      runtimeContext: context, nugetAssetsFiles: [],
+      commands: manifest.templates.filter((row) => row.kind === "command").map((row) => {
+        const actual = cfg.command?.["mefisto:" + row.id];
+        return { name: "mefisto:" + row.id, sourceDigest: digest(actual?.template), agent: actual?.agent ?? null, subtask: actual?.subtask ?? null };
+      }),
+      delegateAgents: [...new Set(manifest.delegatedPrompts.map((row) => row.agent))].map((id) => {
+        const actual = cfg.agent?.[id];
+        return { id, available: plain(actual), sourceDigest: digest(actual?.prompt), mode: actual?.mode ?? null };
+      }),
+      foreignEntryAgents: Object.keys(cfg.agent ?? {}).filter((id) => id.startsWith("command-entry-") && !state.owned.has(id)),
+      permission: { permission: cfg.permission ?? {} } };
+  };
+  const request = (phase, extra = {}) => ({ ...state.observed, phase, ...extra });
   const fail = async (reason) => { state.failed = code(reason, "UNKNOWN"); await log(client, "command_entry_failed", state.failed); };
   const getSession = async (id) => {
     try { const r = await client.session.get({ path: { id } }); return !r?.error && plain(r?.data) ? r.data : null; } catch { return null; }
@@ -822,7 +864,7 @@ export default async function mefistoCommandEntry(input = {}) {
   };
   // Revalida por llamada: misma imagen de permisos refresca evidencia; imagen distinta exige nueva admision.
   const recheck = async () => {
-    const res = await runResolver(root, base("config", { catalog: CATALOG }));
+    const res = await runResolver(root, directory, request("config"));
     if (!res) return "RESOLVER_FAILED";
     if (res.status !== "ready") return code(res.reasonCode, "NOT_READY");
     const image = typeof res.permissionImageDigest === "string" ? res.permissionImageDigest : null;
@@ -845,7 +887,8 @@ export default async function mefistoCommandEntry(input = {}) {
       if (state.skip) return;
       if (state.failed) { await log(client, "command_entry_failed", state.failed); return; }
       if (!plain(cfg)) throw new Error("invalid_config");
-      const res = await runResolver(root, base("config", { catalog: CATALOG }));
+      state.observed = observe(cfg);
+      const res = await runResolver(root, directory, request("config"));
       if (!res) return await fail("RESOLVER_FAILED");
       if (res.status === "disabled" && res.reasonCode === "NO_PROFILE" && !res.controlledContext && !state.applied && !state.ctx) {
         for (const id of CATALOG) {
@@ -889,6 +932,7 @@ export default async function mefistoCommandEntry(input = {}) {
       if (!plain(cfg.agent)) throw new Error("invalid_agent");
       for (const item of stagedAliases) { cfg.agent[item.name] = item.agent; state.aliases.set(item.original, item); }
       for (const item of staged) { cfg.agent[item.name] = item.agent; cfg.command["mefisto:" + item.id].agent = item.name; cfg.command["mefisto:" + item.id].subtask = false; }
+      for (const item of staged) state.owned.add(item.name);
       state.applied = true;
       state.snapshot = typeof res.snapshotDigest === "string" ? res.snapshotDigest : null;
       state.image = typeof res.permissionImageDigest === "string" ? res.permissionImageDigest : null;
@@ -926,7 +970,7 @@ export default async function mefistoCommandEntry(input = {}) {
         matches = data.directory === directory;
       }
     } catch { known = false; }
-    const res = await runResolver(root, base("command", { commandId: id, sessionPolicyKnown: known, sessionProjectMatches: matches, sessionPermission: rules }));
+    const res = await runResolver(root, directory, request("command", { requestedCommand: id, sessionPolicyKnown: known, sessionProjectMatches: matches, sessionPermission: rules }));
     if (!res) throw deny("RESOLVER_FAILED");
     if (res.status !== "ready") throw deny(code(res.reasonCode, code(res.status, "NOT_READY")));
     const row = Array.isArray(res.bindings) ? res.bindings.find((item) => item?.command === id) : undefined;

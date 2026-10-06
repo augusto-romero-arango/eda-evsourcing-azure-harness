@@ -22,11 +22,13 @@ make_release() { # root [image]
   local root="$1" image="${2:-img1}"
   mkdir -p "$root/plugins" "$root/scripts" "$root/fake" "$root/ctx"
   cp "$WORK/plugin.js" "$root/plugins/mefisto-command-entry.js"
+  cp "$REPO_ROOT/dist/opencode/command-entry-manifest.json" "$root/command-entry-manifest.json"
   jq -n --arg v "$VERSION" --arg c "$COMMIT" '{schemaVersion:1,runtime:"opencode",version:$v,commit:$c}' > "$root/mefisto-manifest.json"
   cat > "$root/scripts/resolve-command-entry.sh" <<'EOF'
 #!/usr/bin/env bash
 dir="$(cd "$(dirname "$0")/.." && pwd -P)/fake"
-[ -f "$dir/$2.json" ] && cat "$dir/$2.json"
+phase="$(jq -r .phase)"
+[ -f "$dir/$phase.json" ] && cat "$dir/$phase.json"
 exit 0
 EOF
   cat > "$root/scripts/execution-context.sh" <<'EOF'
@@ -41,10 +43,10 @@ EOF
   jq -n --arg d "$DIGEST" --arg v "$VERSION" '{contractDigest:$d,contract:{release:$v,alias:"autonomy-reviewer",originalAgent:"reviewer",nonce:"nonce-1",projectId:"proj-1"}}' > "$root/ctx/ctx1.json"
   jq -n --arg p "$root/ctx/ctx1.json" '{schemaVersion:1,status:"ready",reasonCode:"VALID",path:$p}' > "$root/fake/op-validate.json"
   jq -n --arg i "$image" --slurpfile m "$SOURCE" '
-    {schemaVersion:1,admissionScope:"entry",status:"ready",reasonCode:"OK",snapshotDigest:"snap-1",permissionImageDigest:$i,resourcesDigest:"res-1",
-     agents:([$m[0].commands[].id] | map({key:("command-entry-"+.),value:{description:"entrada",permission:{"*":"deny"}}}) | from_entries),
-     roleAliases:[{original:"reviewer",alias:"autonomy-reviewer",permission:{"*":"deny",read:{"/x/*":"allow"}}}],
-     bindings:[$m[0].commands[].id | {command:., agent:("command-entry-"+.), admitted:false}]}' > "$root/fake/config.json"
+    {schemaVersion:1,admissionScope:"entry",status:"ready",reasonCode:"OK",projectionDigest:$i,resourcesDigest:"res-1",
+      agents:[$m[0].commands[].id | {id:("command-entry-"+.),rules:[{permission:"read",pattern:"*",value:"deny"}]}],
+      roleAliases:[{original:"reviewer",alias:"autonomy-reviewer",permission:{"*":"deny",read:{"/x/*":"allow"}}}],
+      bindings:[$m[0].commands[].id | {command:("mefisto:"+.), agent:("command-entry-"+.), admitted:false}]}' > "$root/fake/config.json"
 }
 mkdir -p "$WORK/project"
 cat > "$WORK/run.mjs" <<'EOF'
@@ -146,15 +148,15 @@ out="$(run "$R" reserve)"
 check 'reserva fallida: el comando no se ejecuta ni se muta' "$out" '(.bash|endswith("PARENT_NOT_LIVE")) and .untouched'
 
 R="$WORK/r-image"; make_release "$R"
-jq '.snapshotDigest="snap-2"' "$R/fake/config.json" > "$R/fake/config-same.json"
-jq '.snapshotDigest="snap-3" | .permissionImageDigest="img9"' "$R/fake/config.json" > "$R/fake/config-new.json"
+jq '.' "$R/fake/config.json" > "$R/fake/config-same.json"
+jq '.projectionDigest="snap-3"' "$R/fake/config.json" > "$R/fake/config-new.json"
 out="$(run "$R" image)"
-check 'misma imagen con assets nuevos refresca evidencia; imagen distinta exige nueva admision' "$out" '.same == "ok" and (.changed|endswith("READMISSION_REQUIRED")) and (.log|contains("refresh-observations"))'
+check 'misma imagen conserva admision; imagen distinta exige nueva admision' "$out" '.same == "ok" and (.changed|endswith("READMISSION_REQUIRED"))'
 
-R="$WORK/r-admission"; make_release "$R"; jq '.bindings |= map(if .command=="bitacora" then .admitted=true else . end)' "$R/fake/config.json" > "$R/fake/command.json"
+R="$WORK/r-admission"; make_release "$R"; jq '.bindings |= map(if .command=="mefisto:bitacora" then .admitted=true else . end)' "$R/fake/config.json" > "$R/fake/command.json"
 out="$(run "$R" admission)"
 check 'entrada registra entryAdmission sanitizado tras bind-session' "$out" '.entry == "ok" and (.log|contains("bind-session")) and (.log|contains("record-entry-admission")) and (.log|contains("\"policyResult\":\"allowed\""))'
-R="$WORK/r-admission2"; make_release "$R"; jq '.bindings |= map(if .command=="bitacora" then .admitted=true else . end)' "$R/fake/config.json" > "$R/fake/command.json"
+R="$WORK/r-admission2"; make_release "$R"; jq '.bindings |= map(if .command=="mefisto:bitacora" then .admitted=true else . end)' "$R/fake/config.json" > "$R/fake/command.json"
 jq -n '{schemaVersion:1,status:"conflict",reasonCode:"ENTRY_ADMISSION_UNAUTHORIZED"}' > "$R/fake/op-record-entry-admission.json"
 out="$(run "$R" admission)"
 check 'registro de admision fallido: la entrada no se admite' "$out" '.entry|endswith("ADMISSION_NOT_RECORDED")'
