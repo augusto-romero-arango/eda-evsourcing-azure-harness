@@ -4,6 +4,14 @@ Todo cambio notable a este proyecto se documenta aquí. Sigue [Keep a Changelog]
 
 ## [Unreleased]
 
+## [0.41.8] - 2026-10-06
+
+### Fixed
+
+- OpenCode: el plugin de entrada inyecta `MEFISTO_PACKAGE_ROOT`, `MEFISTO_CONFIG_PATH` y `MEFISTO_INSTRUCTIONS_PATH` por `shell.env` y las plantillas de comando dejan de llevar el preambulo shell; los `command-entry-*` pueden leer el config canonico y su fallback (#2017).
+- Test cruzado `test-opencode-entry-template-policy.sh`: evalua cada bash y lectura de config de las plantillas contra la politica de su agente de entrada (#2017).
+- `/purge-store` en OpenCode: su politica de entrada admite `seq` y `sleep` del bucle de reintento, que el test cruzado detecto denegados (#2017).
+
 ## [0.41.7] - 2026-10-06
 
 ### Fixed
@@ -3138,7 +3146,8 @@ Y reemplazar referencias en `CLAUDE.md` del proyecto: `/eda-evsourcing-azure-har
 - Los agentes `reviewer` e `implementer` mantienen el placeholder literal `ADR-XXXX` en sus plantillas de reporte (no es un bug; el agente lo sustituye en tiempo de ejecución por el número real del ADR aplicable).
 - Los ejemplos de código en `test-writer.md`, `implementer.md` y `smoke-test-writer.md` conservan nombres concretos de un proyecto consumidor (`Programacion`, `ControlHoras`) anotados en el "Contrato con el consumidor" de cada agente como ejemplos pedagógicos.
 
-[Unreleased]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.41.7...HEAD
+[Unreleased]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.41.8...HEAD
+[0.41.8]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.41.7...v0.41.8
 [0.41.7]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.41.6...v0.41.7
 [0.41.6]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.41.5...v0.41.6
 [0.41.5]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.41.4...v0.41.5
