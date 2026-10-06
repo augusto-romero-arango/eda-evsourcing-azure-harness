@@ -24,7 +24,9 @@ for file in "$CLAUDE" "$OPENCODE"; do [ -f "$file" ] && pass "existe ${file#"$RE
 claude_body="$(< "$CLAUDE")"
 opencode_body="$(< "$OPENCODE")"
 contains "$claude_body" 'model: "haiku"' 'Claude materializa el perfil fast'
-for k in 'model:' 'subtask' 'agent:'; do absent "$opencode_body" "$k" "OpenCode no emite $k"; done
+absent "$opencode_body" 'model:' 'OpenCode no emite model:'
+contains "$opencode_body" 'agent: "command-entry-onboard"' 'OpenCode liga el command-entry de onboard'
+contains "$opencode_body" 'subtask: false' 'OpenCode no convierte onboard en subtask'
 
 echo '[b] invocaciones de scripts'
 body="$(awk 'NR == 1 { next } $0 == "---" && !seen { seen=1; next } seen { print }' "$SOURCE")"
@@ -44,7 +46,7 @@ echo '[c] command-doc de scaffold-projections'
 contains "$body" '{{mefisto:command-doc scaffold-projections}}' 'fuente lee command-doc'
 contains "$claude_body" '"${MEFISTO_PACKAGE_ROOT}/commands/scaffold-projections.md"' 'Claude lee scaffold-projections'
 contains "$opencode_body" '"${MEFISTO_PACKAGE_ROOT}/commands/mefisto:scaffold-projections.md"' 'OpenCode lee scaffold-projections'
-for cmd in install-auth scaffold-projections infra-base scaffold; do contains "$body" "{{mefisto:command $cmd}}" "remite a $cmd via command"; done
+for cmd in install-auth scaffold-projections autonomy infra-base scaffold; do contains "$body" "{{mefisto:command $cmd}}" "remite a $cmd via command"; done
 
 echo '[d] ausencia de tokens de runtime'
 for forbidden in '.plugin-root' 'plugins/cache' 'PLUGIN_SCRIPTS' 'PLUGIN_ROOT' 'commands/scaffold-projections.md' 'CLAUDE_' '.claude/'; do absent "$body" "$forbidden" "fuente sin token prohibido: $forbidden"; done
@@ -65,6 +67,9 @@ check_order '¿Quieres que lo configure ahora? [si/no]' 'bootstrap-backend.sh --
 check_order '¿Quieres que lo configure ahora? [si/no]' 'setup-github-ci.sh <subscription-id>}}'
 check_order '¿Confirmas? [si/no]' '{{mefisto:run set-harness-tenancy.sh --strategy <mono-tenant-transitorio|multi-tenant-header>}}'
 check_order '¿Quieres que corra' 'command-doc scaffold-projections}}'
+check_order '¿Quieres que corra `{{mefisto:command autonomy}} activar` ahora?' 'command-doc autonomy}}'
+contains "$body" '10. **Autonomia**' 'documenta la seccion 10 Autonomia'
+contains "$body" 'sin un "si" explicito no escribe config ni consentimiento' 'sin si no se escribe config ni consentimiento'
 
 echo '[f] mirror y salidas'
 if cmp -s "$MIRROR" "$CLAUDE"; then pass 'mirror Claude coincide byte a byte'; else fail 'mirror Claude diverge'; fi

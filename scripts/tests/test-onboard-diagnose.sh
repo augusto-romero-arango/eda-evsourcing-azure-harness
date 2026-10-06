@@ -452,6 +452,33 @@ else
 fi
 
 echo ""
+echo "[S-6] seccion 10 Autonomia: disabled -> NO VERIFICADO con causa; ready -> OK"
+write_complete_agents
+rm -f "$ONBOARD_REPO/.mefisto/harness.config.json" "$ONBOARD_REPO/.claude/harness.config.json"
+prepare_onboard_repo "$ONBOARD_REPO/.mefisto/harness.config.json" false
+OUT=$(cd "$ONBOARD_REPO" && PATH="$ONBOARD_BIN:$PATH" bash "$REPO_ROOT/scripts/onboard-diagnose.sh" 2>&1)
+if printf '%s\n' "$OUT" | grep -Fq "[NO VERIFICADO] autonomia disabled (causa: NO_PROFILE)" \
+    && printf '%s\n' "$OUT" | grep -Fq "/autonomy activar" \
+    && [ ! -e "$ONBOARD_REPO/.mefisto/pipeline/autonomy/consent.json" ]; then
+    pass "sin perfil: NO VERIFICADO con la causa de inspect, sin escribir consentimiento"
+else
+    fail "la seccion Autonomia no reporto disabled/NO_PROFILE como NO VERIFICADO"
+fi
+if (cd "$ONBOARD_REPO" && bash "$REPO_ROOT/scripts/autonomy-profile.sh" propose-max --project-root "$ONBOARD_REPO" >/dev/null 2>&1) \
+    && PD=$(cd "$ONBOARD_REPO" && bash "$REPO_ROOT/scripts/autonomy-profile.sh" preview --project-root "$ONBOARD_REPO" | jq -r '.expectedDigest // empty') \
+    && [ -n "$PD" ] \
+    && (cd "$ONBOARD_REPO" && bash "$REPO_ROOT/scripts/autonomy-profile.sh" approve --project-root "$ONBOARD_REPO" --expected-digest "$PD" >/dev/null 2>&1); then
+    OUT=$(cd "$ONBOARD_REPO" && PATH="$ONBOARD_BIN:$PATH" bash "$REPO_ROOT/scripts/onboard-diagnose.sh" 2>&1)
+    if printf '%s\n' "$OUT" | grep -Fq "[OK           ] autonomia lista (inspect: ready)"; then
+        pass "perfil aprobado: la seccion Autonomia reporta OK"
+    else
+        fail "perfil aprobado pero la seccion Autonomia no reporto OK"
+    fi
+else
+    fail "no se pudo preparar un perfil aprobado para probar ready"
+fi
+
+echo ""
 echo "----------------------------------------"
 echo "  Resumen: $PASS pass, $FAIL fail"
 echo "----------------------------------------"
