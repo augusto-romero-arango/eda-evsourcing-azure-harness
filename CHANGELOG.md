@@ -4,6 +4,12 @@ Todo cambio notable a este proyecto se documenta aquí. Sigue [Keep a Changelog]
 
 ## [Unreleased]
 
+## [0.41.6] - 2026-10-06
+
+### Fixed
+
+- El plugin de entrada de OpenCode serializa como escalar (`allow|ask|deny`) las claves de permiso sin patrones (`webfetch`, `websearch`, `list`, `glob`, `grep`) y como mapa solo `read`, `edit`, `bash`, `task`, `skill`, `external_directory`, `write` y `patch`; una clave escalar con patron distinto de `*` se rechaza. Corrige el fallo de arranque de OpenCode con perfil de autonomia aprobado.
+
 ## [0.41.5] - 2026-10-06
 
 ### Changed
@@ -3125,7 +3131,8 @@ Y reemplazar referencias en `CLAUDE.md` del proyecto: `/eda-evsourcing-azure-har
 - Los agentes `reviewer` e `implementer` mantienen el placeholder literal `ADR-XXXX` en sus plantillas de reporte (no es un bug; el agente lo sustituye en tiempo de ejecución por el número real del ADR aplicable).
 - Los ejemplos de código en `test-writer.md`, `implementer.md` y `smoke-test-writer.md` conservan nombres concretos de un proyecto consumidor (`Programacion`, `ControlHoras`) anotados en el "Contrato con el consumidor" de cada agente como ejemplos pedagógicos.
 
-[Unreleased]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.41.5...HEAD
+[Unreleased]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.41.6...HEAD
+[0.41.6]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.41.5...v0.41.6
 [0.41.5]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.41.4...v0.41.5
 [0.41.4]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.41.3...v0.41.4
 [0.41.3]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.41.2...v0.41.3
