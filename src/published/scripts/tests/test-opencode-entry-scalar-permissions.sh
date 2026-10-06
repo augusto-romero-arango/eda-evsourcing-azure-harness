@@ -55,7 +55,7 @@ jq -e --argjson n "$count" '
 BAD='[{"permission":"webfetch","pattern":"https://x/*","value":"allow"}]'
 R="$WORK/bad"; make_release "$R" "$BAD"
 out="$(CATALOG="$(jq -c '[.commands[].id]' "$SOURCE")" node "$WORK/run.mjs" "$R" "$WORK/project" 2>/dev/null)"
-jq -e 'length == 0' <<< "$out" >/dev/null && pass 'escalar con patron distinto de * se rechaza sin emitir configuracion invalida' || fail "patron en clave escalar aceptado: $out"
+jq -e 'all(.[]; has("permission") | not)' <<< "$out" >/dev/null && pass 'escalar con patron distinto de * se rechaza: ningun agente recibe politica propia' || fail "patron en clave escalar aceptado: $out"
 
 printf 'RESULTADO: %s pasaron, %s fallaron\n' "$PASS" "$FAIL"
 exit "$FAIL"

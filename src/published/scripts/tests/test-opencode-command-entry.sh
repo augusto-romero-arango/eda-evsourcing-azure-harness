@@ -115,9 +115,9 @@ if (scenario === "legacy") {
   const cfg = baseConfig(); cfg.command["mefisto:draft"].agent = "agente-usuario";
   const hooks = await mk(session([]));
   await hooks.config(cfg);
-  out.restored = !("agent" in cfg.command["mefisto:bitacora"]) && !("subtask" in cfg.command["mefisto:bitacora"]) && cfg.command["mefisto:bitacora"].template === "T-bitacora" && cfg.command["mefisto:bitacora"].model === "m-usuario";
+  out.restored = cfg.command["mefisto:bitacora"].agent === "command-entry-bitacora" && cfg.command["mefisto:bitacora"].subtask === false && cfg.command["mefisto:bitacora"].template === "T-bitacora" && cfg.command["mefisto:bitacora"].model === "m-usuario";
   out.foreignKept = cfg.command["mefisto:draft"].agent === "agente-usuario";
-  out.noAgents = !Object.keys(cfg.agent).some((k) => k.startsWith("command-entry-"));
+  out.noAgents = catalog.every((id) => cfg.agent["command-entry-" + id]?.mode === "primary" && !("permission" in cfg.agent["command-entry-" + id]));
   const once = JSON.stringify(cfg); await hooks.config(cfg); out.idempotent = once === JSON.stringify(cfg);
   out.passes = await attempt(hooks, "mefisto:bitacora");
 }
@@ -125,7 +125,7 @@ if (scenario === "legacy-real") {
   const cfg = baseConfig();
   const hooks = await mk(session([]));
   await hooks.config(cfg);
-  out.restored = catalog.every((id) => !("agent" in cfg.command["mefisto:" + id]) && !("subtask" in cfg.command["mefisto:" + id]));
+  out.restored = catalog.every((id) => cfg.command["mefisto:" + id].agent === "command-entry-" + id && !!cfg.agent["command-entry-" + id]);
   out.passes = await attempt(hooks, "mefisto:next-order");
   out.logs = logs.map((e) => e.body?.extra?.reason);
 }
@@ -133,6 +133,7 @@ if (scenario === "deny") {
   const cfg = baseConfig(); const before = JSON.stringify(cfg);
   const hooks = await mk(session([]));
   await hooks.config(cfg);
+  for (const k of Object.keys(cfg.agent)) if (k.startsWith("command-entry-") && !("permission" in cfg.agent[k]) && !(k in JSON.parse(before).agent)) delete cfg.agent[k];
   out.configAfter = JSON.stringify(cfg) === before ? "unchanged" : "changed";
   out.result = await attempt(hooks, "mefisto:sequential");
   out.logged = logs.length > 0;
@@ -186,7 +187,7 @@ check 'sesion vacia observada vs no consultable vs otro proyecto' "$out" '.empty
 R="$WORK/r-legacy"; make_release "$R"
 jq -n '{schemaVersion:1,admissionScope:"entry",status:"disabled",reasonCode:"NO_PROFILE",agents:[],bindings:[]}' > "$R/fake/config.json"
 out="$(run "$R" legacy)"
-check 'NO_PROFILE restaura solo routing propio, idempotente, conserva overrides' "$out" '.restored and .foreignKept and .noAgents and .idempotent and .passes == "ok"'
+check 'NO_PROFILE inyecta agentes interactivos, idempotente, conserva overrides' "$out" '.restored and .foreignKept and .noAgents and .idempotent and .passes == "ok"'
 
 # Sin doble: ejecutar el plugin contra el resolver empaquetado y su protocolo stdin real.
 R="$WORK/r-legacy-real"
@@ -203,11 +204,13 @@ jq -n '{schemaVersion:1,admissionScope:"entry",status:"disabled",reasonCode:"CON
 out="$(run "$R" deny)"
 check 'CONSENT_REVOKED no activa fallback legacy y rechaza' "$out" '.result | startswith("mefisto_entry_not_admitted")'
 
-for status in needs-approval conflict; do
-  R="$WORK/r-$status"; make_release "$R"; projection "$status" PENDING none > "$R/fake/config.json"; projection "$status" PENDING bitacora > "$R/fake/command.json"
-  out="$(run "$R" deny)"
-  check "$status instala agentes denegados y no admite" "$out" '.result | startswith("mefisto_entry_not_admitted")'
-done
+R="$WORK/r-needs-approval"; make_release "$R"; projection needs-approval PENDING none > "$R/fake/config.json"
+out="$(run "$R" deny)"
+check 'needs-approval: modo interactivo, sin admision ni rechazo (#2012)' "$out" '.result == "ok"'
+
+R="$WORK/r-conflict"; make_release "$R"; projection conflict PENDING none > "$R/fake/config.json"; projection conflict PENDING bitacora > "$R/fake/command.json"
+out="$(run "$R" deny)"
+check 'conflict instala agentes denegados y no admite' "$out" '.result | startswith("mefisto_entry_not_admitted")'
 
 R="$WORK/r-noagent"; make_release "$R"; projection ready OK none | jq '.agents |= map(select(.id != "command-entry-sequential"))' > "$R/fake/config.json"
 out="$(run "$R" deny)"
