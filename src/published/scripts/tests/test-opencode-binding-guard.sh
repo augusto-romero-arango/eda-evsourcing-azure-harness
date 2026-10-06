@@ -23,7 +23,7 @@ make_release() { # root [image]
   mkdir -p "$root/plugins" "$root/scripts" "$root/fake" "$root/ctx"
   cp "$WORK/plugin.js" "$root/plugins/mefisto-command-entry.js"
   jq -n --arg v "$VERSION" --arg c "$COMMIT" '{schemaVersion:1,runtime:"opencode",version:$v,commit:$c}' > "$root/mefisto-manifest.json"
-  cat > "$root/scripts/resolve-opencode-entry.sh" <<'EOF'
+  cat > "$root/scripts/resolve-command-entry.sh" <<'EOF'
 #!/usr/bin/env bash
 dir="$(cd "$(dirname "$0")/.." && pwd -P)/fake"
 [ -f "$dir/$2.json" ] && cat "$dir/$2.json"
@@ -36,7 +36,7 @@ printf '%s %s\n' "$1" "$(cat | tr -d '\n')" >> "$dir/ctx.log"
 if [ -f "$dir/op-$1.json" ]; then cat "$dir/op-$1.json"; else printf '{"schemaVersion":1,"status":"ready","reasonCode":"OK","digest":"%s"}\n' "$(cat "$dir/digest")"; fi
 exit 0
 EOF
-  chmod 0755 "$root/scripts/resolve-opencode-entry.sh" "$root/scripts/execution-context.sh"
+  chmod 0755 "$root/scripts/resolve-command-entry.sh" "$root/scripts/execution-context.sh"
   printf '%s' "$DIGEST" > "$root/fake/digest"
   jq -n --arg d "$DIGEST" --arg v "$VERSION" '{contractDigest:$d,contract:{release:$v,alias:"autonomy-reviewer",originalAgent:"reviewer",nonce:"nonce-1",projectId:"proj-1"}}' > "$root/ctx/ctx1.json"
   jq -n --arg p "$root/ctx/ctx1.json" '{schemaVersion:1,status:"ready",reasonCode:"VALID",path:$p}' > "$root/fake/op-validate.json"

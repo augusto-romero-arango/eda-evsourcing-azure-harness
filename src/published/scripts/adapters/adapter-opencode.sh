@@ -703,7 +703,7 @@ render_command_entry_plugin() {
     catalog="$(jq -c '[.commands[].id] | sort' "$COMMAND_ENTRY")" || return 1
     identity="$(jq -ce '{version:.version,commit:.commit}' "$RELEASE_IDENTITY")" || { error 'command-entry: release-identity.json invalido'; return 1; }
     printf '%s\n' '// GENERADO por src/published/scripts/adapters/adapter-opencode.sh desde src/published/contract/command-entry.json. No editar a mano.'
-    printf 'const CATALOG = %s;\nconst IDENTITY = %s;\nconst RESOLVER = "scripts/resolve-opencode-entry.sh";\n' "$catalog" "$identity"
+    printf 'const CATALOG = %s;\nconst IDENTITY = %s;\nconst RESOLVER = "scripts/resolve-command-entry.sh";\n' "$catalog" "$identity"
     cat <<'EOF'
 import { execFile } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from "node:fs";
