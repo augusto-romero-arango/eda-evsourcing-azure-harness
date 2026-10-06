@@ -27,6 +27,7 @@ include "opencode-entry-permissions";
       | map(., . + "/*")
     else [$abs, $abs + "/*"] end;
   def excl($r): [ $r.excludedPaths[] | suffix_pats($r; .)[] ];
+  def excl_read($r): [ $r.excludedPaths[] | select(endswith("/harness.config.json") | not) | suffix_pats($r; .)[] ];
   def rule($p; $pat; $v): {permission: $p, pattern: $pat, value: $v};
   def clos($id): reduce range(0; 12) as $_ ([$id]; (. + [.[] | $rowmap[.].composes[]]) | unique);
   def union($ids; $f): [$ids[] | $rowmap[.][$f][]] | unique;
@@ -55,7 +56,7 @@ include "opencode-entry-permissions";
     | ($res | map(select(.id == "project" and .provenance.role == "execution"))) as $exrows
     | ($exrows + ($res | map(select(.id == "state" and (.root | startswith($exec + "/")))))) as $erows
     | ([ $rows[] | pats(.)[] | rule("read"; .; "allow") ]
-       + [ $rows[] | excl(.)[] | rule("read"; .; "deny") ]
+       + [ $rows[] | excl_read(.)[] | rule("read"; .; "deny") ]
        + [ $pdeny[] | rule("read"; .; "deny") ]
        + [ $tool[] | rule("read"; .; "allow") ]
        + [rule("read"; "../*"; "deny")]) as $read
