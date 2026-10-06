@@ -17,6 +17,13 @@ fail() { printf '  FAIL: %s\n' "$1"; FAIL=$((FAIL + 1)); }
 "$ADAPTER" render-asset command-entry-plugin "$SOURCE" > "$WORK/plugin.js" || exit 1
 cmp -s "$GENERATED" "$WORK/plugin.js" && pass 'snapshot generado coincide con dist/opencode' || fail 'snapshot del plugin divergente'
 "$ADAPTER" assets | jq -e 'any(.[]; .id == "command-entry-plugin" and .destination == "plugins/mefisto-command-entry.js")' >/dev/null && pass 'asset registrado' || fail 'asset no registrado'
+resolver_path="$(jq -rRs 'capture("const RESOLVER = \"(?<path>[^\"]+)\";").path' "$WORK/plugin.js")"
+if [ "$resolver_path" = 'scripts/resolve-command-entry.sh' ] && [ -x "$REPO_ROOT/dist/opencode/$resolver_path" ] &&
+   "$ADAPTER" assets | jq -e --arg path "$resolver_path" 'any(.[]; .destination == $path and .mode == "0755")' >/dev/null; then
+  pass 'el plugin apunta al resolver ejecutable empaquetado'
+else
+  fail "resolver del plugin ausente o no empaquetado: $resolver_path"
+fi
 grep -Eq 'Authorization|headers|apiKey|provider|Object\.(keys|entries|values)\(process\.env|stringify\(process\.env' "$WORK/plugin.js" && fail 'plugin menciona secretos o providers' || pass 'plugin no serializa secretos ni providers'
 count="$(jq '[.commands[].id] | length' "$SOURCE")"
 rendered_all=1
@@ -33,7 +40,7 @@ make_release() {
   mkdir -p "$root/plugins" "$root/scripts" "$root/fake"
   cp "$WORK/plugin.js" "$root/plugins/mefisto-command-entry.js"
   jq -n --arg v "$version" --arg c "$COMMIT" '{schemaVersion:1,runtime:"opencode",version:$v,commit:$c}' > "$root/mefisto-manifest.json"
-  cat > "$root/scripts/resolve-opencode-entry.sh" <<'EOF'
+  cat > "$root/scripts/resolve-command-entry.sh" <<'EOF'
 #!/usr/bin/env bash
 dir="$(cd "$(dirname "$0")/.." && pwd -P)/fake"
 phase="$2"
@@ -41,7 +48,7 @@ printf '%s\n' "$*" >> "$dir/argv.log"
 [ -f "$dir/$phase.json" ] && cat "$dir/$phase.json"
 exit 0
 EOF
-  chmod 0755 "$root/scripts/resolve-opencode-entry.sh"
+  chmod 0755 "$root/scripts/resolve-command-entry.sh"
 }
 catalog_ids() { jq -r '.commands[].id' "$SOURCE"; }
 # Respuestas del resolver: config (admitted false) y command (admitted segun el caso).
@@ -182,7 +189,7 @@ R="$WORK/r-noagent"; make_release "$R"; projection ready OK none | jq 'del(.agen
 out="$(run "$R" deny)"
 check 'entrada sin agente proyectado falla visible, sin mutar ni heredar' "$out" '.configAfter == "unchanged" and .result == "mefisto_entry_not_admitted:BINDING_INVALID"'
 
-R="$WORK/r-nores"; make_release "$R"; rm "$R/scripts/resolve-opencode-entry.sh"
+R="$WORK/r-nores"; make_release "$R"; rm "$R/scripts/resolve-command-entry.sh"
 out="$(run "$R" deny)"
 check 'resolver ausente: no admision sin mutar config' "$out" '.configAfter == "unchanged" and (.result | startswith("mefisto_entry_not_admitted:"))'
 
