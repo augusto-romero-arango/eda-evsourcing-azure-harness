@@ -41,7 +41,9 @@ for file in "$CLAUDE" "$OPENCODE"; do [ -f "$file" ] && pass "existe ${file#"$RE
 claude_body="$(< "$CLAUDE")"
 opencode_body="$(< "$OPENCODE")"
 contains "$claude_body" 'model: "sonnet"' 'Claude materializa el perfil balanced'
-for k in 'model:' 'subtask' 'agent:'; do absent "$opencode_body" "$k" "OpenCode no emite $k"; done
+absent "$opencode_body" 'model:' 'OpenCode no emite model'
+contains "$opencode_body" 'agent: "command-entry-install-auth"' 'OpenCode liga el command-entry de install-auth'
+contains "$opencode_body" 'subtask: false' 'OpenCode no convierte install-auth en subtask'
 contains "$claude_body" '"${MEFISTO_PACKAGE_ROOT}/commands/install-workos.md"' 'Claude lee install-workos'
 contains "$claude_body" '"${MEFISTO_PACKAGE_ROOT}/commands/install-apim.md"' 'Claude lee install-apim'
 contains "$opencode_body" '"${MEFISTO_PACKAGE_ROOT}/commands/mefisto:install-workos.md"' 'OpenCode lee install-workos'

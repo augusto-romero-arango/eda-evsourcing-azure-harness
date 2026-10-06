@@ -51,8 +51,8 @@ claude_body="$(< "$CLAUDE")"
 opencode_body="$(< "$OPENCODE")"
 contains "$claude_body" 'model: "sonnet"' 'Claude materializa el perfil balanced'
 absent "$opencode_body" 'model:' 'OpenCode no emite model'
-absent "$opencode_body" 'subtask' 'OpenCode no emite subtask'
-absent "$opencode_body" 'agent:' 'OpenCode no emite agent'
+contains "$opencode_body" 'agent: "command-entry-install-apim"' 'OpenCode liga el command-entry de install-apim'
+contains "$opencode_body" 'subtask: false' 'OpenCode no convierte install-apim en subtask'
 contains "$claude_body" 'agente `mefisto:apim-gateway-scaffolder`' 'Claude delega en mefisto:apim-gateway-scaffolder'
 contains "$opencode_body" 'agente `apim-gateway-scaffolder`' 'OpenCode delega en apim-gateway-scaffolder'
 contains "$claude_body" 'scripts/set-harness-tenancy.sh' 'Claude invoca el setter publicado'

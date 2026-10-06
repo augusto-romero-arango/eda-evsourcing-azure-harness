@@ -50,9 +50,9 @@ claude_body="$(< "$CLAUDE")"
 opencode_body="$(< "$OPENCODE")"
 contains "$claude_body" 'model: "haiku"' 'Claude materializa el perfil fast'
 absent "$opencode_body" 'model:' 'OpenCode no emite model'
-absent "$opencode_body" 'subtask' 'OpenCode no emite subtask'
+contains "$opencode_body" 'subtask: false' 'OpenCode no convierte scaffold-projections en subtask'
 opencode_fm="$(awk 'NR == 1 { next } $0 == "---" { exit } { print }' "$OPENCODE")"
-absent "$opencode_fm" 'agent:' 'OpenCode no emite agent en el frontmatter'
+contains "$opencode_fm" 'agent: "command-entry-scaffold-projections"' 'OpenCode liga el command-entry de scaffold-projections en el frontmatter'
 contains "$claude_body" 'agente `mefisto:projections-scaffolder`' 'Claude delega con la tool Task'
 contains "$opencode_body" 'tool `task` con el agente `projections-scaffolder`' 'OpenCode delega con la tool task'
 contains "$claude_body" '/mefisto:infra-base' 'Claude resuelve command infra-base'
