@@ -92,5 +92,31 @@ done
   && [ "$SRC" -eq 2 ] && [ ! -e "$SYMLINKED/state/pipeline/autonomy/consent.json" ] && [ "$PACKAGED" -eq 1 ] \
   && pass 'perfil falso no se trata como ausente, symlink no escapa y ambos adaptadores contienen la clausura' || fail 'validacion, symlink o packaging incorrecto'
 
+echo '[propose-max] perfil maximo del catalogo'
+PM="$TMP/pm"; make_project "$PM"
+PM_OUT="$(run_at "$PM" propose-max --project-root "$PM")"; PRC=$?
+PM_DIGEST="$(run_at "$PM" preview --project-root "$PM" | jq -r .expectedDigest)"
+PM_CATALOG="$(for c in "$REPO_ROOT"/commands/*.md; do basename "$c" .md | sed 's/^mefisto://'; done | jq -R . | jq -scS 'sort')"
+PM_STATE="$(jq -cS '.autonomy' "$PM/.mefisto/harness.config.json")"
+PM_OUT2="$(run_at "$PM" propose-max --project-root "$PM")"; PRC2=$?
+PM_INSPECT="$(run_at "$PM" inspect --project-root "$PM")"; PIRC=$?
+jq '.autonomy.administration = [] | .autonomy.commands = ["bitacora"]' "$PM/.mefisto/harness.config.json" > "$PM/c.tmp" && mv "$PM/c.tmp" "$PM/.mefisto/harness.config.json"
+PM_OUT3="$(run_at "$PM" propose-max --project-root "$PM")"; PRC3=$?
+[ "$PRC" -eq 0 ] && printf '%s' "$PM_OUT" | jq -e --arg d "$PM_DIGEST" '.changed == true and .revision == 2 and .profileDigest == $d and (.configPath | endswith("/.mefisto/harness.config.json"))' >/dev/null \
+  && printf '%s' "$PM_STATE" | jq -e --argjson c "$PM_CATALOG" '.id == "maximo" and .schemaVersion == 1 and .commands == $c and (.administration | length == 1)' >/dev/null \
+  && [ "$(jq -r .projectName "$PM/.mefisto/harness.config.json")" = "Dato ajeno al perfil" ] \
+  && pass 'propose-max escribe catalogo completo, preserva administracion y resto, y el digest coincide con preview' || fail "propose-max inicial incorrecto: $PM_OUT"
+[ "$PRC2" -eq 0 ] && printf '%s' "$PM_OUT2" | jq -e '.changed == false and .revision == 2' >/dev/null \
+  && [ ! -e "$PM/.mefisto/pipeline/autonomy/consent.json" ] && [ "$PIRC" -eq 1 ] && printf '%s' "$PM_INSPECT" | jq -e '.status == "needs-approval"' >/dev/null \
+  && [ "$PRC3" -eq 0 ] && printf '%s' "$PM_OUT3" | jq -e '.changed == true and .revision == 3' >/dev/null \
+  && pass 'propose-max es idempotente, incrementa revision al cambiar y no escribe consentimiento' || fail 'idempotencia/consentimiento de propose-max incorrectos'
+PM_NONE="$TMP/pm-none"; mkdir -p "$PM_NONE/.claude"; printf '{}' > "$PM_NONE/.claude/harness.config.json"; git -C "$PM_NONE" init -q
+run_at "$PM_NONE" propose-max --project-root "$PM_NONE" >/dev/null 2>&1; NRC=$?
+[ "$NRC" -eq 2 ] && [ ! -e "$PM_NONE/.mefisto" ] && pass 'propose-max sin config canonica falla con exit 2 sin crear archivos' || fail 'propose-max legacy no fallo limpio'
+PM_LINK="$TMP/pm-link"; PM_REAL="$TMP/pm-real"; make_project "$PM_LINK"; mv "$PM_LINK/.mefisto" "$PM_REAL"; ln -s "$PM_REAL" "$PM_LINK/.mefisto"
+PM_LINK_BEFORE="$(cat "$PM_REAL/harness.config.json")"
+run_at "$PM_LINK" propose-max --project-root "$PM_LINK" >/dev/null 2>&1; LRC=$?
+[ "$LRC" -eq 2 ] && [ "$(cat "$PM_REAL/harness.config.json")" = "$PM_LINK_BEFORE" ] && pass 'propose-max no escribe a traves de un .mefisto enlazado' || fail 'propose-max escribio a traves de un enlace simbolico'
+
 echo "Resultado: $PASS PASS, $FAIL FAIL"
 [ "$FAIL" -eq 0 ]

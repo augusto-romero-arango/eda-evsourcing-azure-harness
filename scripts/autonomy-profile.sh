@@ -8,7 +8,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 VALIDATOR="$SCRIPT_DIR/../src/published/contract/autonomy-profile.validate.jq"
 
 fail() { printf 'ERROR: %s\n' "$1" >&2; exit 2; }
-usage() { fail 'uso: autonomy-profile.sh <preview|approve|revoke|inspect> --project-root <raiz> [--expected-digest <sha256>]'; }
+usage() { fail 'uso: autonomy-profile.sh <preview|approve|revoke|inspect|propose-max> --project-root <raiz> [--expected-digest <sha256>]'; }
 hash_stdin() {
     if command -v shasum >/dev/null 2>&1; then shasum -a 256 | cut -d ' ' -f 1
     elif command -v sha256sum >/dev/null 2>&1; then sha256sum | cut -d ' ' -f 1
@@ -34,7 +34,7 @@ while [ $# -gt 0 ]; do
         *) usage ;;
     esac
 done
-case "$OPERATION" in preview|approve|revoke|inspect) ;; *) usage ;; esac
+case "$OPERATION" in preview|approve|revoke|inspect|propose-max) ;; *) usage ;; esac
 [ -n "$PROJECT_ROOT" ] || usage
 [ "$OPERATION" = approve ] || [ "$SEEN_EXPECTED_DIGEST" -eq 0 ] || usage
 [ -x "$(command -v jq 2>/dev/null || true)" ] || fail 'jq no esta instalado'
@@ -82,6 +82,33 @@ else
 fi
 DIGEST="$(printf '%s' "$PROFILE" | hash_stdin)"
 CATALOG="$(for command in "$SCRIPT_DIR/../commands"/*.md; do [ -f "$command" ] || continue; basename "$command" .md | sed 's/^mefisto://' ; done | jq -R . | jq -scS 'sort')" || fail 'no se pudo construir el catalogo publicado'
+
+if [ "$OPERATION" = propose-max ]; then
+    # Propone el perfil maximo (todo el catalogo, administracion preservada); no aprueba nada.
+    [ "$HAS_CANONICAL" -eq 1 ] || fail 'propose-max requiere configuracion canonica en .mefisto/harness.config.json; no se migro ni se creo ningun archivo'
+    [ ! -L "$PROJECT_ROOT/.mefisto" ] || fail 'el directorio .mefisto es un enlace simbolico; no se escribe la configuracion'
+    CURRENT_REVISION="$(printf '%s' "$PROFILE" | jq -r 'if type == "object" and ((.revision? // null) | type) == "number" and .revision > 0 and (.revision | floor) == .revision then .revision else 0 end')"
+    BUILD='{schemaVersion:1,id:"maximo",revision:$rev,commands:$catalog,administration:(if ($p | type) == "object" and (($p.administration? // null) | type) == "array" then $p.administration else [] end)}'
+    SAME="$(jq -cnS --argjson p "$PROFILE" --argjson catalog "$CATALOG" --argjson rev "$CURRENT_REVISION" "$BUILD")"
+    if [ "$CURRENT_REVISION" -gt 0 ] && [ "$SAME" = "$PROFILE" ]; then
+        NEW_REVISION="$CURRENT_REVISION"; CHANGED=false
+    else
+        NEW_REVISION=$((CURRENT_REVISION + 1)); CHANGED=true
+    fi
+    NEW_PROFILE="$(jq -cnS --argjson p "$PROFILE" --argjson catalog "$CATALOG" --argjson rev "$NEW_REVISION" "$BUILD")" || fail 'no se pudo construir el perfil maximo'
+    NEW_DIGEST="$(printf '%s' "$NEW_PROFILE" | hash_stdin)"
+    if [ "$CHANGED" = true ]; then
+        TMP="$(mktemp "${CONFIG}.XXXXXX")" || fail 'no se pudo preparar la escritura atomica'
+        trap 'rm -f "$TMP"' EXIT
+        MODE="$(stat -f '%Lp' "$CONFIG" 2>/dev/null || stat -c '%a' "$CONFIG" 2>/dev/null || true)"
+        jq --argjson a "$NEW_PROFILE" '.autonomy = $a' "$CONFIG" > "$TMP" && jq empty "$TMP" >/dev/null 2>&1 || fail 'no se pudo preparar la actualizacion de la configuracion'
+        [ -z "$MODE" ] || chmod "$MODE" "$TMP" 2>/dev/null || true
+        mv -f "$TMP" "$CONFIG" || fail 'no se pudo sustituir atomicamente la configuracion'
+        trap - EXIT
+    fi
+    jq -cn --arg configPath "$CONFIG" --argjson changed "$CHANGED" --argjson revision "$NEW_REVISION" --arg profileDigest "$NEW_DIGEST" '{configPath:$configPath,changed:$changed,revision:$revision,profileDigest:$profileDigest}'
+    exit 0
+fi
 
 CONSENT_PATH="$PROJECT_ROOT/.mefisto/pipeline/autonomy/consent.json"
 safe_consent_path() {
