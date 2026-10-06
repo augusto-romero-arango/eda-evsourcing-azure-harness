@@ -4,6 +4,21 @@ Todo cambio notable a este proyecto se documenta aquí. Sigue [Keep a Changelog]
 
 ## [Unreleased]
 
+## [0.41.4] - 2026-10-06
+
+### Added
+
+- `autonomy-profile.sh propose-max`: escribe en `.mefisto/harness.config.json` el perfil de autonomia maximo del catalogo publicado (administracion preservada, revision incremental, idempotente) y reporta `profileDigest` para encadenar `approve`; no aprueba nada (MEF-ADR-0055).
+- Comando publicado `/autonomy`: muestra, activa (`propose-max` + una confirmacion + `approve`), reduce, autoriza y revoca la autonomia del consumidor (MEF-ADR-0055); solo interactivo.
+
+### Changed
+
+- `/onboard` diagnostica la autonomia desatendida (seccion 10, informativa: `OK` si `inspect` reporta `ready`, `NO VERIFICADO` con la causa si `disabled`/`needs-approval`) y ofrece, con un "si" explicito, encadenar `/autonomy activar` (paso opt-in 8, MEF-ADR-0055).
+
+### Fixed
+
+- Los scripts publicados `autonomy-preflight.sh`, `run-published-agent.sh` y `execution-context.sh` leen la identidad de la release (`version`/`commit`) desde `mefisto-manifest.json` en vez de `src/published/release-identity.json`, que la release OpenCode no incluye; un manifiesto ausente o invalido falla con error explicito (#1989).
+
 ## [0.41.3] - 2026-10-06
 
 ### Fixed
@@ -3094,7 +3109,8 @@ Y reemplazar referencias en `CLAUDE.md` del proyecto: `/eda-evsourcing-azure-har
 - Los agentes `reviewer` e `implementer` mantienen el placeholder literal `ADR-XXXX` en sus plantillas de reporte (no es un bug; el agente lo sustituye en tiempo de ejecución por el número real del ADR aplicable).
 - Los ejemplos de código en `test-writer.md`, `implementer.md` y `smoke-test-writer.md` conservan nombres concretos de un proyecto consumidor (`Programacion`, `ControlHoras`) anotados en el "Contrato con el consumidor" de cada agente como ejemplos pedagógicos.
 
-[Unreleased]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.41.3...HEAD
+[Unreleased]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.41.4...HEAD
+[0.41.4]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.41.3...v0.41.4
 [0.41.3]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.41.2...v0.41.3
 [0.41.2]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.41.1...v0.41.2
 [0.41.1]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.41.0...v0.41.1

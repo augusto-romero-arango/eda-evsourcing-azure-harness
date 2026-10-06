@@ -28,7 +28,7 @@ const toolName = (input) => String(input?.tool ?? input?.toolName ?? "").toLower
 const args = (input) => input?.args && typeof input.args === "object" ? input.args : {};
 const successful = (output) => Number.isInteger(output?.metadata?.exitCode) && output.metadata.exitCode === 0;
 const modelComponent = (value) => typeof value === "string" && value.length > 0 && value.length <= 256 && !/[\/\u0000-\u001f\u007f]/.test(value);
-const observationIdentity = ["0.41.3","525c27b58b4df38f2cc5104f05dcd9f87b4892f2"];
+const observationIdentity = ["0.41.4","e4029e9291d93dcc230261f964d48fb160102221"];
 const observationMarker = Symbol.for("mefisto.original-tool-observation.v1");
 const observationKey = (context, input) => JSON.stringify([observationIdentity[0], observationIdentity[1], context?.project?.id, context?.directory, sessionID(input), input?.callID]);
 const classifiedObservation = (value) => value === null || (value && typeof value === "object" && !Array.isArray(value) && Object.keys(value).length === 2 && (value.family === "test" && value.subcommand === "test" || value.family === "terraform" && ["plan", "apply", "init", "validate"].includes(value.subcommand)));
