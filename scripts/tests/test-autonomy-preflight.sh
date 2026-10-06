@@ -18,7 +18,7 @@ mkdir -p "$HOME"
 [ -d "$REPO_ROOT/dist/opencode/scripts" ] || { echo 'falta dist/opencode (regenerar con generate-published-adapters.sh)'; exit 1; }
 REL="$TMP/release"; cp -R "$REPO_ROOT/dist/opencode" "$REL"
 # El empaquetado de release agrega identidad y catalogo de entrada; dist/ solo trae la clausura estatica.
-cp "$REPO_ROOT/src/published/release-identity.json" "$REL/src/published/release-identity.json"
+jq -c '{schemaVersion,runtime:"opencode",version,commit}' "$REPO_ROOT/src/published/release-identity.json" > "$REL/mefisto-manifest.json"
 cp "$REPO_ROOT/src/published/contract/command-entry.json" "$REL/src/published/contract/command-entry.json"
 PF="$REL/scripts/autonomy-preflight.sh"; PROFILE="$REL/scripts/autonomy-profile.sh"; EC="$REL/scripts/execution-context.sh"
 
@@ -131,7 +131,7 @@ base="$(jq -cn --arg r "$R" --arg d "$D" '{schemaVersion:1,projectRoot:$r,runId:
 ecall attach "$(jq -c --argjson p $$ '. + {ownerPid:$p}' <<< "$base")"
 ecall bind-session "$(jq -c '. + {sessionID:"sess1"}' <<< "$base")"
 NONCE="$(jq -r .contract.nonce "$CTX")"
-admit() { ecall record-entry-admission "$(jq -c --arg n "$NONCE" --arg p "$1" '. + {controllerNonce:$n,entryAdmission:{sessionID:"sess1",commandId:"sequential",release:"'"$(jq -r .version "$REL/src/published/release-identity.json")"'",permissionImageDigest:"img1",resourcesDigest:"res1",policyResult:$p,ownership:"projected"}}' <<< "$base")"; }
+admit() { ecall record-entry-admission "$(jq -c --arg n "$NONCE" --arg p "$1" '. + {controllerNonce:$n,entryAdmission:{sessionID:"sess1",commandId:"sequential",release:"'"$(jq -r .version "$REL/mefisto-manifest.json")"'",permissionImageDigest:"img1",resourcesDigest:"res1",policyResult:$p,ownership:"projected"}}' <<< "$base")"; }
 admit denied
 pf "$R" opencode "$CMD_PLAN" "$CTX"
 eq "$(j .status)/$RC/$(chk ENTRY_ADMISSION)" 'blocked/1/block/ENTRY_POLICY_DENIED' 'politica denegada bloquea'
@@ -139,7 +139,7 @@ admit allowed
 pf "$R" opencode "$CMD_PLAN" "$CTX"
 eq "$(j .status)/$RC/$(chk ENTRY_ADMISSION)" 'ready-to-dispatch/0/pass/NONE' 'entrada admitida y ligada a la sesion queda ready'
 eq "$(j .resourcesDigest)" 'res1' 'resourcesDigest sale de la evidencia de entrada'
-RID="$REL/src/published/release-identity.json"; cp "$RID" "$TMP/rid.json"
+RID="$REL/mefisto-manifest.json"; cp "$RID" "$TMP/rid.json"
 jq '.version = "9.9.9-otra"' "$TMP/rid.json" > "$RID"
 pf "$R" opencode "$CMD_PLAN" "$CTX"
 eq "$(j .status)/$RC/$(chk CONTEXT_VALID)" 'blocked/1/block/RELEASE_CHANGED' 'cambio de release revalida el contexto y bloquea'

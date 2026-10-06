@@ -25,7 +25,7 @@ RUNNER="$RELEASE_ROOT/src/runtime/mefisto-run-agent.sh"
 RUNTIME_LIB_DIR="$RELEASE_ROOT/src/runtime/lib"
 ROLES_FILE="$RELEASE_ROOT/src/published/contract/agent-execution.json"
 MANIFEST="$RELEASE_ROOT/agent-execution-manifest.json"
-RELEASE_FILE="$RELEASE_ROOT/src/published/release-identity.json"
+RELEASE_FILE="$RELEASE_ROOT/mefisto-manifest.json"
 
 PIPELINE=""; CONTEXT=""; CTX_DIGEST=""; STARTUP_TIMEOUT=30
 RUNNER_ARGS=()
@@ -120,11 +120,12 @@ done
 CWD="$(cd "$CWD" && pwd -P)"
 
 # --- clausura de la release -----------------------------------------------
-for f in "$EC" "$RESOLVE_AGENT" "$RESOLVE_RES" "$RUNNER" "$RUNTIME_LIB_DIR/mefisto-runtime.sh" "$ROLES_FILE" "$MANIFEST" "$RELEASE_FILE"; do
+for f in "$EC" "$RESOLVE_AGENT" "$RESOLVE_RES" "$RUNNER" "$RUNTIME_LIB_DIR/mefisto-runtime.sh" "$ROLES_FILE" "$MANIFEST"; do
     [ -f "$f" ] || { printf 'ERROR: la release no contiene la clausura del launcher (CLOSURE_INCOMPLETE)\n' >&2; exit 78; }
 done
+[ -f "$RELEASE_FILE" ] || { printf 'ERROR: la release no contiene mefisto-manifest.json (RELEASE_UNKNOWN)\n' >&2; exit 78; }
 RELEASE_VERSION="$(jq -r '.version // empty' "$RELEASE_FILE" 2>/dev/null)"
-[ -n "$RELEASE_VERSION" ] || { printf 'ERROR: release sin identidad (RELEASE_UNKNOWN)\n' >&2; exit 78; }
+[ -n "$RELEASE_VERSION" ] || { printf 'ERROR: mefisto-manifest.json sin version valida (RELEASE_UNKNOWN)\n' >&2; exit 78; }
 
 # --- contexto, rol, pipeline ----------------------------------------------
 case "$CONTEXT" in
