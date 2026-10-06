@@ -61,7 +61,7 @@ for text_var in claude_body opencode_body; do
 done
 
 echo '[c] politica bash de OpenCode'
-for pattern in 'git *' 'test *' 'echo *' 'grep *' 'terraform fmt*' 'terraform validate*' 'terraform init -backend=false*'; do
+for pattern in 'git *' 'test *' 'echo *' 'grep *' 'command -v terraform' 'terraform fmt -recursive ../..' 'terraform fmt -check -recursive ../..' 'terraform validate' 'terraform validate -no-color' 'terraform init -backend=false' 'terraform init -backend=false -input=false'; do
     if printf '%s' "$permission" | jq -e --arg p "$pattern" '.bash[$p] == "allow"' >/dev/null 2>&1; then pass "bash permite '$pattern'"; else fail "bash no permite '$pattern'"; fi
 done
 if printf '%s' "$permission" | jq -e '.bash["curl *"] == "deny"' >/dev/null 2>&1; then pass 'curl denegado'; else fail 'curl no esta denegado'; fi
