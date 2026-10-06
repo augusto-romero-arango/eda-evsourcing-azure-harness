@@ -4,6 +4,22 @@ Todo cambio notable a este proyecto se documenta aquí. Sigue [Keep a Changelog]
 
 ## [Unreleased]
 
+## [0.41.5] - 2026-10-06
+
+### Changed
+
+- El limite del fixture de 160 assets en `test-generate-published-adapters.sh` es configurable con `MEFISTO_ASSETS_PERF_LIMIT` (default 20 s); `ci.yml` fija esa variable y `MEFISTO_NEUTRALITY_PERF_LIMIT` con valores holgados para el runner macOS (#1977).
+
+### Fixed
+
+- Los tests de comandos publicados afirman el contrato de entrada OpenCode vigente (`agent: "command-entry-<id>"` y `subtask: false`) en vez de su ausencia; ocho se alinean aqui y `test-onboard-command.sh` ya lo estaba (#1974).
+- Los tests de politica bash de `apim-gateway-scaffolder` e `infra-base-scaffolder` esperan los comandos exactos de la politica generada (terraform fmt/validate/init, registro de secretos con prefijo de runtime) en vez de comodines retirados en #1890.
+- `test-bug-investigator-agent.sh`: la verificacion de invocaciones de `appinsights-query.sh` ya no cuenta la linea `permission:` del frontmatter y compara cada comando con las reglas allow de OpenCode con su prefijo `MEFISTO_RUNTIME=opencode` intacto (falso negativo del test; el adaptador generado estaba bien formado).
+- `test-hold-visibility.sh` [15]: excluye del conteo de `fail_issue` con nota de espera el fallo de reserva de contexto (#1931), que ocurre antes del spawn y no puede tener hold previo (#1978).
+- `test-opencode-resources.sh`: el filtro `jq` de la cobertura NuGet global-only se parentetiza (`[...] as $n | ...` antepuesto), porque en versiones de `jq` donde `A and B as $n | C` se agrupa como `(A and B) as $n`, `$n` llegaba como booleano y fallaba con `boolean (true) has no length` (#1979).
+- Corregido el stub de `herdr pane run` en `test-orchestrator-execution-propagation.sh` (escenario [H]): leia mal el `--started-marker` cuando la ruta de estado tenia espacios y el test dependia de `MEFISTO_STATE_DIR` del entorno; ahora parsea rutas escapadas y aisla la variable (#1980).
+- El preflight de autonomia admite el contexto hijo que los orquestadores delegan al batch (`source: pipeline`): `autonomy-preflight.sh` valida origen, runtime, alcance, que el padre haya reservado a ese hijo (`PARENT_CONTEXT`) y la `entryAdmission` del padre cuando este vino de un comando, y `batch`/`parallel`/`tmux`/`herdr` derivan el `source` del plan con el helper unico `pipeline_preflight_source` en lugar de la mera presencia de `MEFISTO_EXECUTION_CONTEXT` (elimina el bloqueo `CONTEXT_SCOPE_MISMATCH`/`ENTRY_ADMISSION_MISSING` en `/sequential` delegado). Nuevo `scripts/tests/test-autonomy-preflight-child-handoff.sh`: handoff real wrapper -> pane -> batch para tmux y herdr con entrada `direct` y `source: command`.
+
 ## [0.41.4] - 2026-10-06
 
 ### Added
@@ -3109,7 +3125,8 @@ Y reemplazar referencias en `CLAUDE.md` del proyecto: `/eda-evsourcing-azure-har
 - Los agentes `reviewer` e `implementer` mantienen el placeholder literal `ADR-XXXX` en sus plantillas de reporte (no es un bug; el agente lo sustituye en tiempo de ejecución por el número real del ADR aplicable).
 - Los ejemplos de código en `test-writer.md`, `implementer.md` y `smoke-test-writer.md` conservan nombres concretos de un proyecto consumidor (`Programacion`, `ControlHoras`) anotados en el "Contrato con el consumidor" de cada agente como ejemplos pedagógicos.
 
-[Unreleased]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.41.4...HEAD
+[Unreleased]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.41.5...HEAD
+[0.41.5]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.41.4...v0.41.5
 [0.41.4]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.41.3...v0.41.4
 [0.41.3]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.41.2...v0.41.3
 [0.41.2]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.41.1...v0.41.2

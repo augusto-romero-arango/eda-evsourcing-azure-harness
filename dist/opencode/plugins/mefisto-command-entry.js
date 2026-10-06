@@ -1,6 +1,6 @@
 // GENERADO por src/published/scripts/adapters/adapter-opencode.sh desde src/published/contract/command-entry.json. No editar a mano.
 const CATALOG = ["autonomy","batch-stop","bitacora","bug","draft","eraser-diagram","fix-review","health-check","implement","infra","infra-base","install-apim","install-auth","install-workos","merge","next-order","onboard","parallel","purge-store","runtimes","scaffold","scaffold-mcp","scaffold-projections","seed-secret","sequential","tooling","upgrade","work-status"];
-const IDENTITY = {"version":"0.41.4","commit":"e4029e9291d93dcc230261f964d48fb160102221"};
+const IDENTITY = {"version":"0.41.5","commit":"fb326bf3a71ee828a87d0c2cce7fa25bd149c502"};
 const RESOLVER = "scripts/resolve-command-entry.sh";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
