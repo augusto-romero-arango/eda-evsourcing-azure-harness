@@ -21,10 +21,16 @@ const log = async (client, event, reason) => {
 const deny = (reason) => new Error("mefisto_entry_not_admitted:" + code(reason, "UNKNOWN"));
 
 const digest = (value) => typeof value === "string" ? createHash("sha256").update(value.trim()).digest("hex") : "";
+const MAP_PERMISSIONS = new Set(["external_directory", "bash", "edit", "write", "patch", "read", "task", "skill"]);
 const policyFromRules = (rules) => {
   const permission = {};
   for (const rule of rules) {
     if (!plain(rule) || typeof rule.permission !== "string" || typeof rule.pattern !== "string" || !["allow", "ask", "deny"].includes(rule.value)) return null;
+    if (!MAP_PERMISSIONS.has(rule.permission)) {
+      if (rule.pattern !== "*") return null;
+      permission[rule.permission] = rule.value;
+      continue;
+    }
     const patterns = permission[rule.permission] ?? {};
     delete patterns[rule.pattern];
     patterns[rule.pattern] = rule.value;
