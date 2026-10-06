@@ -6,6 +6,7 @@ export LC_ALL=C
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 REPO_ROOT="$(cd "$HERE/../../../.." && pwd -P)"
 WORK="$(cd "$(mktemp -d)" && pwd -P)"; trap 'rm -rf "$WORK"' EXIT
+export HOME="$WORK/home"; mkdir -p "$HOME"
 PASS=0; FAIL=0
 pass() { printf '  PASS: %s\n' "$1"; PASS=$((PASS + 1)); }
 fail() { printf '  FAIL: %s\n' "$1"; FAIL=$((FAIL + 1)); }
@@ -29,26 +30,38 @@ VERSION="$(jq -r .version "$REL/mefisto-manifest.json")"
 mkdir -p "$REL/src/published/contract"
 [ -f "$REL/src/published/contract/command-entry.json" ] || cp "$REPO_ROOT/src/published/contract/command-entry.json" "$REL/src/published/contract/"
 
+mkrepo() {
+    mkdir -p "$1/.mefisto"; git -C "$1" init -q -b main
+    git -C "$1" config user.email t@example.com; git -C "$1" config user.name t
+    printf '.mefisto/\n' > "$1/.gitignore"; git -C "$1" add . && git -C "$1" commit -qm base
+}
+C="$WORK/consumer"; mkrepo "$C"; printf '{}\n' > "$C/.mefisto/harness.config.json"
+P="$WORK/profiled"; mkrepo "$P"; cp "$REPO_ROOT/src/published/scripts/tests/fixtures/autonomy/profile.json" "$P/.mefisto/harness.config.json"
+EC="$REL/scripts/execution-context.sh"; PROFILE="$REL/scripts/autonomy-profile.sh"
+DIGEST="$(cd "$P" && bash "$PROFILE" preview --project-root "$P" | jq -r .expectedDigest)"
+(cd "$P" && bash "$PROFILE" approve --project-root "$P" --expected-digest "$DIGEST" >/dev/null)
+prep() { jq -cn --arg r "$P" --arg c "$1" '{schemaVersion:1,projectRoot:$r,runId:"run1",contextId:$c,rootCommand:"sequential",source:"command",runtime:{id:"opencode",version:"1"},leaseId:"lease-1"}'; }
+
 echo '[1] execution-context desde la release staged'
-FN="$(sed -n '/^release_id()/,/^}/p' "$REL/scripts/execution-context.sh")"
-RID="$(RELEASE_FILE="$REL/mefisto-manifest.json"; eval "$FN"; release_id)"
-eq "$RID" "$VERSION" 'release_id coincide con la version del manifiesto'
-RID_BAD="$(RELEASE_FILE="$WORK/no-existe.json"; eval "$FN"; release_id 2>&1)"
-case "$RID_BAD" in *mefisto-manifest.json*) pass 'release_id sin manifiesto: error explicito que lo nombra' ;; *) fail "release_id sin manifiesto no nombra el manifiesto: $RID_BAD" ;; esac
-grep -q 'PACKAGE_ROOT/mefisto-manifest.json' "$REL/scripts/execution-context.sh" && pass 'RELEASE_FILE apunta al manifiesto del paquete' || fail 'RELEASE_FILE no apunta al manifiesto'
+PO="$(prep ctx1 | bash "$EC" prepare 2>"$WORK/err")"; RC=$?
+eq "$RC" 0 "prepare desde la release staged (err: $(cat "$WORK/err"))"
+eq "$(jq -r .contract.release "$P/.mefisto/pipeline/autonomy/runs/run1/contexts/ctx1.json" 2>/dev/null)" "$VERSION" 'release_id coincide con la version del manifiesto'
 
 echo '[2] preflight desde la release staged'
-C="$WORK/consumer"; mkdir -p "$C/.mefisto"; git -C "$C" init -q -b main
-git -C "$C" config user.email t@example.com; git -C "$C" config user.name t
-printf '.mefisto/\n' > "$C/.gitignore"; printf '{}\n' > "$C/.mefisto/harness.config.json"; git -C "$C" add . && git -C "$C" commit -qm base
 PLAN='{"schemaVersion":1,"launchKind":"sequential","source":"direct","issues":[{"number":1,"pipelineKind":"tooling"}],"requestedOperations":[]}'
 PO="$(cd "$C" && printf '%s' "$PLAN" | bash "$REL/scripts/autonomy-preflight.sh" --project-root "$C" --runtime opencode 2>"$WORK/err")"; RC=$?
-[ "$RC" -ne 2 ] && pass "no aborta por contratos (exit $RC)" || fail "aborto con exit 2: $(cat "$WORK/err")"
-printf '%s' "$PO" | jq -e '.status' >/dev/null 2>&1 && pass 'reporta el estado del perfil' || fail 'sin sobre de estado'
+eq "$(printf '%s' "$PO" | jq -r .status 2>/dev/null)/$RC" 'legacy/0' "sin perfil ni contexto: flujo legacy, no exit 2 por contratos ($(cat "$WORK/err"))"
+CTX="$C/.mefisto/pipeline/autonomy/runs/run1/contexts/ctx1.json"
+CPLAN='{"schemaVersion":1,"launchKind":"sequential","source":"command","issues":[{"number":1,"pipelineKind":"tooling"}],"requestedOperations":[]}'
+PO="$(cd "$C" && printf '%s' "$CPLAN" | bash "$REL/scripts/autonomy-preflight.sh" --project-root "$C" --runtime opencode --context "$CTX" 2>"$WORK/err")"; RC=$?
+eq "$(printf '%s' "$PO" | jq -r '.status + "/" + ([.checks[] | select(.code == "PROFILE_CONSENT")][0].actionCode // "")' 2>/dev/null)/$RC" 'blocked/NO_PROFILE_WITH_CONTEXT/1' "sin perfil con contexto: reporta el estado del perfil ($(cat "$WORK/err"))"
 
 echo '[3] manifiesto ausente o invalido'
 for mode in absent sinversion; do
     if [ "$mode" = absent ]; then rm -f "$REL/mefisto-manifest.json"; else printf '{"schemaVersion":1}\n' > "$REL/mefisto-manifest.json"; fi
+    PO="$(prep "ctx-$mode" | bash "$EC" prepare 2>"$WORK/err")"; RC=$?
+    eq "$(printf '%s' "$PO" | jq -r .reasonCode 2>/dev/null)/$RC" 'RELEASE_UNKNOWN/2' "execution-context $mode: falla con RELEASE_UNKNOWN"
+    grep -q 'mefisto-manifest.json' "$WORK/err" && pass "execution-context $mode: nombra el manifiesto" || fail "execution-context $mode: no nombra el manifiesto"
     (cd "$C" && printf '%s' "$PLAN" | bash "$REL/scripts/autonomy-preflight.sh" --project-root "$C" --runtime opencode >/dev/null 2>"$WORK/err"); RC=$?
     eq "$RC" 2 "preflight $mode: exit 2"
     grep -q 'mefisto-manifest.json' "$WORK/err" && pass "preflight $mode: nombra el manifiesto" || fail "preflight $mode: no nombra el manifiesto"
