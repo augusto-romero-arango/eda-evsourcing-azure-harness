@@ -12,8 +12,7 @@ fail() { printf '  FAIL: %s\n' "$1"; FAIL=$((FAIL + 1)); }
 assert() { local label="$1" filter="$2"; shift 2; jq -e "$@" "$filter" >/dev/null <<< "$OUT" && pass "$label" || { fail "$label"; printf '%s\n' "$OUT" | cut -c1-500 >&2; }; }
 rc_is() { [ "$RC" -eq "$3" ] && pass "$1" || fail "$1 (exit $RC)"; }
 
-# Caso macOS (CA-3): store en ~/Library/Application Support (con espacio) y
-# runtime data en ~/.local/share/opencode, sin overrides XDG de datos.
+# Proyecto consumidor con la autonomia ready y huellas reales de comandos y delegados.
 OS_HOME="$WORK/os home"; DATA="$OS_HOME/Library/Application Support"; CONFIG_HOME="$WORK/config"; RUNTIME_DATA="$OS_HOME/.local/share/opencode"
 STORE="$DATA/mefisto"; RELEASE="$STORE/releases/0.40.2"; CONFIG="$CONFIG_HOME/opencode"; PROJ="$WORK/proj"
 mkdir -p "$OS_HOME" "$STORE/releases" "$CONFIG" "$RUNTIME_DATA/storage" "$RUNTIME_DATA/tool-output/ses_a" "$RUNTIME_DATA/tool-output/ses_b" "$PROJ/.mefisto"
