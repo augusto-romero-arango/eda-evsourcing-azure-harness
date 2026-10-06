@@ -174,7 +174,7 @@ src/published/scripts/tests/test-autonomy-profile-contract.sh
 
 `scripts/autonomy-preflight.sh --project-root <raíz-Git> --runtime <id> [--context <ruta>]`
 lee por stdin un único plan JSON `schemaVersion:1` (`launchKind: sequential|parallel|pane`,
-`source: command|direct`, `issues:[{number,pipelineKind}]`, `requestedOperations:[]` cerrado en
+`source: command|direct|pipeline`, `issues:[{number,pipelineKind}]`, `requestedOperations:[]` cerrado en
 este corte) y responde un único JSON `admissionScope: pre-dispatch` con `status`
 `ready-to-dispatch|legacy|blocked|incomplete`, `projectId`, `profileDigest`, `release`,
 `planDigest`, `resourcesDigest` (o null), `checks:[{code,state,owner,actionCode}]` y
@@ -186,7 +186,7 @@ verifica clausura de scripts y binarios con consultas sin efectos y nunca ejecut
 `approve`, `project`, `install` ni `restore`, ni escribe logs, config, consentimiento,
 contexto o worktrees. `source:command` exige `--context` (debe vivir en la ruta canónica del
 run del mismo proyecto) con `entryAdmission` ya ligada a la sesión iniciadora; `source:direct`
-no admite contexto y marca la entrada `not-applicable`. Sin perfil y sin contexto, o con
+no admite contexto y marca la entrada `not-applicable`; `source:pipeline` es el contexto hijo reservado por un orquestador (exige `--context` con `parentContextId` y `rootCommand`/`allowedPipelines`/`allowedRoles` que cubran el plan; nunca lleva `entryAdmission` propia: el padre del mismo run debe listarlo en `state.children` con su `contractDigest` y compartir su `source`, si no `PARENT_CONTEXT_MISMATCH`; se verifica la `entryAdmission` del padre si este vino de un comando, si no la entrada es `not-applicable`). Sin perfil y sin contexto, o con
 Claude sin contexto, el resultado es `legacy`; consentimiento revocado, sin aprobar o contexto
 de otro runtime bloquean sin fallback.
 
