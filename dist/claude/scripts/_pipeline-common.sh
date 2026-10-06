@@ -2960,6 +2960,17 @@ orchestrator_note_pending() {
     echo "WARN: reserva del contexto hijo $ORCH_CHILD_ID pendiente de reconciliacion (${1:-pendiente}); no se asume admitido" >&2
 }
 
+# pipeline_preflight_source: source del plan de preflight derivado del contexto recibido (no de
+# la mera presencia de MEFISTO_EXECUTION_CONTEXT): sin contexto direct; contexto hijo delegado
+# (.contract.parentContextId presente; hereda el source del padre) pipeline; cualquier otro,
+# command. Un contexto ilegible se presenta como command para que el preflight lo bloquee.
+pipeline_preflight_source() {
+    local ctx="${MEFISTO_EXECUTION_CONTEXT:-}" parent=""
+    [ -n "$ctx" ] || { echo direct; return 0; }
+    if [ -f "$ctx" ] && [ ! -L "$ctx" ]; then parent="$(jq -r '.contract.parentContextId // empty' "$ctx" 2>/dev/null)"; fi
+    if [ -n "$parent" ]; then echo pipeline; else echo command; fi
+}
+
 # orchestrator_reserve_child <pipeline-kind|""> <execution-root>
 # Reserva el contexto del hijo (pipeline/root/identidad/alcance ya decididos) y deja
 # ORCH_CHILD_{ID,CONTEXT,DIGEST}. Sin ejecucion habilitada los deja vacios y retorna 0.

@@ -192,8 +192,8 @@ herdr_autonomy_preflight() {
     PREFLIGHT_STATUS=""; PREFLIGHT_DIAG=""; PREFLIGHT_DEFERRED=""
     bin="$SCRIPT_DIR/autonomy-preflight.sh"
     args=(--project-root "$PROJECT_ROOT" --runtime "$HERDR_RUNTIME")
-    if [ -n "${MEFISTO_EXECUTION_CONTEXT:-}" ]; then
-        src=command
+    src="$(pipeline_preflight_source)"
+    if [ "$src" != direct ]; then
         args+=(--context "$MEFISTO_EXECUTION_CONTEXT")
     fi
     if [ ! -f "$bin" ]; then

@@ -6,7 +6,7 @@
 # contexto, worktrees ni estado, y no invoca prepare/approve/project/install/restore.
 #
 # Uso: autonomy-preflight.sh --project-root <raiz-Git> --runtime <id> [--context <ruta>]
-#      (plan JSON schemaVersion 1 por stdin)
+#      (plan JSON schemaVersion 1 por stdin; source: command|direct|pipeline)
 # Exit: 0 ready-to-dispatch|legacy, 1 blocked|incomplete, 2 protocolo/uso.
 set -uo pipefail
 export LC_ALL=C
@@ -52,7 +52,7 @@ printf '%s' "$PLAN_RAW" | jq -e '
   and ((keys | sort) == ["issues","launchKind","requestedOperations","schemaVersion","source"])
   and .schemaVersion == 1
   and (.launchKind | IN("sequential","parallel","pane"))
-  and (.source | IN("command","direct"))
+  and (.source | IN("command","direct","pipeline"))
   and .requestedOperations == []
   and (.issues | type == "array" and length > 0 and all(.[];
         type == "object" and ((keys | sort) == ["number","pipelineKind"])
@@ -63,7 +63,7 @@ PLAN="$(printf '%s' "$PLAN_RAW" | jq -cS '.issues |= sort_by(.number)')"
 LAUNCH="$(printf '%s' "$PLAN" | jq -r .launchKind)"
 SOURCE="$(printf '%s' "$PLAN" | jq -r .source)"
 case "$LAUNCH" in pane) ROOT_COMMAND=parallel ;; *) ROOT_COMMAND="$LAUNCH" ;; esac
-if [ "$SOURCE" = command ]; then [ -n "$CONTEXT" ] || fail 'source:command exige --context'
+if [ "$SOURCE" = command ] || [ "$SOURCE" = pipeline ]; then [ -n "$CONTEXT" ] || fail "source:$SOURCE exige --context"
 else [ "$SEEN_CTX" -eq 0 ] || fail 'source:direct no admite --context'; fi
 PIPELINES="$(printf '%s' "$PLAN" | jq -cS '[.issues[].pipelineKind] | unique')"
 jq -e --arg c "$ROOT_COMMAND" --argjson p "$PIPELINES" '($p - (.roots[$c] // [])) | length == 0' "$ROLES_FILE" >/dev/null 2>&1 || fail 'pipelineKind desconocido o inconsistente con el catalogo'
@@ -155,8 +155,30 @@ else
 fi
 jq -e --arg c "$ROOT_COMMAND" '[.commands[] | select(.id == $c)] | length == 1' "$CATALOG_FILE" >/dev/null 2>&1 || add CATALOG block preflight ROOT_COMMAND_NOT_IN_CATALOG
 
-# --- contexto / entrada (source:command) --------------------------------------
-if [ "$SOURCE" = command ]; then
+# --- contexto / entrada (source:command | source:pipeline) --------------------
+# pipeline = contexto hijo reservado por un orquestador (hereda .contract.source del padre y
+# lleva parentContextId): nunca lleva entryAdmission propia;
+# la evidencia de entrada es la del padre cuando este vino de un comando (MEF-ADR-0055).
+ea_verify() { # <doc-contexto> <comando> <exigir-attached:1|0> <etiqueta-padre-vacia|padre>
+    local doc="$1" cmd="$2" need_attached="$3" ea
+    ea="$(printf '%s' "$doc" | jq -c '.state.entryAdmission // null')"
+    if [ "$ea" = null ] || { [ "$need_attached" = 1 ] && [ "$(printf '%s' "$doc" | jq -r '.state.status')" != attached ]; }; then
+        add ENTRY_ADMISSION block "callback#1855" ENTRY_ADMISSION_MISSING evidence
+    elif [ "$(printf '%s' "$ea" | jq -r '.policyResult // empty')" != allowed ]; then
+        add ENTRY_ADMISSION block "callback#1855" ENTRY_POLICY_DENIED
+    elif ! printf '%s' "$ea" | jq -e --arg p "$PROJECT_ID" --arg d "$PROFILE_DIGEST" --arg c "$cmd" --argjson s "$(printf '%s' "$doc" | jq -c '[.state.sessions[]?.sessionID]')" '
+        .projectId == $p and .profileDigest == $d and .commandId == $c and ((.sessionID // "") as $i | $s | index($i) != null)
+        and ((.ownership // null) | . != null and . != "" and . != false)
+        and ((.resourcesDigest // "") | type == "string" and length > 0)
+        and ((.permissionImageDigest // "") | type == "string" and length > 0)' >/dev/null 2>&1; then
+        add ENTRY_ADMISSION block "callback#1855" ENTRY_EVIDENCE_INCOMPLETE evidence
+    else
+        add ENTRY_ADMISSION pass preflight NONE
+        RESOURCES_DIGEST="$(printf '%s' "$ea" | jq -r '.resourcesDigest')"
+    fi
+}
+ENTRY_PASSED=0
+if [ "$SOURCE" = command ] || [ "$SOURCE" = pipeline ]; then
     CTX_DOC=""
     if [ -f "$CONTEXT" ] && [ ! -L "$CONTEXT" ]; then CTX_DOC="$(jq -cS . "$CONTEXT" 2>/dev/null)"; fi
     if ! printf '%s' "$CTX_DOC" | jq -e '(.contract|type)=="object" and (.state|type)=="object" and (.contractDigest|type)=="string"' >/dev/null 2>&1; then
@@ -187,29 +209,38 @@ if [ "$SOURCE" = command ]; then
     else
         add CONTEXT_VALID block preflight CONTEXT_VALIDATE_UNAVAILABLE evidence
     fi
-    if printf '%s' "$CTX_DOC" | jq -e --arg c "$ROOT_COMMAND" --argjson p "$PIPELINES" --argjson r "$ROLES" '
-        .contract.source == "command" and .contract.rootCommand == $c
+    if printf '%s' "$CTX_DOC" | jq -e --arg s "$SOURCE" --arg c "$ROOT_COMMAND" --argjson p "$PIPELINES" --argjson r "$ROLES" '
+        .contract.rootCommand == $c
+        and (if $s == "pipeline" then (.contract.source | IN("pipeline","command")) and ((.contract.parentContextId // "") | type == "string" and length > 0)
+             else .contract.source == "command" end)
         and (($p - (.contract.allowedPipelines // [])) | length == 0)
         and (($r - (.contract.allowedRoles // [])) | length == 0)' >/dev/null 2>&1; then
         add CONTEXT_SCOPE pass preflight NONE
     else
         add CONTEXT_SCOPE block preflight CONTEXT_SCOPE_MISMATCH
     fi
-    EA="$(printf '%s' "$CTX_DOC" | jq -c '.state.entryAdmission // null')"
-    if [ "$EA" = null ] || [ "$(printf '%s' "$CTX_DOC" | jq -r '.state.status')" != attached ]; then
-        add ENTRY_ADMISSION block "callback#1855" ENTRY_ADMISSION_MISSING evidence
-    elif [ "$(printf '%s' "$EA" | jq -r '.policyResult // empty')" != allowed ]; then
-        add ENTRY_ADMISSION block "callback#1855" ENTRY_POLICY_DENIED
-    elif ! printf '%s' "$EA" | jq -e --arg p "$PROJECT_ID" --arg d "$PROFILE_DIGEST" --arg c "$ROOT_COMMAND" --argjson s "$(printf '%s' "$CTX_DOC" | jq -c '[.state.sessions[]?.sessionID]')" '
-        .projectId == $p and .profileDigest == $d and .commandId == $c and ((.sessionID // "") as $i | $s | index($i) != null)
-        and ((.ownership // null) | . != null and . != "" and . != false)
-        and ((.resourcesDigest // "") | type == "string" and length > 0)
-        and ((.permissionImageDigest // "") | type == "string" and length > 0)' >/dev/null 2>&1; then
-        add ENTRY_ADMISSION block "callback#1855" ENTRY_EVIDENCE_INCOMPLETE evidence
+    if [ "$SOURCE" = command ]; then
+        ea_verify "$CTX_DOC" "$ROOT_COMMAND" 1
     else
-        add ENTRY_ADMISSION pass preflight NONE
-        RESOURCES_DIGEST="$(printf '%s' "$EA" | jq -r '.resourcesDigest')"
+        P_ID="$(printf '%s' "$CTX_DOC" | jq -r '.contract.parentContextId // empty')"
+        P_DOC=""
+        if valid_id "$P_ID"; then
+            P_FILE="$ROOT/.mefisto/pipeline/autonomy/runs/$C_RUN/contexts/$P_ID.json"
+            if [ -f "$P_FILE" ] && [ ! -L "$P_FILE" ]; then P_DOC="$(jq -cS . "$P_FILE" 2>/dev/null)"; fi
+        fi
+        if ! printf '%s' "$P_DOC" | jq -e --arg r "$C_RUN" --arg i "$P_ID" --arg rt "$RUNTIME" '
+            (.contract|type)=="object" and (.state|type)=="object" and .contract.runId == $r and .contract.contextId == $i
+            and .contract.runtime.id == $rt' >/dev/null 2>&1; then
+            add PARENT_CONTEXT block preflight PARENT_CONTEXT_UNREADABLE
+        elif [ "$(printf '%s' "$P_DOC" | jq -r '.contract.source')" = command ]; then
+            add PARENT_CONTEXT pass preflight NONE
+            ea_verify "$P_DOC" "$(printf '%s' "$P_DOC" | jq -r '.contract.rootCommand')" 0
+        else
+            add PARENT_CONTEXT pass preflight NONE
+            add ENTRY_ADMISSION not-applicable preflight DIRECT_INVOCATION
+        fi
     fi
+    ENTRY_PASSED="$(printf '%s' "$CHECKS" | jq -rs '[.[] | select(.code == "ENTRY_ADMISSION" and .state == "pass")] | length')"
 else
     add ENTRY_ADMISSION not-applicable preflight DIRECT_INVOCATION
 fi
@@ -257,7 +288,7 @@ if [ -x "$SCRIPT_DIR/run-published-agent.sh" ] && grep -q 'execution-context' "$
 else
     add STAGE_ACTOR_GUARD block preflight STAGE_GUARD_MISSING
 fi
-[ "$SOURCE" = command ] || add RESOURCES_SNAPSHOT deferred "$STAGE_OWNER" SNAPSHOT_AT_STAGE
+[ "$ENTRY_PASSED" -ge 1 ] || add RESOURCES_SNAPSHOT deferred "$STAGE_OWNER" SNAPSHOT_AT_STAGE
 add REMOTE_ACCESS deferred "$STAGE_OWNER" REMOTE_UNVERIFIED
 
 finish
