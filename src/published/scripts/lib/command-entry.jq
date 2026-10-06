@@ -19,7 +19,7 @@ def valid_execution_class($entry_id):
   . == {kind:"execute"} or
   ($entry_id == "runtimes" and . == {kind:"by-operation",parser:"runtimes-v1"}) or
   ($entry_id == "upgrade" and . == {kind:"by-operation",parser:"upgrade-v1"});
-def command_ids: ["batch-stop","bitacora","bug","draft","eraser-diagram","fix-review","health-check","implement","infra","infra-base","install-apim","install-auth","install-workos","merge","next-order","onboard","parallel","purge-store","runtimes","scaffold","scaffold-mcp","scaffold-projections","seed-secret","sequential","tooling","upgrade","work-status"];
+def command_ids: ["autonomy","batch-stop","bitacora","bug","draft","eraser-diagram","fix-review","health-check","implement","infra","infra-base","install-apim","install-auth","install-workos","merge","next-order","onboard","parallel","purge-store","runtimes","scaffold","scaffold-mcp","scaffold-projections","seed-secret","sequential","tooling","upgrade","work-status"];
 def classify_execution($command_id; $arguments):
   if ($command_id | type) != "string" or (command_ids | index($command_id) | not) then fail("comando no reconocido")
   elif ($arguments | type) != "string" then fail("argumentos no textuales para " + $command_id)

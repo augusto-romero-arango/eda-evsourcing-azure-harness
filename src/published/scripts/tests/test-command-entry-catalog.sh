@@ -24,7 +24,7 @@ catalog_input() {
 }
 printf '%s\n' '[catalogo]'
 out="$(catalog_input | jq -c -f "$FILTER")"; rc=$?
-[ "$rc" -eq 0 ] && [ "$(jq '.commands | length' <<< "$out")" -eq 27 ] && pass 'las 27 filas forman un catalogo cerrado' || fail 'catalogo de 27 filas'
+[ "$rc" -eq 0 ] && [ "$(jq '.commands | length' <<< "$out")" -eq 28 ] && pass 'las 28 filas forman un catalogo cerrado' || fail 'catalogo de 28 filas'
 jq -e '.commands[] | select(.id == "bitacora") | .closure.commands == ["bitacora","merge"] and .closure.delegates == ["historiador"] and .closure.capabilities == ["read","shell","task"]' <<< "$out" >/dev/null && pass 'bitacora compone merge sin heredar capacidades del delegado' || fail 'clausura de bitacora'
 jq -e '.commands[] | select(.id == "install-auth") | .closure.commands == ["install-apim","install-auth","install-workos","seed-secret"] and .closure.delegates == ["apim-gateway-scaffolder","workos-identity-scaffolder"]' <<< "$out" >/dev/null && pass 'install-auth alcanza seed-secret y ambos scaffolders' || fail 'clausura de install-auth'
 jq -e '.commands[] | select(.id == "onboard") | .closure.commands == ["onboard","scaffold-projections"] and .closure.delegates == ["projections-scaffolder"]' <<< "$out" >/dev/null && pass 'onboard alcanza projections-scaffolder' || fail 'clausura de onboard'
@@ -52,7 +52,7 @@ printf '%s' "$bad" | jq -e -f "$FILTER" >/dev/null 2>&1; [ "$?" -ne 0 ] && pass 
 informative="$(catalog_input | jq '(.commands[] | select(.id == "draft") | .body) += "\n{{mefisto:command merge}}"' | jq -c -f "$FILTER")"
 jq -e '.commands[] | select(.id == "draft") | .closure.commands == ["draft"]' <<< "$informative" >/dev/null && pass 'mencion informativa no compone comandos' || fail 'mencion informativa'
 manifest="$($ADAPTER render-asset command-entry-manifest "$MATRIX")"; rc=$?
-[ "$rc" -eq 0 ] && jq -e '(.templates | length == 27) and (.delegatedPrompts | length > 0) and (.catalogFingerprint | test("^[0-9a-f]{64}$")) and all(.templates[]; .nativeBinding == {commandEntryId:.id,subtask:false} and .legacyBinding == {commandEntryId:.id,subtask:false})' <<< "$manifest" >/dev/null && pass 'manifest identifica templates, prompts y binding observado' || fail 'manifest de ownership'
+[ "$rc" -eq 0 ] && jq -e '(.templates | length == 28) and (.delegatedPrompts | length > 0) and (.catalogFingerprint | test("^[0-9a-f]{64}$")) and all(.templates[]; .nativeBinding == {commandEntryId:.id,subtask:false} and .legacyBinding == {commandEntryId:.id,subtask:false})' <<< "$manifest" >/dev/null && pass 'manifest identifica templates, prompts y binding observado' || fail 'manifest de ownership'
 source "$ADAPTER"
 fixture_root="$ROOT/src/published/scripts/tests/fixtures/command-entry"
 before_binding="$(native_command_binding < "$fixture_root/before-header.md")"

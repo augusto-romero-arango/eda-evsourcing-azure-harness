@@ -21,7 +21,7 @@ printf '[pre] sintaxis, catalogo y normalizacion\n'
 jq -n -f "$VALIDATOR" >/dev/null 2>&1 && pass 'validador compila' || fail 'validador no compila'
 CATALOG="$(jq -cS . "$FIXTURES/catalog.json")"
 GENERATED_CATALOG="$(for command in "$REPO_ROOT"/src/published/commands/*.md; do basename "$command" .md; done | jq -R . | jq -scS 'sort')"
-[ "$CATALOG" = "$GENERATED_CATALOG" ] && [ "$(printf '%s' "$CATALOG" | jq 'length')" -eq 27 ] && pass 'fixture representa exactamente los 27 comandos publicados' || fail 'fixture de catalogo desactualizado'
+[ "$CATALOG" = "$GENERATED_CATALOG" ] && [ "$(printf '%s' "$CATALOG" | jq 'length')" -eq 28 ] && pass 'fixture representa exactamente los 28 comandos publicados' || fail 'fixture de catalogo desactualizado'
 
 digest_of() {
     local normalized
