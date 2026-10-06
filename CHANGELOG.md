@@ -4,6 +4,13 @@ Todo cambio notable a este proyecto se documenta aquí. Sigue [Keep a Changelog]
 
 ## [Unreleased]
 
+## [0.41.7] - 2026-10-06
+
+### Fixed
+
+- La entrada OpenCode degrada a modo interactivo cuando la autonomia del proyecto no esta lista (`disabled`/`needs-approval`): el plugin inyecta igualmente un `command-entry-<id>` por comando, sin politica propia de Mefisto ni admision, y en `conflict` los comandos fallan con `mefisto_entry_not_admitted:<codigo>` en vez de `Agent not found` (#2012).
+- El digest de proyeccion de la entrada OpenCode es independiente de la fase: `_digestInput` ya no incluye `phase`, las reglas de agente se calculan sobre todos los comandos aprobados sin certificacion de sesion y los recursos requeridos cubren todas las filas aprobadas, de modo que `config` y `command` producen el mismo `projectionDigest` y se acaba el `SNAPSHOT_CHANGED` espurio con la autonomia lista (#2013).
+
 ## [0.41.6] - 2026-10-06
 
 ### Fixed
@@ -3131,7 +3138,8 @@ Y reemplazar referencias en `CLAUDE.md` del proyecto: `/eda-evsourcing-azure-har
 - Los agentes `reviewer` e `implementer` mantienen el placeholder literal `ADR-XXXX` en sus plantillas de reporte (no es un bug; el agente lo sustituye en tiempo de ejecución por el número real del ADR aplicable).
 - Los ejemplos de código en `test-writer.md`, `implementer.md` y `smoke-test-writer.md` conservan nombres concretos de un proyecto consumidor (`Programacion`, `ControlHoras`) anotados en el "Contrato con el consumidor" de cada agente como ejemplos pedagógicos.
 
-[Unreleased]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.41.6...HEAD
+[Unreleased]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.41.7...HEAD
+[0.41.7]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.41.6...v0.41.7
 [0.41.6]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.41.5...v0.41.6
 [0.41.5]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.41.4...v0.41.5
 [0.41.4]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.41.3...v0.41.4
