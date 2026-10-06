@@ -14,7 +14,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 PACKAGE_ROOT="${EC_PACKAGE_ROOT:-$(cd "$SCRIPT_DIR/.." && pwd -P)}"
 CATALOG_FILE="$PACKAGE_ROOT/src/published/contract/command-entry.json"
 ROLES_FILE="$PACKAGE_ROOT/src/published/contract/agent-execution.json"
-RELEASE_FILE="$PACKAGE_ROOT/src/published/release-identity.json"
+RELEASE_FILE="$PACKAGE_ROOT/mefisto-manifest.json"
 AUTONOMY_CMD="${EC_AUTONOMY_PROFILE_CMD:-$SCRIPT_DIR/autonomy-profile.sh}"
 
 EMPTY_OBJ='{}'
@@ -159,7 +159,12 @@ revalidate() { # digest-esperado
     fi
     return 0
 }
-release_id() { jq -r '.version // empty' "$RELEASE_FILE" 2>/dev/null; }
+release_id() {
+    local v
+    v="$(jq -r '.version // empty' "$RELEASE_FILE" 2>/dev/null)"
+    [ -n "$v" ] || { printf 'ERROR: mefisto-manifest.json ausente o sin version valida (%s)\n' "$RELEASE_FILE" >&2; return 1; }
+    printf '%s\n' "$v"
+}
 
 ctx_response() { # status reason exit
     emit "$1" "$2" "$3" "$(printf '%s' "$DOC" | jq -c --arg p "$(ctx_file "$RUN_ID" "$CTX_ID")" '{contextId:.contract.contextId,path:$p,digest:.contractDigest,state:.state.status,revision:.state.revision,newAdmissions:(.state.status=="prepared" or .state.status=="attached")}')"
@@ -171,12 +176,14 @@ new_nonce() { od -An -N16 -tx1 /dev/urandom | tr -d ' \n'; }
 subset_of() { jq -ne --argjson a "$1" --argjson b "$2" '($a - $b) | length == 0' >/dev/null 2>&1; }
 
 build_contract() { # parametros por jq --arg; ver prepare/reserve-child
+    local rel
+    rel="$(release_id)" || return 1
     jq -cnS \
         --arg runId "$RUN_ID" --arg contextId "$CTX_ID" --arg parent "${PARENT:-}" \
         --arg projectId "$PROJECT_ID" --arg profileDigest "$PROFILE_DIGEST" \
         --arg rootCommand "$ROOT_COMMAND" --arg pipelineKind "${PIPELINE:-}" --arg stage "${STAGE:-}" \
         --arg agent "${AGENT:-}" --arg alias "${ALIAS:-}" --arg source "$SOURCE" --arg callId "${CALL_ID:-}" \
-        --arg operation "$OPERATION" --arg release "$(release_id)" \
+        --arg operation "$OPERATION" --arg release "$rel" \
         --argjson roles "$ALLOWED_ROLES" --argjson pipelines "$ALLOWED_PIPELINES" --argjson resources "$RESOURCES" \
         --arg approved "$APPROVED_ROOT" --arg exec "$EXEC_ROOT" \
         --arg rtId "$RT_ID" --arg rtVer "$RT_VER" --arg lease "$LEASE_ID" --arg nonce "$(new_nonce)" \
@@ -264,7 +271,7 @@ prepare)
         ALLOWED_ROLES="$(printf '%s' "$PIPE_ROLES" | jq -cS 'sort')"
     fi
     APPROVED_ROOT="$ROOT"; EXEC_ROOT="$ROOT"
-    CONTRACT="$(build_contract)"
+    CONTRACT="$(build_contract)" || emit error RELEASE_UNKNOWN 2
     DOC="$(new_doc "$CONTRACT" null)"
     F="$(ctx_file "$RUN_ID" "$CTX_ID")"
     write_ctx "$F" "$DOC" new; rc=$?
@@ -309,7 +316,7 @@ reserve-child)
     APPROVED_ROOT="$(ctx_field .contract.approvedRoot)"
     RT_ID="$(ctx_field .contract.runtime.id)"; RT_VER="$(ctx_field .contract.runtime.version)"
     CTX_ID="$CHILD"; PARENT_ID="$PARENT"
-    CCONTRACT="$(PARENT="$PARENT_ID" build_contract)"
+    CCONTRACT="$(PARENT="$PARENT_ID" build_contract)" || emit error RELEASE_UNKNOWN 2
     CDOC="$(new_doc "$CCONTRACT" "$(jq -cn --arg i "$RES_ID" '{id:$i,status:"reserved"}')")"
     CDIGEST="$(printf '%s' "$CDOC" | jq -r .contractDigest)"
     CF="$(ctx_file "$RUN_ID" "$CHILD")"

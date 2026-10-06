@@ -17,7 +17,7 @@ PACKAGE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd -P)"
 ROLES_FILE="$PACKAGE_ROOT/src/published/contract/agent-execution.json"
 CATALOG_FILE="$PACKAGE_ROOT/src/published/contract/command-entry.json"
 SOURCES_FILE="$PACKAGE_ROOT/src/published/contract/source-verification.json"
-RELEASE_FILE="$PACKAGE_ROOT/src/published/release-identity.json"
+RELEASE_FILE="$PACKAGE_ROOT/mefisto-manifest.json"
 STAGE_OWNER='run-published-agent.sh/#1858'
 
 fail() { printf 'ERROR: %s\n' "$1" >&2; exit 2; }
@@ -42,7 +42,8 @@ done
 [ -n "$PROJECT_ROOT" ] && [ -n "$RUNTIME" ] || usage
 printf '%s' "$RUNTIME" | grep -Eq '^[a-z][a-z0-9_]{0,31}$' || fail 'runtime invalido'
 [ ! -e "$PACKAGE_ROOT/src/runtime/lib/runtime-$RUNTIME.sh" ] && fail 'el runtime no tiene adaptador en esta release'
-[ -f "$ROLES_FILE" ] && [ -f "$CATALOG_FILE" ] && [ -f "$SOURCES_FILE" ] && [ -f "$RELEASE_FILE" ] || fail 'la release no incluye los contratos publicados'
+[ -f "$ROLES_FILE" ] && [ -f "$CATALOG_FILE" ] && [ -f "$SOURCES_FILE" ] || fail 'la release no incluye los contratos publicados'
+[ -f "$RELEASE_FILE" ] || fail 'la release no incluye mefisto-manifest.json (identidad de la release)'
 
 # --- plan (stdin) ------------------------------------------------------------
 PLAN_RAW="$(cat)"
@@ -78,6 +79,7 @@ TOP="$(cd "$TOP" 2>/dev/null && pwd -P)"
 
 REL_VERSION="$(jq -r '.version // empty' "$RELEASE_FILE" 2>/dev/null)"
 REL_COMMIT="$(jq -r '.commit // empty' "$RELEASE_FILE" 2>/dev/null)"
+[ -n "$REL_VERSION" ] && [ -n "$REL_COMMIT" ] || fail 'mefisto-manifest.json sin version/commit validos'
 REL_ROOT_SAFE="$PACKAGE_ROOT"
 case "$PACKAGE_ROOT" in "${HOME:-/nonexistent}"/*) REL_ROOT_SAFE="~${PACKAGE_ROOT#"$HOME"}" ;; esac
 

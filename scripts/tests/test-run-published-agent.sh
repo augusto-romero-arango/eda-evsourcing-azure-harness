@@ -15,7 +15,7 @@ check() { local l="$1"; shift; if "$@"; then pass; else fail "$l"; fi; }
 REL="$TMP/release"; PROJ="$TMP/proj"; WT="$TMP/wt"; LOG="$TMP/log"
 mkdir -p "$REL/scripts" "$REL/src/runtime/lib" "$REL/src/published/contract" "$PROJ" "$WT" "$LOG"
 cp "$REPO/scripts/run-published-agent.sh" "$REL/scripts/"
-echo '{"version":"9.9.9"}' > "$REL/src/published/release-identity.json"
+echo '{"version":"9.9.9"}' > "$REL/mefisto-manifest.json"
 echo '{"schemaVersion":1,"roles":[{"id":"tooling-writer"},{"id":"implementer"}],"roots":{"tooling":["tooling"],"implement":["tdd"]}}' > "$REL/src/published/contract/agent-execution.json"
 echo '{"schemaVersion":1,"roles":[{"id":"tooling-writer","sourceDigest":"h","metadata":{"mode":"subagent","permission":{},"tools":{}}}]}' > "$REL/agent-execution-manifest.json"
 
