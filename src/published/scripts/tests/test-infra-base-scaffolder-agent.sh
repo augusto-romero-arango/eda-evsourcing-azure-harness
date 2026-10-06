@@ -65,6 +65,8 @@ contains "$opencode_body" '"app-insights-connection" "output" "app_insights_conn
 contains "$opencode_body" '"github-secret" "SB_EXTERNAL_COSMOS_CONNECTION_STRING"' 'se conserva el registro por alias external como github-secret'
 
 echo '[d] politica bash de OpenCode'
+# '[ ... ]' es test_command (no candidato en OpenCode, ver fixtures/bash-candidates) y la ruta
+# de scripts del paquete solo se permite con el prefijo de runtime exacto (#1890).
 permission="$(awk 'NR == 1 { next } /^permission: / { sub(/^permission: /, ""); print; exit }' "$OPENCODE")"
 for pattern in 'git *' 'jq *' 'test *' 'echo *' 'printf *' 'grep *' 'mkdir *' 'command -v terraform' 'terraform fmt -recursive ../..' 'terraform fmt -check -recursive ../..' 'terraform init -backend=false' 'terraform init -backend=false -input=false' 'terraform validate' 'terraform validate -no-color' 'MEFISTO_RUNTIME=opencode "${MEFISTO_PACKAGE_ROOT}/scripts/register-harness-secret.sh"*'; do
     if printf '%s' "$permission" | jq -e --arg p "$pattern" '.bash[$p] == "allow"' >/dev/null 2>&1; then pass "bash permite '$pattern'"; else fail "bash no permite '$pattern'"; fi
