@@ -86,6 +86,7 @@ CATALOG="$(for command in "$SCRIPT_DIR/../commands"/*.md; do [ -f "$command" ] |
 if [ "$OPERATION" = propose-max ]; then
     # Propone el perfil maximo (todo el catalogo, administracion preservada); no aprueba nada.
     [ "$HAS_CANONICAL" -eq 1 ] || fail 'propose-max requiere configuracion canonica en .mefisto/harness.config.json; no se migro ni se creo ningun archivo'
+    [ ! -L "$PROJECT_ROOT/.mefisto" ] || fail 'el directorio .mefisto es un enlace simbolico; no se escribe la configuracion'
     CURRENT_REVISION="$(printf '%s' "$PROFILE" | jq -r 'if type == "object" and ((.revision? // null) | type) == "number" and .revision > 0 and (.revision | floor) == .revision then .revision else 0 end')"
     BUILD='{schemaVersion:1,id:"maximo",revision:$rev,commands:$catalog,administration:(if ($p | type) == "object" and (($p.administration? // null) | type) == "array" then $p.administration else [] end)}'
     SAME="$(jq -cnS --argjson p "$PROFILE" --argjson catalog "$CATALOG" --argjson rev "$CURRENT_REVISION" "$BUILD")"

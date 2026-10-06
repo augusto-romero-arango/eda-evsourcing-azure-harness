@@ -127,7 +127,18 @@ scripts/autonomy-profile.sh preview --project-root /ruta/al/consumidor
 scripts/autonomy-profile.sh approve --project-root /ruta/al/consumidor --expected-digest <sha-256>
 scripts/autonomy-profile.sh revoke --project-root /ruta/al/consumidor
 scripts/autonomy-profile.sh inspect --project-root /ruta/al/consumidor
+scripts/autonomy-profile.sh propose-max --project-root /ruta/al/consumidor
 ```
+
+`propose-max` escribe en `.mefisto/harness.config.json` el perfil máximo de la
+release (`id: maximo`, `commands` con todo el catálogo publicado ordenado y
+`administration` preservada, o vacía si no existía) sin tocar el resto del
+archivo. Es idempotente: si el bloque no cambia reporta `changed: false`; si
+cambia incrementa `revision`. Imprime `configPath`, `changed`, `revision` y el
+`profileDigest` que `preview` calcularía, para encadenar `approve
+--expected-digest`. No aprueba nada ni escribe el registro de consentimiento, y
+sin configuración canónica falla con código 2 sin migrar ni crear archivos
+(MEF-ADR-0055 §1-3).
 
 `preview` no escribe y entrega el perfil, sus grants administrativos y el digest
 que debe volver en `approve`. La aprobación no ejecuta acciones administrativas

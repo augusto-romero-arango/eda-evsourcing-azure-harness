@@ -113,6 +113,10 @@ PM_OUT3="$(run_at "$PM" propose-max --project-root "$PM")"; PRC3=$?
 PM_NONE="$TMP/pm-none"; mkdir -p "$PM_NONE/.claude"; printf '{}' > "$PM_NONE/.claude/harness.config.json"; git -C "$PM_NONE" init -q
 run_at "$PM_NONE" propose-max --project-root "$PM_NONE" >/dev/null 2>&1; NRC=$?
 [ "$NRC" -eq 2 ] && [ ! -e "$PM_NONE/.mefisto" ] && pass 'propose-max sin config canonica falla con exit 2 sin crear archivos' || fail 'propose-max legacy no fallo limpio'
+PM_LINK="$TMP/pm-link"; PM_REAL="$TMP/pm-real"; make_project "$PM_LINK"; mv "$PM_LINK/.mefisto" "$PM_REAL"; ln -s "$PM_REAL" "$PM_LINK/.mefisto"
+PM_LINK_BEFORE="$(cat "$PM_REAL/harness.config.json")"
+run_at "$PM_LINK" propose-max --project-root "$PM_LINK" >/dev/null 2>&1; LRC=$?
+[ "$LRC" -eq 2 ] && [ "$(cat "$PM_REAL/harness.config.json")" = "$PM_LINK_BEFORE" ] && pass 'propose-max no escribe a traves de un .mefisto enlazado' || fail 'propose-max escribio a traves de un enlace simbolico'
 
 echo "Resultado: $PASS PASS, $FAIL FAIL"
 [ "$FAIL" -eq 0 ]
