@@ -390,7 +390,9 @@ fi
 # Un eslabon puede esperar horas y fallar igual al agotar el techo: la nota
 # tiene que llegar tambien a los desenlaces fallidos, sin volverlos otra cosa.
 FAIL_LINES=$(grep -c 'fail_issue "\$ISSUE_NUM" .*\$ISSUE_HELD_NOTE"' "$BATCH_SCRIPT")
-FAIL_TOTAL=$(grep -c 'fail_issue "\$ISSUE_NUM"' "$BATCH_SCRIPT")
+# Se excluye el fail_issue de la reserva de contexto (#1931): ocurre ANTES del
+# spawn del eslabon, asi que no puede haber espera previa que anotar.
+FAIL_TOTAL=$(grep 'fail_issue "\$ISSUE_NUM"' "$BATCH_SCRIPT" | grep -vc 'no se pudo reservar el contexto')
 if [ "$FAIL_LINES" -eq "$FAIL_TOTAL" ] && [ "$FAIL_TOTAL" -gt 0 ]; then
     pass "los $FAIL_TOTAL desenlaces fallidos del eslabon llevan la nota de espera"
 else
