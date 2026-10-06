@@ -78,11 +78,11 @@ opencode_command_entry_resolve() {
     esac
 
     # 2. Recursos desde la misma release, derivados de las filas aprobadas.
-    required="$(jq -c --argjson insp "$inspect_out" --arg phase "$phase" --arg req "$(jq -r '.requestedCommand // ""' <<< "$input")" '
+    # Todas las filas aprobadas en ambas fases: resourcesDigest no depende de la fase (#2013).
+    required="$(jq -c --argjson insp "$inspect_out" '
       ($insp.profile.commands // []) as $approved
       | [.commands[] | select(.id as $i | ($approved | index($i)) != null)] as $rows
-      | (if $phase == "command" then ($rows | map(select(.id == $req))) else $rows end) as $scope
-      | ((["release","project","state","runtime-tool-output"] + [$scope[].resources[]]) | unique)' "$matrix")" || return 2
+      | ((["release","project","state","runtime-tool-output"] + [$rows[].resources[]]) | unique)' "$matrix")" || return 2
     dir="$(jq -r .runtimeContext.directory <<< "$input")"
     top="$(env -u GIT_DIR -u GIT_WORK_TREE -u GIT_COMMON_DIR -u GIT_INDEX_FILE git -C "$dir" rev-parse --show-toplevel 2>/dev/null)" || { _oce_emit conflict "" "$denied" RUNTIME_DIRECTORY_UNRESOLVABLE; return 1; }
     top="$(cd -P "$top" 2>/dev/null && pwd -P)" || { _oce_emit conflict "" "$denied" RUNTIME_DIRECTORY_UNRESOLVABLE; return 1; }
