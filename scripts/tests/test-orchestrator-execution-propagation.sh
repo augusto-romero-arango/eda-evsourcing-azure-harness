@@ -202,7 +202,7 @@ case "${1:-} ${2:-}" in
     "pane run")
         [ "${HERDR_FAIL_RUN:-0}" = 1 ] && exit 1
         if [ "${HERDR_NEVER_CONFIRM:-0}" != 1 ]; then
-            m=$(printf '%s\n' "${4:-}" | grep -oE -- '--started-marker [^[:space:]]+' | awk '{print $2}')
+            m=$(printf '%s\n' "${4:-}" | sed -nE 's/.*--started-marker (([^\\ ]|\\.)+).*/\1/p' | sed -E 's/\\(.)/\1/g')
             [ -n "$m" ] && { mkdir -p "$(dirname "$m")"; : > "$m"; }
         fi ;;
     *) echo '{"result":{"type":"ok"}}' ;;
@@ -215,7 +215,7 @@ git init -q "$CONS_H"; git -C "$CONS_H" config user.email t@m.local; git -C "$CO
 git -C "$CONS_H" commit -q --allow-empty -m base
 run_herdr() { # <runtime> args...
     local rt="$1"; shift; : > "$EC_LOG"; : > "$HERDR_LOG"; rm -rf "$CONS_H/.mefisto/pipeline"
-    ( cd "$CONS_H" && env -u MEFISTO_UI -u MEFISTO_EXECUTION_CONTEXT -u MEFISTO_EXECUTION_DIGEST \
+    ( cd "$CONS_H" && env -u MEFISTO_UI -u MEFISTO_STATE_DIR -u MEFISTO_EXECUTION_CONTEXT -u MEFISTO_EXECUTION_DIGEST \
         MEFISTO_RUNTIME_LIB_DIR="$TMP/otra/lib" PATH="$BIN:$SAFE_SYSTEM_PATH" MEFISTO_RUNTIME="$rt" \
         HERDR_ENV=1 HERDR_PANE_ID=w1:p0 HERDR_WORKSPACE_ID=w1 HERDR_DISPATCH_CONFIRM_TIMEOUT=1 \
         "$REPO_ROOT/scripts/herdr-pipeline.sh" "$@" ) </dev/null >"$TMP/out" 2>"$TMP/err"
