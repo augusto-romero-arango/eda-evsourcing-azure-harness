@@ -1,6 +1,7 @@
 {
   "schemaVersion": 1,
   "commands": [
+    {"id":"autonomy","capabilities":["read","edit","shell"],"writeScope":"project","executionClass":{"kind":"execute"},"delegates":[],"composes":[],"skills":[],"mcp":[],"resources":["project","release","state","runtime-tool-output"],"evidence":["src/published/commands/autonomy.md"],"shellExtra":["git diff*","git rev-parse*","jq*","mktemp*","mv*"]},
     {"id":"batch-stop","capabilities":["read","shell"],"writeScope":"none","executionClass":{"kind":"execute"},"delegates":[],"composes":[],"skills":[],"mcp":[],"resources":["project","release","state","runtime-tool-output"],"evidence":["src/published/commands/batch-stop.md"],"shellExtra":["git rev-parse*","mkdir -p*","pgrep -f*","touch*"]},
     {"id":"bitacora","capabilities":["read","shell","task"],"writeScope":"none","executionClass":{"kind":"execute"},"delegates":["historiador"],"composes":["merge"],"skills":[],"mcp":[],"resources":["project","release","state","runtime-tool-output"],"evidence":["src/published/commands/bitacora.md"],"shellExtra":[]},
     {"id":"bug","capabilities":["read","shell","task"],"writeScope":"none","executionClass":{"kind":"execute"},"delegates":["bug-investigator","tooling-investigator"],"composes":[],"skills":[],"mcp":[],"resources":["project","release","state","runtime-tool-output"],"evidence":["src/published/commands/bug.md"],"shellExtra":[]},

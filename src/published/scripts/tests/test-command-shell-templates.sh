@@ -18,7 +18,7 @@ fail() { printf '  FAIL: %s\n' "$1"; FAIL=$((FAIL+1)); }
 printf '%s\n' '[generacion]'
 GEN="$(bash "$ADAPTER" render-asset command-shell-templates "$MATRIX")" || GEN=''
 [ -n "$GEN" ] && pass 'el adaptador genera el contrato' || { fail 'el adaptador no genera el contrato'; exit 1; }
-jq -e --slurpfile m "$MATRIX" '.schemaVersion == 1 and ((.commands | keys) == ($m[0].commands | map(.id) | sort)) and (.commands | length) == 27 and all(.commands[]; type == "array")' <<< "$GEN" >/dev/null && pass 'schemaVersion 1 y las 27 filas' || fail 'forma del contrato'
+jq -e --slurpfile m "$MATRIX" '.schemaVersion == 1 and ((.commands | keys) == ($m[0].commands | map(.id) | sort)) and (.commands | length) == 28 and all(.commands[]; type == "array")' <<< "$GEN" >/dev/null && pass 'schemaVersion 1 y las 28 filas' || fail 'forma del contrato'
 jq -e 'all(.commands[]; . == (unique | sort))' <<< "$GEN" >/dev/null && pass 'patrones ordenados y sin duplicados' || fail 'patrones no deterministas'
 [ "$GEN" = "$(bash "$ADAPTER" render-asset command-shell-templates "$MATRIX")" ] && pass 'salida determinista' || fail 'salida no determinista'
 [ -f "$PACKAGED" ] && [ "$(jq -cS . "$PACKAGED")" = "$(jq -cS . <<< "$GEN")" ] && pass 'el contrato empaquetado coincide con el generado' || fail 'contrato empaquetado ausente o divergente'

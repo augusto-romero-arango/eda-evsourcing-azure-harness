@@ -72,16 +72,16 @@ run < <(envelope config); rc_is 'perfil ausente: disabled exit 0' x 0
 assert 'NO_PROFILE legacy sin bindings' '.status=="disabled" and .reasonCode=="NO_PROFILE" and (.bindings|length)==0 and .admissionScope=="entry"'
 set_inspect disabled CONSENT_REVOKED 0 "$APPROVED"
 run < <(envelope config); rc_is 'consentimiento revocado: exit 0' x 0
-assert 'revocado conserva motivo y filas no admitidas (no legacy)' '.status=="disabled" and .reasonCode=="CONSENT_REVOKED" and (.bindings|length)==27 and all(.bindings[]; .admitted==false)'
+assert 'revocado conserva motivo y filas no admitidas (no legacy)' '.status=="disabled" and .reasonCode=="CONSENT_REVOKED" and (.bindings|length)==28 and all(.bindings[]; .admitted==false)'
 set_inspect needs-approval CONSENT_DIGEST_MISMATCH 1 "$APPROVED"
 run < <(envelope config); rc_is 'perfil cambiado: needs-approval exit 1' x 1
-assert 'needs-approval con 27 filas denegadas' '.status=="needs-approval" and (.bindings|length)==27 and all(.bindings[]; .admitted==false)'
+assert 'needs-approval con 28 filas denegadas' '.status=="needs-approval" and (.bindings|length)==28 and all(.bindings[]; .admitted==false)'
 set_inspect ready CONSENT_APPROVED 0 "$APPROVED"
 
 printf '%s\n' '[config]'
 run < <(envelope config); rc_is 'config ready exit 0' x 0
 assert 'envelope cerrado con digests e identidad' '.status=="ready" and .phase=="config" and .admissionScope=="entry" and (.projectionDigest|length)==64 and (.catalogDigest|length)==64 and (.resourcesDigest|length)==64 and .release.version=="0.40.2" and .projectId=="project-aaaaaaaaaaaaaaaaaaaaaaaa"'
-assert 'inventario completo: 27 bindings y 27 agentes, todos admitted false' '(.bindings|length)==27 and (.agents|length)==27 and all(.bindings[]; .admitted==false and .subtask==false and (.agent|startswith("command-entry-")) and (.command|startswith("mefisto:"))) and all(.agents[]; .mode=="primary" and .hidden==true and (has("model")|not))'
+assert 'inventario completo: 28 bindings y 28 agentes, todos admitted false' '(.bindings|length)==28 and (.agents|length)==28 and all(.bindings[]; .admitted==false and .subtask==false and (.agent|startswith("command-entry-")) and (.command|startswith("mefisto:"))) and all(.agents[]; .mode=="primary" and .hidden==true and (has("model")|not))'
 assert 'fila no aprobada queda con permisos denegados' '[.agents[] | select(.id=="command-entry-merge") | .rules[] | select(.value=="allow")] | length==0'
 assert 'bitacora no obtiene task universal ni capacidades del hijo' '[.agents[] | select(.id=="command-entry-bitacora") | .rules[] | select(.permission=="task" and .value=="allow")] | map(.pattern) | unique == ["historiador"]'
 assert 'sequential sin task nativo (solo runner shell)' '[.agents[] | select(.id=="command-entry-sequential") | .rules[] | select(.permission=="task" and .value=="allow")] | length==0'
@@ -98,7 +98,7 @@ printf '%s\n' '[command]'
 run < <(envelope command); rc_is 'command ready exit 0' x 0
 assert 'solo la fila solicitada queda admitida' '.phase=="command" and ([.bindings[] | select(.admitted)] | map(.command) == ["mefisto:sequential"])'
 run < <(envelope command '.requestedCommand = "merge"'); rc_is 'comando no aprobado: conflict exit 1' x 1
-assert 'COMMAND_NOT_APPROVED y todo no admitido' '.status=="conflict" and any(.diagnostics[]; .code=="COMMAND_NOT_APPROVED") and all(.bindings[]; .admitted==false) and (.bindings|length)==27'
+assert 'COMMAND_NOT_APPROVED y todo no admitido' '.status=="conflict" and any(.diagnostics[]; .code=="COMMAND_NOT_APPROVED") and all(.bindings[]; .admitted==false) and (.bindings|length)==28'
 run < <(envelope command '.sessionPolicyKnown = false | .sessionPermission = []'); rc_is 'sesion desconocida: conflict' x 1
 assert 'SESSION_UNKNOWN' 'any(.diagnostics[]; .code=="SESSION_UNKNOWN")'
 run < <(envelope command '.sessionProjectMatches = false'); rc_is 'sesion de otro proyecto: conflict' x 1
@@ -166,14 +166,14 @@ assert 'DELEGATE_MODIFIED' 'any(.diagnostics[]; .code=="DELEGATE_MODIFIED")'
 run < <(envelope config '.delegateAgents |= map(select(.id != "historiador"))'); rc_is 'delegado ausente: conflict' x 1
 run < <(envelope config '.delegateAgents |= map(if .id=="historiador" then .mode="primary" else . end)'); rc_is 'modo de delegado incompatible: conflict' x 1
 run < <(envelope config '.foreignEntryAgents = ["command-entry-merge"]'); rc_is 'colision de agente tecnico: conflict' x 1
-assert 'filas denegadas ante colision' 'all(.bindings[]; .admitted==false) and (.bindings|length)==27'
+assert 'filas denegadas ante colision' 'all(.bindings[]; .admitted==false) and (.bindings|length)==28'
 run < <(envelope config '.runtimeContext.directory = "/no/existe"'); rc_is 'directorio no verificable: conflict' x 1
 rm "$SHELLS"
 run < <(envelope config); rc_is 'sin plantillas shell de la release no se admite' x 1
-assert 'SHELL_TEMPLATES_UNAVAILABLE sin catalogo parcial' 'any(.diagnostics[]; .code=="SHELL_TEMPLATES_UNAVAILABLE") and (.bindings|length)==27 and all(.bindings[]; .admitted==false)'
+assert 'SHELL_TEMPLATES_UNAVAILABLE sin catalogo parcial' 'any(.diagnostics[]; .code=="SHELL_TEMPLATES_UNAVAILABLE") and (.bindings|length)==28 and all(.bindings[]; .admitted==false)'
 cp "$REPO_ROOT/dist/opencode/src/published/contract/command-shell-templates.json" "$SHELLS"
 run < <(envelope config); rc_is 'contrato empaquetado de #1944: config ready' x 0
-assert 'contrato empaquetado: ninguna fila emite SHELL_TEMPLATES_UNAVAILABLE' '(.diagnostics|type)=="array" and all(.diagnostics[]; .code != "SHELL_TEMPLATES_UNAVAILABLE") and (.bindings|length)==27'
+assert 'contrato empaquetado: ninguna fila emite SHELL_TEMPLATES_UNAVAILABLE' '(.diagnostics|type)=="array" and all(.diagnostics[]; .code != "SHELL_TEMPLATES_UNAVAILABLE") and (.bindings|length)==28'
 rm -rf "$RELEASE/src/published/scripts/adapters/lib/opencode-command-entry.jq"
 run < <(envelope config); rc_is 'clausura incompleta: protocolo' x 2
 
