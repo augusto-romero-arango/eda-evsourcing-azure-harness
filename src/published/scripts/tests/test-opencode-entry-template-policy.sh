@@ -65,7 +65,15 @@ extract() { # <doc> -> un comando por linea ejecutable de los bloques bash
       }
       if (cont) next
       if (line == "" || line ~ /^#/ || line ~ /^[)}|]/ || line ~ /^;;/ || line ~ /^[^ ]*\)/) next
+      # OpenCode evalua tambien cada comando dentro de una sustitucion $(...).
+      rest=line
+      while ((p = index(rest, "$(")) > 0) {
+        rest=substr(rest, p + 2); sub(/^ +/, "", rest); split(rest, sw, /[ \t;)]/)
+        if (rest != "" && sw[1] !~ /^(echo|printf|test|true|false|\[|\[\[|:)$/) print rest
+      }
       for (i = 0; i < 6; i++) {
+        # La invocacion traducida de mefisto:run es el candidato completo, con su asignacion en linea.
+        if (line ~ /^MEFISTO_RUNTIME=opencode /) break
         if (sub(/^(if|elif|while|!) +/, "", line)) continue
         if (sub(/^\(cd [^&]*&& */, "", line)) continue
         if (match(line, /^[A-Za-z_][A-Za-z0-9_]*=/)) {
@@ -100,7 +108,7 @@ while IFS= read -r id; do
   while IFS= read -r line; do
     [ -n "$line" ] || continue
     if grep -Fxq "commands/$id.md	$line" <<< "$human"; then continue; fi
-    checked=$((checked+1))
+    checked=$((checked+1)); printf '%s\n' "$line" >> "$WORK/candidates"
     [ "$(evaluate "$rules" bash "$line")" = allow ] || { fail "$id: bash denegado por su politica: $line"; bad=1; }
   done < <(extract "$doc")
   if grep -Eq '\$\{?MEFISTO_CONFIG_PATH' "$doc"; then
@@ -113,6 +121,17 @@ while IFS= read -r id; do
   [ "$(evaluate "$rules" edit ".mefisto/harness.config.json")" = deny ] || { fail "$id: edit del config canonico debe seguir denegado"; bad=1; }
 done < <(jq -r '.[]' <<< "$ALL")
 [ "$bad" -eq 0 ] && [ "$checked" -gt 20 ] && pass "ningun bash ($checked) ni lectura de config ($reads comandos) queda denegado en el catalogo" || fail 'hay llamadas denegadas o un preambulo reintroducido'
+
+printf '%s\n' '[modo interactivo (#2012)]'
+# Sin autonomia lista, el command-entry-<id> no lleva politica propia de Mefisto: ninguna regla suya puede denegar.
+ibad=0
+while IFS= read -r line; do
+  [ "$(evaluate '[]' bash "$line")" != deny ] || { fail "interactivo: bash denegado: $line"; ibad=1; }
+done < <(sort -u "$WORK/candidates")
+for cfg in .mefisto/harness.config.json .claude/harness.config.json; do
+  [ "$(evaluate '[]' read "$cfg")" != deny ] || { fail "interactivo: read denegado: $cfg"; ibad=1; }
+done
+[ "$ibad" -eq 0 ] && pass 'en modo interactivo ningun bash ni lectura de config queda denegado por Mefisto' || fail 'modo interactivo con denegaciones'
 
 printf '%s\n' '[la guardia detecta regresiones]'
 rules="$(jq -c '.agents[] | select(.id == "command-entry-next-order") | .rules' <<< "$OUT")"

@@ -38,7 +38,11 @@ let result = "ok";
 const hook = hooks["command.execute.before"];
 try { await hook({ command: "mefisto:" + ids[0], sessionID: "s1", arguments: "" }, { parts: [] }); } catch (e) { result = String(e.message); }
 const missing = ids.filter((id) => cfg.command["mefisto:" + id].agent && !cfg.agent[cfg.command["mefisto:" + id].agent]);
-console.log(JSON.stringify({ agents: cfg.agent, missing, result, routed: ids.every((id) => cfg.command["mefisto:" + id].agent === "command-entry-" + id) }));
+const { realpathSync } = await import("node:fs");
+const env = {}; await hooks["shell.env"]({ cwd: project }, { env });
+const pinnedEnv = { MEFISTO_LOADED_RELEASE_ROOT: "/fijada/release" }; await hooks["shell.env"]({ cwd: project }, { env: pinnedEnv });
+const shellEnv = { root: env.MEFISTO_PACKAGE_ROOT === realpathSync(root), config: env.MEFISTO_CONFIG_PATH, pinned: pinnedEnv.MEFISTO_PACKAGE_ROOT, noCtx: !("MEFISTO_EXECUTION_CONTEXT" in env) };
+console.log(JSON.stringify({ shellEnv, agents: cfg.agent, missing, result, routed: ids.every((id) => cfg.command["mefisto:" + id].agent === "command-entry-" + id) }));
 EOS
 mkdir -p "$WORK/project/.claude"; printf '{}\n' > "$WORK/project/.claude/harness.config.json"; git -C "$WORK/project" init -q
 CATALOG="$(jq -c '[.commands[].id]' "$SOURCE")"; export CATALOG
@@ -56,6 +60,8 @@ interactive_check() { # label json
     all(.agents[]; (has("permission") | not) and .mode == "primary") and
     (.result == "ok")' <<< "$2" >/dev/null \
     && pass "$1: agente interactivo por comando, sin politica propia ni admision" || fail "$1: $2"
+  jq -e '.shellEnv.root and .shellEnv.config == ".claude/harness.config.json" and .shellEnv.pinned == "/fijada/release" and .shellEnv.noCtx' <<< "$2" >/dev/null \
+    && pass "$1: shell.env expone MEFISTO_PACKAGE_ROOT de la release cargada (o la fijada) y el config efectivo (#2017)" || fail "$1: shell.env $(jq -c .shellEnv <<< "$2")"
 }
 
 out="$(run_state noprofile '{"schemaVersion":1,"admissionScope":"entry","status":"disabled","reasonCode":"NO_PROFILE","agents":[],"bindings":[]}')"

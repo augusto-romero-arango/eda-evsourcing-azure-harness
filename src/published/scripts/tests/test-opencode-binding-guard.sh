@@ -81,6 +81,7 @@ if (scenario === "ready") {
   out.pin = env.MEFISTO_LOADED_RELEASE_ROOT === root.replace(/^\/private/, "") || env.MEFISTO_LOADED_RELEASE_ROOT.endsWith(root.split("/").pop());
   out.envCtx = env.MEFISTO_EXECUTION_CONTEXT === process.env.MEFISTO_EXECUTION_CONTEXT && env.MEFISTO_EXECUTION_DIGEST === process.env.MEFISTO_EXECUTION_DIGEST;
   out.noSecret = !("OPENCODE_SERVER_PASSWORD" in env);
+  out.packageRoot = env.MEFISTO_PACKAGE_ROOT === env.MEFISTO_LOADED_RELEASE_ROOT;
   const bash = { args: { command: "dotnet test --filter 'a b' $(echo hi)" } };
   const r1 = await tryHook("tool.execute.before", { tool: "bash", sessionID: "s1", callID: "call_1" }, bash);
   out.prefix = r1 === "ok" && bash.args.command.includes("attach --owner-pid \"$$\"") && bash.args.command.endsWith("\ndotnet test --filter 'a b' $(echo hi)") && bash.args.command.includes(">/dev/null || exit 1");
@@ -98,7 +99,7 @@ if (scenario === "failed") {
   out.ready = existsSync(readyFile);
   out.params = await tryHook("chat.params", { sessionID: "s1", agent: "autonomy-reviewer" }, {});
   const env = {}; await hooks["shell.env"]({}, { env });
-  out.noPin = !("MEFISTO_LOADED_RELEASE_ROOT" in env) && "MEFISTO_EXECUTION_CONTEXT" in env;
+  out.noPin = !("MEFISTO_LOADED_RELEASE_ROOT" in env) && !("MEFISTO_PACKAGE_ROOT" in env) && "MEFISTO_EXECUTION_CONTEXT" in env;
   out.bash = await tryHook("tool.execute.before", { tool: "bash", sessionID: "s1", callID: "c" }, { args: { command: "ls" } });
 }
 if (scenario === "reserve") {
@@ -129,7 +130,7 @@ out="$(run "$R" ready)"
 check 'config aplica alias oculto mode all clonado en memoria, original intacto, sin agente envolvente' "$out" '.alias and .original and .noEnvelope'
 check 'handshake runtime-ready.json versionado con nonce/alias/proyecto y sin secretos, modelos ni prompts' "$out" '.ready'
 check 'chat.params rechaza fallback a default, sin agente, sesion no observada y original sin alias' "$out" '(.defaultFallback|startswith("mefisto_entry_not_admitted:ACTOR_MISMATCH")) and (.noAgent|startswith("mefisto_entry_not_admitted:ACTOR_MISMATCH")) and (.noSession|endswith("SESSION_UNOBSERVED")) and (.noCoverage|endswith("ACTOR_MISMATCH")) and .good == "ok"'
-check 'shell.env inyecta pin y contexto, y retira el secreto del servidor' "$out" '.pin and .envCtx and .noSecret'
+check 'shell.env inyecta pin y contexto, y retira el secreto del servidor' "$out" '.pin and .envCtx and .noSecret and .packageRoot'
 check 'prefijo attach preserva el comando original integro y falla sin cuerpo' "$out" '.prefix'
 check 'Task: original -> alias, background, destino desconocido y resume ajeno rechazados' "$out" '.taskOk and (.taskBg|endswith("BACKGROUND_UNSUPPORTED")) and (.taskUnknown|endswith("TASK_TARGET_UNKNOWN")) and (.taskForeign|endswith("TASK_RESUME_FOREIGN"))'
 check 'hijo: ancestry desconocida rechazada, hijo de sesion conocida se une y exige su alias' "$out" '(.childUnknownParent|endswith("ANCESTRY_UNKNOWN")) and .childOk == "ok" and .childParams == "ok" and (.childWrong|endswith("ACTOR_MISMATCH"))'
