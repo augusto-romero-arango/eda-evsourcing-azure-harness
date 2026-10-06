@@ -98,7 +98,7 @@ include "opencode-entry-permissions";
     | ([ $req.taskTargets[] | pair(.)[] | rule("task"; .; "allow") ]) as $task
     | ([ $m.metadata.skills[]? | rule("skill"; .; "allow") ]) as $skill
     | ([ ($m.metadata.tools // {}) | to_entries[] | rule(.key; "*"; (if .value == true then "allow" else "deny" end)) ]) as $mcp
-    | ([ $mp | to_entries[] | select(.key as $k | (["external_directory","bash","edit","write","patch","read","task","skill"] | index($k)) == null and (.value | type) == "string") | rule(.key; "*"; .value) ]) as $scalars
+    | ([ $mp | to_entries[] | select(.key as $k | (pattern_permissions | index($k)) == null and (.value | type) == "string") | rule(.key; "*"; .value) ]) as $scalars
     | ($read + $ext + $edit + $bash + $task + $skill + $mcp + $scalars) as $allow
     | (["read","external_directory","edit","bash","task","skill"] + ($mcp | map(.permission)) + ($scalars | map(.permission)) | unique) as $perms
     | ([ $perms[] | rule(.; "*"; "deny") ] + $allow);

@@ -697,13 +697,14 @@ export default async function mefistoMcp({ client } = {}) {
 EOF
 }
 render_command_entry_plugin() {
-    local catalog identity
+    local catalog identity pattern_keys
     command_entry_catalog >/dev/null || return 1
     [ -f "$RELEASE_IDENTITY" ] || { error 'command-entry: falta release-identity.json'; return 1; }
     catalog="$(jq -c '[.commands[].id] | sort' "$COMMAND_ENTRY")" || return 1
     identity="$(jq -ce '{version:.version,commit:.commit}' "$RELEASE_IDENTITY")" || { error 'command-entry: release-identity.json invalido'; return 1; }
     printf '%s\n' '// GENERADO por src/published/scripts/adapters/adapter-opencode.sh desde src/published/contract/command-entry.json. No editar a mano.'
-    printf 'const CATALOG = %s;\nconst IDENTITY = %s;\nconst RESOLVER = "scripts/resolve-command-entry.sh";\n' "$catalog" "$identity"
+    pattern_keys="$(jq -cn -L "$SCRIPT_DIR/lib" 'include "opencode-entry-permissions"; pattern_permissions')" || { error 'command-entry: no se pudo leer pattern_permissions'; return 1; }
+    printf 'const CATALOG = %s;\nconst IDENTITY = %s;\nconst RESOLVER = "scripts/resolve-command-entry.sh";\nconst MAP_PERMISSIONS = new Set(%s);\n' "$catalog" "$identity" "$pattern_keys"
     cat <<'EOF'
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -724,7 +725,6 @@ const log = async (client, event, reason) => {
 const deny = (reason) => new Error("mefisto_entry_not_admitted:" + code(reason, "UNKNOWN"));
 
 const digest = (value) => typeof value === "string" ? createHash("sha256").update(value.trim()).digest("hex") : "";
-const MAP_PERMISSIONS = new Set(["external_directory", "bash", "edit", "write", "patch", "read", "task", "skill"]);
 const policyFromRules = (rules) => {
   const permission = {};
   for (const rule of rules) {

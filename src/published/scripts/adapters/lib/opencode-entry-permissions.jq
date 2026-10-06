@@ -3,6 +3,8 @@
 # Las reglas son arrays ordenados: la ultima coincidencia decide.
 
 def entry_permissions_version: "1";
+# Claves que el esquema OpenCode admite como mapa patron -> accion; el resto solo acepta accion escalar (#2009).
+def pattern_permissions: ["external_directory","bash","edit","write","patch","read","task","skill"];
 def _result($body): $body + {version: entry_permissions_version};
 def _diag($code; $permission; $index):
   {code: $code, permission: $permission, rule_index: $index};
