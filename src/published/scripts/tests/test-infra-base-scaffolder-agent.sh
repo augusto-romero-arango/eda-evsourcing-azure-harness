@@ -66,7 +66,7 @@ contains "$opencode_body" '"github-secret" "SB_EXTERNAL_COSMOS_CONNECTION_STRING
 
 echo '[d] politica bash de OpenCode'
 permission="$(awk 'NR == 1 { next } /^permission: / { sub(/^permission: /, ""); print; exit }' "$OPENCODE")"
-for pattern in 'git *' 'jq *' 'test *' '[ *' 'echo *' 'printf *' 'grep *' 'mkdir *' 'terraform fmt*' 'terraform init -backend=false*' 'terraform validate*' '${MEFISTO_PACKAGE_ROOT}/scripts/*'; do
+for pattern in 'git *' 'jq *' 'test *' 'echo *' 'printf *' 'grep *' 'mkdir *' 'command -v terraform' 'terraform fmt -recursive ../..' 'terraform fmt -check -recursive ../..' 'terraform init -backend=false' 'terraform init -backend=false -input=false' 'terraform validate' 'terraform validate -no-color' 'MEFISTO_RUNTIME=opencode "${MEFISTO_PACKAGE_ROOT}/scripts/register-harness-secret.sh"*'; do
     if printf '%s' "$permission" | jq -e --arg p "$pattern" '.bash[$p] == "allow"' >/dev/null 2>&1; then pass "bash permite '$pattern'"; else fail "bash no permite '$pattern'"; fi
 done
 for command in 'terraform plan' 'terraform apply' 'az group list' 'source x.sh'; do
