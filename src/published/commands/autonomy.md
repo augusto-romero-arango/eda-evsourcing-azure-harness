@@ -31,7 +31,7 @@ Sin argumentos: estado. Un unico argumento entre `activar`, `reducir`, `autoriza
 {{mefisto:run autonomy-profile.sh inspect --project-root "$(git rev-parse --show-toplevel)"}}
 ```
 
-Presenta el resultado en espanol: estado (`disabled` = deshabilitado, `needs-approval` = necesita aprobacion, `ready` = listo), los comandos autorizados y las grants administrativas (`administration`). Si no es `ready`, sugiere `{{mefisto:command autonomy}} activar`.
+`inspect` sale con codigo 1 cuando el estado es `needs-approval` o `conflict`: no es un fallo del comando, lee el JSON igual. Presenta el resultado en espanol: estado (`disabled` = deshabilitado, `needs-approval` = necesita aprobacion, `ready` = listo), los comandos autorizados y las grants administrativas (`administration`). Si no es `ready`, sugiere `{{mefisto:command autonomy}} activar`.
 
 ### `activar` (camino por defecto cuando el estado no es `ready`)
 
@@ -40,6 +40,8 @@ Presenta el resultado en espanol: estado (`disabled` = deshabilitado, `needs-app
 ```bash
 {{mefisto:run autonomy-profile.sh propose-max --project-root "$(git rev-parse --show-toplevel)"}}
 ```
+
+Si falla por falta de `.mefisto/harness.config.json` (consumidor con config legacy), no crees ni migres nada: indica que corra `{{mefisto:command onboard}}` primero y termina.
 
 2. Guarda el `profileDigest` que imprime. Muestra el perfil resultante con `preview` y verifica que su `expectedDigest` coincide:
 
