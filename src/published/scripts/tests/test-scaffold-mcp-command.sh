@@ -50,9 +50,9 @@ claude_body="$(< "$CLAUDE")"
 opencode_body="$(< "$OPENCODE")"
 contains "$claude_body" 'model: "haiku"' 'Claude materializa el perfil fast'
 absent "$opencode_body" 'model:' 'OpenCode no emite model'
-absent "$opencode_body" 'subtask' 'OpenCode no emite subtask'
+contains "$opencode_body" 'subtask: false' 'OpenCode no convierte scaffold-mcp en subtask'
 opencode_fm="$(awk 'NR == 1 { next } $0 == "---" { exit } { print }' "$OPENCODE")"
-absent "$opencode_fm" 'agent:' 'OpenCode no emite agent en el frontmatter'
+contains "$opencode_fm" 'agent: "command-entry-scaffold-mcp"' 'OpenCode liga el command-entry de scaffold-mcp en el frontmatter'
 contains "$claude_body" 'agente `mefisto:mcp-scaffolder`' 'Claude delega con la tool Task'
 contains "$opencode_body" 'tool `task` con el agente `mcp-scaffolder`' 'OpenCode delega con la tool task'
 contains "$claude_body" '/mefisto:install-apim' 'Claude resuelve command install-apim'
