@@ -1101,14 +1101,32 @@ export default async function mefistoCommandEntry(input = {}) {
   };
 
   // El pin y el contexto viajan solo por llamada, nunca en el entorno global; el secreto del servidor no llega a las herramientas.
-  const shellEnv = async (_event, output) => {
-    if (state.skip || !state.ctx || !plain(output?.env)) return;
+  const shellEnv = async (event, output) => {
+    if (state.skip || !plain(output?.env)) return;
+    if (!state.ctx) {
+      // Entrada interactiva: raiz fijada de la release cargada, sin elegir la activa en ejecucion.
+      const fixed = output.env.MEFISTO_LOADED_RELEASE_ROOT;
+      const pinned = typeof fixed === "string" && isAbsolute(fixed) ? fixed : LOADED_ROOT;
+      if (!state.failed && pinned !== null) output.env.MEFISTO_PACKAGE_ROOT = pinned;
+      const base = typeof event?.cwd === "string" && isAbsolute(event.cwd) ? event.cwd : directory;
+      const pick = (names) => names.find((name) => { try { return existsSync(join(base, name)); } catch { return false; } });
+      const cfg = pick([".mefisto/harness.config.json", ".claude/harness.config.json"]);
+      if (cfg) output.env.MEFISTO_CONFIG_PATH = cfg;
+      const ins = pick(["AGENTS.md", "CLAUDE.md"]);
+      if (ins) output.env.MEFISTO_INSTRUCTIONS_PATH = ins;
+      return;
+    }
     output.env.MEFISTO_EXECUTION_CONTEXT = state.ctx.raw;
     output.env.MEFISTO_EXECUTION_DIGEST = state.ctx.digest;
     delete output.env.OPENCODE_SERVER_PASSWORD;
     delete output.env.OPENCODE_SERVER_USERNAME;
-    if (!state.failed && !state.ctx.invalid && LOADED_ROOT !== null) output.env.MEFISTO_LOADED_RELEASE_ROOT = LOADED_ROOT;
-    else delete output.env.MEFISTO_LOADED_RELEASE_ROOT;
+    if (!state.failed && !state.ctx.invalid && LOADED_ROOT !== null) { output.env.MEFISTO_LOADED_RELEASE_ROOT = LOADED_ROOT; output.env.MEFISTO_PACKAGE_ROOT = LOADED_ROOT; }
+    else { delete output.env.MEFISTO_LOADED_RELEASE_ROOT; delete output.env.MEFISTO_PACKAGE_ROOT; }
+    const cbase = typeof event?.cwd === "string" && isAbsolute(event.cwd) ? event.cwd : directory;
+    for (const [key, names] of [["MEFISTO_CONFIG_PATH", [".mefisto/harness.config.json", ".claude/harness.config.json"]], ["MEFISTO_INSTRUCTIONS_PATH", ["AGENTS.md", "CLAUDE.md"]]]) {
+      const hit = names.find((name) => { try { return existsSync(join(cbase, name)); } catch { return false; } });
+      if (hit) output.env[key] = hit;
+    }
   };
 
   return { config, "command.execute.before": before, "chat.params": params, "chat.message": message, "tool.execute.before": toolBefore, "shell.env": shellEnv };
@@ -1143,13 +1161,17 @@ render() {
         preamble="$(skill_preamble "$native_skills")"
     fi
     translated="$(published_opencode_translate_body "$rel" "$raw_body")" || return 1
-    if needs_package_root "$raw_body"; then
+    # Las plantillas de comando no llevan preambulo shell (#2017): el plugin de entrada inyecta
+    # MEFISTO_PACKAGE_ROOT, MEFISTO_CONFIG_PATH y MEFISTO_INSTRUCTIONS_PATH con shell.env.
+    if [ "$kind" != command ] && needs_package_root "$raw_body"; then
         [ -z "$preamble" ] || preamble="$preamble"$'\n'
         preamble="$preamble$(package_root_preamble)"
     fi
     local needs_config=0 needs_instructions=0
-    published_effective_contract_needs_config "$raw_body" && needs_config=1
-    published_effective_contract_needs_instructions "$raw_body" && needs_instructions=1
+    if [ "$kind" != command ]; then
+        published_effective_contract_needs_config "$raw_body" && needs_config=1
+        published_effective_contract_needs_instructions "$raw_body" && needs_instructions=1
+    fi
     if [ "$needs_config" -eq 1 ] || [ "$needs_instructions" -eq 1 ]; then
         [ -z "$preamble" ] || preamble="$preamble"$'\n'
         preamble="$preamble$(published_effective_contract_preamble "$needs_config" "$needs_instructions")"

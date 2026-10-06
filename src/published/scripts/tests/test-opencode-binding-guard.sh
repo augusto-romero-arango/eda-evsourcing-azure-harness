@@ -161,8 +161,8 @@ jq -n '{schemaVersion:1,status:"conflict",reasonCode:"ENTRY_ADMISSION_UNAUTHORIZ
 out="$(run "$R" admission)"
 check 'registro de admision fallido: la entrada no se admite' "$out" '.entry|endswith("ADMISSION_NOT_RECORDED")'
 
-# Preambulo pin-aware: con contexto aborta sin pin y nunca elige active; sin contexto conserva el camino legacy.
-PRE="$(awk '/^```bash$/{i=1;next} /^```$/{if(i)exit} i' "$REPO_ROOT/dist/opencode/commands/mefisto:bitacora.md")"
+# Preambulo pin-aware (solo agentes; las plantillas de comando reciben la raiz por shell.env, #2017): con contexto aborta sin pin y nunca elige active; sin contexto conserva el camino legacy.
+PRE="$(awk '/^```bash$/{i=1;blk="";next} /^```$/{if(i&&blk ~ /mefisto_opencode_launcher/){printf "%s",blk;exit} i=0} i{blk=blk $0 "\n"}' "$REPO_ROOT/dist/opencode/agents/pr-sync.md")"
 if [ -n "$PRE" ]; then
   mkdir -p "$WORK/pin"; jq -n '{}' > "$WORK/pin/mefisto-manifest.json"
   (MEFISTO_EXECUTION_CONTEXT="$CTX_PATH" bash -c "$PRE" >/dev/null 2>&1) && fail 'contexto sin pin debio abortar' || pass 'contexto sin pin aborta sin elegir active'

@@ -178,7 +178,7 @@ doc_rendered="$(render "$WORK/doc-prueba.md")"; rc=$?
 doc_preambles="$(printf '%s\n' "$doc_rendered" | grep -c 'mefisto_opencode_launcher="\$HOME/.local/share/mefisto/active/bin/mefisto-opencode"')"
 [ "$rc" -eq 0 ] && assert_contains "$doc_rendered" 'Lee "${MEFISTO_PACKAGE_ROOT}/commands/mefisto:draft.md" y' 'command-doc OpenCode resuelve la ruta exacta' || fail 'command-doc OpenCode debio renderizar'
 [ "$rc" -eq 0 ] && assert_contains "$doc_rendered" 'luego "${MEFISTO_PACKAGE_ROOT}/commands/mefisto:seed-secret.md".' 'command-doc OpenCode segunda aparicion entre comillas' || fail 'command-doc OpenCode segunda aparicion'
-[ "$doc_preambles" -eq 1 ] && pass 'varias directivas command-doc emiten un solo preambulo OpenCode' || fail 'command-doc OpenCode duplico el preambulo'
+[ "$doc_preambles" -eq 0 ] && pass 'una plantilla de comando OpenCode no lleva preambulo shell (la raiz llega por shell.env)' || fail 'command-doc OpenCode reintrodujo el preambulo'
 [ -f "$REPO_ROOT/dist/opencode/commands/mefisto:draft.md" ] && pass 'dist OpenCode contiene el comando referido' || fail 'dist OpenCode no contiene el comando referido'
 printf '%s\n' '---' '{"kind":"command","id":"doc-prueba","description":"Prueba."}' '---' '{{mefisto:assert-consumer-repo}}' 'Lee {{mefisto:command-doc no-existe-jamas}}.' > "$WORK/doc-inexistente.md"
 out="$(bash "$REPO_ROOT/src/published/scripts/validate-published-artifacts.sh" "$WORK/doc-inexistente.md" 2>&1)"; rc=$?

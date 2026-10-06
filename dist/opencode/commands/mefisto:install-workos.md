@@ -4,34 +4,6 @@ agent: "command-entry-install-workos"
 subtask: false
 ---
 <!-- GENERADO por src/published/scripts/generate-published-adapters.sh desde src/published/commands/install-workos.md. No editar a mano. -->
-```bash
-# Cada llamada bash que use ${MEFISTO_PACKAGE_ROOT} debe incluir este bloque antes de sus comandos: no se asume estado de shell persistente entre llamadas.
-if [ -n "${MEFISTO_EXECUTION_CONTEXT:-}" ] || [ -n "${MEFISTO_EXECUTION_DIGEST:-}" ]; then
-    case "${MEFISTO_LOADED_RELEASE_ROOT:-}" in
-        /*) MEFISTO_PACKAGE_ROOT="$(cd -P "$MEFISTO_LOADED_RELEASE_ROOT" 2>/dev/null && printf '%s\n' "$PWD")" && [ -f "$MEFISTO_PACKAGE_ROOT/mefisto-manifest.json" ] || {
-            printf '%s\n' 'ERROR OpenCode: el pin de la release cargada es invalido; no se elige la release activa.' >&2; exit 1; } ;;
-        *) printf '%s\n' 'ERROR OpenCode: contexto de ejecucion sin pin de release cargada; no se elige la release activa.' >&2; exit 1 ;;
-    esac
-else
-if [ -n "${XDG_DATA_HOME:-}" ]; then mefisto_opencode_launcher="$XDG_DATA_HOME/mefisto/active/bin/mefisto-opencode"
-elif [ "${OSTYPE%%[0-9.]*}" = darwin ]; then mefisto_opencode_launcher="$HOME/Library/Application Support/mefisto/active/bin/mefisto-opencode"
-else mefisto_opencode_launcher="$HOME/.local/share/mefisto/active/bin/mefisto-opencode"; fi
-if [ ! -f "$mefisto_opencode_launcher" ] || [ -L "$mefisto_opencode_launcher" ] || [ ! -x "$mefisto_opencode_launcher" ]; then
-    printf '%s\n' 'ERROR OpenCode: no hay una release activa valida; instale o active la release OpenCode.' >&2; exit 1
-fi
-MEFISTO_PACKAGE_ROOT="$("$mefisto_opencode_launcher" package-root)" || {
-    printf '%s\n' 'ERROR OpenCode: no se pudo resolver la release activa; instale o active la release OpenCode.' >&2; exit 1;
-}
-case "$MEFISTO_PACKAGE_ROOT" in
-    /*) ;;
-    *) printf '%s\n' 'ERROR OpenCode: la release activa no devolvio una raiz absoluta; reinstale o active la release OpenCode.' >&2; exit 1 ;;
-esac
-MEFISTO_PACKAGE_ROOT="$(cd -P "$MEFISTO_PACKAGE_ROOT" 2>/dev/null && printf '%s\n' "$PWD")" || {
-    printf '%s\n' 'ERROR OpenCode: la release activa no existe; reinstale o active la release OpenCode.' >&2; exit 1;
-}
-fi
-export MEFISTO_PACKAGE_ROOT
-```
 
 Guia al operador por la capa de **identidad** de la autenticacion en el borde (MEF-ADR-0032): lo que **no es automatizable** (crear la cuenta/proyecto de WorkOS AuthKit y parametrizarlo en su dashboard) y cablea lo que **si** lo es (el codigo del adapter, via el agente `workos-identity-scaffolder`, y la custodia de la API key, via el comando `/mefisto:seed-secret`). Es el long-pole humano del onboarding de auth: produce el `client_id` y la API key que el futuro `/mefisto:install-apim` (issue #340) va a consumir. Comunicate en **espanol**.
 

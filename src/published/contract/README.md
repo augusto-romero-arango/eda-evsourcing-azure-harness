@@ -418,8 +418,9 @@ incluidas sustituciones ejecutables, sí se recorren.
 Cada `run` publicado se emite como una regla por script concreto con el prefijo
 literal `MEFISTO_RUNTIME=opencode` y la ruta entre comillas. No existe una
 regla genérica para `${MEFISTO_PACKAGE_ROOT}/scripts/*`, ni se insertan
-comodines entre la asignación y el ejecutable. El preámbulo de package-root
-permite solamente su consulta de launcher y diagnósticos necesarios. El de
+comodines entre la asignación y el ejecutable. Las plantillas de comando
+OpenCode no llevan preámbulo de package-root (#2017): cada bash es un comando
+simple y la raíz llega por `shell.env`. El de
 lifecycle está aplanado a asignaciones, `if` y `OSTYPE`; sus únicas llamadas
 permitidas son `projection-status`, `project` y `deactivate`. Cada llamada que
 usa variables resueltas incluye su propio preámbulo.
@@ -650,12 +651,19 @@ sesión. Su uso previsto es la composición por lectura (leer la doctrina de otr
 comando en lugar de duplicarla), no su ejecución.
 
 Cuando un body usa `run`, `package-root`, `skill-root` o
-`command-doc`, el adaptador antepone un bloque Bash
-que valida y exporta una única raíz física sin barra final:
-`MEFISTO_PACKAGE_ROOT`. Claude valida la distribución cargada desde su variable
-de runtime o los markers canónico/legacy del consumidor; OpenCode consulta el
-launcher de la release activa. Esta mecánica es exclusiva de cada salida: la
-fuente neutral y sus callers no conocen variables ni layouts de runtime.
+`command-doc`, la salida expone una única raíz física sin barra final:
+`MEFISTO_PACKAGE_ROOT`. Claude antepone un bloque Bash que la valida desde su
+variable de runtime o los markers canónico/legacy del consumidor. En las
+plantillas de comando de OpenCode no hay bloque (#2017): el plugin de entrada
+la inyecta con el hook `shell.env` con la raíz absoluta de la release cargada
+(`LOADED_ROOT`, fijada al cargar el módulo), sin elegir la release activa en
+ejecución; si el entorno ya fija `MEFISTO_LOADED_RELEASE_ROOT` absoluto, esa
+raíz se respeta, y con contexto de ejecución el pin sigue siendo la release
+cargada. La política bash de `command-entry-<id>` no incluye subcomandos de
+preámbulo, por eso cada bash es un único comando simple que casa con su regla
+`allow`. Los agentes delegados conservan el bloque. Esta mecánica es exclusiva
+de cada salida: la fuente neutral y sus callers no conocen variables ni layouts
+de runtime.
 
 Cada invocación traducida de `{{mefisto:run <script> <args>}}` fija además,
 como asignación en línea inmediatamente antes del script, `MEFISTO_RUNTIME=<id
@@ -669,7 +677,12 @@ máquina tiene ambos instalados y el entorno no fija la variable.
 resuelven la ruta efectiva de lectura del contrato consumidor descrita en
 MEF-ADR-0053 sección 4 (canónica primero, fallback legacy de lectura
 únicamente si la canónica falta, aborto con diagnóstico si no existe ninguna).
-Cuando un body usa una o ambas directivas, el adaptador antepone un único
+En OpenCode las plantillas de comando no llevan ese bloque: `shell.env` exporta
+`MEFISTO_CONFIG_PATH` y `MEFISTO_INSTRUCTIONS_PATH` con la misma precedencia
+(canónica primero, legacy solo si falta) y los `command-entry-*` pueden leer
+`.mefisto/harness.config.json` y `.claude/harness.config.json` (el edit y las
+demás rutas protegidas siguen denegados). Cuando un body usa una o ambas
+directivas en una salida que lo conserva, el adaptador antepone un único
 bloque Bash adicional -- independiente del de `package-root` -- que resuelve
 cada ruta usada exactamente una vez y exporta `MEFISTO_CONFIG_PATH` y/o
 `MEFISTO_INSTRUCTIONS_PATH`; cada aparición inline de la directiva se traduce
@@ -1098,5 +1111,5 @@ configuracion global del usuario no se lee. La certificacion instalada queda en 
 - **Entrada** (un objeto JSON por stdin): `schemaVersion: 1`, `phase: config|command`, `home`, `configPolicyKnown`, `runtimeContext` (el de `resolve-opencode-resources.sh`; su `home` debe coincidir), `nugetAssetsFiles`, `commands` (`name`, `sourceDigest`, `agent`, `subtask` observados), `delegateAgents`, `foreignEntryAgents`, `permission` (política ya normalizada por el runtime, o null) y, en `command`, `requestedCommand`, `sessionPolicyKnown`, `sessionProjectMatches`, `sessionPermission`. Una sesión no observada es desconocida, nunca `[]`.
 - **Secuencia**: inspect del perfil (sin perfil o consumidor ajeno: `disabled` legacy; `CONSENT_REVOKED` conserva su motivo y las filas denegadas) → recursos de la misma release derivados de las filas aprobadas → ownership por hash del cuerpo con `trim()` y de los destinos Task → política propia por la clausura de `composes` → composición ordenada con #1838 → operaciones requeridas y controles negativos.
 - **Salida**: `status: disabled|needs-approval|ready|conflict`, `admissionScope: entry`, digests (`catalogDigest`, `resourcesDigest`, `projectionDigest` con el orden de las reglas), `agents` (`command-entry-<id>`, primarios, ocultos, sin modelo, reglas ordenadas) y `bindings` (`mefisto:<id>`, `subtask: false`, `admitted`). En `config` todos los bindings llevan `admitted: false`; en `command` solo la fila solicitada puede admitirse. Una fila no aprobada conserva un agente con permisos denegados. Exit 0 disabled/ready, 1 needs-approval/conflict, 2 protocolo.
-- **Plantillas shell por comando**: la política shell de cada fila se deriva de `src/published/contract/command-shell-templates.json` (`{schemaVersion:1, commands:{<id>:[patrón…]}}`), contrato **generado** por el adaptador OpenCode (asset `command-shell-templates`, `--check` detecta divergencia) y empaquetado en la release; no se edita a mano. Cada fila de `command-entry.json` declara opcionalmente `shellExtra` (array de strings, default `[]`) con los patrones de los comandos que el documento ejecuta fuera de `{{mefisto:run …}}` (p. ej. `batch-stop`: `git rev-parse*`, `pgrep -f*`, `mkdir -p*`, `touch*`); no se extraen de los bloques ```bash. El adaptador une, por comando, un patrón estrecho por cada `{{mefisto:run X …}}` del documento (`MEFISTO_RUNTIME=opencode "${MEFISTO_PACKAGE_ROOT}/scripts/X"*`, nunca `*` sobre el script) con su `shellExtra`, ordenado y sin duplicados. No copia la política `bash` global de los agentes (`opencode-permissions.json`) ni un permiso shell de un worker. `test-command-shell-templates.sh` afirma que ningún patrón es `*` y que cada comando raíz de los bloques ```bash de `commands/<id>.md` queda cubierto por algún patrón de su fila.
+- **Plantillas shell por comando**: la política shell de cada fila se deriva de `src/published/contract/command-shell-templates.json` (`{schemaVersion:1, commands:{<id>:[patrón…]}}`), contrato **generado** por el adaptador OpenCode (asset `command-shell-templates`, `--check` detecta divergencia) y empaquetado en la release; no se edita a mano. Cada fila de `command-entry.json` declara opcionalmente `shellExtra` (array de strings, default `[]`) con los patrones de los comandos que el documento ejecuta fuera de `{{mefisto:run …}}` (p. ej. `batch-stop`: `git rev-parse*`, `pgrep -f*`, `mkdir -p*`, `touch*`); no se extraen de los bloques ```bash. El adaptador une, por comando, un patrón estrecho por cada `{{mefisto:run X …}}` del documento (`MEFISTO_RUNTIME=opencode "${MEFISTO_PACKAGE_ROOT}/scripts/X"*`, nunca `*` sobre el script) con su `shellExtra`, ordenado y sin duplicados. No copia la política `bash` global de los agentes (`opencode-permissions.json`) ni un permiso shell de un worker. `test-opencode-entry-template-policy.sh` cruza, para todo el catálogo, cada bash de la plantilla OpenCode y cada lectura del config contra la política real de su `command-entry-<id>` con `evaluate_rules`; cualquier `deny` o un preámbulo reintroducido lo hace fallar. `test-command-shell-templates.sh` afirma que ningún patrón es `*` y que cada comando raíz de los bloques ```bash de `commands/<id>.md` queda cubierto por algún patrón de su fila.
 - `ready` es una proyección de entrada verificable: no autoriza una purga, recursos cloud ni una tarea, y no es un sandbox ni RBAC de acciones administrativas.
