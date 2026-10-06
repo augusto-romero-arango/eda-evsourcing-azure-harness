@@ -207,7 +207,7 @@ run "$MAIN" "$MAIN" "$(request "$MAIN" "$MAIN" "$BASE")"
 [ ! -e "$RELEASE/scripts/nuget.args" ] && assert_json 'NuGet omitido: no se consulta ni hay filas' '.nuget==null and ([.resources[].id] | index("nuget-packages")) == null' || fail 'NuGet omitido se consulto'
 run "$MAIN" "$LINKED" "$(request "$LINKED" "$LINKED" "$WITH_NUGET" "[\"$LINKED/obj/project.assets.json\"]")"
 [ "$RC" -eq 0 ] && pass 'NuGet requerido global-only: ready' || fail "NuGet global-only ($(jq -c .diagnostics <<< "$OUT"))"
-assert_json 'NuGet global-only: coverage y fila read con procedencia' --arg p "$OS_HOME/.nuget/packages" '.nuget.coverage=="global-only" and [.resources[] | select(.id=="nuget-packages")] as $n | ($n|length)==1 and $n[0].root==$p and $n[0].maxAccess=="read" and $n[0].aliases==[] and $n[0].provenance.sources==[{kind:"cli"}]'
+assert_json 'NuGet global-only: coverage y fila read con procedencia' --arg p "$OS_HOME/.nuget/packages" '([.resources[] | select(.id=="nuget-packages")]) as $n | .nuget.coverage=="global-only" and ($n|length)==1 and $n[0].root==$p and $n[0].maxAccess=="read" and $n[0].aliases==[] and $n[0].provenance.sources==[{kind:"cli"}]'
 grep -q -- "--worktree-root $LINKED --assets-file $LINKED/obj/project.assets.json" "$RELEASE/scripts/nuget.args" && pass 'NuGet recibe execution-root y assets explicitos' || fail 'argv de NuGet'
 G_DIGEST="$(jq -r .resourcesDigest <<< "$OUT")"
 C64="$(printf 'c%.0s' $(seq 64))"
