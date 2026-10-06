@@ -24,7 +24,9 @@ for file in "$CLAUDE" "$OPENCODE"; do [ -f "$file" ] && pass "existe ${file#"$RE
 claude_body="$(< "$CLAUDE")"
 opencode_body="$(< "$OPENCODE")"
 contains "$claude_body" 'model: "haiku"' 'Claude materializa el perfil fast'
-for k in 'model:' 'subtask' 'agent:'; do absent "$opencode_body" "$k" "OpenCode no emite $k"; done
+absent "$opencode_body" 'model:' 'OpenCode no emite model:'
+contains "$opencode_body" 'agent: "command-entry-onboard"' 'OpenCode liga el command-entry de onboard'
+contains "$opencode_body" 'subtask: false' 'OpenCode no convierte onboard en subtask'
 
 echo '[b] invocaciones de scripts'
 body="$(awk 'NR == 1 { next } $0 == "---" && !seen { seen=1; next } seen { print }' "$SOURCE")"
