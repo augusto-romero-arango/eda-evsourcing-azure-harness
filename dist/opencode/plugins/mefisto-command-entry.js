@@ -185,7 +185,25 @@ export default async function mefistoCommandEntry(input = {}) {
     return r !== null && r.status === "ready";
   };
 
+  const interactiveAgent = () => ({ description: "Entrada tecnica de Mefisto", mode: "primary", hidden: true });
+  // Un fallo no deja un agente de entrada ausente: el comando debe fallar con la causa concreta, nunca con "Agent not found".
+  const stub = (cfg) => {
+    try {
+      if (!plain(cfg) || !plain(cfg.command)) return;
+      for (const id of CATALOG) {
+        const name = agentId(id);
+        if (!plain(cfg.command["mefisto:" + id])) continue;
+        if (cfg.agent === undefined) cfg.agent = {};
+        if (!plain(cfg.agent)) return;
+        if (cfg.agent[name] === undefined) { cfg.agent[name] = interactiveAgent(); state.owned.add(name); }
+      }
+    } catch { /* failure: continue */ }
+  };
   const config = async (cfg) => {
+    await configure(cfg);
+    if (!state.skip && !state.legacy && !state.applied) stub(cfg);
+  };
+  const configure = async (cfg) => {
     try {
       if (state.skip) return;
       if (state.failed) { await log(client, "command_entry_failed", state.failed); return; }
@@ -193,17 +211,27 @@ export default async function mefistoCommandEntry(input = {}) {
       state.observed = observe(cfg);
       const res = await runResolver(root, directory, request("config"));
       if (!res) return await fail("RESOLVER_FAILED");
-      if (res.status === "disabled" && res.reasonCode === "NO_PROFILE" && !res.controlledContext && !state.applied && !state.ctx) {
+      if ((res.status === "disabled" || res.status === "needs-approval") && !res.controlledContext && !state.applied && !state.ctx) {
+        // Autonomia no lista: entrada interactiva. El agente no aporta politica propia, rige la del usuario (MEF-ADR-0055 seccion 1).
         for (const id of CATALOG) {
-          const command = plain(cfg.command) ? cfg.command["mefisto:" + id] : undefined;
-          if (plain(command) && command.agent === agentId(id) && command.subtask === false) { delete command.agent; delete command.subtask; }
+          const name = agentId(id);
+          if (!plain(cfg.command) || !plain(cfg.command["mefisto:" + id])) continue;
+          if (cfg.agent === undefined) cfg.agent = {};
+          if (!plain(cfg.agent)) throw new Error("invalid_agent");
+          const agent = interactiveAgent();
+          if (cfg.agent[name] !== undefined && !same(cfg.agent[name], agent)) { state.rejected.add(id); continue; }
+          cfg.agent[name] = agent;
+          state.owned.add(name);
         }
         state.legacy = true;
+        if (state.rejected.size > 0) await log(client, "command_entry_collision", "COLLISION");
         return;
       }
       if (state.applied && res.status === "disabled") return await fail("PROFILE_REMOVED");
       const bindings = Array.isArray(res.bindings) ? res.bindings : [];
       const agents = plain(res.agents) ? res.agents : {};
+      // Sin filas proyectadas el resolver no dejo nada que instalar: la causa visible es su propio codigo.
+      if (res.status !== "ready" && Object.keys(agents).length === 0) return await fail(code(res.reasonCode, "NOT_READY"));
       if (!same(bindings.map((row) => row?.command).sort(), [...CATALOG].sort())) return await fail("CATALOG_MISMATCH");
       const staged = [];
       const rejected = new Set();
@@ -216,7 +244,7 @@ export default async function mefistoCommandEntry(input = {}) {
         const existing = plain(cfg.agent) ? cfg.agent[name] : undefined;
         const command = plain(cfg.command) ? cfg.command["mefisto:" + row.command] : undefined;
         if (!plain(command)) return await fail("COMMAND_MISSING");
-        if ((existing !== undefined && !same(existing, agent)) || (command.agent !== undefined && command.agent !== name)) rejected.add(row.command);
+        if ((existing !== undefined && !state.owned.has(name) && !same(existing, agent)) || (command.agent !== undefined && command.agent !== name)) rejected.add(row.command);
         staged.push({ id: row.command, name, agent });
       }
       if (rejected.size > 0) { state.rejected = rejected; await log(client, "command_entry_collision", "COLLISION"); return; }
