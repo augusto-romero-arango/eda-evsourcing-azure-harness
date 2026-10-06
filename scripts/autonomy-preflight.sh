@@ -232,6 +232,11 @@ if [ "$SOURCE" = command ] || [ "$SOURCE" = pipeline ]; then
             (.contract|type)=="object" and (.state|type)=="object" and .contract.runId == $r and .contract.contextId == $i
             and .contract.runtime.id == $rt' >/dev/null 2>&1; then
             add PARENT_CONTEXT block preflight PARENT_CONTEXT_UNREADABLE
+        elif ! printf '%s' "$P_DOC" | jq -e --arg c "$C_ID" --arg d "$C_DIGEST" --arg s "$(printf '%s' "$CTX_DOC" | jq -r '.contract.source')" '
+            .contract.source == $s and ([.state.children[]? | select(.contextId == $c and .contractDigest == $d)] | length == 1)' >/dev/null 2>&1; then
+            # El padre debe haber reservado a ESTE hijo (mismo contrato) y compartir su source:
+            # un hijo fabricado no puede apropiarse de la entrada de un padre ajeno.
+            add PARENT_CONTEXT block preflight PARENT_CONTEXT_MISMATCH
         elif [ "$(printf '%s' "$P_DOC" | jq -r '.contract.source')" = command ]; then
             add PARENT_CONTEXT pass preflight NONE
             ea_verify "$P_DOC" "$(printf '%s' "$P_DOC" | jq -r '.contract.rootCommand')" 0

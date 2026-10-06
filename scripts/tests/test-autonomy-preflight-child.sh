@@ -75,6 +75,11 @@ eq "$(j .status)/$RC/$(chk ENTRY_ADMISSION)" 'ready-to-dispatch/0/pass/NONE' 'pa
 eq "$(j .resourcesDigest)" 'r' 'la evidencia de entrada es la del padre'
 
 echo '[3] Rechazos con causa concreta'
+PCX="$(ctxpath runC ctx-p)"; cp "$PCX" "$TMP/p.bak"
+jq '.state.children = []' "$TMP/p.bak" > "$PCX"
+pf "$(plan sequential pipeline)" "$CC"
+eq "$(j .status)/$(chk PARENT_CONTEXT)" 'blocked/block/PARENT_CONTEXT_MISMATCH' 'hijo no reservado por el padre bloquea'
+cp "$TMP/p.bak" "$PCX"
 mkdir -p "$R/.mefisto/pipeline/autonomy/runs/runX/contexts"; cp "$CH" "$R/.mefisto/pipeline/autonomy/runs/runX/contexts/ctx-c-d1.json"
 pf "$(plan sequential pipeline)" "$R/.mefisto/pipeline/autonomy/runs/runX/contexts/ctx-c-d1.json"
 eq "$(chk CONTEXT_ORIGIN)" 'block/CONTEXT_ORIGIN_MISMATCH' 'contexto hijo de otro run'
@@ -86,7 +91,7 @@ pf "$(plan sequential pipeline)" "$CC"
 eq "$(j .status)/$(chk PROFILE_CONSENT)" 'blocked/block/CONSENT_REVOKED' 'perfil revocado bloquea'
 
 echo '[4] Helper unico en los orquestadores'
-if git -C "$REPO_ROOT" grep -n 'src=command' -- scripts >/dev/null 2>&1; then fail 'quedan src=command en scripts/'; else pass 'sin src=command en scripts/'; fi
+if git -C "$REPO_ROOT" grep -n 'src=command' -- scripts ':!scripts/tests' >/dev/null 2>&1; then fail 'quedan src=command en scripts/'; else pass 'sin src=command en scripts/'; fi
 for o in batch parallel tmux herdr; do
     grep -q 'src="$(pipeline_preflight_source)"' "$REPO_ROOT/scripts/$o-pipeline.sh" && pass "$o usa el helper" || fail "$o no usa el helper"
 done
