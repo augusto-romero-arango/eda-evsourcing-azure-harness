@@ -143,6 +143,8 @@ if (scenario === "collision") {
   const before = JSON.stringify(cfg);
   const hooks = await mk(session([]));
   await hooks.config(cfg);
+  // Solo se admiten stubs sin politica para comandos sin agente (#2012); el ajeno no se reemplaza.
+  for (const k of Object.keys(cfg.agent)) if (k.startsWith("command-entry-") && !("permission" in cfg.agent[k]) && !(k in JSON.parse(before).agent)) delete cfg.agent[k];
   out.untouched = JSON.stringify(cfg) === before;
   out.result = await attempt(hooks, "mefisto:merge");
 }

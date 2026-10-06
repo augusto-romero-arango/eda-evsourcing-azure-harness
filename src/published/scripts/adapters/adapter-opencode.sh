@@ -904,7 +904,7 @@ export default async function mefistoCommandEntry(input = {}) {
   };
   const config = async (cfg) => {
     await configure(cfg);
-    if (state.failed && !state.skip) stub(cfg);
+    if (!state.skip && !state.legacy && !state.applied) stub(cfg);
   };
   const configure = async (cfg) => {
     try {
@@ -933,6 +933,8 @@ export default async function mefistoCommandEntry(input = {}) {
       if (state.applied && res.status === "disabled") return await fail("PROFILE_REMOVED");
       const bindings = Array.isArray(res.bindings) ? res.bindings : [];
       const agents = plain(res.agents) ? res.agents : {};
+      // Sin filas proyectadas el resolver no dejo nada que instalar: la causa visible es su propio codigo.
+      if (res.status !== "ready" && Object.keys(agents).length === 0) return await fail(code(res.reasonCode, "NOT_READY"));
       if (!same(bindings.map((row) => row?.command).sort(), [...CATALOG].sort())) return await fail("CATALOG_MISMATCH");
       const staged = [];
       const rejected = new Set();
@@ -945,7 +947,7 @@ export default async function mefistoCommandEntry(input = {}) {
         const existing = plain(cfg.agent) ? cfg.agent[name] : undefined;
         const command = plain(cfg.command) ? cfg.command["mefisto:" + row.command] : undefined;
         if (!plain(command)) return await fail("COMMAND_MISSING");
-        if ((existing !== undefined && !same(existing, agent)) || (command.agent !== undefined && command.agent !== name)) rejected.add(row.command);
+        if ((existing !== undefined && !state.owned.has(name) && !same(existing, agent)) || (command.agent !== undefined && command.agent !== name)) rejected.add(row.command);
         staged.push({ id: row.command, name, agent });
       }
       if (rejected.size > 0) { state.rejected = rejected; await log(client, "command_entry_collision", "COLLISION"); return; }

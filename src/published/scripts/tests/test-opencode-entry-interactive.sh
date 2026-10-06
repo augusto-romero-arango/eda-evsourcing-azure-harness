@@ -70,11 +70,11 @@ jq -e --argjson n "$count" '(.agents | length) == $n and (.missing | length) == 
   && pass 'ready: entrada controlada con politica de Mefisto, sin cambios' || fail "ready: $out"
 
 out="$(run_state conflict "$(jq -cn --argjson b "$denied" '{schemaVersion:1,admissionScope:"entry",status:"conflict",reasonCode:"DELEGATE_MISSING",agents:[],bindings:$b}')")"
-jq -e --argjson n "$count" '(.missing | length) == 0 and .routed and (.agents | length) == $n and (.result | startswith("mefisto_entry_not_admitted:"))' <<< "$out" >/dev/null \
+jq -e --argjson n "$count" '(.missing | length) == 0 and .routed and (.agents | length) == $n and (.result == "mefisto_entry_not_admitted:DELEGATE_MISSING")' <<< "$out" >/dev/null \
   && pass 'conflict: agentes presentes y el comando falla con mefisto_entry_not_admitted:<codigo>' || fail "conflict: $out"
 
 out="$(run_state conflict-empty '{"schemaVersion":1,"admissionScope":"entry","status":"conflict","reasonCode":"INSPECT_FAILED","agents":[],"bindings":[]}')"
-jq -e '(.missing | length) == 0 and .routed and (.result | startswith("mefisto_entry_not_admitted:"))' <<< "$out" >/dev/null \
+jq -e '(.missing | length) == 0 and .routed and (.result == "mefisto_entry_not_admitted:INSPECT_FAILED")' <<< "$out" >/dev/null \
   && pass 'conflict sin filas: agentes presentes y falla con la causa, no Agent not found' || fail "conflict sin filas: $out"
 
 printf 'RESULTADO: %s pasaron, %s fallaron\n' "$PASS" "$FAIL"
