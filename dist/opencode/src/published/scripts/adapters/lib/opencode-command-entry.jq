@@ -99,7 +99,7 @@ include "opencode-entry-permissions";
            + [ $prot[] | select(.exceptions | length == 0) | ({permission: "read", candidate: (.root + "/probe")}, {permission: "edit", candidate: (.root + "/probe")}) ]
            + [ $res[] | select(.id == "release" or .id == "runtime-tool-output" or .id == "nuget-packages") | {permission: "edit", candidate: (.root + "/probe")} ]) };
 
-  def compile($id):
+  def compile($id; $sess_on):
     (managed($id)) as $m
     | compose_policy({permission: map_by($m)}; $global; $home; true) as $c
     | required($id) as $q
@@ -108,7 +108,7 @@ include "opencode-entry-permissions";
         ($c.policy.rules | map(norm_rule)) as $rules
         | (evaluate_rules($rules; $q.positive; $home)) as $pos
         | (evaluate_rules($rules; $q.negative; $home)) as $neg
-        | (if $in.phase == "command" and $in.sessionPolicyKnown and $in.sessionProjectMatches
+        | (if $sess_on and $in.phase == "command" and $in.sessionPolicyKnown and $in.sessionProjectMatches
            then certify_session({permission: map_by($rules)}; $in.sessionPermission; $q.positive; true; $home) else {accepted: true, conflicts: []} end) as $sess
         | ([ (if any($pos[]; .decision != "allow") then err("OPERATION_NOT_ALLOWED"; $id) else empty end),
              (if any($neg[]; .decision == "allow") then err("WIDENING_DETECTED"; $id) else empty end),
@@ -150,9 +150,10 @@ include "opencode-entry-permissions";
        (if $in.phase == "command" and ($in.sessionProjectMatches | not) then err("SESSION_PROJECT_MISMATCH"; "session") else empty end),
        ($all[] | own_diags(.)[]) ]) as $d0
   | (if ($d0 | length) > 0 then [] else [ $good[] | (row_diags(.)[], delegate_diags(.)[]) ] end) as $d1
-  | (if ($d0 + $d1 | length) > 0 then [] else [ $good[] | . as $id | {id: $id, c: compile($id)} ] end) as $comp
+  | (if ($d0 + $d1 | length) > 0 then [] else [ $good[] | . as $id | {id: $id, c: compile($id; true)} ] end) as $comp
   | ($d0 + $d1 + [ $comp[] | .id as $id | .c.diags[] ] | unique_by([.code, .subject])) as $diags
   | ($diags | length == 0) as $ok
+  | (if ($d0 + $d1 | length) > 0 then {} else ([ $approved[] | select(. as $i | ($all | index($i)) != null) | . as $id | {key: $id, value: (compile($id; false) | .rules // null)} ] | from_entries) end) as $dig_rules
   | ($comp | map({key: .id, value: .c.rules}) | from_entries) as $rulesby
   | ($templates | map({
        id: .id,
@@ -169,6 +170,6 @@ include "opencode-entry-permissions";
                  admitted: ($ok and $in.phase == "command" and $t.id == $in.requestedCommand)})),
       diagnostics: $diags,
       _digestInput: (if $ok then {projectId: $snap.projectId, profileDigest: $snap.profileDigest, release: $snap.release, catalogDigest: $man.catalogFingerprint,
-          resourcesDigest: $snap.resourcesDigest, phase: $in.phase,
-          agents: ($agentrows | map({id: .agent, rules: .rules})),
+          resourcesDigest: $snap.resourcesDigest,
+          agents: ($templates | map({id: ("command-entry-" + .id), rules: ($dig_rules[.id] // deny_rules([]))})),
           bindings: ($templates | map({command: ("mefisto:" + .id), agent: ("command-entry-" + .id), sourceDigest: .sha256}))} else null end) }

@@ -81,7 +81,7 @@ opencode_command_entry_resolve() {
     required="$(jq -c --argjson insp "$inspect_out" --arg phase "$phase" --arg req "$(jq -r '.requestedCommand // ""' <<< "$input")" '
       ($insp.profile.commands // []) as $approved
       | [.commands[] | select(.id as $i | ($approved | index($i)) != null)] as $rows
-      | (if $phase == "command" then ($rows | map(select(.id == $req))) else $rows end) as $scope
+      | $rows as $scope
       | ((["release","project","state","runtime-tool-output"] + [$scope[].resources[]]) | unique)' "$matrix")" || return 2
     dir="$(jq -r .runtimeContext.directory <<< "$input")"
     top="$(env -u GIT_DIR -u GIT_WORK_TREE -u GIT_COMMON_DIR -u GIT_INDEX_FILE git -C "$dir" rev-parse --show-toplevel 2>/dev/null)" || { _oce_emit conflict "" "$denied" RUNTIME_DIRECTORY_UNRESOLVABLE; return 1; }
