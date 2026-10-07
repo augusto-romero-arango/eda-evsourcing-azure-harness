@@ -1,19 +1,12 @@
 ---
 description: "Investigador conversacional de errores en el entorno desplegado. Usa App Insights, codigo fuente y fuentes externas para diagnosticar problemas y proponer acciones."
 mode: "all"
-permission: {"external_directory":{"*":"deny","~/Library/Application Support/mefisto/*":"allow","~/.local/share/mefisto/*":"allow","~/.config/opencode/agents/*":"allow","~/.config/opencode/commands/*":"allow","~/.config/opencode/skills/*":"allow"},"doom_loop":"deny","lsp":"deny","todowrite":"deny","question":"deny","webfetch":"allow","websearch":"allow","skill":"deny","task":"deny","list":"allow","glob":"allow","grep":"allow","bash":{"*":"deny","git *":"allow","gh *":"allow","jq *":"allow","cat *":"allow","ls":"allow","ls *":"allow","basename *":"allow","find *":"allow","grep *":"allow","sort":"allow","sort *":"allow","bash scripts/*":"allow","sh scripts/*":"allow","scripts/*":"allow","./scripts/*":"allow","MEFISTO_RUNTIME=opencode \"${MEFISTO_PACKAGE_ROOT}/scripts/appinsights-query.sh\"*":"allow","MEFISTO_RUNTIME=opencode \"${MEFISTO_PACKAGE_ROOT}/scripts/azure-account-info.sh\"*":"allow","MEFISTO_RUNTIME=opencode \"${MEFISTO_PACKAGE_ROOT}/scripts/bootstrap-backend.sh\"*":"allow","MEFISTO_RUNTIME=opencode \"${MEFISTO_PACKAGE_ROOT}/scripts/field-note.sh\"*":"allow","MEFISTO_RUNTIME=opencode \"${MEFISTO_PACKAGE_ROOT}/scripts/fix-review-admission.sh\"*":"allow","MEFISTO_RUNTIME=opencode \"${MEFISTO_PACKAGE_ROOT}/scripts/fix-review-prepare.sh\"*":"allow","MEFISTO_RUNTIME=opencode \"${MEFISTO_PACKAGE_ROOT}/scripts/fix-review-receipts.sh\"*":"allow","MEFISTO_RUNTIME=opencode \"${MEFISTO_PACKAGE_ROOT}/scripts/herdr-pipeline.sh\"*":"allow","MEFISTO_RUNTIME=opencode \"${MEFISTO_PACKAGE_ROOT}/scripts/next-order.sh\"*":"allow","MEFISTO_RUNTIME=opencode \"${MEFISTO_PACKAGE_ROOT}/scripts/onboard-diagnose.sh\"*":"allow","MEFISTO_RUNTIME=opencode \"${MEFISTO_PACKAGE_ROOT}/scripts/onboard-migrate-directives.sh\"*":"allow","MEFISTO_RUNTIME=opencode \"${MEFISTO_PACKAGE_ROOT}/scripts/pr-sync.sh\"*":"allow","MEFISTO_RUNTIME=opencode \"${MEFISTO_PACKAGE_ROOT}/scripts/purge-store.sh\"*":"allow","MEFISTO_RUNTIME=opencode \"${MEFISTO_PACKAGE_ROOT}/scripts/register-harness-secret.sh\"*":"allow","MEFISTO_RUNTIME=opencode \"${MEFISTO_PACKAGE_ROOT}/scripts/render-eraser-diagram.sh\"*":"allow","MEFISTO_RUNTIME=opencode \"${MEFISTO_PACKAGE_ROOT}/scripts/resolve-nuget-resources.sh\"*":"allow","MEFISTO_RUNTIME=opencode \"${MEFISTO_PACKAGE_ROOT}/scripts/seed-secret.sh\"*":"allow","MEFISTO_RUNTIME=opencode \"${MEFISTO_PACKAGE_ROOT}/scripts/set-harness-tenancy.sh\"*":"allow","MEFISTO_RUNTIME=opencode \"${MEFISTO_PACKAGE_ROOT}/scripts/setup-github-ci.sh\"*":"allow","MEFISTO_RUNTIME=opencode \"${MEFISTO_PACKAGE_ROOT}/scripts/setup-github-labels.sh\"*":"allow","MEFISTO_RUNTIME=opencode \"${MEFISTO_PACKAGE_ROOT}/scripts/tmux-pipeline.sh\"*":"allow","MEFISTO_RUNTIME=opencode \"${MEFISTO_PACKAGE_ROOT}/scripts/upgrade.sh\"*":"allow","MEFISTO_RUNTIME=opencode \"${MEFISTO_PACKAGE_ROOT}/scripts/validate-dockerfile.sh\"*":"allow","MEFISTO_RUNTIME=opencode \"${MEFISTO_PACKAGE_ROOT}/scripts/work-status-collect.sh\"*":"allow","mkdir *":"allow","mktemp":"allow","mktemp *":"allow","rm *":"deny","dotnet *":"allow","func init *":"allow","command -v terraform":"allow","terraform init -backend=false":"allow","terraform init -backend=false -input=false":"allow","terraform fmt -recursive ../..":"allow","terraform fmt -check -recursive ../..":"allow","terraform validate":"allow","terraform validate -no-color":"allow","python3 - *":"allow","python3 -m json.tool*":"allow","cd *":"allow","echo *":"allow","date":"allow","date *":"allow","printf *":"allow","\"$mefisto_opencode_launcher\" package-root":"allow","exit 1":"allow","test *":"allow","\"$MEFISTO_LIFECYCLE_LAUNCHER\" projection-status":"allow","\"$MEFISTO_LIFECYCLE_LAUNCHER\" project":"allow","\"$MEFISTO_LIFECYCLE_LAUNCHER\" deactivate":"allow","pgrep -f \"[s]cripts/batch-pipeline\\.sh\" >/dev/null 2>&1":"allow","pgrep -f \"[s]cripts/parallel-pipeline\\.sh\" >/dev/null 2>&1":"allow","true":"allow","sleep 15":"allow","touch *":"allow","tr *":"allow","cut *":"allow","head *":"allow","tail *":"allow","awk *":"allow","sed *":"allow","mv *":"allow","ilspycmd *":"allow","diff *":"allow","cmp -s \"$SELECTED_ASSEMBLY\" \"${CANDIDATES[$index]}\"":"allow","rm -f src/*":"allow","rm -rf src/*":"allow","rm -f tests/*":"allow","rm -f \"src/*":"allow","rm -rf \"src/*":"allow","rm -f \"tests/*":"allow","curl *":"deny","ssh *":"deny","scp *":"deny","sudo *":"deny","touch *Application*Support/mefisto*":"deny","touch *.local/share/mefisto*":"deny","touch *mefisto/releases*":"deny","touch *mefisto/active*":"deny","touch *.config/opencode/*":"deny","touch *MEFISTO_PACKAGE_ROOT*":"deny","mv *Application*Support/mefisto*":"deny","mv *.local/share/mefisto*":"deny","mv *mefisto/releases*":"deny","mv *mefisto/active*":"deny","mv *.config/opencode/*":"deny","mv *MEFISTO_PACKAGE_ROOT*":"deny","mkdir *Application*Support/mefisto*":"deny","mkdir *.local/share/mefisto*":"deny","mkdir *mefisto/releases*":"deny","mkdir *mefisto/active*":"deny","mkdir *.config/opencode/*":"deny","mkdir *MEFISTO_PACKAGE_ROOT*":"deny","rm *Application*Support/mefisto*":"deny","rm *.local/share/mefisto*":"deny","rm *mefisto/releases*":"deny","rm *mefisto/active*":"deny","rm *.config/opencode/*":"deny","rm *MEFISTO_PACKAGE_ROOT*":"deny","cp *Application*Support/mefisto*":"deny","cp *.local/share/mefisto*":"deny","cp *mefisto/releases*":"deny","cp *mefisto/active*":"deny","cp *.config/opencode/*":"deny","cp *MEFISTO_PACKAGE_ROOT*":"deny","sed *-i*Application*Support/mefisto*":"deny","sed *-i*.local/share/mefisto*":"deny","sed *-i*mefisto/releases*":"deny","sed *-i*mefisto/active*":"deny","sed *-i*.config/opencode/*":"deny","sed *-i*MEFISTO_PACKAGE_ROOT*":"deny"},"edit":{"*":"allow","commands/**":"deny","skills/**":"deny","agents/**":"deny","hooks/**":"deny",".claude-plugin/**":"deny","src/published/**":"deny","src/runtime/**":"deny","dist/**":"deny","docs/adr/mef-adr-*":"deny","../*":"deny","~/Library/Application Support/mefisto/**":"deny","~/.local/share/mefisto/**":"deny","~/.config/opencode/**":"deny"},"write":{"*":"allow","commands/**":"deny","skills/**":"deny","agents/**":"deny","hooks/**":"deny",".claude-plugin/**":"deny","src/published/**":"deny","src/runtime/**":"deny","dist/**":"deny","docs/adr/mef-adr-*":"deny","../*":"deny","~/Library/Application Support/mefisto/**":"deny","~/.local/share/mefisto/**":"deny","~/.config/opencode/**":"deny"},"patch":{"*":"allow","commands/**":"deny","skills/**":"deny","agents/**":"deny","hooks/**":"deny",".claude-plugin/**":"deny","src/published/**":"deny","src/runtime/**":"deny","dist/**":"deny","docs/adr/mef-adr-*":"deny","../*":"deny","~/Library/Application Support/mefisto/**":"deny","~/.local/share/mefisto/**":"deny","~/.config/opencode/**":"deny"},"read":{"*":"allow",".env":"deny",".env.*":"deny","**/.env":"deny","**/.env.*":"deny","**/auth.json":"deny","**/opencode.jsonc":"deny","**/.local/share/opencode/**":"deny","**/.aws/**":"deny","**/.ssh/**":"deny"}}
+permission: {"external_directory":{"*":"deny","~/Library/Application Support/mefisto/*":"allow","~/.local/share/mefisto/*":"allow","~/.config/opencode/agents/*":"allow","~/.config/opencode/commands/*":"allow","~/.config/opencode/skills/*":"allow"},"doom_loop":"deny","lsp":"deny","todowrite":"deny","question":"deny","webfetch":"allow","websearch":"allow","skill":"deny","task":"deny","list":"allow","glob":"allow","grep":"allow","bash":{"*":"deny","git *":"allow","gh *":"allow","jq *":"allow","cat *":"allow","ls":"allow","ls *":"allow","basename *":"allow","find *":"allow","grep *":"allow","sort":"allow","sort *":"allow","bash scripts/*":"allow","sh scripts/*":"allow","scripts/*":"allow","./scripts/*":"allow","${MEFISTO_PACKAGE_ROOT}/scripts/*":"allow","mkdir *":"allow","mktemp":"allow","mktemp *":"allow","rm *":"deny","dotnet *":"allow","func init *":"allow","terraform init -backend=false*":"allow","terraform validate*":"allow","terraform fmt*":"allow","python3 - *":"allow","python3 -m json.tool*":"allow","cd *":"allow","echo *":"allow","date":"allow","date *":"allow","printf *":"allow","\"$mefisto_opencode_launcher\" package-root":"allow","export MEFISTO_PACKAGE_ROOT":"allow","exit 1":"allow","test *":"allow","[ *":"allow","touch *":"allow","tr *":"allow","head *":"allow","tail *":"allow","awk *":"allow","sed *":"allow","mv *":"allow","ilspycmd *":"allow","diff *":"allow","rm -f src/*":"allow","rm -rf src/*":"allow","rm -f tests/*":"allow","rm -f \"src/*":"allow","rm -rf \"src/*":"allow","rm -f \"tests/*":"allow","curl *":"deny","ssh *":"deny","scp *":"deny","sudo *":"deny","touch *Application*Support/mefisto*":"deny","touch *.local/share/mefisto*":"deny","touch *mefisto/releases*":"deny","touch *mefisto/active*":"deny","touch *.config/opencode/*":"deny","touch *MEFISTO_PACKAGE_ROOT*":"deny","mv *Application*Support/mefisto*":"deny","mv *.local/share/mefisto*":"deny","mv *mefisto/releases*":"deny","mv *mefisto/active*":"deny","mv *.config/opencode/*":"deny","mv *MEFISTO_PACKAGE_ROOT*":"deny","mkdir *Application*Support/mefisto*":"deny","mkdir *.local/share/mefisto*":"deny","mkdir *mefisto/releases*":"deny","mkdir *mefisto/active*":"deny","mkdir *.config/opencode/*":"deny","mkdir *MEFISTO_PACKAGE_ROOT*":"deny","rm *Application*Support/mefisto*":"deny","rm *.local/share/mefisto*":"deny","rm *mefisto/releases*":"deny","rm *mefisto/active*":"deny","rm *.config/opencode/*":"deny","rm *MEFISTO_PACKAGE_ROOT*":"deny","cp *Application*Support/mefisto*":"deny","cp *.local/share/mefisto*":"deny","cp *mefisto/releases*":"deny","cp *mefisto/active*":"deny","cp *.config/opencode/*":"deny","cp *MEFISTO_PACKAGE_ROOT*":"deny","sed *-i*Application*Support/mefisto*":"deny","sed *-i*.local/share/mefisto*":"deny","sed *-i*mefisto/releases*":"deny","sed *-i*mefisto/active*":"deny","sed *-i*.config/opencode/*":"deny","sed *-i*MEFISTO_PACKAGE_ROOT*":"deny"},"edit":{"*":"allow","commands/**":"deny","skills/**":"deny","agents/**":"deny","hooks/**":"deny",".claude-plugin/**":"deny","src/published/**":"deny","src/runtime/**":"deny","dist/**":"deny","docs/adr/mef-adr-*":"deny","../*":"deny","~/Library/Application Support/mefisto/**":"deny","~/.local/share/mefisto/**":"deny","~/.config/opencode/**":"deny"},"write":{"*":"allow","commands/**":"deny","skills/**":"deny","agents/**":"deny","hooks/**":"deny",".claude-plugin/**":"deny","src/published/**":"deny","src/runtime/**":"deny","dist/**":"deny","docs/adr/mef-adr-*":"deny","../*":"deny","~/Library/Application Support/mefisto/**":"deny","~/.local/share/mefisto/**":"deny","~/.config/opencode/**":"deny"},"patch":{"*":"allow","commands/**":"deny","skills/**":"deny","agents/**":"deny","hooks/**":"deny",".claude-plugin/**":"deny","src/published/**":"deny","src/runtime/**":"deny","dist/**":"deny","docs/adr/mef-adr-*":"deny","../*":"deny","~/Library/Application Support/mefisto/**":"deny","~/.local/share/mefisto/**":"deny","~/.config/opencode/**":"deny"},"read":{"*":"allow",".env":"deny",".env.*":"deny","**/.env":"deny","**/.env.*":"deny","**/auth.json":"deny","**/opencode.jsonc":"deny","**/.local/share/opencode/**":"deny","**/.aws/**":"deny","**/.ssh/**":"deny"}}
 tools: {"microsoft-learn_*":false,"terraform_*":false}
 ---
 <!-- GENERADO por src/published/scripts/generate-published-adapters.sh desde src/published/agents/bug-investigator.md. No editar a mano. -->
 ```bash
 # Cada llamada bash que use ${MEFISTO_PACKAGE_ROOT} debe incluir este bloque antes de sus comandos: no se asume estado de shell persistente entre llamadas.
-if [ -n "${MEFISTO_EXECUTION_CONTEXT:-}" ] || [ -n "${MEFISTO_EXECUTION_DIGEST:-}" ]; then
-    case "${MEFISTO_LOADED_RELEASE_ROOT:-}" in
-        /*) MEFISTO_PACKAGE_ROOT="$(cd -P "$MEFISTO_LOADED_RELEASE_ROOT" 2>/dev/null && printf '%s\n' "$PWD")" && [ -f "$MEFISTO_PACKAGE_ROOT/mefisto-manifest.json" ] || {
-            printf '%s\n' 'ERROR OpenCode: el pin de la release cargada es invalido; no se elige la release activa.' >&2; exit 1; } ;;
-        *) printf '%s\n' 'ERROR OpenCode: contexto de ejecucion sin pin de release cargada; no se elige la release activa.' >&2; exit 1 ;;
-    esac
-else
 if [ -n "${XDG_DATA_HOME:-}" ]; then mefisto_opencode_launcher="$XDG_DATA_HOME/mefisto/active/bin/mefisto-opencode"
 elif [ "${OSTYPE%%[0-9.]*}" = darwin ]; then mefisto_opencode_launcher="$HOME/Library/Application Support/mefisto/active/bin/mefisto-opencode"
 else mefisto_opencode_launcher="$HOME/.local/share/mefisto/active/bin/mefisto-opencode"; fi
@@ -30,7 +23,6 @@ esac
 MEFISTO_PACKAGE_ROOT="$(cd -P "$MEFISTO_PACKAGE_ROOT" 2>/dev/null && printf '%s\n' "$PWD")" || {
     printf '%s\n' 'ERROR OpenCode: la release activa no existe; reinstale o active la release OpenCode.' >&2; exit 1;
 }
-fi
 export MEFISTO_PACKAGE_ROOT
 ```
 ```bash
@@ -166,62 +158,24 @@ La firma diagnostica es **"compila + unit tests verdes pero revienta en runtime"
    MEFISTO_RUNTIME=opencode "${MEFISTO_PACKAGE_ROOT}/scripts/appinsights-query.sh" exceptions
    # busca el tipo de excepcion (p. ej. InvalidOperationException: "Unable to resolve service for type ...", la excepcion que lanza el contenedor Microsoft.Extensions.DependencyInjection del worker isolated) y su conteo en la ventana del deploy
    ```
-2. **Resuelve y localiza cada version por separado en las roots efectivas**. Una version vieja y una nueva pueden vivir en roots distintas. Ejecuta el bloque completo en una sola tool call: la funcion vuelve a invocar el resolver para cada version y no depende de variables de una llamada anterior ni inventa una root alternativa.
-    ```bash
-    WORKTREE_ROOT="$(git rev-parse --show-toplevel)" || exit 1
-    PACKAGE_ID_LOWER=<paquete-en-minusculas>
-    TFM=<TargetFramework>
-    ASSEMBLY=<Ensamblado-con-casing-real>.dll
-
-    resolve_assembly() {
-      PACKAGE_VERSION="$1"
-      # El resolver entrega el envelope tambien al fallar cerrado.
-      NUGET_RESOURCES="$( MEFISTO_RUNTIME=opencode "${MEFISTO_PACKAGE_ROOT}/scripts/resolve-nuget-resources.sh" --worktree-root "$WORKTREE_ROOT" )" || true
-      if [ "$(jq -r '.status // empty' <<< "$NUGET_RESOURCES" 2>/dev/null)" != resolved ]; then
-        printf '%s\n' 'Las roots NuGet estan unavailable o en conflicto; la inspeccion requerida queda no verificada.' >&2
-        return 1
-      fi
-      CANDIDATES=()
-      while IFS= read -r root; do
-        candidate="$root/$PACKAGE_ID_LOWER/$PACKAGE_VERSION/lib/$TFM/$ASSEMBLY"
-        [ -f "$candidate" ] && CANDIDATES+=("$candidate")
-      done < <(jq -r '.roots[].physicalRoot' <<< "$NUGET_RESOURCES")
-      [ "${#CANDIDATES[@]}" -gt 0 ] || {
-        printf '%s\n' "No se encontro $PACKAGE_ID_LOWER/$PACKAGE_VERSION/lib/$TFM/$ASSEMBLY en las roots resueltas; la inspeccion requerida queda no verificada." >&2
-        return 1
-      }
-      SELECTED_ASSEMBLY="${CANDIDATES[0]}"
-      for ((index = 1; index < ${#CANDIDATES[@]}; index++)); do
-        if ! cmp -s "$SELECTED_ASSEMBLY" "${CANDIDATES[$index]}"; then
-          printf 'Conflicto: candidatos NuGet con contenido distinto: %s | %s\n' "$SELECTED_ASSEMBLY" "${CANDIDATES[$index]}" >&2
-          return 1
-        fi
-      done
-    }
-
-    resolve_assembly <version-vieja> || exit 1
-    OLD_ASSEMBLY="$SELECTED_ASSEMBLY"
-    printf 'Assembly viejo seleccionado: %s\n' "$OLD_ASSEMBLY"
-    resolve_assembly <version-nueva> || exit 1
-    NEW_ASSEMBLY="$SELECTED_ASSEMBLY"
-    printf 'Assembly nuevo seleccionado: %s\n' "$NEW_ASSEMBLY"
-    ```
-    Cada llamada a `resolve_assembly` obtiene un envelope nuevo y compara solo los candidatos de esa version. Si cualquiera falla, no continúes a la decompilacion.
+2. **Localiza ambas versiones del paquete en el almacen local de paquetes NuGet**:
+   ```bash
+   ls ~/.nuget/packages/<paquete>/
+   # ej: ls ~/.nuget/packages/cosmos.eventsourcing/
+   ```
 3. **Decompila cada version con `ilspycmd`** (dotnet global tool). Si el tool no esta instalado, indica el comando de instalacion — **no lo instales por cuenta propia**:
    ```bash
    dotnet tool install -g ilspycmd
    ```
    Comando de decompilacion. Ojo con el casing: NuGet normaliza el id del paquete a minusculas para la **carpeta** del almacen local (`<paquete>`), pero el `.dll` conserva el casing real del **ensamblado** (`<Ensamblado>`), que suele ser PascalCase y puede diferir de la carpeta — una sustitucion literal del mismo placeholder en ambos sitios falla en sistemas de archivos sensibles a mayusculas (Linux). Placeholders: `<paquete>` (carpeta, minusculas), `<Ensamblado>.dll` (ensamblado, casing real), `<version-vieja>`, `<version-nueva>`, `<TargetFramework>`:
    ```bash
-    # Usa OLD_ASSEMBLY y NEW_ASSEMBLY seleccionadas en el mismo bloque anterior.
-    ilspycmd "$OLD_ASSEMBLY" -o .mefisto/pipeline/tmp/decompiled-vieja
-    ilspycmd "$NEW_ASSEMBLY" -o .mefisto/pipeline/tmp/decompiled-nueva
+   ilspycmd ~/.nuget/packages/<paquete>/<version-vieja>/lib/<TargetFramework>/<Ensamblado>.dll -o .mefisto/pipeline/tmp/decompiled-vieja
+   ilspycmd ~/.nuget/packages/<paquete>/<version-nueva>/lib/<TargetFramework>/<Ensamblado>.dll -o .mefisto/pipeline/tmp/decompiled-nueva
    ```
    Ejemplo concreto del casing (caso de origen): carpeta `cosmos.eventsourcing.critterstack`, ensamblado `Cosmos.EventSourcing.CritterStack.dll`, TargetFramework `net10.0` —
    ```bash
-    # OLD_ASSEMBLY y NEW_ASSEMBLY son las rutas seleccionadas por sus resoluciones separadas.
-    ilspycmd "$OLD_ASSEMBLY" -o .mefisto/pipeline/tmp/decompiled-vieja
-    ilspycmd "$NEW_ASSEMBLY" -o .mefisto/pipeline/tmp/decompiled-nueva
+   ilspycmd ~/.nuget/packages/cosmos.eventsourcing.critterstack/0.1.9/lib/net10.0/Cosmos.EventSourcing.CritterStack.dll -o .mefisto/pipeline/tmp/decompiled-vieja
+   ilspycmd ~/.nuget/packages/cosmos.eventsourcing.critterstack/2.1.0/lib/net10.0/Cosmos.EventSourcing.CritterStack.dll -o .mefisto/pipeline/tmp/decompiled-nueva
    ```
 4. **Diffea los tipos relevantes**: los metodos de extension de registro (los que el proyecto invoca en su `Program.cs`, p. ej. `AgregarWolverine*Router`) y los constructores de los servicios que el stacktrace senala como no resueltos:
    ```bash

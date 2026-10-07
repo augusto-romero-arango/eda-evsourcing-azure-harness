@@ -1,9 +1,43 @@
 ---
 description: "Instala/actualiza el gateway APIM, cablea las GitHub variables y ejecuta la transicion a->b de tenancy."
-agent: "command-entry-install-apim"
-subtask: false
 ---
 <!-- GENERADO por src/published/scripts/generate-published-adapters.sh desde src/published/commands/install-apim.md. No editar a mano. -->
+```bash
+# Cada llamada bash que use ${MEFISTO_PACKAGE_ROOT} debe incluir este bloque antes de sus comandos: no se asume estado de shell persistente entre llamadas.
+if [ -n "${XDG_DATA_HOME:-}" ]; then mefisto_opencode_launcher="$XDG_DATA_HOME/mefisto/active/bin/mefisto-opencode"
+elif [ "${OSTYPE%%[0-9.]*}" = darwin ]; then mefisto_opencode_launcher="$HOME/Library/Application Support/mefisto/active/bin/mefisto-opencode"
+else mefisto_opencode_launcher="$HOME/.local/share/mefisto/active/bin/mefisto-opencode"; fi
+if [ ! -f "$mefisto_opencode_launcher" ] || [ -L "$mefisto_opencode_launcher" ] || [ ! -x "$mefisto_opencode_launcher" ]; then
+    printf '%s\n' 'ERROR OpenCode: no hay una release activa valida; instale o active la release OpenCode.' >&2; exit 1
+fi
+MEFISTO_PACKAGE_ROOT="$("$mefisto_opencode_launcher" package-root)" || {
+    printf '%s\n' 'ERROR OpenCode: no se pudo resolver la release activa; instale o active la release OpenCode.' >&2; exit 1;
+}
+case "$MEFISTO_PACKAGE_ROOT" in
+    /*) ;;
+    *) printf '%s\n' 'ERROR OpenCode: la release activa no devolvio una raiz absoluta; reinstale o active la release OpenCode.' >&2; exit 1 ;;
+esac
+MEFISTO_PACKAGE_ROOT="$(cd -P "$MEFISTO_PACKAGE_ROOT" 2>/dev/null && printf '%s\n' "$PWD")" || {
+    printf '%s\n' 'ERROR OpenCode: la release activa no existe; reinstale o active la release OpenCode.' >&2; exit 1;
+}
+export MEFISTO_PACKAGE_ROOT
+```
+```bash
+if [ -f "AGENTS.md" ]; then
+    if [ -f "CLAUDE.md" ]; then
+        printf '%s\n' 'AVISO: se usara AGENTS.md; se ignora el legacy CLAUDE.md. Migra o elimina conscientemente el archivo legacy para evitar divergencias.' >&2
+    fi
+    MEFISTO_INSTRUCTIONS_PATH="AGENTS.md"
+elif [ -f "CLAUDE.md" ]; then
+    MEFISTO_INSTRUCTIONS_PATH="CLAUDE.md"
+else
+    printf '%s\n' 'ERROR: no se encontro AGENTS.md, la fuente canonica de directivas del consumidor.' >&2
+    printf '%s\n' '  Se acepta solo para lectura el fallback legacy CLAUDE.md.' >&2
+    printf '%s\n' '  Ejecuta /mefisto:onboard para diagnosticar y completar el contrato del consumidor.' >&2
+    exit 1
+fi
+export MEFISTO_INSTRUCTIONS_PATH
+```
 
 Instala/actualiza el gateway APIM (Azure API Management) delante de las Function Apps del BC, fiel a MEF-ADR-0032: invoca el agente `apim-gateway-scaffolder` (issue #335) para generar/actualizar los modulos Terraform `api-management`/`apim-function-api` de forma aditiva por dominio, cablea `TF_VAR_workos_client_id` desde la GitHub variable `WORKOS_CLIENT_ID` (la que registro `/mefisto:install-workos`), y ejecuta la **transicion a->b de tenancy** (MEF-ADR-0028 seccion 4, issue #337, enmendada por el issue #802): flip de `tenancy.strategy` a `"multi-tenant-header"`, scaffold de la biblioteca `src/{RootNamespace}.TenantResolver/` (patron AsyncLocal + middleware, issue #803) y migracion del `ITenantResolver` de **todos** los dominios ya scaffoldeados del BC -- incluidos los que quedaron en el hibrido `AgregarTenantResolverHibrido()` probado roto en Azure Functions isolated worker (issue #802) -- a esa biblioteca. Ademas **detecta automaticamente los servidores MCP del BC** (`src/{RootNamespace}.Mcp.*`, issue #820) y los expone en el mismo flip a->b con el modulo `apim-mcp-api` (gate OAuth de la variante MCP/Connect, MEF-ADR-0032 seccion 9), cableando `Mcp__ResourceUri`/`Mcp__AuthorizationServer` del servidor a la URL real de APIM. Es la capa de **borde** de la auth (segunda tras `/mefisto:install-workos`): APIM se monta delante de Function Apps existentes, asi que exige infra base + al menos un dominio ya scaffoldeado. Comunicate en **espanol**.
 
@@ -202,15 +236,49 @@ fi
 #### 9.2 Flip del token
 
 ```bash
-SETTER_RESULT=$( MEFISTO_RUNTIME=opencode "${MEFISTO_PACKAGE_ROOT}/scripts/set-harness-tenancy.sh" --strategy multi-tenant-header ) || exit 1
-CONFIG=$(printf '%s' "$SETTER_RESULT" | jq -er '.configPath') || exit 1
-TENANCY_TOKEN_FLIPPED=$(printf '%s' "$SETTER_RESULT" | jq -r 'if (.changed | type) == "boolean" then .changed else error("changed debe ser booleano") end') || exit 1
+REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || { echo "ERROR: no estas en un repositorio git"; exit 1; }
+
+COMMON="${MEFISTO_PACKAGE_ROOT}/scripts/_pipeline-common.sh"
+if [ ! -f "$COMMON" ]; then
+  echo "ERROR: no se hallo _pipeline-common.sh en el paquete activo ($COMMON)."
+  exit 1
+fi
+source "$COMMON"
+CONFIG=$(resolve_harness_config_path write "$REPO_ROOT") || exit 1
+
+if ! load_harness_config >/dev/null; then
+  echo "ERROR: el config efectivo no es válido. Corrígelo antes de escribir $CONFIG."
+  exit 1
+fi
+
+ESTRATEGIA=$(jq -r '.tenancy.strategy // "mono-tenant-transitorio"' "$HARNESS_CONFIG_PATH")
+TENANCY_TOKEN_FLIPPED=false
+if [ "$HARNESS_CONFIG_PATH" != "$CONFIG" ]; then
+  echo "ERROR: el config efectivo todavía es legacy ($HARNESS_CONFIG_PATH)."
+  echo "       Migra primero el config a $CONFIG; los escritores nuevos no modifican la ruta legacy."
+  exit 1
+elif [ "$ESTRATEGIA" = "multi-tenant-header" ]; then
+  echo "OK: tenancy.strategy ya esta en etapa (b) en $HARNESS_CONFIG_PATH."
+elif ! command -v jq >/dev/null 2>&1; then
+  echo "ERROR: jq no esta instalado. Requerido para escribir $CONFIG."
+  exit 1
+else
+  TMP=$(mktemp)
+  if jq --arg s "multi-tenant-header" '.tenancy = ((.tenancy // {}) + {strategy: $s})' "$CONFIG" > "$TMP" \
+      && jq empty "$TMP" && mv "$TMP" "$CONFIG"; then
+    TENANCY_TOKEN_FLIPPED=true
+    echo "OK: tenancy.strategy = \"multi-tenant-header\" escrito en $CONFIG."
+  else
+    rm -f "$TMP"
+    echo "ERROR: no se pudo escribir $CONFIG (revisa que sea JSON valido)."
+    exit 1
+  fi
+fi
 ```
 
-- Conserva como datos de la sesion los valores exactos devueltos en `configPath` y `changed`; llamalos `<SETTER_CONFIG_PATH>` y `<SETTER_CHANGED>`. Los bloques Bash se pueden ejecutar en shells distintos: no asumas que `CONFIG`, `TENANCY_TOKEN_FLIPPED` ni `SETTER_RESULT` sobreviven hasta el paso 10.
-- Si `changed` es `false`: no toques el archivo. Repórtalo "ya en etapa (b)" y segui directo al 9.3 -- puede haber dominios scaffoldeados entre corridas que todavia no se migraron.
-- El setter actualiza exclusivamente el config canónico, conserva los demas campos de `tenancy` y devuelve la ruta realmente escrita en `configPath`.
-- Si no hay config efectivo o si solo existe el legacy, el setter termina con un error bloqueante antes del 9.3. En el segundo caso migra primero el archivo completo a `.mefisto/harness.config.json`; este skill nunca crea, copia ni modifica el config legacy.
+- Si ya es `"multi-tenant-header"`: no toques el archivo. Repórtalo "ya en etapa (b)" y segui directo al 9.3 -- puede haber dominios scaffoldeados entre corridas que todavia no se migraron.
+- Cualquier otro valor, incluido `"mono-tenant-transitorio"` o un campo ausente, se trata como etapa (a) y se actualiza exclusivamente en el config canónico. El objeto `tenancy` conserva sus demas campos.
+- Si no hay config efectivo o si solo existe el legacy, el bloque termina con un error bloqueante antes del 9.3. En el segundo caso migra primero el archivo completo a `.mefisto/harness.config.json`; este skill nunca crea, copia ni modifica el config legacy.
 
 #### 9.3 Scaffold de la biblioteca `src/<RootNamespace>.TenantResolver/` (CA-1, MEF-ADR-0028 seccion 4)
 
@@ -605,12 +673,6 @@ dotnet test "tests/<RootNamespace>.{PascalCase}.Tests" --filter "FullyQualifiedN
 Solo si el paso 9 tuvo al menos un cambio (token flip, scaffold de la biblioteca, o algun dominio migrado):
 
 ```bash
-CONFIG="<SETTER_CONFIG_PATH exacto devuelto por el setter en 9.2>"
-TENANCY_TOKEN_FLIPPED="<SETTER_CHANGED exacto devuelto por el setter en 9.2>"
-case "$TENANCY_TOKEN_FLIPPED" in
-  true|false) ;;
-  *) echo "ERROR: no se rehidrato el booleano changed devuelto por el setter en 9.2."; exit 1 ;;
-esac
 if [ "$TENANCY_TOKEN_FLIPPED" = true ]; then
   git add "$CONFIG"
 fi

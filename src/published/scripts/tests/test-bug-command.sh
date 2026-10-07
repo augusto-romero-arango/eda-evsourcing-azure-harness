@@ -57,8 +57,8 @@ for pair in "claude:$claude_body" "opencode:$opencode_body"; do
     tooling_section="${tooling_section%%Si entorno desplegado*}"
     absent "$tooling_section" 'azure-account-info.sh' "$rt: la ruta tooling no exige Azure"
 done
-contains "$opencode_body" 'agent: "command-entry-bug"' 'OpenCode liga el command-entry de bug'
-contains "$opencode_body" 'subtask: false' 'OpenCode no convierte bug en subtask'
+absent "$opencode_body" 'subtask' 'OpenCode sin subtask'
+absent "$opencode_body" 'agent:' 'OpenCode sin agent'
 absent "$opencode_body" 'CLAUDE_' 'OpenCode sin CLAUDE_'
 absent "$opencode_body" 'model:' 'OpenCode no emite model'
 contains "$claude_body" 'model: "haiku"' 'Claude materializa el perfil fast'

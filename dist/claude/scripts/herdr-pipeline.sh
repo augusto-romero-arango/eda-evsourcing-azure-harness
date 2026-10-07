@@ -163,96 +163,6 @@ resolve_report_runtime() {
         || abort "No se pudo preparar el pool canonico de panes Herdr."
 }
 
-# --- Preflight de autonomia (issue #1873, MEF-ADR-0055) ---
-# Gate de CONSULTA antes de tocar el workspace herdr (acquire_report_pane, split, close,
-# reservas de hijos): delega en autonomy-preflight.sh (#1870) UN plan cerrado con todos los
-# issues ruteables de la invocacion, derivado del routing ya resuelto (nunca del texto del
-# issue). `legacy` sin contexto conserva el flujo previo; blocked, incomplete, busy, salida
-# invalida o evaluador ausente abortan con 0 panes, 0 procesos y 0 markers, y nunca caen a
-# legacy. Corre una sola vez por invocacion: reusar un pane libre no exime del plan y el
-# reintento tras marker no confirmado (dispatch_to_pane) conserva la misma decision sin
-# reevaluar. El marker `.started` es handshake del despachador, nunca admision. --refresh-agents,
-# --collapse-panes y --help no inician issues y no consultan.
-HERDR_PLAN_LAUNCH=""
-HERDR_PLAN_ITEMS=()
-HERDR_PREFLIGHT_DONE=0
-# 1 solo para --scaffold: el catalogo de #1870 aun no admite pipelineKind scaffold bajo
-# launchKind pane (el evaluador rechaza el plan con exit 2). Sin contexto transportado ese
-# rechazo de protocolo no bloquea (conserva el flujo previo); con contexto sigue fallando cerrado.
-HERDR_PLAN_SCAFFOLD_GAP=0
-PREFLIGHT_STATUS=""
-PREFLIGHT_DIAG=""
-PREFLIGHT_DEFERRED=""
-
-# herdr_autonomy_preflight <launchKind> <numero:pipelineKind>...
-# 0 = legacy|ready-to-dispatch; 1 = no se puede lanzar (PREFLIGHT_STATUS/DIAG con codigos).
-herdr_autonomy_preflight() {
-    local launch="$1" bin plan out rc=0 src=direct args
-    shift
-    PREFLIGHT_STATUS=""; PREFLIGHT_DIAG=""; PREFLIGHT_DEFERRED=""
-    bin="$SCRIPT_DIR/autonomy-preflight.sh"
-    args=(--project-root "$PROJECT_ROOT" --runtime "$HERDR_RUNTIME")
-    src="$(pipeline_preflight_source)"
-    if [ "$src" != direct ]; then
-        args+=(--context "$MEFISTO_EXECUTION_CONTEXT")
-    fi
-    if [ ! -f "$bin" ]; then
-        PREFLIGHT_STATUS="unavailable"; PREFLIGHT_DIAG="PREFLIGHT_UNAVAILABLE"
-        return 1
-    fi
-    plan=$(jq -cn --arg s "$src" --arg l "$launch" '{schemaVersion:1,launchKind:$l,source:$s,requestedOperations:[],
-        issues:[$ARGS.positional[] | split(":") | {number:(.[0]|tonumber),pipelineKind:.[1]}]}' --args "$@" 2>/dev/null) \
-        || { PREFLIGHT_STATUS="unavailable"; PREFLIGHT_DIAG="PREFLIGHT_PLAN_INVALID"; return 1; }
-    out=$(printf '%s' "$plan" | bash "$bin" "${args[@]}" 2>/dev/null) || rc=$?
-    PREFLIGHT_STATUS=$(printf '%s' "$out" | jq -r '.status // empty' 2>/dev/null) || PREFLIGHT_STATUS=""
-    PREFLIGHT_DIAG=$(printf '%s' "$out" | jq -r '[.diagnostics[]? | select(type == "string" and test("^[A-Za-z0-9_#:.-]+$"))] | join(",")' 2>/dev/null) || PREFLIGHT_DIAG=""
-    PREFLIGHT_DEFERRED=$(printf '%s' "$out" | jq -r '[.checks[]? | select(.state == "deferred" and (.code|type) == "string" and (.owner|type) == "string") | "\(.code)@\(.owner)"] | map(select(test("^[A-Za-z0-9_#:./@-]+$"))) | join(",")' 2>/dev/null) || PREFLIGHT_DEFERRED=""
-    if [ "$rc" -eq 2 ] && [ -z "$PREFLIGHT_STATUS" ] && [ "$HERDR_PLAN_SCAFFOLD_GAP" = 1 ] && [ "$src" = direct ]; then
-        PREFLIGHT_STATUS="legacy"
-        return 0
-    fi
-    if [ "$rc" -eq 0 ]; then
-        case "$PREFLIGHT_STATUS" in
-            legacy)
-                # Un contexto transportado nunca degrada a legacy.
-                [ "$src" = command ] || return 0
-                PREFLIGHT_STATUS="invalid"; PREFLIGHT_DIAG="PREFLIGHT_LEGACY_WITH_CONTEXT"; return 1 ;;
-            ready-to-dispatch)
-                if printf '%s' "$out" | jq -e '(.checks | type == "array") and all(.checks[];
-                        (.state | IN("pass","deferred","not-applicable"))
-                        and (.state != "deferred" or ((.owner | type) == "string" and (.owner | length) > 0)))' >/dev/null 2>&1; then
-                    return 0
-                fi
-                PREFLIGHT_STATUS="invalid"; PREFLIGHT_DIAG="PREFLIGHT_CHECKS_INCONSISTENT"; return 1 ;;
-        esac
-    fi
-    if [ "$rc" -eq 75 ]; then
-        PREFLIGHT_STATUS="busy"; PREFLIGHT_DIAG="${PREFLIGHT_DIAG:-PREFLIGHT_BUSY}"
-    else
-        case "$PREFLIGHT_STATUS" in
-            blocked|incomplete) ;;
-            *) PREFLIGHT_STATUS="invalid"; PREFLIGHT_DIAG="${PREFLIGHT_DIAG:-PREFLIGHT_RC_$rc}" ;;
-        esac
-    fi
-    return 1
-}
-
-# herdr_preflight_gate: ejecuta el plan fijado por el cmd_* una sola vez; aborta (exit 1)
-# sin tocar tmux si no hay admision. Sin plan fijado no hace nada.
-herdr_preflight_gate() {
-    [ "$HERDR_PREFLIGHT_DONE" = 1 ] && return 0
-    [ ${#HERDR_PLAN_ITEMS[@]} -gt 0 ] || return 0
-    HERDR_PREFLIGHT_DONE=1
-    if herdr_autonomy_preflight "$HERDR_PLAN_LAUNCH" "${HERDR_PLAN_ITEMS[@]}"; then
-        if [ "$PREFLIGHT_STATUS" = "ready-to-dispatch" ]; then
-            log "Preflight de autonomia: $PREFLIGHT_STATUS"
-            [ -z "$PREFLIGHT_DEFERRED" ] || log "Verificaciones diferidas al guard del hijo (no es permiso efectivo futuro): $PREFLIGHT_DEFERRED"
-        fi
-        return 0
-    fi
-    abort "Preflight de autonomia: ${PREFLIGHT_STATUS} [${PREFLIGHT_DIAG:-sin-detalle}]. No se creo, dividio ni cerro ningun pane herdr ni se inicio ningun pipeline."
-}
-
 # --- Helpers de panes ---
 
 # pane_exists <pane_id> -- 0 si el pane sigue vivo en el servidor.
@@ -451,75 +361,6 @@ stack_split_ratio() {
 #
 # Imprime por stdout la linea que un pane debe ejecutar para correr el runner
 # interno (--_pane-runner) con <cmd args...>. Todo argumento va quoteado con
-# pane_env_prefix (issue #1861)
-#
-# Prefijo por proceso de TODO runner tecleado en un pane: descarta lo heredado del
-# shell del pane (que pudo nacer en otra distribucion/consumidor) y fija biblioteca,
-# validador de modelos y raices de estado de la distribucion LANZADORA, mas el
-# contexto/digest del hijo reservado cuando hay ejecucion controlada. Valores con
-# printf %q (rutas con espacios); sin eval ni estado global del servidor.
-pane_env_prefix() {
-    local lib validator
-    lib="$(cd "$SCRIPT_DIR/../src/runtime/lib" 2>/dev/null && pwd -P)" || lib="$RUNTIME_LIB_DIR"
-    validator="$(cd "$SCRIPT_DIR/../src/runtime/contract" 2>/dev/null && pwd -P)/models.validate.jq"
-    printf 'env -u MEFISTO_RUNTIME_LIB_DIR -u MEFISTO_MODELS_VALIDATOR -u MEFISTO_STATE_DIR -u MEFISTO_LEGACY_STATE_DIR -u MEFISTO_RUN_AGENT_BIN -u MEFISTO_EXECUTION_CONTEXT -u MEFISTO_EXECUTION_DIGEST'
-    printf ' MEFISTO_RUNTIME=%q' "$HERDR_RUNTIME"
-    printf ' MEFISTO_RUNTIME_LIB_DIR=%q' "$lib"
-    printf ' MEFISTO_MODELS_VALIDATOR=%q' "$validator"
-    printf ' MEFISTO_STATE_DIR=%q' "$PROJECT_ROOT/.mefisto/pipeline"
-    local legacy=".claude"
-    printf ' MEFISTO_LEGACY_STATE_DIR=%q' "$PROJECT_ROOT/$legacy/pipeline"
-    orchestrator_child_env_words
-}
-
-# Referencia de ejecucion del despachador (issue #1861): se abre una vez, antes de
-# reservar al primer hijo, y se cierra al salir. Soltarla es seguro: cada hijo queda
-# reservado (anclado) antes de teclear su comando. Sin perfil/runtime autorizado no
-# abre nada y el camino previo no cambia.
-HERDR_EXEC_OPEN=0
-HERDR_DISPATCH_ROOT=""
-HERDR_DISPATCH_KIND=""
-
-# herdr_dispatch_scope <cmd>: comando raiz y tipo de hijo segun el pipeline despachado.
-# Un comando desconocido no reserva nada (camino previo).
-herdr_dispatch_scope() {
-    HERDR_DISPATCH_ROOT=""; HERDR_DISPATCH_KIND=""
-    case "$(basename "$1")" in
-        tdd-pipeline.sh)      HERDR_DISPATCH_ROOT=implement; HERDR_DISPATCH_KIND=tdd ;;
-        tooling-pipeline.sh)  HERDR_DISPATCH_ROOT=tooling;   HERDR_DISPATCH_KIND=tooling ;;
-        iac-pipeline.sh)      HERDR_DISPATCH_ROOT=infra;     HERDR_DISPATCH_KIND=iac ;;
-        scaffold-pipeline.sh) HERDR_DISPATCH_ROOT=scaffold;  HERDR_DISPATCH_KIND=scaffold ;;
-        batch-pipeline.sh)    HERDR_DISPATCH_ROOT=sequential ;;
-        parallel-pipeline.sh) HERDR_DISPATCH_ROOT=parallel ;;
-    esac
-}
-
-# herdr_reserve_for <cmd> [kind-override]: abre la referencia (una vez) y reserva el hijo.
-# Aborta si el contexto no se puede reservar: nada se lanza sin reserva.
-herdr_reserve_for() {
-    local cmd="$1"
-    herdr_dispatch_scope "$cmd"
-    [ -z "${2:-}" ] || HERDR_DISPATCH_KIND="$2"
-    ORCH_CHILD_ID=""; ORCH_CHILD_CONTEXT=""; ORCH_CHILD_DIGEST=""
-    [ -n "$HERDR_DISPATCH_ROOT" ] || return 0
-    if [ "$HERDR_EXEC_OPEN" != 1 ]; then
-        HERDR_EXEC_OPEN=1
-        MEFISTO_RUNTIME="$HERDR_RUNTIME" orchestrator_execution_open "$HERDR_DISPATCH_ROOT" "$PROJECT_ROOT" "$(cd "$SCRIPT_DIR/.." && pwd -P)" "$RUNTIME_LIB_DIR" "${MEFISTO_RUN_AGENT_BIN:-}" \
-            || abort "No se pudo abrir la ejecucion preparada del despachador (contexto invalido, ocupado o revocado); no se lanzo nada."
-        orchestrator_install_exit_trap
-    fi
-    orchestrator_reserve_child "$HERDR_DISPATCH_KIND" "$PROJECT_ROOT" \
-        || abort "No se pudo reservar el contexto de ejecucion del pipeline; no se lanzo nada."
-}
-
-# herdr_handoff_reported <pane>: el pane arranco (marcador), pero el attach es del hijo:
-# la reserva queda pendiente y se reporta asi, nunca como admision completa.
-herdr_handoff_reported() {
-    [ -n "$ORCH_CHILD_ID" ] || return 0
-    log "Contexto hijo $ORCH_CHILD_ID reservado: el pipeline hace attach al arrancar en el pane $1 (el marcador de arranque no prueba la admision)."
-    ORCH_CHILD_ID=""; ORCH_CHILD_CONTEXT=""; ORCH_CHILD_DIGEST=""
-}
-
 # printf %q: el pane run literalmente escribe la linea en el shell del pane.
 # <started_marker> vacio omite el flag --started-marker; cuando se pasa, es la
 # ruta que cmd_pane_runner escribe antes de lanzar el sub-pipeline (issue
@@ -529,7 +370,7 @@ build_pane_runner_cmdline() {
     shift 4
 
     local cmdline
-    cmdline="cd $(printf '%q' "$PROJECT_ROOT") && $(pane_env_prefix) $(printf '%q' "$SCRIPT_DIR/herdr-pipeline.sh") --_pane-runner --title $(printf '%q' "$title")"
+    cmdline="cd $(printf '%q' "$PROJECT_ROOT") && MEFISTO_RUNTIME=$(printf '%q' "$HERDR_RUNTIME") $(printf '%q' "$SCRIPT_DIR/herdr-pipeline.sh") --_pane-runner --title $(printf '%q' "$title")"
     if [ -n "$issues_csv" ]; then
         cmdline="$cmdline --issues $(printf '%q' "$issues_csv")"
     fi
@@ -569,26 +410,19 @@ dispatch_to_pane() {
     token=$(next_dispatch_token)
     marker=$(dispatch_marker_path "$token")
     rm -f "$marker"
-    herdr_reserve_for "$1"
     cmdline=$(build_pane_runner_cmdline "$title" "$issues_csv" 0 "$marker" "$@")
 
-    if ! herdr pane run "$pane" "$cmdline" >/dev/null 2>&1; then
-        orchestrator_finish_child aborted || true
-        abort "No se pudo lanzar el pipeline en el pane $pane (herdr pane run fallo)."
-    fi
+    herdr pane run "$pane" "$cmdline" >/dev/null 2>&1 \
+        || abort "No se pudo lanzar el pipeline en el pane $pane (herdr pane run fallo)."
 
     if wait_for_dispatch_marker "$marker" "$HERDR_DISPATCH_CONFIRM_TIMEOUT" \
         || ! claim_dispatch_marker "$marker"; then
-        herdr_handoff_reported "$pane"
         success "Pipeline '$title' corriendo en el pane $pane de este workspace."
         log "El pane muestra el visor en vivo del agente; el reporte completo queda en $LOG_DIR_ABS/."
         log "No hay sesion que adjuntar: el pane ya esta visible en el workspace (barra lateral de herdr)."
         return 0
     fi
 
-    # Marcador reclamado por el despachador: el runner de ese pane nunca lanzara nada,
-    # asi que la reserva queda demostrablemente no entregada y se retira.
-    orchestrator_finish_child aborted || true
     warn "El pane $pane no confirmo el arranque en ${HERDR_DISPATCH_CONFIRM_TIMEOUT}s (marcador ausente): puede tener el shell en un estado invalido. Reintentando en un pane nuevo, sin volver a escribir en $pane."
 
     local retry_pane retry_token retry_marker retry_cmdline
@@ -596,24 +430,19 @@ dispatch_to_pane() {
     retry_token=$(next_dispatch_token)
     retry_marker=$(dispatch_marker_path "$retry_token")
     rm -f "$retry_marker"
-    herdr_reserve_for "$1"
     retry_cmdline=$(build_pane_runner_cmdline "$title" "$issues_csv" 0 "$retry_marker" "$@")
 
-    if ! herdr pane run "$retry_pane" "$retry_cmdline" >/dev/null 2>&1; then
-        orchestrator_finish_child aborted || true
-        abort "No se pudo lanzar el pipeline en el pane de reintento $retry_pane (herdr pane run fallo). Pane sospechoso original: $pane."
-    fi
+    herdr pane run "$retry_pane" "$retry_cmdline" >/dev/null 2>&1 \
+        || abort "No se pudo lanzar el pipeline en el pane de reintento $retry_pane (herdr pane run fallo). Pane sospechoso original: $pane."
 
     if wait_for_dispatch_marker "$retry_marker" "$HERDR_DISPATCH_CONFIRM_TIMEOUT" \
         || ! claim_dispatch_marker "$retry_marker"; then
-        herdr_handoff_reported "$retry_pane"
         success "Pipeline '$title' corriendo en el pane $retry_pane de este workspace (reintento tras un arranque no confirmado en $pane)."
         log "El pane muestra el visor en vivo del agente; el reporte completo queda en $LOG_DIR_ABS/."
         log "No hay sesion que adjuntar: el pane ya esta visible en el workspace (barra lateral de herdr)."
         return 0
     fi
 
-    orchestrator_finish_child aborted || true
     abort "Ni el pane $pane ni el reintento $retry_pane confirmaron el arranque de '$title' en ${HERDR_DISPATCH_CONFIRM_TIMEOUT}s. Cierra ambos paneles (alguno de los dos shells puede seguir en un estado invalido) y relanza el pipeline a mano."
 }
 
@@ -818,10 +647,6 @@ cmd_single() {
     fi
     resolved="$(plugin_script "$resolved")"
 
-    HERDR_PLAN_LAUNCH="pane"
-    HERDR_PLAN_ITEMS=("$issue:$(orchestrator_kind_for_script "$resolved")")
-    herdr_preflight_gate
-
     local pipeline_name
     pipeline_name=$(basename "$resolved" .sh)
     local title="${pipeline_name%-pipeline} #$issue"
@@ -857,9 +682,6 @@ cmd_tooling() {
     # distingue el titulo del pane cuando hay variante (dos corridas del mismo
     # issue en panes separados, cada una identificable en la barra lateral).
     local variant="${4:-}"
-    HERDR_PLAN_LAUNCH="pane"
-    HERDR_PLAN_ITEMS=("$issue:tooling")
-    herdr_preflight_gate
     local title="tooling #$issue"
     [ -n "$variant" ] && title="tooling #$issue ($variant)"
     if [ -n "$models" ] && [ -n "$variant" ]; then
@@ -880,9 +702,6 @@ cmd_tooling() {
 cmd_infra() {
     local issue="$1"
     local extra_args="${2:-}"
-    HERDR_PLAN_LAUNCH="pane"
-    HERDR_PLAN_ITEMS=("$issue:iac")
-    herdr_preflight_gate
     # shellcheck disable=SC2086
     dispatch_to_pane "infra #$issue" "$issue" "$SCRIPT_DIR/iac-pipeline.sh" "$issue" $extra_args
 }
@@ -912,11 +731,6 @@ cmd_scaffold() {
         | sed 's/\([a-z0-9]\)\([A-Z]\)/\1-\2/g' \
         | tr '[:upper:]' '[:lower:]')
 
-    HERDR_PLAN_LAUNCH="pane"
-    HERDR_PLAN_ITEMS=("${issue:-1}:scaffold")
-    HERDR_PLAN_SCAFFOLD_GAP=1
-    herdr_preflight_gate
-
     local args=()
     [ -n "$issue" ] && args+=("$issue")
     args+=(--domain "$domain")
@@ -940,18 +754,6 @@ cmd_batch() {
     if [ ${#issues[@]} -eq 0 ]; then
         abort "Debes especificar al menos un issue. Uso: --batch 42 43 44"
     fi
-
-    local b_issue b_resolved b_kind
-    HERDR_PLAN_LAUNCH="sequential"
-    HERDR_PLAN_ITEMS=()
-    for b_issue in "${issues[@]}"; do
-        b_resolved=$(resolve_pipeline "$b_issue" "$pipeline_override" 2>/dev/null) || continue
-        [[ "$b_resolved" == SKIP:* ]] && continue
-        b_kind="$(orchestrator_kind_for_script "$b_resolved")"
-        [ -n "$b_kind" ] || continue
-        HERDR_PLAN_ITEMS+=("$b_issue:$b_kind")
-    done
-    herdr_preflight_gate
 
     local issues_csv
     issues_csv=$(IFS=','; echo "${issues[*]}")
@@ -1035,17 +837,6 @@ cmd_parallel() {
         abort "$projection_count issues tipo:projection en el lote: comparten el worker de proyecciones (MEF-ADR-0034) y en modo pane no se serializan entre si. Usa /sequential, o parallel-pipeline.sh directo (su scheduler si los serializa)."
     fi
 
-    # Todos los issues ruteables se comprueban antes de tocar un solo pane.
-    local p_i p_kind
-    HERDR_PLAN_LAUNCH="pane"
-    HERDR_PLAN_ITEMS=()
-    for p_i in "${!resolved_issues[@]}"; do
-        p_kind="$(orchestrator_kind_for_script "${resolved_pipelines[$p_i]}")"
-        [ -n "$p_kind" ] || continue
-        HERDR_PLAN_ITEMS+=("${resolved_issues[$p_i]}:$p_kind")
-    done
-    herdr_preflight_gate
-
     # Pane 1: el pane de ejecucion de la derecha (reutilizado o creado; los
     # libres sobrantes se colapsan ahi mismo, asi el apilado arranca de UNO).
     local panes=() prev
@@ -1082,23 +873,18 @@ cmd_parallel() {
         token=$(next_dispatch_token)
         marker=$(dispatch_marker_path "$token")
         rm -f "$marker"
-        herdr_reserve_for "${resolved_pipelines[$i]}"
         cmdline=$(build_pane_runner_cmdline "$title" "$issue" "$delay" "$marker" "${resolved_pipelines[$i]}" "$issue")
-        if ! herdr pane run "${panes[$i]}" "$cmdline" >/dev/null 2>&1; then
-            orchestrator_finish_child aborted || true
-            abort "No se pudo lanzar el issue #$issue en el pane ${panes[$i]} (herdr pane run fallo)."
-        fi
+        herdr pane run "${panes[$i]}" "$cmdline" >/dev/null 2>&1 \
+            || abort "No se pudo lanzar el issue #$issue en el pane ${panes[$i]} (herdr pane run fallo)."
 
         if wait_for_dispatch_marker "$marker" "$HERDR_DISPATCH_CONFIRM_TIMEOUT" \
             || ! claim_dispatch_marker "$marker"; then
-            herdr_handoff_reported "${panes[$i]}"
             if [ "$delay" -gt 0 ]; then
                 log "Issue #$issue -> pane ${panes[$i]} ($title, arranca en ${delay}s)"
             else
                 log "Issue #$issue -> pane ${panes[$i]} ($title)"
             fi
         else
-            orchestrator_finish_child aborted || true
             warn "Issue #$issue: el pane ${panes[$i]} no confirmo el arranque en ${HERDR_DISPATCH_CONFIRM_TIMEOUT}s (marcador ausente). Sin reintento (ya es un pane nuevo del lote): revisa/cierra ${panes[$i]} y relanza el issue #$issue a mano."
             failed_confirm+=("#$issue en el pane ${panes[$i]}")
         fi

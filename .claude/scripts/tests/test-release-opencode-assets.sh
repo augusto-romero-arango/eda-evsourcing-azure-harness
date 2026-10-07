@@ -154,14 +154,6 @@ setup main-advanced; ORIGIN_MAIN_COMMIT=cccccccccccccccccccccccccccccccccccccccc
 [ "$rc" -ne 0 ] && pass 'un main avanzado aborta' || fail 'main avanzado deberia abortar'
 assert_absent "$EVENTS" 'git tag -a' 'no crea tag si HEAD ya no es origin/main'
 
-for oc in plugins/mefisto-observability.js plugins/mefisto-command-entry.js .mefisto-generated-assets.json; do
-    setup "delta-oc-$oc"; DELTA_PATH="dist/opencode/$oc" run_release; rc=$?
-    [ "$rc" -eq 0 ] && pass "admite dist/opencode/$oc en el delta" || fail "debe admitir dist/opencode/$oc"
-done
-setup delta-oc-generic; DELTA_PATH=dist/opencode/scripts/intruso.sh run_release; rc=$?
-[ "$rc" -ne 0 ] && pass 'rechaza dist/opencode generico fuera de las tres rutas' || fail 'dist/opencode generico deberia abortar'
-assert_absent "$EVENTS" 'git tag -a' 'no crea tag con ruta OpenCode ajena'
-
 setup delta-fails; DELTA_PATH=scripts/intruso.sh run_release; rc=$?
 [ "$rc" -ne 0 ] && pass 'un path fuera de allowlist aborta' || fail 'path fuera de allowlist deberia abortar'
 assert_absent "$EVENTS" 'git tag -a' 'no crea tag con delta fuera de allowlist'
@@ -196,31 +188,6 @@ publish_line="$(grep -nF '# FASE PUBLISH' "$RELEASE" | cut -d: -f1 | head -n1)"
 package_line="$(grep -nF '"$OPENCODE_PACKAGER" --output "$ASSETS_DIR"' "$RELEASE" | cut -d: -f1 | head -n1)"
 [ -n "$publish_line" ] && [ -n "$package_line" ] && [ "$package_line" -gt "$publish_line" ] \
     && pass 'el packager solo se invoca dentro de publish' || fail 'prepare no debe invocar el packager'
-
-printf '[E] Generador real: salidas dependientes de identidad (#1953)\n'
-REAL="$WORK/real-generator"; mkdir -p "$REAL"
-git -C "$REPO_ROOT" archive HEAD | tar -x -C "$REAL"
-(cd "$REAL" && git init -q && git add -A && git -c user.name=t -c user.email=t@t.invalid commit -qm base) >/dev/null 2>&1
-REAL_ID="$REAL/src/published/release-identity.json"
-jq '.version = "9.9.9" | .commit = "0123456789abcdef0123456789abcdef01234567"' "$REAL_ID" > "$REAL_ID.tmp" && mv "$REAL_ID.tmp" "$REAL_ID"
-jq '.version = "9.9.9"' "$REAL/.claude-plugin/plugin.json" > "$REAL/plugin.tmp" && mv "$REAL/plugin.tmp" "$REAL/.claude-plugin/plugin.json"
-bash "$REAL/src/published/scripts/generate-published-adapters.sh" >"$WORK/real-gen.out" 2>&1 \
-    && pass 'el generador real acepta la identidad preparada' || fail 'el generador real fallo con la identidad preparada'
-CHANGED="$(git -C "$REAL" status --porcelain --untracked-files=all | cut -c4- | grep -v -e '^src/published/release-identity.json$' -e '^.claude-plugin/plugin.json$')"
-for oc in dist/opencode/plugins/mefisto-observability.js dist/opencode/plugins/mefisto-command-entry.js dist/opencode/.mefisto-generated-assets.json; do
-    printf '%s\n' "$CHANGED" | grep -qxF "$oc" && pass "la identidad regenera $oc" || fail "$oc no depende de la identidad: revisar la lista de prepare"
-done
-STAGE_BLOCK="$(sed -n '/git add CHANGELOG.md docs\/adr\/INDICE-TEMATICO.md/,/^ *if \[ -d changelog.d \]/p' "$RELEASE")"
-ALLOW_LINE="$(grep -F 'CHANGELOG.md|docs/adr/INDICE-TEMATICO.md|' "$RELEASE")"
-uncovered=""
-while IFS= read -r path; do
-    [ -n "$path" ] || continue
-    printf '%s\n' "$STAGE_BLOCK" | grep -qF "$path" && printf '%s\n' "$ALLOW_LINE" | grep -qF "|$path" || uncovered="$uncovered $path"
-done <<< "$CHANGED"
-[ -z "$uncovered" ] && pass 'toda salida dependiente de identidad se stagea en prepare y se admite en publish' \
-    || fail "salidas de identidad fuera de prepare/allowlist:$uncovered"
-bash "$REAL/src/published/scripts/generate-published-adapters.sh" --check >"$WORK/real-check.out" 2>&1 \
-    && pass 'generate-published-adapters.sh --check termina limpio tras prepare' || fail '--check diverge tras regenerar la identidad'
 
 printf '\nResultado: %s PASS, %s FAIL\n' "$PASS" "$FAIL"
 exit "$FAIL"

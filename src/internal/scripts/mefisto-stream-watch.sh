@@ -42,10 +42,10 @@
 #
 # Neutral a runtime (CA-6, MEF-ADR-0049): el parser solo conoce el vocabulario
 # de run-events.schema.json (`message`, `tool.started`, `tool.completed`,
-# `permission.observed`, `run.completed`, `run.failed`; `run.started` se
-# reconoce pero no se renderiza) -- nunca un nombre de campo propio de un
-# runtime concreto. Un campo no disponible (`null` en el JSONL) se muestra
-# como "n/d", nunca como un cero fabricado (CA-3).
+# `run.completed`, `run.failed`; `run.started` se reconoce pero no se
+# renderiza) -- nunca un nombre de campo propio de un runtime concreto. Un
+# campo no disponible (`null` en el JSONL) se muestra como "n/d", nunca como
+# un cero fabricado (CA-3).
 #
 # Solo lectura y autonomo: no modifica ningun pipeline ni archivo existente,
 # no escribe mas que en un directorio temporal propio via mktemp, y se puede
@@ -127,9 +127,6 @@ CURRENT_CWD=""
 #                 sola fila por herramienta; render_row solo la imprime
 #                 cuando `ok == false`, issue #925 -- un exito no aporta nada
 #                 que `tool_started` no haya mostrado ya).
-#   "permission_observed" -> observacion parcial de permisos: no altera las
-#                 metricas ni el contador de ignorados, y no se renderiza para
-#                 no inferir cardinalidad desde una senal aislada.
 #   "terminal" -> cierre de stage (`run.completed`/`run.failed`): status,
 #                 runtime, model, session_id, duration_ms, api_duration_ms,
 #                 estimated_cost_usd (o cost_usd legado), turns,
@@ -171,8 +168,7 @@ def row: map(cell) | @tsv;
 
 def known_type($t):
   ($t == "run.started" or $t == "message" or $t == "tool.started"
-    or $t == "tool.completed" or $t == "permission.observed"
-    or $t == "run.completed" or $t == "run.failed");
+    or $t == "tool.completed" or $t == "run.completed" or $t == "run.failed");
 
 if (type != "object") then ["ignored"] | row
 else
@@ -193,8 +189,6 @@ else
     elif $t == "tool.completed" then
       ($e.ts | epoch_ms) as $ems
       | ["tool", $ems, ($e.tool // null), $e.ok, ($e.duration_ms // null)] | row
-    elif $t == "permission.observed" then
-      ["permission_observed"] | row
     else
       ($e.ts | epoch_ms) as $ems
       | ["terminal", $ems, $e.status, $e.runtime, ($e.model // null), ($e.session_id // null),
@@ -541,8 +535,6 @@ render_terminal_summary() {
 #   kind=tool        -> p3=nombre, p4=ok, p5=duration_ms -- solo imprime
 #                       linea si p4="false" (issue #925: un exito ya se vio
 #                       al arrancar via tool_started).
-#   kind=permission_observed -> senal parcial conocida que no imprime ni suma
-#                       a ignorados o metricas de la corrida.
 #   kind=terminal    -> p3..p15 = status,runtime,model,session_id,
 #                       duration_ms,api_duration_ms,estimated_cost_usd (o
 #                       cost_usd legado),turns,
@@ -561,10 +553,6 @@ render_row() {
 
     if [ "$kind" = "ignored" ]; then
         IGNORED_COUNT=$((IGNORED_COUNT + 1))
-        return 0
-    fi
-
-    if [ "$kind" = "permission_observed" ]; then
         return 0
     fi
 

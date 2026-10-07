@@ -26,11 +26,6 @@ else
 fi
 body="$(awk 'NR == 1 { next } $0 == "---" && !seen { seen=1; next } seen { print }' "$SOURCE")"
 contains "$body" '{{mefisto:assert-consumer-repo}}' 'guard consumidor presente'
-for command in '(cd "infra/environments/<env>" && terraform fmt -recursive ../..)' '(cd "infra/environments/<env>" && terraform init -backend=false)' '(cd "infra/environments/<env>" && terraform validate)'; do
-    contains "$body" "$command" "validacion local usa subshell para $command"
-done
-absent "$body" 'terraform -chdir=' 'validacion local no usa -chdir'
-contains "$body" 'command -v terraform' 'consulta canonica de disponibilidad'
 contains "$body" '{{mefisto:config-path}}' 'lee el config via config-path'
 contains "$body" '{{mefisto:instructions-path}}' 'lee RootNamespace via instructions-path'
 contains "$body" '{{mefisto:command onboard}}' 'remite al diagnostico via command onboard'
@@ -65,10 +60,8 @@ contains "$opencode_body" '"app-insights-connection" "output" "app_insights_conn
 contains "$opencode_body" '"github-secret" "SB_EXTERNAL_COSMOS_CONNECTION_STRING"' 'se conserva el registro por alias external como github-secret'
 
 echo '[d] politica bash de OpenCode'
-# '[ ... ]' es test_command (no candidato en OpenCode, ver fixtures/bash-candidates) y la ruta
-# de scripts del paquete solo se permite con el prefijo de runtime exacto (#1890).
 permission="$(awk 'NR == 1 { next } /^permission: / { sub(/^permission: /, ""); print; exit }' "$OPENCODE")"
-for pattern in 'git *' 'jq *' 'test *' 'echo *' 'printf *' 'grep *' 'mkdir *' 'command -v terraform' 'terraform fmt -recursive ../..' 'terraform fmt -check -recursive ../..' 'terraform init -backend=false' 'terraform init -backend=false -input=false' 'terraform validate' 'terraform validate -no-color' 'MEFISTO_RUNTIME=opencode "${MEFISTO_PACKAGE_ROOT}/scripts/register-harness-secret.sh"*'; do
+for pattern in 'git *' 'jq *' 'test *' '[ *' 'echo *' 'printf *' 'grep *' 'mkdir *' 'terraform fmt*' 'terraform init -backend=false*' 'terraform validate*' '${MEFISTO_PACKAGE_ROOT}/scripts/*'; do
     if printf '%s' "$permission" | jq -e --arg p "$pattern" '.bash[$p] == "allow"' >/dev/null 2>&1; then pass "bash permite '$pattern'"; else fail "bash no permite '$pattern'"; fi
 done
 for command in 'terraform plan' 'terraform apply' 'az group list' 'source x.sh'; do

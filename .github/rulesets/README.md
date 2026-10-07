@@ -1,6 +1,6 @@
 # Rulesets de GitHub
 
-`main.json` protege `main`: PR obligatorio (0 aprobaciones), sin force-push ni borrado. **Sin check de CI requerido** (la suite completa corre en una nightly) y **sin bypass** (`bypass_actors: []`): los agentes y pipelines usan las credenciales del admin, asi que un bypass del rol admin dejaria pasar sus pushes directos. Ningun script hace push directo a `main`. Para una intervencion manual urgente, el humano desactiva el ruleset desde la configuracion del repo y lo reactiva despues.
+`main.json` protege `main`: PR obligatorio (0 aprobaciones), check `tests` del CI (`.github/workflows/ci.yml`) sin "require branches to be up to date", sin force-push ni borrado. Bypass solo para el rol admin del repo (`actor_id: 5`), uso humano deliberado (`gh pr merge --admin`) si el propio CI se rompe; ningun script lo usa.
 
 Se aplica **a mano** por un humano admin: ningun pipeline muta la configuracion de seguridad del repo.
 

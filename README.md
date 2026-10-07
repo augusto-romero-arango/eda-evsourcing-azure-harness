@@ -30,8 +30,6 @@ Plugin de [Claude Code](https://code.claude.com/docs/en/plugins) que provee un h
 
 El [veredicto del corte vertical](docs/testing/opencode-consumer-cutover.md#veredicto-final-del-corte-vertical-1066) (issue #1066, `PASA` sobre la cadena `v0.37.14` → `v0.37.16`, con la desviación de release declarada allí) certifica soporte OpenCode publicado **exclusivamente para `/mefisto:tooling`**: instalación real con checksum del artefacto OpenCode, discovery de comandos/agentes/Skills/scripts/permisos/hooks/MCP, ejecución headless hasta PR real lanzada desde sesión interactiva, Herdr con pools de panes separados por runtime, y observabilidad correlacionable sin secretos.
 
-El plugin de observabilidad conserva la clasificación de pruebas y Terraform cuando otro binding antepone contexto al comando: intercambia solo una familia y subcomando validados en memoria, correlacionados por identidad de release, proyecto, sesión y llamada. Nunca registra el comando ni sus argumentos.
-
 Queda **fuera** de esa certificación —discovery disponible, invocación real no ejercitada por el gate—:
 
 - el resto de slash commands publicados y sus pipelines (`/implement`, `/infra-base`, `/scaffold`, `/scaffold-projections`, `/scaffold-mcp`, `/parallel`, `/sequential`, `/merge` y los demás del catálogo de "Qué incluye");

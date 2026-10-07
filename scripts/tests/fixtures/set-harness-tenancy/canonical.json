@@ -1,9 +1,0 @@
-{
-  "projectName": "Ejemplo",
-  "namespacePrefix": "Ejemplo",
-  "solutionFile": "Ejemplo.slnx",
-  "domainLabels": ["ventas"],
-  "boundedContext": {"name": "Principal", "domains": ["ventas"]},
-  "tenancy": {"strategy": "mono-tenant-transitorio", "extra": "preservar"},
-  "other": {"value": true}
-}

@@ -31,12 +31,6 @@ contains "$body" '{{mefisto:command install-apim}}' 'referencia install-apim'
 contains "$body" 'Se va a generar el servidor MCP' 'aviso de lo que se genera'
 contains "$body" 'No generes nada tu mismo' 'regla: no generar'
 contains "$body" 'idempotente' 'regla: idempotente'
-contains "$body" 'Uso: {{mefisto:command scaffold-mcp}} [<proposito>]' 'proposito opcional en la ayuda'
-contains "$body" 'PROPOSITO_PASCAL=General' 'sin argumento usa General'
-contains "$body" 'servidor MCP General del BC' 'resumen previo informa el servidor General'
-contains "$body" 'Mcp.General/' 'detecta Mcp.General existente'
-contains "$body" 'pasa un proposito' 'mensaje de parada indica pasar un proposito'
-absent "$body" 'Consultas/Comandos' 'ayuda sin particion Consultas/Comandos'
 guard_line="$(grep -nF '{{mefisto:assert-consumer-repo}}' "$SOURCE" | cut -d: -f1)"
 usage_line="$(grep -nF 'Uso:' "$SOURCE" | head -1 | cut -d: -f1)"
 config_line="$(grep -nF 'namespacePrefix' "$SOURCE" | head -1 | cut -d: -f1)"
@@ -50,9 +44,9 @@ claude_body="$(< "$CLAUDE")"
 opencode_body="$(< "$OPENCODE")"
 contains "$claude_body" 'model: "haiku"' 'Claude materializa el perfil fast'
 absent "$opencode_body" 'model:' 'OpenCode no emite model'
-contains "$opencode_body" 'subtask: false' 'OpenCode no convierte scaffold-mcp en subtask'
+absent "$opencode_body" 'subtask' 'OpenCode no emite subtask'
 opencode_fm="$(awk 'NR == 1 { next } $0 == "---" { exit } { print }' "$OPENCODE")"
-contains "$opencode_fm" 'agent: "command-entry-scaffold-mcp"' 'OpenCode liga el command-entry de scaffold-mcp en el frontmatter'
+absent "$opencode_fm" 'agent:' 'OpenCode no emite agent en el frontmatter'
 contains "$claude_body" 'agente `mefisto:mcp-scaffolder`' 'Claude delega con la tool Task'
 contains "$opencode_body" 'tool `task` con el agente `mcp-scaffolder`' 'OpenCode delega con la tool task'
 contains "$claude_body" '/mefisto:install-apim' 'Claude resuelve command install-apim'

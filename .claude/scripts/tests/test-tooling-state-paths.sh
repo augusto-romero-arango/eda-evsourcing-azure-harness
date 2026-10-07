@@ -249,7 +249,6 @@ EOF
     printf '.mefisto/\n.claude/pipeline/\n' > "$FAKE_MEFISTO/.gitignore"
     cp "$CANON_LIB" "$FAKE_MEFISTO/src/internal/scripts/lib/_mefisto-common.sh"
     cp "$REPO_ROOT/src/internal/scripts/lib/mefisto-state.sh" "$FAKE_MEFISTO/src/internal/scripts/lib/mefisto-state.sh"
-    cp "$REPO_ROOT/src/internal/scripts/lib/mefisto-test-inventory.sh" "$FAKE_MEFISTO/src/internal/scripts/lib/mefisto-test-inventory.sh"
     # El fixture copia el nucleo completo y no conserva una segunda fuente
     # ejecutable de runtime/modelos/runner bajo src/internal/.
     cp -R "$REPO_ROOT/src/runtime" "$FAKE_MEFISTO/src/runtime"
@@ -528,7 +527,6 @@ else
     echo '{"name":"mefisto","version":"0.0.0"}' > "$H_REPO/.claude-plugin/plugin.json"
     cp "$CANON_LIB" "$H_REPO/src/internal/scripts/lib/_mefisto-common.sh"
     cp "$REPO_ROOT/src/internal/scripts/lib/mefisto-state.sh" "$H_REPO/src/internal/scripts/lib/mefisto-state.sh"
-    cp "$REPO_ROOT/src/internal/scripts/lib/mefisto-test-inventory.sh" "$H_REPO/src/internal/scripts/lib/mefisto-test-inventory.sh"
     cp -R "$REPO_ROOT/src/runtime" "$H_REPO/src/runtime"
     cp "$SHIM_LIB" "$H_REPO/.claude/scripts/_mefisto-common.sh"
     cp "$REPO_ROOT/src/internal/scripts/mefisto-metrics-report.sh" "$H_REPO/src/internal/scripts/mefisto-metrics-report.sh"

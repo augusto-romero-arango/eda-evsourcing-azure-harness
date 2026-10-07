@@ -1,3 +1,0 @@
-{"v":1,"type":"run.started","ts":"2026-10-04T10:30:00Z","runtime":"fake","agent":"mefisto-writer","model":null,"cwd":"/tmp/worktree"}
-{"v":1,"type":"tool.completed","ts":"2026-10-04T10:30:01Z","tool":"Bash","ok":false,"duration_ms":1}
-{"v":1,"type":"run.completed","ts":"2026-10-04T10:30:02Z","status":"success","runtime":"fake","model":null,"session_id":null,"duration_ms":2000,"tokens":{"input":null,"output":null},"estimated_cost_usd":null,"turns":null,"denials":0,"ttft_ms":null,"api_duration_ms":null,"error":null}

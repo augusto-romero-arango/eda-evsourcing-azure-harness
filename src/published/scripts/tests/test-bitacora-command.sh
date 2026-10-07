@@ -45,9 +45,7 @@ for file in "$CLAUDE" "$OPENCODE"; do [ -f "$file" ] && pass "existe ${file#"$RE
 claude_body="$(< "$CLAUDE")"
 opencode_body="$(< "$OPENCODE")"
 contains "$claude_body" 'model: "haiku"' 'Claude materializa el perfil fast'
-absent "$opencode_body" 'model:' 'OpenCode no emite model'
-contains "$opencode_body" 'agent: "command-entry-bitacora"' 'OpenCode liga el command-entry de bitacora'
-contains "$opencode_body" 'subtask: false' 'OpenCode no convierte bitacora en subtask'
+for k in 'model:' 'subtask' 'agent:'; do absent "$opencode_body" "$k" "OpenCode no emite $k"; done
 contains "$claude_body" 'mefisto:historiador' 'Claude delega en mefisto:historiador'
 contains "$opencode_body" 'historiador' 'OpenCode delega en historiador'
 contains "$claude_body" '"${MEFISTO_PACKAGE_ROOT}/commands/merge.md"' 'Claude lee merge'

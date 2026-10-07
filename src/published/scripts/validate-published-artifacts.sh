@@ -71,12 +71,10 @@ EOF
     body_validation="$(awk -v id="$id" -v kind="$artifact_kind" -v rel="$rel" -v declared_skills="$declared_skills" -v available_skills="$available_skills" -v available_commands="$available_commands" '
         function allowed_placeholder(value) {
             if (value == "$ARGUMENTS") return 1
-            if (id == "domain-scaffolder" && value ~ /^\$(1|2|3|AJENOS|CSPROJ|ESPERA|EVENTO|RUN_CONCLUSION|RUN_EVENTO|RUN_RAMA|RUN_REPO|GITHUB_OUTPUT|INTENTOS|INTRUSOS|JOB_STATUS|PENDIENTES|PR_NUM|REPO|REPO_ROOT|RUN|RUN_ID|SECONDS|SHA|TIMEOUT|archivo|destino|f|i|paquete|presupuesto|proj|temporal|version_esperada)$/) return 1
-            if (id == "domain-scaffolder" && (value == "${PR_NUM}" || value == "${REPO}" || value == "${RUN_SHA}" || value == "${TIMEOUT}" || value == "${archivo}")) return 1
+            if (id == "domain-scaffolder" && value ~ /^\$(1|2|3|AJENOS|CSPROJ|ESPERA|GITHUB_OUTPUT|INTENTOS|INTRUSOS|JOB_STATUS|PENDIENTES|PR_NUM|REPO|REPO_ROOT|RUN|RUN_ID|SECONDS|SHA|TIMEOUT|archivo|destino|f|i|paquete|presupuesto|proj|temporal|version_esperada)$/) return 1
+            if (id == "domain-scaffolder" && (value == "${PR_NUM}" || value == "${TIMEOUT}" || value == "${archivo}")) return 1
             if (id == "projection-test-writer" && (value == "$PLUGIN_ROOT" || value == "$HOME" || value == "$2")) return 1
             if (id == "reviewer" && (value == "$PLUGIN_ROOT" || value == "$HOME")) return 1
-            if ((id == "test-writer" || id == "reviewer" || id == "bug-investigator") && value ~ /^\$(ASSEMBLY|CANDIDATES|NUGET_RESOURCES|PACKAGE_ID_LOWER|PACKAGE_VERSION|SELECTED_ASSEMBLY|TFM|WORKTREE_ROOT|candidate|index|root)$/) return 1
-            if (id == "bug-investigator" && value ~ /^\$(1|OLD_ASSEMBLY|NEW_ASSEMBLY)$/) return 1
             if (id == "runtimes" && (value == "$MEFISTO_LIFECYCLE_LAUNCHER" || value == "$MEFISTO_LIFECYCLE_CONFIG_ROOT")) return 1
             if (id == "batch-stop" && value == "$REPO_ROOT") return 1
             if (id == "scaffold-mcp" && value ~ /^\$(\{)?(ROOT_NAMESPACE|SOLUTION_FILE|VERSION|PROPOSITO_PASCAL)(\})?$/) return 1
@@ -92,13 +90,13 @@ EOF
             if (id == "infra-base-scaffolder" && value ~ /^\$\{(APP_ID|PR_NUM|TF_VAR_postgresql_admin_password|delay|environment|project_short|topic_name)\}$/) return 1
             if (id == "workos-identity-scaffolder" && value ~ /^\$(COMPOSICION|CSPROJ|IDENTITY_DIR|PROGRAM_CS|PROYECTO)$/) return 1
             if (id == "apim-gateway-scaffolder" && value ~ /^\$(MCP_TF|PROVIDERS_TF|WORKFLOW)$/) return 1
-            if (id == "mcp-scaffolder" && value ~ /^\$(APP_NAME|BASE|CONFIG|EVENTO|FA_MODULE|FIXTURES|GITHUB_ENV|GITHUB_OUTPUT|PRIMER_DOMINIO_KEBAB|PROJ|PR_NUM|REPO_ROOT|REPO|RESOURCE_GROUP|RUN_CONCLUSION|RUN_EVENTO|RUN_RAMA|RUN_REPO|SECONDS|TENANCY_STRATEGY|VARS|WORKFLOW|azure_region_short|body|code|dominio_kebab|dominio_pascal|dominio_snake|espera|expected_sha|i|key|mcp_id|nombre|presupuesto|proj|proposito_kebab|tiene_region_seq|timeout_peticion|ultimo_cuerpo)$/) return 1
+            if (id == "mcp-scaffolder" && value ~ /^\$(APP_NAME|BASE|CONFIG|EVENTO|FA_MODULE|FIXTURES|GITHUB_ENV|GITHUB_OUTPUT|PRIMER_DOMINIO_KEBAB|PROJ|PR_NUM|REPO_ROOT|RESOURCE_GROUP|RUN_CONCLUSION|RUN_RAMA|SECONDS|TENANCY_STRATEGY|VARS|WORKFLOW|azure_region_short|body|code|dominio_kebab|dominio_pascal|dominio_snake|espera|expected_sha|i|key|mcp_id|nombre|presupuesto|proj|proposito_kebab|tiene_region_seq|timeout_peticion|ultimo_cuerpo)$/) return 1
             if (id == "mcp-scaffolder" && value ~ /^\$\{(APP_NAME|PR_NUM|REPO|RUN_SHA|app_name|azure_region_short|body|code|dominio_kebab|espera|expected_sha|intentos|i|project|proposito_kebab|region_seq_suffix|resource_sequence|startup_logs_url|transcurrido|ultimo_cuerpo)\}$/) return 1
             if (id == "historiador" && value ~ /^\$(0|BRANCH|DIAS_PENDIENTES|FECHA|HISTORIAL|HISTORIAL_CANONICO|f)$/) return 1
             if (id == "historiador" && (value == "${FECHA}" || value == "${FECHA_MAS_RECIENTE}")) return 1
-            if (id == "install-apim" && value ~ /^\$(COMMON|CONFIG|CORS_JSON|ESTRATEGIA|HARNESS_CONFIG_PATH|REPO_ROOT|ROOT_NAMESPACE|SETTER_RESULT|TENANCY_TOKEN_FLIPPED|TMP|s)$/) return 1
+            if (id == "install-apim" && value ~ /^\$(COMMON|CONFIG|CORS_JSON|ESTRATEGIA|HARNESS_CONFIG_PATH|REPO_ROOT|ROOT_NAMESPACE|TENANCY_TOKEN_FLIPPED|TMP|s)$/) return 1
             if (id == "install-apim" && (value == "${ENV}" || value == "${ROOT_NAMESPACE}")) return 1
-            if (id == "onboard" && value ~ /^\$(COMMON|CONFIG|ESTRATEGIA|HARNESS_CONFIG_PATH|REPO_ROOT|SETTER_RESULT|TMP|s)$/) return 1
+            if (id == "onboard" && value ~ /^\$(COMMON|CONFIG|ESTRATEGIA|HARNESS_CONFIG_PATH|REPO_ROOT|TMP|s)$/) return 1
             if (id == "install-auth" && (value == "${ENV}" || value == "${#CORS_ORIGINS[@]}" || value == "$?")) return 1
             if (id == "install-auth" && value ~ /^\$(GH_VAR_RC|GH_SECRET_RC|WORKOS_CLIENT_ID|WORKOS_API_KEY_PRESENTE)$/) return 1
             if (id == "apim-gateway-scaffolder" && (value == "${ENV}" || value == "${origin}")) return 1

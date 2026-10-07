@@ -80,7 +80,7 @@ fail() { echo "  FAIL: $1"; FAIL=$((FAIL+1)); }
 echo "[A] Skills publicados (commands/*.md): guard 'cwd != Mefisto' presente"
 
 PUBLISHED_SKILLS=(
-    autonomy.md batch-stop.md bitacora.md bug.md draft.md eraser-diagram.md fix-review.md health-check.md
+    batch-stop.md bitacora.md bug.md draft.md eraser-diagram.md fix-review.md health-check.md
     implement.md infra.md infra-base.md install-apim.md install-auth.md install-workos.md
     merge.md next-order.md onboard.md parallel.md purge-store.md scaffold.md scaffold-mcp.md
     scaffold-projections.md seed-secret.md sequential.md tooling.md upgrade.md work-status.md
@@ -167,7 +167,7 @@ PUBLISHED_PIPELINES=(
     tooling-pipeline.sh parallel-pipeline.sh batch-pipeline.sh pr-sync.sh
     tdd-pipeline.sh iac-pipeline.sh scaffold-pipeline.sh tmux-pipeline.sh
     appinsights-query.sh setup-github-ci.sh setup-github-labels.sh
-    bootstrap-backend.sh seed-secret.sh set-harness-tenancy.sh onboard-diagnose.sh onboard-migrate-directives.sh purge-store.sh
+    bootstrap-backend.sh seed-secret.sh onboard-diagnose.sh onboard-migrate-directives.sh purge-store.sh
 )
 
 for pipe in "${PUBLISHED_PIPELINES[@]}"; do
@@ -197,7 +197,7 @@ echo "[C2] Scripts auxiliares publicados: el guard aborta cuando se ejecutan en 
 
 AUX_SCRIPTS=(
     appinsights-query.sh setup-github-ci.sh setup-github-labels.sh
-    bootstrap-backend.sh seed-secret.sh set-harness-tenancy.sh onboard-diagnose.sh onboard-migrate-directives.sh update-plugin.sh upgrade.sh
+    bootstrap-backend.sh seed-secret.sh onboard-diagnose.sh onboard-migrate-directives.sh update-plugin.sh upgrade.sh
     purge-store.sh next-order.sh field-note.sh
 )
 

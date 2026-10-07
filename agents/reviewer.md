@@ -164,7 +164,7 @@ Si hay tests fallando al inicio, verifica si existe reporte de bloqueo (paso 2b)
 Si hay tests fallando al inicio, verifica si existe `.mefisto/pipeline/blockage-report.md`.
 
 Si el reporte existe:
-1. **Lee el reporte** — entiende que se intento y por que fallo. Si su "Hipotesis" declara **test defectuoso** (camino corto del implementer, seccion 4b de su agente), verifica primero si el test cae en uno de los casos de la "Excepcion" de abajo antes de gastar intentos sobre la implementacion; si no cae en ninguno, sigue con el paso 2
+1. **Lee el reporte** — entiende que se intento y por que fallo
 2. **Intenta resolver los tests rojos** cambiando SOLO codigo de implementacion (nunca tests)
 3. Tienes **5 intentos enfocados** por cada test bloqueado (misma definicion de "intento" que el implementer: un enfoque distinto deliberado, no un test run incidental)
 4. Si despues de 5 intentos no lo resuelves:
@@ -192,7 +192,7 @@ Si en cambio resolviste el bloqueo (no agotaste 5 intentos), **omite el bloque a
 ```markdown
 ### Resolucion de bloqueo heredado
 
-(Solo cuando aplicaste la excepcion "bugs de framework, contradicciones estructurales del plan o assert de estado sin stream", no cuando agotaste 5 intentos sin resolverlo.)
+(Solo cuando aplicaste la excepcion "bugs de framework o contradicciones estructurales del plan", no cuando agotaste 5 intentos sin resolverlo.)
 
 | Test afectado | Naturaleza del problema | Accion tomada | Donde queda cubierto el CA |
 |---|---|---|---|
@@ -205,7 +205,7 @@ Esta tabla deja trazabilidad de cuando el reviewer actua como resolvedor de bloq
 
 **Importante**: NO modifiques tests para hacerlos pasar. Solo cambia implementaciones.
 
-**Excepcion: bugs de framework, contradicciones estructurales del plan o assert de estado sin stream.** Puedes modificar o eliminar tests en estos casos:
+**Excepcion: bugs de framework o contradicciones estructurales del plan.** Puedes modificar o eliminar tests en estos casos:
 
 1. **Bugs de framework** (caso original): un test usa un overload incorrecto del harness (`Then(evento)` en lugar de `Then(streamId, null, evento)`, o `And<T,P>(selector, valor)` en lugar de `And<T,P>(streamId, selector, valor)`) y el aggregate tiene stream ID compuesto (no GUID). Esto es un **bug en el test**, no una modificacion para hacerlo pasar. Corregir el overload es equivalente a corregir un typo — el intent del test no cambia. En este caso:
    1. Identifica el stream ID correcto (busca `ComputarStreamId` en el aggregate)
@@ -217,9 +217,7 @@ Esta tabla deja trazabilidad de cuando el reviewer actua como resolvedor de bloq
 
 2. **Contradicciones estructurales no resueltas por el test-writer** (caso PR #148): un test en proyecto A que el issue pide modificar para usar API de proyecto B, pero A no puede depender de B; o un test que quedo obsoleto porque el refactor del issue volvio imposible su precondicion (ej. sin `[JsonConstructor]`, STJ vanilla ya no puede deserializar la clase contra MEF-ADR-0012). En estos casos: **elimina el test o reubicalo al proyecto correcto, siempre que los CAs del issue queden cubiertos por otro test** (nuevo o existente). Idealmente esta resolucion la hace el test-writer (regla #19 de su agente) en la fase roja; si no la hizo, te toca a ti como parte del refactor.
 
-3. **Assert de estado sobre un stream que el escenario nunca crea** (caso Bitakora.ControlAsistencia #744): un test con `And<TAggregate,P>(...)` (assert de estado) cuyo `Given` nunca crea ese stream, de modo que el harness falla (ej. `ArgumentNullException('entidad')`) sin importar la implementacion; tipicamente un escenario que espera una excepcion. Corrige el test preservando su intent: retira el assert de estado cuando el escenario espera una excepcion (o agrega al `Given` el evento que crea el stream si el intent era verificar estado). Solo aplica a este defecto del propio test: si el stream si se crea y el assert falla, el defecto es del codigo de produccion y sigue prohibido tocar el test. Confirma con `dotnet test`.
-
-Los tres casos: el intent del test no cambia (o el CA se cubre de otra forma equivalente). Documenta la accion en el reporte bajo "Resolucion de bloqueo heredado" con el formato indicado debajo del bloque "Reporte de bloqueo - Reviewer".
+Ambos casos: el intent del test no cambia (o el CA se cubre de otra forma equivalente). Documenta la accion en el reporte bajo "Resolucion de bloqueo heredado" con el formato indicado debajo del bloque "Reporte de bloqueo - Reviewer".
 
 **Lo que sigue prohibido**: eliminar tests para forzar que pase la suite cuando el codigo de produccion tiene un defecto real, o cuando los CAs no quedan cubiertos por ningun otro test. La excepcion no es licencia para "limpiar" tests legitimos.
 
@@ -325,40 +323,9 @@ MEF-ADR-0034 seccion 6 fija un config-test barato para el worker de proyecciones
 **Por que hace falta decompilar.** El write-side **no** tiene su configuracion completa en el codigo del consumidor: `ComposicionServicios{Dominio}.cs` solo invoca la fachada del paquete (`AgregarWolverineParaComandosServerless`; `UsarWolverineParaComandos` en un host que no sea Functions), y es esa fachada la que por debajo llama a `Commands.MartenEventStoreExtensions.AgregarConfiguracionMartenComandos` -- el metodo que realmente fija los atributos de Marten del write-side. **No busques `AgregarConfiguracionMartenComandos` en `src/`: no esta ahi**, y su ausencia no significa que el dominio no configure Marten. Mismo procedimiento y mismo gotcha de casing que ya documenta `agents/bug-investigator.md` para este mismo paquete (carpeta del cache de NuGet en minusculas, ensamblado en PascalCase, `TargetFramework net10.0`) -- no lo reinventes, solo cambia el objetivo:
 
 ```bash
-    # Resuelve las roots efectivas para ESTE worktree antes de inspeccionar.
-    # No reutilices variables de otra tool call ni inventes una root alternativa.
-    WORKTREE_ROOT="$(git rev-parse --show-toplevel)" || exit 1
-    # El resolver entrega el envelope tambien al fallar cerrado; conserva esa
-    # salida para distinguir resolved de unavailable/conflict.
-    NUGET_RESOURCES="$( MEFISTO_RUNTIME=claude "${MEFISTO_PACKAGE_ROOT}/scripts/resolve-nuget-resources.sh" --worktree-root "$WORKTREE_ROOT" )" || true
-    if [ "$(jq -r '.status // empty' <<< "$NUGET_RESOURCES" 2>/dev/null)" != resolved ]; then
-      printf '%s\n' 'Las roots NuGet estan unavailable o en conflicto; la verificacion queda no verificada.' >&2
-      exit 1
-    fi
-    PACKAGE_ID_LOWER=cosmos.eventsourcing.critterstack
-    PACKAGE_VERSION=<version-del-csproj>
-    TFM=net10.0
-    ASSEMBLY=Cosmos.EventSourcing.CritterStack.dll
-    CANDIDATES=()
-    while IFS= read -r root; do
-      candidate="$root/$PACKAGE_ID_LOWER/$PACKAGE_VERSION/lib/$TFM/$ASSEMBLY"
-      [ -f "$candidate" ] && CANDIDATES+=("$candidate")
-    done < <(jq -r '.roots[].physicalRoot' <<< "$NUGET_RESOURCES")
-    [ "${#CANDIDATES[@]}" -gt 0 ] || {
-      printf '%s\n' "No se encontro $PACKAGE_ID_LOWER/$PACKAGE_VERSION/lib/$TFM/$ASSEMBLY en las roots resueltas; la verificacion queda no verificada." >&2
-      exit 1
-    }
-    SELECTED_ASSEMBLY="${CANDIDATES[0]}"
-    for ((index = 1; index < ${#CANDIDATES[@]}; index++)); do
-      if ! cmp -s "$SELECTED_ASSEMBLY" "${CANDIDATES[$index]}"; then
-        printf 'Conflicto: candidatos NuGet con contenido distinto: %s | %s\n' "$SELECTED_ASSEMBLY" "${CANDIDATES[$index]}" >&2
-        exit 1
-      fi
-    done
-    printf 'Assembly seleccionado: %s\n' "$SELECTED_ASSEMBLY"
-    mkdir -p ".mefisto/pipeline/tmp/reviewer-decompiled"
-    ilspycmd "$SELECTED_ASSEMBLY" -o ".mefisto/pipeline/tmp/reviewer-decompiled"
-grep -n -A 30 "AgregarConfiguracionMartenComandos" ".mefisto/pipeline/tmp/reviewer-decompiled/Cosmos.EventSourcing.CritterStack.decompiled.cs"
+ls ~/.nuget/packages/cosmos.eventsourcing.critterstack/
+ilspycmd ~/.nuget/packages/cosmos.eventsourcing.critterstack/<version-del-csproj>/lib/net10.0/Cosmos.EventSourcing.CritterStack.dll -o /tmp/decompiled-critterstack
+grep -n -A 30 "AgregarConfiguracionMartenComandos" /tmp/decompiled-critterstack/Cosmos.EventSourcing.CritterStack.decompiled.cs
 ```
 
 Ese `grep` es el paso de lectura, no un atajo: `-o` **sin** `-p` deja un unico archivo `<Ensamblado>.decompiled.cs` en el directorio de salida, no un arbol de carpetas por namespace -- no existe ningun `Commands/MartenEventStoreExtensions.cs` que abrir (con `-p` si existe, pero bajo una carpeta por namespace **completo**: `Cosmos.EventSourcing.CritterStack.Commands/MartenEventStoreExtensions.cs`; para leer un metodo no hace falta el proyecto). Esa es la linea base real del write-side, no lo que asumas por memoria.
@@ -515,16 +482,6 @@ MEF-ADR-0038 documenta tres invariantes cuya violacion es silenciosa -- compila,
 Para cada uno de los tres puntos: si el hallazgo no esta declarado como desviacion por el implementer con razon tecnica legitima, corrigelo siguiendo el protocolo estandar (`dotnet test` despues del cambio, revertir si rompe). Si no es trivial corregir, documentalo como hallazgo bloqueante.
 
 **Esto no reemplaza el guardrail de composicion, lo custodia.** MEF-ADR-0038 seccion 4 exige un test de composicion (tecnica hermana de MEF-ADR-0029: construir el grafo real con `BuildServiceProvider` y verificarlo, no confiar en que "se ve bien" en el codigo) que resuelve el `TracerProvider` real, lee por reflection su `Sampler` interno y compara `Sampler.Description` contra el valor esperado en el camino default (`TELEMETRY_SAMPLING_RATIO` no declarada). Ese guardrail vive hoy **solo del lado write**, dentro del mismo test de composicion del dominio que ya exige MEF-ADR-0029: `domain-scaffolder` lo genera como `AgregarServicios{Dominio}_ElSamplerEfectivoNoEsElDelExporterDeAzureMonitor`, `AgregarServicios{Dominio}_ElRatioDefaultLlegaAlSamplerEfectivo`, `AgregarServicios{Dominio}_ApagaLaRecoleccionDeMetricasDeDurabilidad` y, desde #700, `AgregarServicios{Dominio}_DeshabilitaElSamplerDeLogsBasadoEnTrazas` (resuelve `IOptions<AzureMonitorExporterOptions>` del `ServiceProvider` real y afirma `EnableTraceBasedLogsSampler == false`: el valor resuelto, no el texto del seam). Si el diff toca el wiring de OTel o el callback de Wolverine **de un dominio del write-side**, verifica que esos tests **existan** y que no sean vacuos (que realmente comparen el tipo y la `Description` del sampler efectivo y el valor de la bandera, no solo que "no lance excepcion" -- el mismo defecto de test vacuo que MEF-ADR-0029 ya advierte para el config-test del contenedor DI). Si faltan o son vacuos, es hallazgo bloqueante: la evidencia de campo (PRs #311/#312 del consumidor) es lo que sostiene que el guardrail real es este test de composicion, no la lectura visual del wiring. **Del lado del worker el equivalente tambien existe** (#513): `projections-scaffolder` genera `ConfiguracionObservabilidadProjectionsTests` con `ConfigurarObservabilidad_ElSamplerEfectivoNoEsElDelExporterDeAzureMonitor`, `ConfigurarObservabilidad_ElRatioDefaultLlegaAlSamplerEfectivo`, `SamplerQueDescartaPollingDelDaemon_ElSpanFiltradoCoincideConElOtelPrefixDeMarten` (el nombre del span comparado en vivo contra `new StoreOptions().Projections.OtelPrefix`, no contra un literal) y `SamplerQueDescartaPollingDelDaemon_DescartaElSpanDelDaemonYNoInstanciaElHijoNpgsql_PeroConservaLaProyeccionReal` (cascada real contra el SDK: el hijo Npgsql no se instancia y el span de proyeccion real sobrevive) y, desde #680, `ConfigurarObservabilidad_DeshabilitaElSamplerDeLogsBasadoEnTrazas` (resuelve `IOptions<AzureMonitorExporterOptions>` del `ServiceProvider` real y afirma `EnableTraceBasedLogsSampler == false`: el valor resuelto, no el texto del seam). Si el diff toca el seam del worker, exigelos con el mismo criterio -- que existan y no sean vacuos.
-
-#### Publicacion sin registro: `PublishAsync` de un evento sin `PublicarEventoServerless<T>` (MEF-ADR-0024 decision 7, MEF-ADR-0029)
-
-**El gate**: corre esta verificacion si `git diff main...HEAD` **agrega** lineas con `PublishAsync` sobre un `IPrivateEventSender` o `IPublicEventSender` (directo o via `GetPrivateEvents()`/lista de eventos). A diferencia de los gates de `ComposicionServicios*` de arriba, este se dispara justo cuando el diff **no** toca la composicion: el modo de falla es agregar el `PublishAsync` y olvidar el registro, y Wolverine descarta el mensaje en silencio en runtime (sin excepcion, sin dead-letter; casos `AusenciaDiariaCancelada` y `CancelacionTurnoDiarioSolicitada` en Bitakora.ControlAsistencia). Si el diff no agrega ninguna de esas lineas: fila `n/a` en el checklist (paso 8).
-
-1. **Identifica cada tipo de evento publicado** en las lineas agregadas (resuelve el tipo concreto de lo que se pasa a `PublishAsync`, incluidos los eventos que produce `GetPrivateEvents()` en ese handler).
-2. **Verifica el registro en el arbol resultante, no solo en el diff** (el evento pudo registrarse antes): cada tipo debe tener su `PublicarEventoServerless<T>` en `ComposicionServicios{Dominio}.cs`. Si el dominio tiene la lista declarativa `Infraestructura/EnrutamientoEventos{Dominio}.cs` (#1804), verifica el tipo en esa lista (alimenta las lineas de la composicion y su test de composicion falla nombrando el tipo faltante); si no la tiene, verifica las lineas sueltas. Funciona con cualquiera de las dos formas.
-3. **Un tipo sin registro es hallazgo bloqueante que corriges tu**: agrega la linea (y la entrada de la lista, si existe) en el broker correcto -- `IPrivateEvent` al broker interno, `IPublicEvent` al backbone nombrado (misma regla de enrutamiento de `agents/implementer.md`) -- y corre `dotnet test`.
-4. **Infra del `IPrivateEvent`**: verifica que el topic exista en `topics_config` de `module "service_bus_interno"` (`infra/environments/dev/main.tf`) con la suscripcion `smoke-tests`. Si falta el topic o su suscripcion, agregalo tu al `topics_config` (mismo criterio que la regla de suscripcion `smoke-tests` de arriba) y reportalo como hallazgo corregido.
-5. **Infra del `IPublicEvent`**: el backbone es compartido y no se provisiona desde el BC; verifica que el resumen del implementer documente la necesidad de topic/suscripcion en el backbone. Si no la documenta, es hallazgo.
 
 ---
 
@@ -791,7 +748,6 @@ Si el implementer cito precedentes del codigo en su resumen de fase verde, verif
 | Identidad de stream (MEF-ADR-0037): `ToString()` sin formato explicito, punto unico via `ComputarStreamId`, GET con parseo tipado del segmento de ruta (n/a si el diff no toca una identidad de stream) | ok / falla / n/a | ... |
 | Contrato HTTP de comandos (MEF-ADR-0043): verbo segun test de precedencia, ruta kebab-case, ids URL-safe (charset unreserved) + politica de aceptacion de codigos de negocio en ruta, PATCH ausente, `Route` explicito, verbo declarado en Functions que comparten segmento, codigo de exito conforme al paso aplicable (201/204/200, `202` solo con justificacion explicita), coincidencia con el contrato pactado en el issue -- incluido el codigo de exito -- y no-op de PUT/DELETE nuevo o migrado (estado ya alcanzado declarado; mismo exito sin evento, publicacion ni excepcion; unit tests con cero efectos y estado inalterado; smoke con segundo intento y cero efectos correlacionados) (n/a si el diff no crea un endpoint HTTP de comando ni pacta la migracion de uno preexistente; un preexistente solo tocado nunca es bloqueante, salvo que el issue haya pactado explicitamente migrar su codigo de exito o no-op) | ok / falla / n/a | ... |
 | Control de volumen de telemetria (MEF-ADR-0038): orden `SetSampler`/`UseAzureMonitorExporter()`, `ParentBasedSampler` del worker, `DurabilityMetricsEnabled`/`Mode` del write-side (n/a si el diff no toca los seams de observabilidad ni el callback de Wolverine) | ok / falla / n/a | ... |
-| Publicacion con registro (MEF-ADR-0024 decision 7): cada evento de un `PublishAsync` agregado tiene su `PublicarEventoServerless<T>` en `ComposicionServicios{Dominio}` (o en la lista `EnrutamientoEventos{Dominio}`), topic + suscripcion `smoke-tests` en `service_bus_interno` si es `IPrivateEvent`, necesidad documentada en el backbone si es `IPublicEvent` (n/a si el diff no agrega ningun `PublishAsync` sobre `IPrivateEventSender`/`IPublicEventSender`) | ok / falla / n/a | ... |
 | Limpieza de comentarios (MEF-ADR-0044): umbral doble aplicado sobre los `.cs` del diff, behavior-preserving, frontera al diff propio, precedencia de citas a ADR respetada (n/a si el diff no toca ningun `.cs`) | ok / n/a | ... |
 | Tests via ToString/comportamiento | ok / falla / n/a | ... |
 | Sin numeros magicos | ok / falla / n/a | ... |

@@ -18,8 +18,8 @@ absent() { case "$1" in *"$2"*) fail "$3" ;; *) pass "$3" ;; esac; }
 echo '[a] metadata y perfil'
 if bash "$REPO_ROOT/src/published/scripts/validate-published-artifacts.sh" "$SOURCE" >/dev/null; then pass 'la fuente valida'; else fail 'la fuente no valida'; fi
 metadata="$(awk 'NR == 1 { next } $0 == "---" { exit } { print }' "$SOURCE")"
-if printf '%s' "$metadata" | jq -e '.kind == "agent" and .id == "mcp-scaffolder" and .mode == "all" and .profile == "balanced" and .capabilities == ["read","edit","shell","web"] and (has("mcp") | not)' >/dev/null; then
-    pass 'metadata agent/mcp-scaffolder/all/balanced/read-edit-shell-web sin mcp'
+if printf '%s' "$metadata" | jq -e '.kind == "agent" and .id == "mcp-scaffolder" and .mode == "all" and .profile == "balanced" and .capabilities == ["read","edit","shell"] and (has("mcp") | not)' >/dev/null; then
+    pass 'metadata agent/mcp-scaffolder/all/balanced/read-edit-shell sin mcp'
 else
     fail 'metadata neutral invalida'
 fi
@@ -28,36 +28,6 @@ contains "$body" '{{mefisto:assert-consumer-repo}}' 'guard consumidor presente'
 contains "$body" '{{mefisto:config-path}}' 'lee el config via config-path'
 contains "$body" '{{mefisto:instructions-path}}' 'lee los tokens via instructions-path'
 contains "$body" '{{mefisto:command onboard}}' 'remite al contrato via command onboard'
-
-echo '[fuentes] reverificacion condicional de pines'
-SOURCE_FIXTURE="$HERE/fixtures/mcp-scaffolder-sources/cases.json"
-if jq -e '
-    .schemaVersion == 1 and (.cases | length) == 5 and
-    any(.cases[]; .id == "local-pins-intactos" and .expected == "sin-red-extra") and
-    any(.cases[]; .id == "nuget-pin-exacto" and .tool == "WebFetch" and .requiredVersion == "1.6.0" and .latestAbsolute == "1.7.0" and (.fetchedUrl | endswith("/microsoft.azure.functions.worker.extensions.mcp/index.json")) and .expected == "adoptar-1.6.0") and
-    any(.cases[]; .id == "nuget-nuspec-exacto" and .tool == "WebFetch" and .requiredVersion == "1.6.0" and (.fetchedUrl | endswith("/1.6.0/microsoft.azure.functions.worker.extensions.mcp.1.6.0.nuspec")) and .expected == "dependencias-de-1.6.0") and
-    any(.cases[]; .id == "oauth-versionado" and .tool == "WebFetch" and .queryTerms == ["WorkOS AuthKit","v1.2.3","OAuth"] and .requiredVersion == "v1.2.3" and .latestAbsolute == "v2.0.0" and (.fetchedUrl | endswith("/tree/v1.2.3")) and .expected == "adoptar-v1.2.3") and
-    any(.cases[]; .id == "fuente-ausente" and .expected == "NO VERIFICADO") and
-    all(.cases[]; all(.queryTerms[]?; IN("WorkOS AuthKit", "v1.2.3", "OAuth"))) and
-    all(.cases[]; ((.queryTerms // []) | join(" ") | test("client_id|secret|key|token|https?://"; "i") | not))
-' "$SOURCE_FIXTURE" >/dev/null 2>&1; then
-    pass 'fixture separa flujo local, index, nuspec, OAuth versionado y fuente ausente'
-else
-    fail 'fixture de reverificacion de mcp-scaffolder incompleta'
-fi
-for statement in \
-    'no consultes red por defecto y conserva el flujo existente' \
-    'fuente publica oficial de **esa version requerida**' \
-    'la evidencia la aporta WebFetch sobre la pagina, tag o archivo oficial que identifica esa version' \
-    'para comprobar que contiene el pin exacto' \
-    'para probar las dependencias de esa misma version' \
-    'no de su pagina `latest`' \
-    'nunca `client_id`, secretos, keys, URLs privadas, tokens, configuracion ni payloads del BC' \
-    'informa **NO VERIFICADO** y deja como propuesta sin aprobar el cambio dependiente' \
-    'no sustituyas la consulta con `curl` ni con un MCP generico' \
-    'no autoriza configurar auth ni promete disponibilidad efectiva'; do
-    contains "$body" "$statement" "conserva la regla de fuente: $statement"
-done
 
 echo '[b] ausencia de acoplamientos'
 absent "$body" '.claude/harness.config.json' 'sin config legacy'
@@ -70,35 +40,11 @@ claude_body="$(< "$CLAUDE")"
 opencode_body="$(< "$OPENCODE")"
 contains "$claude_body" 'name: "mcp-scaffolder"' 'Claude expone el id'
 contains "$claude_body" 'model: "sonnet"' 'Claude materializa balanced como sonnet'
-contains "$claude_body" 'tools: "Read, Glob, Grep, Edit, Write, Bash, WebFetch, WebSearch"' 'Claude suma solo el par web'
 absent "$opencode_body" 'model:' 'OpenCode no emite model'
-contains "$opencode_body" '"webfetch":"allow"' 'OpenCode permite webfetch solo en este agente'
-contains "$opencode_body" '"websearch":"allow"' 'OpenCode permite websearch solo en este agente'
 for text_var in claude_body opencode_body; do
     text="${!text_var}"
     absent "$text" 'export MEFISTO_INSTRUCTIONS_PATH="AGENTS.md"' "$text_var sin resolucion manual fija"
 done
-
-echo '[identidad] identidad derivada del token (issue #1934)'
-contains "$body" 'internal async Task Ejecutar(' 'CA-1/2: IdentidadTenantMcpMiddleware con nucleo testeable'
-contains "$body" 'tool.TryGetHttpTransport(out var transporte)' 'CA-1: lee el Bearer del transporte de ToolInvocationContext'
-contains "$body" 'DerivadorIdentidadTenantMcp' 'CA-1: derivador org_id/sub'
-contains "$body" 'builder.UseMiddleware<IdentidadTenantMcpMiddleware>();' 'CA-1: Program.cs registra el middleware de identidad'
-contains "$body" 'despues de AutorizacionMcpMiddleware' 'CA-1: orden tras AutorizacionMcpMiddleware'
-contains "$body" '<ProjectReference Include="..\<RootNamespace>.TenantResolver\' 'CA-1: ProjectReference a TenantResolver'
-contains "$body" 'public async Task<ClaimsPrincipal?> ValidarAsync(' 'CA-1: validador expone el ClaimsPrincipal'
-contains "$body" 'TenantExecutionContext.SetDerivedIdentity(' 'CA-2: publica identidad ambiente'
-contains "$body" 'items[SesionUsuario.ClaveEnContexto]' 'CA-2: publica la sesion'
-contains "$body" 'ErrorTokenSinOrganizacionOUsuario' 'CA-2: rechazo con mensaje resx'
-contains "$body" 'Fallback explicito del camino SIN Bearer' 'CA-3: fallback explicito'
-absent "$body" 'TODO(tenancy etapa b' 'CA-3: sin TODO de identidad derivada'
-absent "$body" 'llegan a este worker SIN header Authorization' 'CA-3: ya no afirma que el Authorization nunca llega'
-contains "$body" 'internal const string NombreTool = "obtener_sesion";' 'CA-4: tool obtener_sesion'
-contains "$body" '"tenant_fijo"' 'CA-4: origen tenant_fijo'
-contains "$body" 'Ejecutar_PublicaIdentidadAmbienteYSesion_CuandoElBearerEsValido' 'CA-5: test del middleware publica identidad y sesion'
-contains "$body" 'Ejecutar_Rechaza_CuandoElTokenNoTraeOrgIdOSub' 'CA-5: rechazo sin org_id/sub'
-contains "$body" 'ObtenerSesionTool.NombreTool' 'CA-5: composicion pinnea obtener_sesion'
-contains "$body" 'ObtenerSesion_Responde_TenantFijo_CuandoSeInvocaConSystemKeySinBearer' 'CA-6: smoke obtener_sesion'
 
 echo '[c] cada comando ejecutable casa una regla allow de OpenCode'
 permission="$(awk 'NR == 1 { next } /^permission: / { sub(/^permission: /, ""); print; exit }' "$OPENCODE")"
@@ -112,7 +58,7 @@ while IFS= read -r cmd; do
     [ -n "$cmd" ] || continue
     if allowed "$cmd"; then pass "allow casa: $cmd"; else fail "ninguna regla allow casa: $cmd"; fi
 done <<< "$commands"
-for sample in 'terraform fmt -recursive ../..' 'terraform validate' 'terraform init -backend=false' 'dotnet build' 'dotnet test' 'sed -n 1p x' 'mkdir -p x' 'git rev-parse --show-toplevel' 'awk -F- x' 'test -f x'; do
+for sample in 'terraform fmt -check' 'terraform validate' 'terraform init -backend=false' 'dotnet build' 'dotnet test' 'sed -n 1p x' 'mkdir -p x' 'git rev-parse --show-toplevel' 'awk -F- x' '[ -f x ]'; do
     if allowed "$sample"; then pass "bash permite '$sample'"; else fail "bash no permite '$sample'"; fi
 done
 

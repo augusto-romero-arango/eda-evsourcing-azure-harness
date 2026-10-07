@@ -1156,30 +1156,7 @@ Cuando implementas un handler que publica eventos (usando `IPublicEventSender` o
 | `IPrivateEvent` | `IPrivateEventSender` | `PublicarEventoServerless<T>(topic)` → broker default | `module "service_bus_interno"` |
 | `IPublicEvent` | `IPublicEventSender` | `PublicarEventoServerless<T>("<alias>", topic)` → broker nombrado (backbone compartido) | Ninguno — el backbone lo administra infra, fuera del alcance del Terraform de este BC |
 
-El criterio de enrutamiento del topic (a que broker va) esta ligado al registro que la composicion de servicios (`AgregarServicios{Dominio}` en `ComposicionServicios{Dominio}.cs`, MEF-ADR-0029) hace de ese evento: coherencia publish<->mapeo<->infra (MEF-ADR-0024 decision #7). **Ese registro es por evento y lo escribe el implementer.** Al nacer el dominio no existe ningun evento: el `domain-scaffolder` deja vacia la lista declarativa `EnrutamientoEventos{Dominio}.EventosPublicados` (`Infraestructura/` del Function App), que alimenta el callback de Wolverine; ningun evento queda enrutado por el scaffold.
-
-**Registro obligatorio por cada evento publicado.** Cuando un handler publica un evento (nuevo o reutilizado) via `IPrivateEventSender`/`IPublicEventSender`, verifica en `AgregarServicios{Dominio}` (`ComposicionServicios{Dominio}.cs`) que exista su registro dentro del callback de Wolverine y, si falta, agregalo:
-
-```csharp
-// IPrivateEvent -> broker default (namespace interno del BC)
-options.PublicarEventoServerless<TurnoCreado>("turno-creado");
-// IPublicEvent -> broker nombrado (alias del backbone compartido declarado en serviceBus.external, en minusculas)
-options.PublicarEventoServerless<EmpleadoAsignado>("cosmos", "empleado-asignado");
-```
-
-**Donde va el registro:** si el dominio tiene `EnrutamientoEventos{Dominio}` (scaffold posterior a #1804), cada evento publicado nuevo se agrega como entrada de `EventosPublicados` (`EventoPublicado.Privado<T>(topic)` / `EventoPublicado.Publico<T>(clave, topic)`), nunca como linea suelta en el callback; ver la plantilla del punto 6a-bis del `domain-scaffolder` y sus guardrails en `ComposicionContenedorTests`. Sin esa lista, la linea va directa en el callback como arriba.
-
-Registra siempre por tipo: **no** uses `PublicarEventosServerless(Assembly)` completo -- captura `IPrivateEvent` e `IPublicEvent` juntos y los enruta al mismo broker (ver el aviso en la plantilla de `ComposicionServicios{Dominio}` del `domain-scaffolder`).
-
-**Por que no es opcional:** `PublishAsync` sobre un tipo sin ruta **no lanza**. Wolverine descarta el mensaje en silencio, el handler termina sin error y el endpoint responde exito (p. ej. 204); el fallo solo aparece aguas abajo (smoke tests post-merge, consumidores que nunca reciben el evento). Que el tipo del evento y su topic **ya existan** -- por ejemplo, porque el consumidor se implemento antes en otro issue -- **no implica** que el productor tenga ruta: el registro es del lado productor y se verifica en cada issue que publica.
-
-**El trio es una unidad que se completa en el mismo issue** (MEF-ADR-0024 decision #7):
-
-1. La llamada a `PublishAsync` en el handler.
-2. El registro `PublicarEventoServerless<T>(...)` en `ComposicionServicios{Dominio}` (via su entrada en `EnrutamientoEventos{Dominio}` si la lista existe).
-3. El topic: en `topics_config` de `module "service_bus_interno"` para `IPrivateEvent`; para `IPublicEvent`, la necesidad documentada en la seccion "Infraestructura modificada" del resumen si el topic del backbone aun no existe.
-
-Ninguno de los tres se difiere a otro issue.
+El criterio de enrutamiento del topic (a que broker va) esta ligado al registro que la composicion de servicios (`AgregarServicios{Dominio}` en `ComposicionServicios{Dominio}.cs`, MEF-ADR-0029) hace de ese evento: coherencia publish<->infra (MEF-ADR-0024 decision #7). El `domain-scaffolder` genera ese registro al crear el dominio; el implementer no lo toca, solo respeta el broker que corresponde al tipo del evento.
 
 **Wolverine en modo serverless NO auto-provisiona topics** (SendInline). El namespace interno del BC es always-on (lo crea la infra base, `infra-base-scaffolder`); sus topics se agregan JIT por flujo aqui (MEF-ADR-0001, MEF-ADR-0024). El backbone compartido ya existe (lo provisiona infra, fuera de este repo): sus topics tambien se agregan JIT por flujo, pero no via el Terraform de este BC — ver mas abajo.
 
@@ -1290,10 +1267,6 @@ Itera hasta que todos los tests pasen. Lee los mensajes de error de AwesomeAsser
 
 ### 4b. Deteccion de bloqueo
 
-#### Aviso de tests preexistentes en rojo
-
-Al empezar, si existe `{{mefisto:state-path preexisting-red-warning.md}}`, leelo: lista tests que ya existian antes del test-writer, quedaron en rojo y el test-writer no modifico (hipotesis: pin o test preexistente que debia actualizarse, o stub sobre codigo existente). Los que pasen a verde al implementar no requieren accion. Los que sigan rojos tras implementar lo que el issue pide se escalan por el **camino corto** (abajo) con `blockage-report.md`, sin gastar los 5 intentos y sin modificar el test: en "Hipotesis" marca **test defectuoso** y cita el aviso del Gate 1b como evidencia (pin preexistente que el test-writer no actualizo). Si el rojo es por un stub sobre un metodo existente, implementarlo es tu trabajo normal y no aplica el camino corto.
-
 #### Que es un intento
 
 Un **intento** cuenta solo cuando **deliberadamente enfocas tu trabajo en resolver un test especifico**, cambias la implementacion con un enfoque distinto para hacerlo pasar, y el test sigue fallando.
@@ -1351,20 +1324,7 @@ una limitacion del framework, o un malentendido del requisito]
 
 4. **Termina normalmente** (exit 0). No es un error — es un yield controlado.
 
-#### Camino corto: test defectuoso diagnosticado de entrada
-
-Si diagnosticas que un test esta mal planteado (no "no se como hacerlo pasar"; ej. un `And<TAggregate,...>` sobre un stream que el `Given` del escenario nunca crea, de modo que el harness falla antes de evaluar tu implementacion), **no agotes los 5 intentos**: escribe `{{mefisto:state-path blockage-report.md}}` de inmediato, con el formato de arriba, y:
-
-- En "Hipotesis", marca explicitamente **test defectuoso** y explica por que el test es el que esta mal.
-- En "Tests bloqueados", pon el test y el error literal; en "Intentos enfocados" el numero real (puede ser 0).
-- En "Enfoques intentados", la evidencia: que asserta el test, que crea (o no) el escenario y por que ningun cambio en produccion puede ponerlo verde.
-- Sigue sin modificar el test. Haz commit del progreso parcial y termina normalmente (exit 0).
-
-**La unica senal valida de un test defectuoso es `blockage-report.md`.** Senalarlo solo en el resumen de stage (una seccion tipo "Test defectuoso" u otra prosa) esta prohibido: el gate del pipeline no lee el resumen, no continua al reviewer y el pipeline aborta. No confundir con `## Issue incompleto` (primera linea canonica, detiene el pipeline sin reviewer): este camino usa el reporte de tests bloqueados, que si continua al reviewer.
-
 ### 5. Verificar infraestructura (si aplica)
-
-Si el handler publica un evento (privado o publico), verifica primero que `ComposicionServicios{Dominio}` registra `PublicarEventoServerless<T>(...)` para ese tipo con el broker que le corresponde, y agregalo si falta (seccion "Infraestructura (topics y subscriptions)", trio publish/mapeo/topic).
 
 Si el handler publica un evento privado (`IPrivateEventSender`), verifica que el topic y las subscriptions existen en `infra/environments/dev/main.tf`, bloque `topics_config` de `module "service_bus_interno"`. Agrega lo que falte segun la tabla de enrutamiento de la seccion "Infraestructura (topics y subscriptions)". Si el handler publica un evento publico (`IPublicEventSender`), el topic/subscription vive en el backbone compartido, fuera del Terraform de este repo: si detectas que falta, documentalo en tu resumen de decisiones para seguimiento administrativo — no lo agregues a ningun archivo de este repo.
 
@@ -1427,7 +1387,6 @@ Si no hay desviaciones, escribe explicitamente "Ninguna desviacion — todos los
 
 ### Infraestructura modificada
 - [Topics y subscriptions agregados, o "ninguna" si no aplica]
-- [Si el issue publica eventos: por cada evento, el registro `PublicarEventoServerless<T>(...)` en `ComposicionServicios{Dominio}` (agregado o ya existente) y su topic (agregado en `topics_config`, ya existente o necesidad del backbone documentada)]
 
 ### Complejidad encontrada
 - [Problemas que surgieron y como se resolvieron]

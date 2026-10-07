@@ -52,8 +52,8 @@ claude_body="$(< "$CLAUDE")"
 opencode_body="$(< "$OPENCODE")"
 contains "$claude_body" 'model: "sonnet"' 'Claude materializa el perfil balanced'
 absent "$opencode_body" 'model:' 'OpenCode no emite model'
-contains "$opencode_body" 'agent: "command-entry-install-workos"' 'OpenCode liga el command-entry de install-workos'
-contains "$opencode_body" 'subtask: false' 'OpenCode no convierte install-workos en subtask'
+absent "$opencode_body" 'subtask' 'OpenCode no emite subtask'
+absent "$opencode_body" 'agent:' 'OpenCode no emite agent'
 contains "$claude_body" 'agente `mefisto:workos-identity-scaffolder`' 'Claude delega puntualmente en mefisto:workos-identity-scaffolder'
 contains "$opencode_body" 'agente `workos-identity-scaffolder`' 'OpenCode delega puntualmente en workos-identity-scaffolder'
 contains "$claude_body" 'MEFISTO_RUNTIME=claude "${MEFISTO_PACKAGE_ROOT}/scripts/seed-secret.sh" workos-api-key' 'Claude invoca seed-secret.sh con su runtime'
