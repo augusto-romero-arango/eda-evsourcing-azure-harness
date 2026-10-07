@@ -45,7 +45,7 @@ fail() { echo "  FAIL: $1"; FAIL=$((FAIL+1)); }
 
 assert_contains() {
     local desc="$1" haystack="$2" needle="$3"
-    if printf '%s' "$haystack" | grep -qF -- "$needle"; then
+    if grep -qF -- "$needle" <<<"$haystack"; then
         pass "$desc"
     else
         fail "$desc -- no se encontro: '$needle'"
@@ -54,7 +54,7 @@ assert_contains() {
 
 assert_not_contains() {
     local desc="$1" haystack="$2" needle="$3"
-    if printf '%s' "$haystack" | grep -qF -- "$needle"; then
+    if grep -qF -- "$needle" <<<"$haystack"; then
         fail "$desc -- se encontro indebidamente: '$needle'"
     else
         pass "$desc"
@@ -69,13 +69,6 @@ assert_eq() {
         fail "$desc -- se esperaba '$expected', fue '$actual'"
     fi
 }
-
-echo "[pre] El visor tmux sigue ambas raices de estado sin escribir en la legacy"
-TMUX_SOURCE=$(cat "$TMUX_SCRIPT")
-assert_contains "usa tail -F para seguir archivos rotados" "$TMUX_SOURCE" "tail -F"
-assert_contains "el tail sigue canonica y legacy, en ese orden" "$TMUX_SOURCE" "tail -F '\$EVENTS_LOG' '\$EVENTS_LOG_LEGACY'"
-assert_contains "ensure_events_log crea solo la ruta canonica" "$TMUX_SOURCE" "touch \"\$(mefisto_state_path 'events.log')\""
-assert_not_contains "no codifica .claude/pipeline en el visor" "$TMUX_SOURCE" ".claude/pipeline"
 
 # --- Consumidor falso + stubs de tmux, gh y sleep ---
 FAKE_CONSUMER="$(mktemp -d)"
@@ -152,6 +145,7 @@ run_parallel_capture() {
     local out="$TMP_DIR/stdout" err="$TMP_DIR/stderr"
     (
         cd "$FAKE_CONSUMER" || exit 99
+        unset MEFISTO_STATE_DIR MEFISTO_LEGACY_STATE_DIR MEFISTO_REPO_ROOT MEFISTO_MODELS_FILE
         PATH="$FAKE_BIN:$PATH" "$TMUX_SCRIPT" "$@"
     ) </dev/null >"$out" 2>"$err"
     RUN_RC=$?
@@ -192,6 +186,19 @@ assert_eq "lote de 2 tooling: exit 0" "0" "$RUN_RC"
 assert_contains "crea la sesion tmux" "$STUB_CALLS" "new-session"
 assert_eq "abre exactamente 2 panes (uno por issue)" "2" "$(grep -c "^tmux split-window" <<< "$STUB_CALLS")"
 assert_contains "mensaje de exito con ambos issues" "$RUN_OUT" "Pipeline paralelo iniciado: issues 42 43"
+
+# Visor: sigue canonica y legacy (en ese orden) sin escribir en la legacy.
+TAIL_LINE="$(grep -F 'tail -F' <<<"$STUB_CALLS" | head -n1)"
+CONSUMER_REAL="$(cd "$FAKE_CONSUMER" && pwd -P)"
+EXPECTED_TAIL="tail -F '$FAKE_CONSUMER/.mefisto/pipeline/events.log' '$FAKE_CONSUMER/.claude/pipeline/events.log'"
+EXPECTED_TAIL_REAL="tail -F '$CONSUMER_REAL/.mefisto/pipeline/events.log' '$CONSUMER_REAL/.claude/pipeline/events.log'"
+if grep -qF -- "$EXPECTED_TAIL" <<<"$TAIL_LINE" || grep -qF -- "$EXPECTED_TAIL_REAL" <<<"$TAIL_LINE"; then
+    pass "el visor sigue canonica y legacy con tail -F, en ese orden"
+else
+    fail "el visor sigue canonica y legacy con tail -F, en ese orden -- linea: '$TAIL_LINE'"
+fi
+[ -f "$FAKE_CONSUMER/.mefisto/pipeline/events.log" ] && pass "se crea events.log canonico" || fail "no se creo .mefisto/pipeline/events.log"
+[ ! -e "$FAKE_CONSUMER/.claude/pipeline/events.log" ] && pass "no se escribe events.log legacy" || fail "se creo .claude/pipeline/events.log"
 
 # --- Resumen ---
 echo ""
