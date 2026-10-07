@@ -29,6 +29,11 @@ jobs:
     env:
       # Paridad con la ejecucion real: la suite corre dentro de un pipeline que fija el runtime.
       MEFISTO_RUNTIME: claude
+      # Umbrales de rendimiento holgados para el runner macOS, que es mas lento que local.
+      # Nightly 2026-10-05 (run 37344502403): fixture de 160 assets --check 38s (default 20s)
+      # y corrida completa del gate de neutralidad 85s (default 60s). Local conserva los defaults.
+      MEFISTO_ASSETS_PERF_LIMIT: "90"
+      MEFISTO_NEUTRALITY_PERF_LIMIT: "180"
     steps:
       - uses: actions/checkout@v4
 
