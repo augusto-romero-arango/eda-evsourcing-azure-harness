@@ -1169,7 +1169,28 @@ Cuando implementas un handler que publica eventos (usando `IPublicEventSender` o
 | `IPrivateEvent` | `IPrivateEventSender` | `PublicarEventoServerless<T>(topic)` → broker default | `module "service_bus_interno"` |
 | `IPublicEvent` | `IPublicEventSender` | `PublicarEventoServerless<T>("<alias>", topic)` → broker nombrado (backbone compartido) | Ninguno — el backbone lo administra infra, fuera del alcance del Terraform de este BC |
 
-El criterio de enrutamiento del topic (a que broker va) esta ligado al registro que la composicion de servicios (`AgregarServicios{Dominio}` en `ComposicionServicios{Dominio}.cs`, MEF-ADR-0029) hace de ese evento: coherencia publish<->infra (MEF-ADR-0024 decision #7). El `domain-scaffolder` genera ese registro al crear el dominio; el implementer no lo toca, solo respeta el broker que corresponde al tipo del evento.
+El criterio de enrutamiento del topic (a que broker va) esta ligado al registro que la composicion de servicios (`AgregarServicios{Dominio}` en `ComposicionServicios{Dominio}.cs`, MEF-ADR-0029) hace de ese evento: coherencia publish<->mapeo<->infra (MEF-ADR-0024 decision #7). **Ese registro es por evento y lo escribe el implementer.** Al nacer el dominio no existe ningun evento, asi que la plantilla del `domain-scaffolder` solo deja comentarios-guia dentro del callback de Wolverine; ningun evento queda enrutado por el scaffold.
+
+**Registro obligatorio por cada evento publicado.** Cuando un handler publica un evento (nuevo o reutilizado) via `IPrivateEventSender`/`IPublicEventSender`, verifica en `AgregarServicios{Dominio}` (`ComposicionServicios{Dominio}.cs`) que exista su registro dentro del callback de Wolverine y, si falta, agregalo:
+
+```csharp
+// IPrivateEvent -> broker default (namespace interno del BC)
+options.PublicarEventoServerless<TurnoCreado>("turno-creado");
+// IPublicEvent -> broker nombrado (alias del backbone compartido declarado en serviceBus.external)
+options.PublicarEventoServerless<EmpleadoAsignado>("COSMOS", "empleado-asignado");
+```
+
+Registra siempre por tipo: **no** uses `PublicarEventosServerless(Assembly)` completo -- captura `IPrivateEvent` e `IPublicEvent` juntos y los enruta al mismo broker (ver el aviso en la plantilla de `ComposicionServicios{Dominio}` del `domain-scaffolder`).
+
+**Por que no es opcional:** `PublishAsync` sobre un tipo sin ruta **no lanza**. Wolverine descarta el mensaje en silencio, el handler termina sin error y el endpoint responde exito (p. ej. 204); el fallo solo aparece aguas abajo (smoke tests post-merge, consumidores que nunca reciben el evento). Que el tipo del evento y su topic **ya existan** -- por ejemplo, porque el consumidor se implemento antes en otro issue -- **no implica** que el productor tenga ruta: el registro es del lado productor y se verifica en cada issue que publica.
+
+**El trio es una unidad que se completa en el mismo issue** (MEF-ADR-0024 decision #7):
+
+1. La llamada a `PublishAsync` en el handler.
+2. El registro `PublicarEventoServerless<T>(...)` en `ComposicionServicios{Dominio}`.
+3. El topic: en `topics_config` de `module "service_bus_interno"` para `IPrivateEvent`; para `IPublicEvent`, la necesidad documentada en la seccion "Infraestructura modificada" del resumen si el topic del backbone aun no existe.
+
+Ninguno de los tres se difiere a otro issue.
 
 **Wolverine en modo serverless NO auto-provisiona topics** (SendInline). El namespace interno del BC es always-on (lo crea la infra base, `infra-base-scaffolder`); sus topics se agregan JIT por flujo aqui (MEF-ADR-0001, MEF-ADR-0024). El backbone compartido ya existe (lo provisiona infra, fuera de este repo): sus topics tambien se agregan JIT por flujo, pero no via el Terraform de este BC — ver mas abajo.
 
@@ -1339,6 +1360,8 @@ una limitacion del framework, o un malentendido del requisito]
 
 ### 5. Verificar infraestructura (si aplica)
 
+Si el handler publica un evento (privado o publico), verifica primero que `ComposicionServicios{Dominio}` registra `PublicarEventoServerless<T>(...)` para ese tipo con el broker que le corresponde, y agregalo si falta (seccion "Infraestructura (topics y subscriptions)", trio publish/mapeo/topic).
+
 Si el handler publica un evento privado (`IPrivateEventSender`), verifica que el topic y las subscriptions existen en `infra/environments/dev/main.tf`, bloque `topics_config` de `module "service_bus_interno"`. Agrega lo que falte segun la tabla de enrutamiento de la seccion "Infraestructura (topics y subscriptions)". Si el handler publica un evento publico (`IPublicEventSender`), el topic/subscription vive en el backbone compartido, fuera del Terraform de este repo: si detectas que falta, documentalo en tu resumen de decisiones para seguimiento administrativo — no lo agregues a ningun archivo de este repo.
 
 Si el handler **consume** un evento publico de otro BC (define `[ServiceBusTrigger]` con `Connection = "SERVICE_BUS_CONNECTION_<ALIAS>"` del backbone compartido, MEF-ADR-0024 decision #4), verifica que tu subscription con naming MEF-ADR-0005 (`{consumidor}-escucha-{productor}`) existe sobre el topic del productor en el backbone. Esa subscription vive fuera del Terraform de este repo, igual que el topic del productor (seccion "Infraestructura (topics y subscriptions)"): si aun no existe, documentala en la seccion "Infraestructura modificada" de tu resumen para seguimiento administrativo — no la agregues tu mismo a ningun archivo de este repo. El consumo intra-BC de un evento privado (`SERVICE_BUS_CONNECTION_INTERNO`) no requiere este paso: su subscription ya queda cubierta por el bloque `topics_config` del productor, verificado arriba.
@@ -1400,6 +1423,7 @@ Si no hay desviaciones, escribe explicitamente "Ninguna desviacion — todos los
 
 ### Infraestructura modificada
 - [Topics y subscriptions agregados, o "ninguna" si no aplica]
+- [Si el issue publica eventos: por cada evento, el registro `PublicarEventoServerless<T>(...)` en `ComposicionServicios{Dominio}` (agregado o ya existente) y su topic (agregado en `topics_config`, ya existente o necesidad del backbone documentada)]
 
 ### Complejidad encontrada
 - [Problemas que surgieron y como se resolvieron]
