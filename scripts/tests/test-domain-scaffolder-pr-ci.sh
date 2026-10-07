@@ -103,7 +103,7 @@ if deploy:
 check("workflow_run:\n    workflows: ['Infra CD']" in template, "se conserva workflow_run posterior a Infra CD")
 check("workflow_dispatch:" in template, "se conserva workflow_dispatch")
 check(
-    'if [ "${{ github.event_name }}" != "workflow_run" ]; then' in template,
+    'if [ "$EVENTO" != "workflow_run" ]; then' in template,
     "determinar-alcance habilita build-and-test para pull_request, push y workflow_dispatch",
 )
 check(
