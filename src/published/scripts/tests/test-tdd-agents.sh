@@ -139,7 +139,6 @@ for index in "${!agents[@]}"; do
         if diff -u <(expected_package_root_and_effective_contract_body claude "$source") <(body_without_adapter_lines "$mirror") >/dev/null; then pass "$agent conserva exactamente ambos preambulos y el cuerpo traducido al proyectar Claude"; else fail "$agent altera alguno de los preambulos o el cuerpo al proyectar Claude"; fi
     elif diff -u <(translated_source_body claude "$source") <(body_without_adapter_lines "$mirror") >/dev/null; then pass "$agent conserva el cuerpo traducido al proyectar Claude"; else fail "$agent altera el cuerpo al proyectar Claude"; fi
     if [ "$agent" = domain-scaffolder ]; then
-        if [ "$(grep -c '\${{' "$source")" -eq 35 ] && [ "$(grep -c '\${{' "$mirror")" -eq 35 ]; then pass 'domain-scaffolder conserva las 35 expresiones GitHub Actions'; else fail 'domain-scaffolder altera las expresiones GitHub Actions'; fi
         source_separators="$(body "$source" | grep -cx -- '---')"
         mirror_separators="$(body "$mirror" | grep -cx -- '---')"
         if [ "$source_separators" -ge 4 ] && [ "$source_separators" -eq "$mirror_separators" ]; then pass 'domain-scaffolder conserva las cuatro lineas documentadas y los demas separadores del cuerpo'; else fail 'domain-scaffolder altera los separadores del cuerpo'; fi

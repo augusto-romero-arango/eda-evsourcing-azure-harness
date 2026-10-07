@@ -313,5 +313,54 @@ elapsed=$(( $(date +%s) - start ))
 ASSETS_PERF_LIMIT="${MEFISTO_ASSETS_PERF_LIMIT:-20}"
 [ "$elapsed" -lt "$ASSETS_PERF_LIMIT" ] && pass "fixture de 160 assets: --check completo en ${elapsed}s (< ${ASSETS_PERF_LIMIT}s)" || fail "fixture de 160 assets: --check tardo ${elapsed}s (>= ${ASSETS_PERF_LIMIT}s, limite configurable con MEFISTO_ASSETS_PERF_LIMIT)"
 
+# ---------------------------------------------------------------------------
+# ARBOL REAL (no fixtures): invariante de expresiones GitHub Actions (#2052).
+# Cada fuente con `${{` debe conservar el mismo conteo en todos sus espejos.
+# ---------------------------------------------------------------------------
+# Uso: check_expression_mirrors ROOT. Define EXPR_EVALUATED y EXPR_FAILURES.
+check_expression_mirrors() {
+    local root="$1" src kind name n mirror_rel mirror_n
+    EXPR_EVALUATED=0; EXPR_FAILURES=()
+    for src in "$root"/src/published/agents/*.md "$root"/src/published/commands/*.md; do
+        [ -f "$src" ] || continue
+        kind="$(basename "$(dirname "$src")")"; name="$(basename "$src")"
+        n="$(grep -cF '${{' "$src")"
+        [ "$n" -gt 0 ] || continue
+        EXPR_EVALUATED=$((EXPR_EVALUATED + 1))
+        for mirror_rel in "$kind/$name" "dist/claude/$kind/$name" "dist/opencode/$kind/$name"; do
+            if [ ! -f "$root/$mirror_rel" ]; then
+                EXPR_FAILURES+=("$name: espejo $mirror_rel ausente"); continue
+            fi
+            mirror_n="$(grep -cF '${{' "$root/$mirror_rel")"
+            [ "$mirror_n" -eq "$n" ] || EXPR_FAILURES+=("$name: espejo $mirror_rel tiene $mirror_n expresiones, la fuente $n")
+        done
+    done
+}
+
+echo '[arbol real] expresiones GitHub Actions conservadas en todos los espejos'
+check_expression_mirrors "$REPO_ROOT"
+[ "$EXPR_EVALUATED" -gt 0 ] && pass "se evaluaron $EXPR_EVALUATED fuentes con expresiones GitHub Actions" || fail 'ninguna fuente con expresiones GitHub Actions evaluada (layout cambio?)'
+if [ "${#EXPR_FAILURES[@]}" -eq 0 ]; then
+    pass 'fuente y espejos conservan el mismo conteo de expresiones GitHub Actions'
+else
+    for f in "${EXPR_FAILURES[@]}"; do fail "$f"; done
+fi
+
+echo '[arbol real] caso negativo: un espejo con una expresion menos se detecta'
+NEG="$WORK/expr-neg"
+mkdir -p "$NEG/src/published/agents" "$NEG/agents" "$NEG/dist/claude/agents" "$NEG/dist/opencode/agents"
+neg_src="$REPO_ROOT/src/published/agents/domain-scaffolder.md"
+for d in src/published/agents agents dist/claude/agents dist/opencode/agents; do cp "$neg_src" "$NEG/$d/domain-scaffolder.md"; done
+check_expression_mirrors "$NEG"
+[ "$EXPR_EVALUATED" -eq 1 ] && [ "${#EXPR_FAILURES[@]}" -eq 0 ] && pass 'copia temporal consistente no produce fallos' || fail 'copia temporal consistente produjo fallos'
+neg_line="$(grep -nF '${{' "$neg_src" | head -1 | cut -d: -f1)"
+sed "${neg_line}d" "$neg_src" > "$NEG/dist/claude/agents/domain-scaffolder.md"
+check_expression_mirrors "$NEG"
+if [ "${#EXPR_FAILURES[@]}" -eq 1 ] && [[ "${EXPR_FAILURES[0]}" == *domain-scaffolder.md*dist/claude/agents/domain-scaffolder.md* ]]; then
+    pass 'espejo corrupto detectado con nombre de archivo y espejo'
+else
+    fail "espejo corrupto no detectado correctamente (${EXPR_FAILURES[*]:-sin fallos})"
+fi
+
 printf '\nResultado: %s PASS, %s FAIL\n' "$PASS" "$FAIL"
 exit "$FAIL"
