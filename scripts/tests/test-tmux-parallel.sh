@@ -145,6 +145,7 @@ run_parallel_capture() {
     local out="$TMP_DIR/stdout" err="$TMP_DIR/stderr"
     (
         cd "$FAKE_CONSUMER" || exit 99
+        # Hermetico: el pipeline exporta estas rutas y desviarian events.log fuera del consumidor falso.
         unset MEFISTO_STATE_DIR MEFISTO_LEGACY_STATE_DIR MEFISTO_REPO_ROOT MEFISTO_MODELS_FILE
         PATH="$FAKE_BIN:$PATH" "$TMUX_SCRIPT" "$@"
     ) </dev/null >"$out" 2>"$err"
