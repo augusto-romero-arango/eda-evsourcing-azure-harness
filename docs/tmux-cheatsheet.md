@@ -160,29 +160,6 @@ viva, o la reemplaza si ya termino. Para decidirlo vos mismo sin que pregunte
 
 ---
 
-## Frontera de entorno de los panes (issue #1740)
-
-Un servidor tmux ya vivo puede haber nacido en otra distribucion o consumidor y
-transmitir sus variables a las sesiones nuevas. `tmux-pipeline.sh` no confia en
-esa herencia: descarta `MEFISTO_RUNTIME_LIB_DIR`, `MEFISTO_MODELS_VALIDATOR`,
-`MEFISTO_STATE_DIR` y `MEFISTO_LEGACY_STATE_DIR` al arrancar, deriva biblioteca y
-validador de modelos de la raiz fisica de su propio paquete, y toma el estado del
-Git toplevel del cwd (`<raiz>/.mefisto/pipeline`; `.claude/pipeline` solo
-lectura). Cada sub-pipeline se envia con un unico prefijo
-`env -u <los cinco overrides, incluido MEFISTO_RUN_AGENT_BIN> MEFISTO_RUNTIME=...
-<raices propias>`, aplicado al proceso del pipeline (no al servidor ni al visor);
-no usa `env -i` ni `tmux set-environment -g`. Si falta la biblioteca o el
-validador propios, aborta antes de crear la sesion.
-
-Diferencia: un pipeline invocado directamente sigue respetando sus overrides
-(`MEFISTO_STATE_DIR`, `MEFISTO_RUNTIME_LIB_DIR`); este wrapper no puede distinguir
-un override intencional de uno heredado y usa siempre raices propias. Un destino
-de estado distinto requeriria una interfaz opt-in separada.
-
-Limite con #1861: este wrapper solo garantiza paths y runtime del hijo tmux; el
-transporte de contextos/leases por pane es de #1861 y la validacion de identidad
-del handoff de #1855.
-
 ## Recuperacion ante fallos
 
 | Situacion | Como recuperar |

@@ -1,9 +1,27 @@
 ---
 description: "Registra un secreto nuevo post-greenfield y cablea su referencia Key Vault versionless en la Function App de un dominio."
-agent: "command-entry-seed-secret"
-subtask: false
 ---
 <!-- GENERADO por src/published/scripts/generate-published-adapters.sh desde src/published/commands/seed-secret.md. No editar a mano. -->
+```bash
+# Cada llamada bash que use ${MEFISTO_PACKAGE_ROOT} debe incluir este bloque antes de sus comandos: no se asume estado de shell persistente entre llamadas.
+if [ -n "${XDG_DATA_HOME:-}" ]; then mefisto_opencode_launcher="$XDG_DATA_HOME/mefisto/active/bin/mefisto-opencode"
+elif [ "${OSTYPE%%[0-9.]*}" = darwin ]; then mefisto_opencode_launcher="$HOME/Library/Application Support/mefisto/active/bin/mefisto-opencode"
+else mefisto_opencode_launcher="$HOME/.local/share/mefisto/active/bin/mefisto-opencode"; fi
+if [ ! -f "$mefisto_opencode_launcher" ] || [ -L "$mefisto_opencode_launcher" ] || [ ! -x "$mefisto_opencode_launcher" ]; then
+    printf '%s\n' 'ERROR OpenCode: no hay una release activa valida; instale o active la release OpenCode.' >&2; exit 1
+fi
+MEFISTO_PACKAGE_ROOT="$("$mefisto_opencode_launcher" package-root)" || {
+    printf '%s\n' 'ERROR OpenCode: no se pudo resolver la release activa; instale o active la release OpenCode.' >&2; exit 1;
+}
+case "$MEFISTO_PACKAGE_ROOT" in
+    /*) ;;
+    *) printf '%s\n' 'ERROR OpenCode: la release activa no devolvio una raiz absoluta; reinstale o active la release OpenCode.' >&2; exit 1 ;;
+esac
+MEFISTO_PACKAGE_ROOT="$(cd -P "$MEFISTO_PACKAGE_ROOT" 2>/dev/null && printf '%s\n' "$PWD")" || {
+    printf '%s\n' 'ERROR OpenCode: la release activa no existe; reinstale o active la release OpenCode.' >&2; exit 1;
+}
+export MEFISTO_PACKAGE_ROOT
+```
 
 Registra un secreto nuevo post-greenfield en `harness.config.json > secrets[]` (registro declarativo que itera el step de siembra data-driven de `infra-cd.yml`, issue #256) y cablea su referencia `@Microsoft.KeyVault(...)` versionless + el rol `Key Vault Secrets User` en la Function App del dominio que lo consume. **No** toca el `Key Vault Secrets Officer` del SP de CI (MEF-ADR-0022, mecanismo M1): ese rol de escritura ya se auto-asigna el propio `apply`; este skill solo agrega -- o verifica que ya exista -- el rol de lectura de la app. Ningun valor de secreto viaja en claro (MEF-ADR-0025): este skill solo referencia nombres de GitHub secrets o de `terraform output`. Comunicate en **espanol**.
 
@@ -105,15 +123,15 @@ Busca en el mismo archivo un `azurerm_role_assignment` con `role_definition_name
 
 **Nunca** toques ni agregues un `azurerm_role_assignment` de `Key Vault Secrets Officer`: ese rol es exclusivo del SP de CI (mecanismo M1, MEF-ADR-0022) y ya se auto-asigna en el `main.tf` del entorno -- fuera del alcance de este skill.
 
-### 7. Formatear y validar (si `command -v terraform` confirma que esta instalado)
+### 7. Formatear y validar (si `terraform` esta instalado)
 
 ```bash
-(cd "infra/environments/<env>" && terraform fmt -recursive ../..)
-(cd "infra/environments/<env>" && terraform init -backend=false)
-(cd "infra/environments/<env>" && terraform validate)
+terraform -chdir=infra/environments/<env> fmt -recursive ../..
+terraform -chdir=infra/environments/<env> init -backend=false
+terraform -chdir=infra/environments/<env> validate
 ```
 
-Si `terraform validate` falla, corrige el HCL insertado y vuelve a validar. Si `command -v terraform` no encuentra la herramienta, avisa y deja el formateo/validacion como paso manual pendiente -- no es motivo para detenerte. **Nunca** ejecutes `terraform plan` ni `terraform apply`: el `apply` real (el que siembra el valor del secreto) corre en CI al mergear el PR (MEF-ADR-0021, MEF-ADR-0022).
+Si `terraform validate` falla, corrige el HCL insertado y vuelve a validar. Si `terraform` no esta instalado, avisa y deja el formateo/validacion como paso manual pendiente -- no es motivo para detenerte. **Nunca** ejecutes `terraform plan` ni `terraform apply`: el `apply` real (el que siembra el valor del secreto) corre en CI al mergear el PR (MEF-ADR-0021, MEF-ADR-0022).
 
 ### 8. Commitear
 

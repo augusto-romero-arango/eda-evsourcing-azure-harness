@@ -11,12 +11,12 @@
 # para la entrega real que lo evidencio). Como script en disco, este archivo
 # nunca pasa por esa sustitucion: commands/onboard.md solo lo invoca por ruta.
 #
-# Reporta, sin tocar nada, el checklist de 10 secciones de /onboard: config,
+# Reporta, sin tocar nada, el checklist de 9 secciones de /onboard: config,
 # directivas canónicas en AGENTS.md y su puente CLAUDE.md, estructura de carpetas, labels de GitHub,
 # CI hacia Azure, secretos que alimentan la siembra en Key Vault, el registro
 # secrets[], la bifurcacion de dos caminos de auth (tenancy.strategy) y el
-# worker de proyecciones y la autonomia (MEF-ADR-0055). Las provisiones opt-in
-# (directivas, labels, CI, tenancy, proyecciones, autonomia) viven en los pasos 3-8 de commands/onboard.md e invocan
+# worker de proyecciones. Las provisiones opt-in (directivas, labels, CI,
+# tenancy, proyecciones) viven en los pasos 3-7 de commands/onboard.md e invocan
 # otros scripts bajo confirmacion explicita del usuario -- este script nunca
 # escribe ni ejecuta ninguno de ellos.
 #
@@ -220,7 +220,6 @@ main() {
     PA_INFRA_BASE_MISSING=0
     PA_AUTH_PATH=0
     PA_PROJECTIONS_MISSING=0
-    PA_AUTONOMY_MISSING=0
 
     # Guard defensivo (cwd != Mefisto), por si el script se invoca aislado.
     REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || {
@@ -518,31 +517,7 @@ main() {
         fi
     fi
 
-    # --- 10. Autonomia (MEF-ADR-0055, issue #1992, informativo) ---
-    echo ""
-    echo "Autonomia desatendida (MEF-ADR-0055, informativo):"
-    AUTONOMY_SCRIPT="$PLUGIN_SCRIPTS/autonomy-profile.sh"
-    AUTONOMY_JSON=""
-    if [ "$CONFIG_VALID" -ne 1 ]; then
-        row NV "autonomia no verificada porque el config efectivo no pudo cargarse (revisa la seccion Configuracion)"
-    elif [ ! -f "$AUTONOMY_SCRIPT" ] || ! command -v jq >/dev/null 2>&1; then
-        row NV "autonomia no verificada (falta autonomy-profile.sh del plugin o jq)"
-    else
-        AUTONOMY_JSON=$(bash "$AUTONOMY_SCRIPT" inspect --project-root "$REPO_ROOT" 2>/dev/null)
-        AUTONOMY_STATUS=$(printf '%s' "$AUTONOMY_JSON" | jq -r '.status // empty' 2>/dev/null)
-        AUTONOMY_REASON=$(printf '%s' "$AUTONOMY_JSON" | jq -r '.reasonCode // "sin causa reportada"' 2>/dev/null)
-        case "$AUTONOMY_STATUS" in
-            ready) row OK "autonomia lista (inspect: ready) -- los pipelines desatendidos pasan el preflight" ;;
-            disabled|needs-approval)
-                row NV "autonomia $AUTONOMY_STATUS (causa: $AUTONOMY_REASON) -- un /sequential desatendido seria rechazado por el preflight"
-                PA_AUTONOMY_MISSING=1
-                ;;
-            conflict) row NV "autonomia en conflicto (causa: $AUTONOMY_REASON) -- revisa el perfil con /autonomy antes de cualquier pipeline desatendido" ;;
-            *) row NV "autonomia no verificada (inspect no devolvio un estado reconocible: '${AUTONOMY_STATUS:-sin respuesta}')" ;;
-        esac
-    fi
-
-    # --- 11. Acciones y resumen ---
+    # --- 10. Acciones y resumen ---
     echo ""
     if [ -n "$DIRECTIVE_ACTIONS$ACTIONS" ]; then
         echo "Acciones sugeridas (el diagnostico no ejecuta ninguna; los labels faltantes y el CI los pueden provisionar los pasos opt-in, bajo tu confirmacion):"
@@ -606,11 +581,6 @@ main() {
             echo "     corre /scaffold-projections para generarlo (MEF-ADR-0034), o confirma el paso opt-in que"
             echo "     te ofrece este mismo /onboard."
         fi
-        if [ "$PA_AUTONOMY_MISSING" -eq 1 ]; then
-            PA_STEP=$((PA_STEP + 1))
-            echo "  $PA_STEP. La autonomia no esta lista: un /sequential desatendido seria rechazado por el preflight."
-            echo "     Corre /autonomy activar, o confirma el paso opt-in que te ofrece este mismo /onboard (MEF-ADR-0055)."
-        fi
     else
         if [ "$PA_AGENTS_FALTA" -eq 1 ]; then
             PA_STEP=$((PA_STEP + 1))
@@ -654,11 +624,6 @@ main() {
             echo "  $PA_STEP. El BC declara projections.enabled=true pero el worker de proyecciones no existe:"
             echo "     corre /scaffold-projections para generarlo (MEF-ADR-0034), o confirma el paso opt-in que"
             echo "     te ofrece este mismo /onboard."
-        fi
-        if [ "$PA_AUTONOMY_MISSING" -eq 1 ]; then
-            PA_STEP=$((PA_STEP + 1))
-            echo "  $PA_STEP. La autonomia no esta lista: un /sequential desatendido seria rechazado por el preflight."
-            echo "     Corre /autonomy activar, o confirma el paso opt-in que te ofrece este mismo /onboard (MEF-ADR-0055)."
         fi
         if [ "$PA_STEP" -eq 0 ]; then
             echo "  Resuelve primero los \"NO VERIFICADO\" de arriba (instala/autentica lo que falte) para que"

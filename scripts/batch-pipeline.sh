@@ -164,92 +164,6 @@ defer_from_index() {
     done
 }
 
-# ─── Preflight de autonomia (issue #1826, MEF-ADR-0055) ──────────────────────
-# Gate de CONSULTA antes de lanzar: delega en autonomy-preflight.sh (#1870) un plan
-# cerrado launchKind:sequential. No adquiere ni libera la lease de la cadena, no pide
-# aprobacion, no repara perfil/permisos y no certifica la sesion futura: ready-to-dispatch
-# deja sus checks `deferred` al guard por instancia del stage (#1858/#1860). `legacy`
-# (sin perfil / runtime sin contexto) conserva exactamente el flujo anterior; cualquier
-# otra salida (blocked, incomplete, 75 busy, salida invalida, consulta caida) impide el
-# lanzamiento y NUNCA se sustituye por legacy.
-BATCH_PREFLIGHT_BLOCKED=false
-PREFLIGHT_STATUS=""
-PREFLIGHT_DIAG=""
-PREFLIGHT_DEFERRED=""
-BATCH_PLAN_NUMS=()
-BATCH_PLAN_KINDS=()
-
-# batch_plan_kind_for <issue>: pipelineKind del plan inicial ("" si no esta).
-batch_plan_kind_for() {
-    local i
-    for ((i = 0; i < ${#BATCH_PLAN_NUMS[@]}; i++)); do
-        if [ "${BATCH_PLAN_NUMS[$i]}" = "$1" ]; then echo "${BATCH_PLAN_KINDS[$i]}"; return 0; fi
-    done
-    return 0
-}
-
-# batch_autonomy_preflight <numero:pipelineKind>...
-# 0 = legacy|ready-to-dispatch; 1 = no se puede lanzar (PREFLIGHT_STATUS/DIAG con codigos).
-batch_autonomy_preflight() {
-    local bin plan out rc=0 src=direct args
-    PREFLIGHT_STATUS=""; PREFLIGHT_DIAG=""; PREFLIGHT_DEFERRED=""
-    bin="$(_pc_script_dir)/autonomy-preflight.sh"
-    args=(--project-root "$REPO_ROOT" --runtime "$BATCH_RUNTIME")
-    src="$(pipeline_preflight_source)"
-    if [ "$src" != direct ]; then
-        args+=(--context "$MEFISTO_EXECUTION_CONTEXT")
-    fi
-    if [ ! -x "$bin" ]; then
-        PREFLIGHT_STATUS="unavailable"; PREFLIGHT_DIAG="PREFLIGHT_UNAVAILABLE"
-        return 1
-    fi
-    plan=$(jq -cn --arg s "$src" '{schemaVersion:1,launchKind:"sequential",source:$s,requestedOperations:[],
-        issues:[$ARGS.positional[] | split(":") | {number:(.[0]|tonumber),pipelineKind:.[1]}]}' --args "$@" 2>/dev/null) \
-        || { PREFLIGHT_STATUS="unavailable"; PREFLIGHT_DIAG="PREFLIGHT_PLAN_INVALID"; return 1; }
-    out=$(printf '%s' "$plan" | "$bin" "${args[@]}" 2>/dev/null) || rc=$?
-    PREFLIGHT_STATUS=$(printf '%s' "$out" | jq -r '.status // empty' 2>/dev/null) || PREFLIGHT_STATUS=""
-    PREFLIGHT_DIAG=$(printf '%s' "$out" | jq -r '[.diagnostics[]? | select(type == "string" and test("^[A-Za-z0-9_#:.-]+$"))] | join(",")' 2>/dev/null) || PREFLIGHT_DIAG=""
-    PREFLIGHT_DEFERRED=$(printf '%s' "$out" | jq -r '[.checks[]? | select(.state == "deferred" and (.code|type) == "string" and (.owner|type) == "string") | "\(.code)@\(.owner)"] | map(select(test("^[A-Za-z0-9_#:./@-]+$"))) | join(",")' 2>/dev/null) || PREFLIGHT_DEFERRED=""
-    if [ "$rc" -eq 0 ]; then
-        case "$PREFLIGHT_STATUS" in
-            legacy)
-                # Un contexto transportado nunca degrada a legacy (CA-5).
-                [ "$src" = command ] || return 0
-                PREFLIGHT_STATUS="invalid"; PREFLIGHT_DIAG="PREFLIGHT_LEGACY_WITH_CONTEXT"; return 1 ;;
-            ready-to-dispatch)
-                # Fail-closed (CA-3): todo check clasificado; deferred solo con propietario;
-                # ningun block ni estado desconocido presentado como admision.
-                if printf '%s' "$out" | jq -e '(.checks | type == "array") and all(.checks[];
-                        (.state | IN("pass","deferred","not-applicable"))
-                        and (.state != "deferred" or ((.owner | type) == "string" and (.owner | length) > 0)))' >/dev/null 2>&1; then
-                    return 0
-                fi
-                PREFLIGHT_STATUS="invalid"; PREFLIGHT_DIAG="PREFLIGHT_CHECKS_INCONSISTENT"; return 1 ;;
-        esac
-    fi
-    if [ "$rc" -eq 75 ]; then
-        PREFLIGHT_STATUS="busy"; PREFLIGHT_DIAG="${PREFLIGHT_DIAG:-PREFLIGHT_BUSY}"
-    else
-        case "$PREFLIGHT_STATUS" in
-            blocked|incomplete) ;;
-            *) PREFLIGHT_STATUS="invalid"; PREFLIGHT_DIAG="${PREFLIGHT_DIAG:-PREFLIGHT_RC_$rc}" ;;
-        esac
-    fi
-    return 1
-}
-
-# batch_preflight_block_from <indice-0-based> <momento>
-# Termina el lanzamiento de la cola restante: estado explicito, sin worktree/PR/merge, y
-# exit != 0 al final. No consume batch-stop, no mata procesos ni revierte merges.
-batch_preflight_block_from() {
-    local from="$1" when="$2" i
-    BATCH_PREFLIGHT_BLOCKED=true
-    for ((i = from; i < ${#ISSUE_NUMS[@]}; i++)); do
-        set_status "${ISSUE_NUMS[$i]}" "no iniciado por preflight (${PREFLIGHT_STATUS}: ${PREFLIGHT_DIAG:-sin-detalle})"
-    done
-    echo -e "\n${RED}${BOLD}✗ Preflight de autonomia ${when}: ${PREFLIGHT_STATUS} [${PREFLIGHT_DIAG:-sin-detalle}]. No se lanza la cola restante.${NC}" | tee -a "$LOG_FILE_ABS"
-}
-
 # ─── Parsear argumentos ───────────────────────────────────────────────────────
 ISSUE_NUMS=()
 STOP_ON_ERROR=false
@@ -389,15 +303,6 @@ fi
 # auto-detectar por su cuenta y podria divergir del batch.
 export MEFISTO_RUNTIME="$BATCH_RUNTIME"
 
-# Referencia de ejecucion de TODA la cadena (issue #1861, MEF-ADR-0055): se abre una
-# vez, antes del primer eslabon, y sobrevive a huecos, hold, sync de main, espera de
-# cuota y reintentos hasta el cierre del batch. Sin contexto transportado ni perfil
-# autorizado (o con runtime Claude) conserva el camino previo, sin servicio ni lease.
-_BATCH_PKG_ROOT="$(cd "$(_pc_script_dir)/.." && pwd -P)"
-orchestrator_execution_open sequential "$REPO_ROOT" "$_BATCH_PKG_ROOT" "$RUNTIME_LIB_DIR" "$(_pc_script_dir)/run-published-agent.sh" \
-    || abort "No se pudo abrir la ejecucion preparada del batch (contexto invalido, ocupado o revocado)"
-orchestrator_install_exit_trap
-
 # ─── Cabecera ─────────────────────────────────────────────────────────────────
 header "batch-pipeline --- Procesamiento secuencial de issues"
 log "Runtime: $MEFISTO_RUNTIME"
@@ -417,7 +322,6 @@ TOTAL=${#ISSUE_NUMS[@]}
 # que el loop realmente procesa. Vaciarla es como se salta el loop completo sin
 # envolverlo en un `if` (que forzaria a reindentar todo su cuerpo).
 BATCH_QUEUE=("${ISSUE_NUMS[@]}")
-BATCH_PREFLIGHT_LAUNCHED=false
 
 # Parada suave, momento 1 (CA-1): la senal ya estaba puesta antes de arrancar
 # el primer eslabon, asi que ningun issue se procesa en esta corrida.
@@ -425,37 +329,6 @@ if batch_stop_requested; then
     warn "Parada solicitada ($BATCH_STOP_SIGNAL) antes de arrancar el primer eslabon: ningun issue se procesa en esta corrida."
     defer_from_index 0
     BATCH_QUEUE=()
-fi
-
-# Preflight de autonomia, plan inicial (issue #1826): tras consultar batch-stop, para que
-# no se imponga sobre trabajo que no se ejecutara. Mismo resolutor y orden que el loop;
-# cerrados/sin tipo/SKIP no entran al plan (conservan su semantica). Sin issues ruteables
-# no se exige ninguna capacidad.
-if [ ${#BATCH_QUEUE[@]} -gt 0 ]; then
-    PLAN_ITEMS=()
-    for PLAN_ISSUE in "${BATCH_QUEUE[@]}"; do
-        PLAN_FACTS=$(resolve_pipeline_with_state "$PLAN_ISSUE" "$PIPELINE_OVERRIDE") || continue
-        [ "${PLAN_FACTS%%|*}" = "OPEN" ] || continue
-        PLAN_SCRIPT="${PLAN_FACTS#*|}"
-        [[ "$PLAN_SCRIPT" == SKIP:* ]] && continue
-        PLAN_KIND=$(orchestrator_kind_for_script "$PLAN_SCRIPT")
-        [ -n "$PLAN_KIND" ] || continue
-        [ -z "$(batch_plan_kind_for "$PLAN_ISSUE")" ] || continue
-        BATCH_PLAN_NUMS+=("$PLAN_ISSUE")
-        BATCH_PLAN_KINDS+=("$PLAN_KIND")
-        PLAN_ITEMS+=("$PLAN_ISSUE:$PLAN_KIND")
-    done
-    if [ ${#PLAN_ITEMS[@]} -gt 0 ]; then
-        if batch_autonomy_preflight "${PLAN_ITEMS[@]}"; then
-            log "Preflight de autonomia: $PREFLIGHT_STATUS"
-            if [ "$PREFLIGHT_STATUS" = "ready-to-dispatch" ] && [ -n "$PREFLIGHT_DEFERRED" ]; then
-                log "Verificaciones diferidas al stage (no es permiso efectivo futuro): $PREFLIGHT_DEFERRED"
-            fi
-        else
-            batch_preflight_block_from 0 "antes del primer issue"
-            BATCH_QUEUE=()
-        fi
-    fi
 fi
 
 # ${a[@]+"${a[@]}"}: bash 3.2 aborta con "unbound variable" al expandir un array
@@ -485,23 +358,6 @@ for ISSUE_NUM in ${BATCH_QUEUE[@]+"${BATCH_QUEUE[@]}"}; do
 
     PIPELINE_NAME=$(basename "$PIPELINE_SCRIPT")
 
-    # ── Preflight de autonomia antes de cada eslabon posterior al primero (#1826) ─
-    # Reconsulta facts del issue que sigue (ya resueltos arriba), runtime, perfil/contexto
-    # y plan restante: ninguna admision previa sobrevive por estar en memoria. Un bloqueo
-    # nuevo termina el lanzamiento de la cola restante; el eslabon anterior ya concluyo.
-    if [ "$BATCH_PREFLIGHT_LAUNCHED" = true ]; then
-        REST_ITEMS=("$ISSUE_NUM:$(orchestrator_kind_for_script "$PIPELINE_SCRIPT")")
-        for ((REST_I = CURRENT; REST_I < ${#ISSUE_NUMS[@]}; REST_I++)); do
-            REST_KIND=$(batch_plan_kind_for "${ISSUE_NUMS[$REST_I]}")
-            [ -z "$REST_KIND" ] || REST_ITEMS+=("${ISSUE_NUMS[$REST_I]}:$REST_KIND")
-        done
-        if ! batch_autonomy_preflight "${REST_ITEMS[@]}"; then
-            batch_preflight_block_from $((CURRENT - 1)) "antes del issue #$ISSUE_NUM"
-            break
-        fi
-    fi
-    BATCH_PREFLIGHT_LAUNCHED=true
-
     # ── Stage 1: Ejecutar pipeline ────────────────────────────────────────────
     log "Ejecutando $PIPELINE_NAME para issue #$ISSUE_NUM..."
 
@@ -521,25 +377,8 @@ for ISSUE_NUM in ${BATCH_QUEUE[@]+"${BATCH_QUEUE[@]}"}; do
         [ -z "$HOLD_LINE_START_LEGACY" ] && HOLD_LINE_START_LEGACY=0
     fi
 
-    # Reserva del contexto hijo ANTES del spawn (issue #1861): si no se puede reservar
-    # el eslabon no arranca y no se reporta como ejecutado.
-    if ! orchestrator_reserve_child "$(orchestrator_kind_for_script "$PIPELINE_SCRIPT")" "$REPO_ROOT"; then
-        fail_issue "$ISSUE_NUM" "no se pudo reservar el contexto de ejecucion del eslabon; el pipeline no se lanzo"
-        FAILED=$((FAILED + 1))
-        if [ "$STOP_ON_ERROR" = true ]; then
-            abort "Detenido por --stop-on-error en issue #$ISSUE_NUM"
-        fi
-        continue
-    fi
-
     PIPELINE_EXIT=0
-    if [ -n "$ORCH_CHILD_ID" ]; then
-        MEFISTO_EXECUTION_CONTEXT="$ORCH_CHILD_CONTEXT" MEFISTO_EXECUTION_DIGEST="$ORCH_CHILD_DIGEST" \
-            "$PIPELINE_SCRIPT" "$ISSUE_NUM" 2>&1 | tee "$ISSUE_LOG" || PIPELINE_EXIT=$?
-        orchestrator_finish_child "$(orchestrator_outcome_for "$PIPELINE_EXIT")" || true
-    else
-        "$PIPELINE_SCRIPT" "$ISSUE_NUM" 2>&1 | tee "$ISSUE_LOG" || PIPELINE_EXIT=$?
-    fi
+    "$PIPELINE_SCRIPT" "$ISSUE_NUM" 2>&1 | tee "$ISSUE_LOG" || PIPELINE_EXIT=$?
 
     # Agregar el log del issue al log general
     cat "$ISSUE_LOG" | _strip_ansi >> "$LOG_FILE_ABS"
@@ -653,18 +492,9 @@ for ISSUE_NUM in "${ISSUE_NUMS[@]}"; do
     esac
 done
 DEFERRED=${#DEFERRED_NUMS[@]}
-NOT_STARTED=0
-for ISSUE_NUM in "${ISSUE_NUMS[@]}"; do
-    case "$(get_status "$ISSUE_NUM")" in
-        "no iniciado por preflight"*) NOT_STARTED=$((NOT_STARTED + 1)) ;;
-    esac
-done
 
 echo ""
 echo -e "  Total: $TOTAL  |  ${GREEN}Completados: $COMPLETED${NC}  |  ${RED}Fallidos: $FAILED${NC}  |  ${YELLOW}Aplazados: $DEFERRED${NC}"
-if [ "$NOT_STARTED" -gt 0 ]; then
-    echo -e "  ${RED}No iniciados por preflight: $NOT_STARTED${NC}"
-fi
 echo -e "  Log: $LOG_FILE_ABS"
 # Tiempo total en espera (issue #973): informativo, aparte del recuento de
 # desenlaces -- una espera nunca es un fallo ni un aplazado.
@@ -677,11 +507,6 @@ if [ "$DEFERRED" -gt 0 ]; then
     warn "Parada solicitada: $DEFERRED issue(s) quedaron aplazados en esta corrida. No es un fallo del batch: el exit code no cambia por esto y nada quedo a medio pipeline."
     echo -e "  Relanza los aplazados, en el mismo orden: ${BOLD}/sequential ${DEFERRED_NUMS[*]}${NC}"
     echo ""
-fi
-
-if [ "$BATCH_PREFLIGHT_BLOCKED" = true ]; then
-    warn "Preflight de autonomia: $NOT_STARTED issue(s) no iniciados por preflight. No se reintento ni se amplio ningun permiso. Log: $LOG_FILE_ABS"
-    exit 1
 fi
 
 if [ "$HAVE_ERRORS" = true ]; then

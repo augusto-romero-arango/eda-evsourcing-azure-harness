@@ -17,7 +17,6 @@ Todo evento lleva `v: 1` y un `type` del vocabulario cerrado declarado en
 | `message` | `ts`, `role`, `text`, `kind?` (`text` o `thinking`) |
 | `tool.started` | `ts`, `tool`, `input_summary|null` |
 | `tool.completed` | `ts`, `tool`, `ok`, `duration_ms|null` |
-| `permission.observed` | `ts`, `session_id|null`, `tool|null`, `signal`, `evidence` |
 | `run.completed` / `run.failed` | `ts`, `status`, `runtime`, `model|null`, `session_id|null`, `duration_ms`, `tokens`, `estimated_cost_usd|null`, `turns|null`, `denials|null`, `ttft_ms|null`, `api_duration_ms|null`, `error|null`, `resets_at?` |
 
 `tokens` conserva `input` y `output`, ambos numero o `null`, y puede incluir
@@ -30,42 +29,6 @@ su `output_tokens` en `output`, mapea
 con `null`, nunca con un cero ni otro valor inventado. Cada definicion cierra su forma con
 `additionalProperties: false`; lo mismo hacen `tokens` y `error`.
 
-## Observaciones parciales de permisos
-
-`permission.observed` es un evento no terminal opcional: registra una senal
-vista, no un inventario de decisiones ni una llamada unica. Puede repetirse y
-un duplicado no incrementa ningun contador. Su forma cerrada no admite texto de
-error, reglas, patrones, identificadores sensibles, feedback ni input de
-comando. `session_id` y `tool` son identificadores acotados o `null`; un nombre
-de tool no representable se omite como `null`, nunca se vuelca crudo.
-
-| `signal` | `evidence` permitida |
-|---|---|
-| `denied` / `rejected` | `structured-error` |
-| `possible-denial` / `possible-rejection` | `tool-error-text` |
-
-La pareja se valida en el gate complementario porque `jsonschema-lite.jq` no
-expresa dependencias entre campos. `structured-error` solo se emite cuando el
-productor reconoce exactamente el nombre de error estructurado de su runtime;
-no se transporta ese nombre. `tool-error-text` es una clasificacion de la
-senal, no una extraccion ni una busqueda de texto crudo.
-
-`run.*.denials` conserva su significado: es un entero solo con una fuente de
-cobertura completa y es `null` con cobertura parcial o desconocida. Una o mas
-observaciones no establecen cardinalidad completa, y la ausencia de
-`permission.observed` nunca prueba cero solicitudes ni cero denegaciones.
-`tool.completed{ok:false}` solo indica fallo de tool y no crea una observacion
-ni una denegacion. El evento no cambia `success`, exit, retry, hold, duration,
-costo, retries o completitud de la corrida.
-
-En OpenCode 1.18.29 puede haber solicitudes autoaprobadas y denegaciones que no
-aparezcan en el JSON de ejecucion. Por ello, cero eventos observados no es
-evidencia de cero permisos solicitados o denegados.
-
-El smoke de certificacion de #1827 consume esta evidencia como parcial: una
-senal observada exige investigacion para la capacidad requerida, pero su
-ausencia no es un veredicto global de cero denegaciones.
-
 `estimated_cost_usd` es una estimacion de equivalencia a tarifas API, no el
 costo marginal de una suscripcion (MEF-ADR-0054). Los escritores posteriores
 al corte emiten solo ese nombre. Para leer JSONL v1 local previo, el schema
@@ -76,8 +39,7 @@ al menos uno de los dos. No hay protocolo v2 ni doble escritura.
 
 ## Relacion entre terminal y estado
 
-Los unicos terminales son `run.completed` y `run.failed`. `permission.observed`
-tambien es no terminal. `type` y `status` no
+Los unicos terminales son `run.completed` y `run.failed`. `type` y `status` no
 son dos veredictos independientes: el schema divide deliberadamente el
 vocabulario de estados entre ambos.
 
@@ -144,14 +106,8 @@ nuevo y no usa `cost_usd`. `legacy-cost-usd.jsonl` identifica expresamente una
 lectura v1 previa al corte. Los casos de
 limite de uso muestran `resets_at` poblado cuando el runtime ofrece esa senal y
 `null` cuando no la ofrece. `invalid-missing-field.jsonl`,
-`invalid-unknown-type.jsonl`, `invalid-status-mismatch.jsonl` y los
-`invalid-permission-observed-*.jsonl` son rechazables linea a linea por la
-validacion de referencia, incluido su complemento jq. Estos
-ultimos cubren propiedades sensibles extras, signals desconocidas, parejas
-signal/evidence invalidas e identificadores fuera de los limites. Un fixture
-`valid-tool-failure-no-permission.jsonl` demuestra que
-`tool.completed{ok:false}` sigue siendo valido sin crear una observacion ni
-cambiar `denials`.
+`invalid-unknown-type.jsonl` e `invalid-status-mismatch.jsonl` son rechazables
+linea a linea.
 
 `invalid-two-terminals.jsonl` tiene lineas individualmente validas, pero viola
 la cardinalidad de exactamente un terminal; existe para comprobar el gate
@@ -235,44 +191,6 @@ recibe el modelo.
 `eval`, separa stdout/stderr y crea una sesion sin TTY de control. El runner
 decide timeout mediante la senal del watchdog y su reloj de pared conforme a
 MEF-ADR-0031.
-
-### Servicio preparado opt-in
-
-El core expone, para un caller que lo `source`,
-`runtime_service_start <runtime> <cwd> <work-dir> <startup-timeout-seconds>`,
-`runtime_service_request <runtime> <method> <relative-path> <directory>` y
-`runtime_service_stop <runtime>`. Es transporte mecanico: no admite agentes,
-roles, perfiles, leases ni autorizacion. `start` conserva solo en el shell del
-caller el PID concreto, su identidad al inicio, endpoint loopback y version en
-`MEFISTO_RUNTIME_SERVICE_{PID,IDENTITY,ENDPOINT,VERSION}`; no hay registro
-global ni adopcion de una instancia ajena. `stop` vuelve a acreditar la
-identidad antes de senalar exclusivamente ese PID y lo invalida tras `wait`.
-Un segundo `start` en el mismo shell se rechaza mientras exista el handle.
-
-La capacidad es opcional por adaptador. El adaptador que la ofrece inicia una
-instancia privada con host loopback, puerto efimero y descubrimiento de red
-desactivado; espera endpoint y health dentro del plazo. La credencial IPC es
-aleatoria por instancia, permanece solo en memoria/entorno de hijos propios y
-en el canal de autenticacion de la peticion: nunca llega al argv, eventos,
-logs, configuracion o respuesta del API. Las peticiones solo aceptan HTTP
-loopback, no siguen redirects y se limitan a GET de `/agent`,
-`/session/<id>`, `/global/health` y POST de `/session/<id>/abort`; los errores
-son mensajes sanitizados.
-La salida del proceso pasa por redaccion antes de escribirse en el directorio
-privado de trabajo y esos archivos mecanicos se eliminan al cerrar la
-instancia. El entorno oficial de autenticacion se exporta solo para que los
-hijos controlados (`serve` y el runner adjunto) compartan el canal; `stop`
-restaura el valor previo del caller sin imprimir ninguno de los dos valores.
-El runner acredita ademas que el endpoint corresponde al PID y a la identidad
-de inicio que `start` entrego al mismo arbol de procesos; un URL loopback
-arbitrario no basta para adoptar un servicio del usuario.
-
-El runner acepta `--runtime-endpoint <loopback-url>` y
-`--execution-agent <opaque-id>`. Ambos son opt-in: un endpoint no loopback, un
-alias sin endpoint o un runtime sin capacidad abortan antes del CLI. El agente
-de ejecucion solo llega al adaptador; `--agent` sigue siendo la identidad
-logica de `run.started` y del modelo/evidencia. Sin esas opciones el argv,
-stdin, resume y eventos mantienen su comportamiento anterior.
 
 ## Mapping de modelos
 

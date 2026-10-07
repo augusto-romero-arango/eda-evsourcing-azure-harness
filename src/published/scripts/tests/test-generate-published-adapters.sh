@@ -310,8 +310,7 @@ elapsed=$(( $(date +%s) - start ))
 # Umbral generoso a proposito (issue #1499, CA-4): con la cuadratica previa esto
 # tardaba minutos; con la deteccion de colisiones en arrays bash basta con
 # quedar comodamente por debajo.
-ASSETS_PERF_LIMIT="${MEFISTO_ASSETS_PERF_LIMIT:-20}"
-[ "$elapsed" -lt "$ASSETS_PERF_LIMIT" ] && pass "fixture de 160 assets: --check completo en ${elapsed}s (< ${ASSETS_PERF_LIMIT}s)" || fail "fixture de 160 assets: --check tardo ${elapsed}s (>= ${ASSETS_PERF_LIMIT}s, limite configurable con MEFISTO_ASSETS_PERF_LIMIT)"
+[ "$elapsed" -lt 20 ] && pass "fixture de 160 assets: --check completo en ${elapsed}s (< 20s)" || fail "fixture de 160 assets: --check tardo ${elapsed}s (>= 20s)"
 
 printf '\nResultado: %s PASS, %s FAIL\n' "$PASS" "$FAIL"
 exit "$FAIL"

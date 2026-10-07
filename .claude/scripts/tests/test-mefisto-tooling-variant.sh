@@ -117,7 +117,6 @@ printf '.mefisto/\n' > "$FAKE_MEFISTO/.gitignore"
 cp "$REPO_ROOT/src/internal/scripts/lib/_mefisto-common.sh" "$FAKE_MEFISTO/src/internal/scripts/lib/_mefisto-common.sh"
 cp "$REPO_ROOT/.claude/scripts/_mefisto-common.sh" "$FAKE_MEFISTO/.claude/scripts/_mefisto-common.sh"
 cp "$REPO_ROOT/src/internal/scripts/lib/mefisto-state.sh" "$FAKE_MEFISTO/src/internal/scripts/lib/mefisto-state.sh"
-cp "$REPO_ROOT/src/internal/scripts/lib/mefisto-test-inventory.sh" "$FAKE_MEFISTO/src/internal/scripts/lib/mefisto-test-inventory.sh"
 # El bloque [18] invoca el pipeline real: copia el nucleo comun completo, no
 # los shims temporales que este corte elimina de src/internal/.
 cp -R "$REPO_ROOT/src/runtime" "$FAKE_MEFISTO/src/runtime"

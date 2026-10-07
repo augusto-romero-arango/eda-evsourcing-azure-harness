@@ -1,7 +1,7 @@
 ---
 name: "domain-scaffolder"
 description: "Crea el scaffold completo para un nuevo dominio (Function App, tests, Terraform, GitHub Actions)."
-tools: "Read, Glob, Grep, Edit, Write, Bash, WebFetch, WebSearch"
+tools: "Read, Glob, Grep, Edit, Write, Bash"
 model: "sonnet"
 ---
 <!-- GENERADO por src/published/scripts/generate-published-adapters.sh desde src/published/agents/domain-scaffolder.md. No editar a mano. -->
@@ -286,8 +286,6 @@ Elimina estas lineas del `.csproj`:
 
 > **Pines exactos sin comodin, `Worker.Extensions.ServiceBus` y `FluentValidation.DependencyInjectionExtensions` (issue #605)**: un comodin de major (`5.*`, `11.*`) resuelve "la ultima version que matchea al momento del restore", asi que el resultado del build depende del dia y la hora en que corre, no del commit -- el mismo riesgo que evidencio el incidente de `10.*` documentado en la nota del bloque de `SmokeTests` (Paso 2b). `Microsoft.Azure.Functions.Worker.Extensions.ServiceBus` queda en `5.24.0` y `FluentValidation.DependencyInjectionExtensions` en `11.12.0`, verificadas contra `api.nuget.org/v3-flatcontainer/<paquete>/index.json` al momento de este cambio. **Criterio del pin**: la ultima estable **de la linea que el comodin abarcaba**, no la ultima estable absoluta del paquete -- este issue congela la resolucion que el comodin ya producia, no actualiza dependencias. `5.24.0` coincide hoy con la ultima absoluta; `11.12.0` **no** (existe `12.x`, un major de FluentValidation que queda deliberadamente fuera de alcance). Al revalidar contra la fuente, sube dentro de la misma linea: cruzar un major se decide en su propio issue, con su propia verificacion de breaking changes. **Repos ya scaffoldeados con el comodin**: la idempotencia de este agente no reescribe un `.csproj` existente -- edita a mano esas dos lineas en el `.csproj` del Function App de cada dominio ya scaffoldeado.
 
-> **Reverificacion externa de pines y SDKs (MEF-ADR-0003, MEF-ADR-0038, issue #1879):** si esta tarea usa exactamente los pines y la receta declarados aqui, conserva la evidencia local: ADRs, `.csproj`, paquete restaurado/decompilado y `dotnet build`. No consultes red automaticamente ni sustituyas un pin por `latest`. Solo cuando la tarea pide modificar o reverificar un pin, su grafo de dependencias o una firma que no se puede demostrar localmente, consulta la fuente oficial publica de **la version y linea requeridas** con WebFetch/WebSearch: el `index.json` versionado y el `.nuspec` de NuGet ([Package Base Address](https://learn.microsoft.com/nuget/api/package-base-address-resource)) para existencia y dependencias, o la documentacion/codigo oficial del SDK para su superficie o firma. `dotnet package search --exact-match` puede confirmar que existen el id y el pin cuando el CLI ya esta disponible, pero no demuestra el grafo del `.nuspec`. Distingue siempre: existencia del pin exacto, ultima version publicada y dependencia efectiva de esa version; que exista una release mas nueva no autoriza cruzar de `FluentValidation` 11.x a 12.x ni otro major. Si falla la web o no esta disponible la fuente obligatoria, informa **NO VERIFICADO**; no declares verificado por un build que resolvio otro grafo, no elijas otro major y no uses `curl` como sustituto. La version instalada de `func init` o `dotnet restore` y el pin declarado son evidencias distintas, nunca intercambiables. En las consultas web envia solo identificadores tecnicos publicos, nunca configuracion del consumidor, secretos ni payloads.
-
 **3. Crear (si no existen) los ensamblados de bus del BC `PublicEvents`/`PrivateEvents`** (MEF-ADR-0039 decisiones 1, 2 y 8): particion incondicional por rol de los eventos que cruzan el bus del BC -- `<RootNamespace>.PublicEvents` (sale del BC) y `<RootNamespace>.PrivateEvents` (bus interno). A diferencia de `{PascalCase}.DomainEvents` (uno por dominio), estos dos viven a nivel de **Bounded Context**: el primer dominio del BC los crea, y los siguientes solo agregan su subcarpeta (mas abajo). Verifica primero si ya existen:
 
 ```bash
@@ -473,58 +471,6 @@ public static class IdentidadEventos{PascalCase}
 }
 ```
 
-**6a-bis. Crear `Infraestructura/EnrutamientoEventos{PascalCase}.cs`** en el Function App (issue #1804, MEF-ADR-0024 decision #7, MEF-ADR-0029): la lista declarativa de los eventos de bus que este dominio **publica**, con su topic y, para los publicos, la clave de broker. Es la contraparte de salida de `IdentidadEventos{PascalCase}.TiposPersistidos`: esa lista alimenta `AddEventTypes`, esta alimenta las lineas `PublicarEventoServerless<T>` de `ComposicionServicios{PascalCase}` (punto 6b), y `ComposicionContenedorTests` (Paso 2 punto 9) verifica ambas contra el contenedor real. No vive en `{PascalCase}.DomainEvents` como su paralela: sus entradas nombran tipos de `PrivateEvents`/`PublicEvents`, y `DomainEvents` es una isla sin `ProjectReference` (MEF-ADR-0039 decision 2). El Function App es el unico proyecto que ve los tres ensamblados. Nace vacia.
-
-```csharp
-using Cosmos.EventDriven.Abstractions;
-using Cosmos.EventDriven.CritterStack.AzureServiceBus;
-using Wolverine;
-
-namespace <RootNamespace>.{PascalCase}.Infraestructura;
-
-/// <summary>
-/// Un evento de bus que este dominio publica. <see cref="Registrar"/> es la linea
-/// <c>PublicarEventoServerless&lt;T&gt;</c> tipada que <c>ComposicionServicios{PascalCase}</c> aplica;
-/// <see cref="Broker"/> es null para el broker default (namespace interno).
-/// </summary>
-public sealed record EventoPublicado(Type Tipo, string Topic, string? Broker, Action<WolverineOptions> Registrar)
-{
-    public static EventoPublicado Privado<TEvento>(string topic)
-        where TEvento : class, IPrivateEvent
-        => new(typeof(TEvento), topic, null, options => options.PublicarEventoServerless<TEvento>(topic));
-
-    public static EventoPublicado Publico<TEvento>(string broker, string topic)
-        where TEvento : class, IPublicEvent
-        => new(typeof(TEvento), topic, broker, options => options.PublicarEventoServerless<TEvento>(broker, topic));
-}
-
-/// <summary>
-/// Eventos que el dominio {PascalCase} publica (MEF-ADR-0024 decision #7). Sin entrada aqui,
-/// PublishAsync descarta el evento en silencio.
-/// </summary>
-public static class EnrutamientoEventos{PascalCase}
-{
-    // Clave de broker en Wolverine: el alias de serviceBus.external EN MINUSCULAS. Wolverine
-    // normaliza a minusculas el esquema del Uri del broker nombrado ("cosmos://topic/..."), y una
-    // clave en mayusculas revienta la composicion con "Unknown Transport scheme" al registrar el
-    // primer evento publico.
-    public const string BrokerCosmos = "cosmos";
-
-    // Una entrada por evento publicado; el guardrail derivado de ComposicionContenedorTests exige
-    // cada IPrivateEvent/IPublicEvent de PrivateEvents.{PascalCase}/PublicEvents.{PascalCase}:
-    //   EventoPublicado.Privado<TurnoCreado>("turno-creado"),
-    //   EventoPublicado.Publico<EmpleadoAsignado>(BrokerCosmos, "empleado-asignado"),
-    public static IReadOnlyList<EventoPublicado> EventosPublicados { get; } = [];
-}
-```
-
-Si el Paso 0 no resolvio ningun alias `serviceBus.external` con `alcance == "compartido"`, omite la constante `BrokerCosmos` (y su linea de ejemplo). Si hay mas de uno, declara una constante por alias, siempre en minusculas.
-
-**Verificacion de la mecanica de enrutamiento (issue #1804, CA-1)**, por decompilacion de los paquetes pinneados (`Cosmos.EventDriven.*` 2.1.0, que arrastra `WolverineFx` 6.16.0) y por experimento local sobre el mismo wiring de este agente:
-- `MessageBus.PublishAsync<T>` resuelve `Runtime.RoutingFor(message.GetType()).RouteForPublish(...)` y, si no hay envelopes, solo llama `MessageTracking.NoRoutesFor` (una linea de log) y devuelve `ValueTask.CompletedTask`: **no lanza**. `SendAsync`, en cambio, si falla sin ruta: `EmptyMessageRouter<T>.RouteForSend` lanza `IndeterminateRoutesException`.
-- `WolverinePrivateEventSender`/`WolverinePublicEventSender` delegan en `IMessageBus.PublishAsync<IPrivateEvent|IPublicEvent>` sin ninguna verificacion propia ni opcion de modo estricto. No hay alternativa en el paquete; el unico guardrail disponible es el de composicion (Paso 2 punto 9).
-- `IWolverineRuntime.RoutingFor(type).Routes` se resuelve sobre el `ServiceProvider` sin arrancar el host y sin red. `Describe().Endpoint` da `asb://topic/{topic}` en el broker default y `{clave}://topic/{topic}` en el nombrado.
-
 **6b. Crear `Infraestructura/ComposicionServicios{PascalCase}.cs`** con el metodo de extension que concentra toda la composicion de DI que antes vivia inline en `Program.cs` (issue #319, MEF-ADR-0029). La seccion de brokers nombrados es **dinamica**, con la misma regla del Paso 6: un parametro y una linea `AgregarAzureServiceBusNombradoServerless` **por cada alias del backbone compartido** resuelto en el Paso 0. El ejemplo siguiente ilustra un dominio con un unico alias `COSMOS`:
 
 ```csharp
@@ -592,19 +538,14 @@ public static class ComposicionServicios{PascalCase}
                 // Broker default: namespace interno del BC (MEF-ADR-0024 decision #3, #7).
                 options.HabilitarAzureServiceBusParaServerLess(serviceBusInterno);
                 // Broker(s) nombrado(s): uno por alias del backbone compartido (MEF-ADR-0024 decision #4, #7).
-                // La clave de broker es el alias declarado en serviceBus.external, en minusculas.
-                options.AgregarAzureServiceBusNombradoServerless(EnrutamientoEventos{PascalCase}.BrokerCosmos, serviceBusCosmos);
-                // Enrutamiento por tipo (MEF-ADR-0024 decision #2, #4, #7), alimentado por la lista
-                // declarativa EnrutamientoEventos{PascalCase} (punto 6a-bis):
-                //   EventoPublicado.Privado<T>(topic)          -> broker default  -> namespace interno
-                //   EventoPublicado.Publico<T>(clave, topic)   -> broker nombrado -> backbone compartido
+                // La clave de broker es el mismo alias declarado en serviceBus.external.
+                options.AgregarAzureServiceBusNombradoServerless("COSMOS", serviceBusCosmos);
+                // Enrutamiento por tipo (MEF-ADR-0024 decision #2, #4):
+                //   IPrivateEvent -> PublicarEventoServerless<T>(topic)            -> broker default  -> namespace interno
+                //   IPublicEvent  -> PublicarEventoServerless<T>("<alias>", topic) -> broker nombrado -> backbone compartido
                 // AVISO: NO usar PublicarEventosServerless(Assembly contratos) completo: filtra por
                 //   IsAssignableTo(typeof(IEvent)), captura IPrivateEvent e IPublicEvent juntos y enruta
                 //   todo al mismo broker, rompiendo la separacion privado/publico. Registrar siempre por tipo.
-                foreach (var evento in EnrutamientoEventos{PascalCase}.EventosPublicados)
-                {
-                    evento.Registrar(options);
-                }
             });
 
         services.AgregarMartenEventStore();
@@ -756,7 +697,7 @@ public static class ComposicionServicios{PascalCase}
 
 **Fallback de connection string del exporter de metricas (MEF-ADR-0038 seccion 10):** el `PostConfigure<AzureMonitorExporterOptions>` de arriba no es un ajuste cosmetico -- sin el, un dominio nuevo sin `APPLICATIONINSIGHTS_CONNECTION_STRING` resuelta (greenfield antes de desplegar App Insights, o el arranque en frio en que la referencia `@Microsoft.KeyVault(...)` del Paso 4 todavia no resolvio) revienta al arrancar el host con `InvalidOperationException` al resolver el `MeterProvider` -- **incluso** con el drop total de arriba activo, porque el fallo ocurre al **construir** el exporter, antes de que exista ninguna medida que filtrar (asimetria frente al `TracerProvider`, que si se resuelve sin connection string). `PostConfigure` solo actua si ninguna fuente real (env var o Key Vault) resolvio antes la connection string, asi que el dummy nunca desplaza una real. Lo que **no** debes afirmar -- ni en el codigo generado ni en el reporte al usuario -- es que con el dummy no sale ningun byte: el drop total gobierna los instrumentos que pasan por las vistas del `MeterProviderBuilder`, no necesariamente el latido que el propio exporter emite sobre si mismo (`_APPRESOURCEPREVIEW_`), que MEF-ADR-0038 seccion 10 deja explicitamente como **gate abierto de medicion** -- ningun agente lo da por suprimido hasta cerrarlo con telemetria real post-deploy.
 
-Si el Paso 0 no resolvio ningun alias `serviceBus.external` con `alcance == "compartido"`, omite el parametro `serviceBusCosmos` y la linea `AgregarAzureServiceBusNombradoServerless` (el `foreach` sobre `EnrutamientoEventos{PascalCase}.EventosPublicados` se conserva siempre); deja solo el broker default y un comentario: `// Backbone compartido: sin alias "compartido" declarado en serviceBus.external todavia (MEF-ADR-0024 decision #4). Agrega su broker nombrado cuando el BC publique/consuma su primer evento publico.` Si hay mas de un alias, repite el par parametro + linea de registro por cada uno (y su argumento correspondiente en la llamada de `Program.cs` y en el test de composicion, Paso 2 punto 9). No wirees ningun alias con `alcance == "externo"` (integracion verdaderamente externa, diferida por MEF-ADR-0024 decision #5, default-off).
+Si el Paso 0 no resolvio ningun alias `serviceBus.external` con `alcance == "compartido"`, omite el parametro `serviceBusCosmos` y la linea `AgregarAzureServiceBusNombradoServerless`; deja solo el broker default y un comentario: `// Backbone compartido: sin alias "compartido" declarado en serviceBus.external todavia (MEF-ADR-0024 decision #4). Agrega su broker nombrado cuando el BC publique/consuma su primer evento publico.` Si hay mas de un alias, repite el par parametro + linea de registro por cada uno (y su argumento correspondiente en la llamada de `Program.cs` y en el test de composicion, Paso 2 punto 9). No wirees ningun alias con `alcance == "externo"` (integracion verdaderamente externa, diferida por MEF-ADR-0024 decision #5, default-off).
 
 Si el Paso 0 resolvio `tenancy.strategy = "multi-tenant-header"` (etapa b, MEF-ADR-0028), **reemplaza** la linea `services.AddScoped<ITenantResolver, TenantResolverMonoTenantPorDefecto>();` (y el `using Cosmos.MultiTenancy;` de arriba) por el registro del resolver `TenantExecutionContext` (biblioteca `src/<RootNamespace>.TenantResolver/`) -- ver el detalle completo (verificacion de presencia obligatoria, CA-6, y el fallback a "proponer", CA-7) en el punto 10f del Paso 1.
 
@@ -1856,9 +1797,8 @@ y valida el resultado con `BuildServiceProvider(ValidateOnBuild: true, ValidateS
 el guardrail que detecta en segundos, en CI, un registro faltante que de otro modo solo revienta
 en runtime (issue #221 del consumidor Bitakora.ControlAsistencia: `ITenantResolver` sin registrar
 paso "compila + unit tests verdes" y solo se detecto post-deploy en smoke tests). Gana ademas una
-guarda derivada de identidad de eventos (MEF-ADR-0036 CA-3/CA-4), los dos guardrails de salida de
-eventos publicados (issue #1804: ruta resuelta por cada entrada de `EnrutamientoEventos{PascalCase}`
-y guarda derivada de que ningun `IPrivateEvent`/`IPublicEvent` del dominio falte en ella), los dos guardrails deterministas del sampler de observabilidad (MEF-ADR-0038 seccion 4), el
+guarda derivada de identidad de eventos (MEF-ADR-0036 CA-3/CA-4, ultimo test de la clase abajo),
+los dos guardrails deterministas del sampler de observabilidad (MEF-ADR-0038 seccion 4), el
 guardrail del flip de logs desacoplado del muestreo de trazas (MEF-ADR-0038 seccion 9, issue #700),
 el guardrail del drop total de metricas (MEF-ADR-0038 seccion 10, issue #764/#777) y los dos
 guardrails del durability agent apagado en origen (MEF-ADR-0038 seccion 6, ultimos dos tests de la
@@ -1883,7 +1823,6 @@ using Microsoft.Extensions.Options;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Trace;
 using Wolverine;
-using Wolverine.Runtime;
 
 namespace <RootNamespace>.{PascalCase}.Tests.Infraestructura;
 
@@ -1991,53 +1930,6 @@ public class ComposicionContenedorTests
         var eventosRegistrados = store.Options.Events.AllKnownEventTypes().Select(e => e.EventType);
 
         eventosEsperados.Should().BeSubsetOf(eventosRegistrados);
-    }
-
-    // Guardrail de salida (issue #1804, MEF-ADR-0024 decision #7): PublishAsync sobre un tipo sin
-    // ruta no lanza, descarta en silencio. Para cada evento de EnrutamientoEventos{PascalCase},
-    // Wolverine debe resolver en el contenedor real (sin arrancar el host, sin red) una ruta al
-    // topic declarado en el broker correcto. Fact que recorre la lista, no Theory: en xUnit v3 una
-    // Theory sin filas falla con "No data found", y la lista nace vacia.
-    [Fact]
-    public async Task AgregarServicios{PascalCase}_EnrutaCadaEventoPublicadoASuTopic()
-    {
-        await using var proveedor = ConstruirProveedor();
-        var runtime = proveedor.GetRequiredService<IWolverineRuntime>();
-
-        foreach (var evento in EnrutamientoEventos{PascalCase}.EventosPublicados)
-        {
-            var destinoEsperado = new Uri($"{evento.Broker ?? "asb"}://topic/{evento.Topic}");
-            var destinos = runtime.RoutingFor(evento.Tipo).Routes.Select(r => r.Describe().Endpoint);
-
-            destinos.Should().Contain(destinoEsperado,
-                $"{evento.Tipo.FullName} esta declarado en EnrutamientoEventos{PascalCase} y Wolverine debe enrutarlo a ese topic y broker");
-        }
-    }
-
-    // Guarda derivada (issue #1804): todo IPrivateEvent/IPublicEvent del namespace de ESTE dominio
-    // en PrivateEvents/PublicEvents debe estar en EnrutamientoEventos{PascalCase}. El namespace es
-    // del productor (MEF-ADR-0039 decision 3), asi que los eventos de otros dominios que este solo
-    // consume no entran. Assembly.Load por nombre, no GetReferencedAssemblies: el compilador omite
-    // la referencia mientras el Function App no use ningun tipo del ensamblado.
-    [Fact]
-    public void EnrutamientoEventos{PascalCase}_DeclaraCadaEventoDeBusDelDominio()
-    {
-        var eventosDelDominio = new[]
-            {
-                (Ensamblado: "<RootNamespace>.PrivateEvents", Namespace: "<RootNamespace>.PrivateEvents.{PascalCase}", Marker: typeof(IPrivateEvent)),
-                (Ensamblado: "<RootNamespace>.PublicEvents", Namespace: "<RootNamespace>.PublicEvents.{PascalCase}", Marker: typeof(IPublicEvent)),
-            }
-            .SelectMany(origen => Assembly.Load(origen.Ensamblado).GetTypes()
-                .Where(t => t.Namespace == origen.Namespace
-                    && origen.Marker.IsAssignableFrom(t)
-                    && t is { IsAbstract: false, IsInterface: false }));
-        var declarados = EnrutamientoEventos{PascalCase}.EventosPublicados.Select(e => e.Tipo);
-
-        var faltantes = eventosDelDominio.Except(declarados).Select(t => t.FullName);
-
-        faltantes.Should().BeEmpty(
-            "cada evento de bus del dominio se declara en EnrutamientoEventos{PascalCase}.EventosPublicados " +
-            "(EventoPublicado.Privado<T>/Publico<T>); sin esa entrada PublishAsync lo descarta en silencio");
     }
 
     // Helper de reflection (MEF-ADR-0038 seccion 4): TracerProviderSdk.Sampler es una propiedad
@@ -3424,12 +3316,6 @@ on:
     types: [completed]
   workflow_dispatch:
 
-# Piso para los jobs que no declaran los suyos. Los permisos de un job reemplazan por completo
-# a los del workflow (GitHub Docs, "Assigning permissions to jobs"), asi que las concesiones
-# de cada job (id-token: write, pull-requests: read, actions: read) siguen vigentes.
-permissions:
-  contents: read
-
 jobs:
   # El apply de infra (infra-cd.yml, MEF-ADR-0022) y el deploy de codigo pueden correr en
   # el mismo push a main. Encadenar por workflow_run (en vez de un 'push' que dispare
@@ -3450,21 +3336,11 @@ jobs:
     steps:
       - id: check
         name: Decidir si corresponde desplegar este dominio
-        # Los datos del evento entran por 'env', nunca como ${{ }} dentro del 'run': un dato
-        # controlable por quien crea la rama (head_branch) se sustituiria como texto y
-        # se volveria codigo (script injection, hardening de GitHub Actions).
         env:
           GH_TOKEN: ${{ github.token }}
-          EVENTO: ${{ github.event_name }}
-          RUN_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
-          RUN_EVENTO: ${{ github.event.workflow_run.event }}
-          RUN_RAMA: ${{ github.event.workflow_run.head_branch }}
-          RUN_REPO: ${{ github.event.workflow_run.head_repository.full_name }}
-          RUN_SHA: ${{ github.event.workflow_run.head_sha }}
-          REPO: ${{ github.repository }}
         run: |
           # push directo (src/**) o workflow_dispatch: siempre despliega.
-          if [ "$EVENTO" != "workflow_run" ]; then
+          if [ "${{ github.event_name }}" != "workflow_run" ]; then
             echo "debe_desplegar=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -3472,17 +3348,13 @@ jobs:
           # cualquier corrida suya (plan o apply) dispara este workflow_run, asi que
           # hay que filtrar explicitamente por la corrida de 'apply' (rama main,
           # exitosa) y no reaccionar a un plan sobre una PR de infra sin mergear.
-          # Ademas exige origen confiable: corrida disparada por push y del mismo repo
-          # (head_branch solo no prueba de que repositorio viene el commit).
-          if [ "$RUN_CONCLUSION" != "success" ] || \
-             [ "$RUN_RAMA" != "main" ] || \
-             [ "$RUN_EVENTO" != "push" ] || \
-             [ "$RUN_REPO" != "$REPO" ]; then
+          if [ "${{ github.event.workflow_run.conclusion }}" != "success" ] || \
+             [ "${{ github.event.workflow_run.head_branch }}" != "main" ]; then
             echo "debe_desplegar=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           # ...y el PR mergeado toco este dominio.
-          PR_NUM=$(gh api "repos/${REPO}/commits/${RUN_SHA}/pulls" --jq '.[0].number // empty')
+          PR_NUM=$(gh api "repos/${{ github.repository }}/commits/${{ github.event.workflow_run.head_sha }}/pulls" --jq '.[0].number // empty')
           if [ -z "$PR_NUM" ]; then
             echo "debe_desplegar=false" >> "$GITHUB_OUTPUT"
             exit 0
@@ -3497,17 +3369,15 @@ jobs:
           # hace su entrada en 'paths'. Si esta lista y la de 'paths' se desincronizan, el
           # modo de fallo es silencioso: el push despliega, pero la corrida encadenada
           # detras del apply de infra no, y se pierde el orden infra->codigo.
-          if gh api "repos/${REPO}/pulls/${PR_NUM}/files" --paginate --jq '.[].filename' | grep -qE '^src/<RootNamespace>\.({PascalCase}(\.DomainEvents)?|PublicEvents|PrivateEvents)/'; then
+          if gh api "repos/${{ github.repository }}/pulls/${PR_NUM}/files" --paginate --jq '.[].filename' | grep -qE '^src/<RootNamespace>\.({PascalCase}(\.DomainEvents)?|PublicEvents|PrivateEvents)/'; then
             echo "debe_desplegar=true" >> "$GITHUB_OUTPUT"
           else
             echo "debe_desplegar=false" >> "$GITHUB_OUTPUT"
           fi
 
   build-and-test:
-    # Guarda de origen repetida junto al checkout (CodeQL actions/untrusted-checkout): este job
-    # compila el head_sha de una corrida ajena; solo se confia en un push a main del mismo repo.
     needs: determinar-alcance
-    if: needs.determinar-alcance.outputs.debe_desplegar == 'true' && (github.event_name != 'workflow_run' || (github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch == 'main' && github.event.workflow_run.head_repository.full_name == github.repository))
+    if: needs.determinar-alcance.outputs.debe_desplegar == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -3535,8 +3405,7 @@ jobs:
     # Un PR valida el artefacto con build-and-test, pero nunca obtiene OIDC, publica ni
     # despliega. La frontera queda en este job, no solo en el filtro del trigger: evita
     # que un cambio futuro de paths o un nuevo trigger exponga Azure desde un PR.
-    # Guarda de origen repetida junto al checkout con OIDC (CodeQL actions/untrusted-checkout).
-    if: github.event_name != 'pull_request' && needs.determinar-alcance.outputs.debe_desplegar == 'true' && (github.event_name != 'workflow_run' || (github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch == 'main' && github.event.workflow_run.head_repository.full_name == github.repository))
+    if: github.event_name != 'pull_request' && needs.determinar-alcance.outputs.debe_desplegar == 'true'
     runs-on: ubuntu-latest
     permissions:
       id-token: write   # requerido para el login OIDC de azure/login (sin secret) - MEF-ADR-0022
@@ -4145,7 +4014,6 @@ Scaffold completado para el dominio "{kebab}":
     Infraestructura/RequestValidator.cs    - IRequestValidator + implementacion
     Infraestructura/EventStoreReadinessProbe.cs - IEventStoreReadinessProbe + implementacion: fuerza la materializacion de storage de Marten via FetchStreamStateAsync sobre un stream centinela, sin cache del positivo (MEF-ADR-0031 seccion 6)
     Infraestructura/TenantResolverMonoTenantPorDefecto.cs - ITenantResolver mono-tenant transitorio (MEF-ADR-0028). Solo en etapa (a) y en el fallback CA-7 de etapa (b); el auto-cableo de etapa (b) no lo genera (referencia src/<RootNamespace>.TenantResolver/ en su lugar)
-    Infraestructura/EnrutamientoEventos{PascalCase}.cs - Eventos de bus publicados con su topic y clave de broker (lista vacia al nacer, alimenta PublicarEventoServerless<T>) - issue #1804
     Infraestructura/ServiceBusDeserializador.cs - Helper de deserializacion case-insensitive
     Infraestructura/ServiceBusEndpointBase.cs   - Clase base para endpoints de ServiceBus (topic+subscription)
     Infraestructura/ServiceBusSessionEndpointBase.cs - Clase base para endpoints de fan-in (queue en modo sesion, MEF-ADR-0026)
@@ -4167,7 +4035,7 @@ Scaffold completado para el dominio "{kebab}":
     Infraestructura/ServiceBusEndpointBaseTests.cs - Tests de orquestacion (feliz, lock-lost, dead-letter, JSON invalido)
     Infraestructura/ServiceBusSessionEndpointBaseTests.cs - Tests de orquestacion de fan-in (feliz, lock-lost, dead-letter, Subject no reconocido)
     Infraestructura/PrivateEventEndpointBaseTests.cs - Tests de orquestacion del EventHandler directo (feliz, lock-lost, dead-letter, JSON invalido)
-    Infraestructura/ComposicionContenedorTests.cs - Test de composicion del contenedor DI: BuildServiceProvider(ValidateOnBuild + ValidateScopes) + resolucion explicita de los routers (issue #319, MEF-ADR-0029) + guarda derivada de eventos aplicados vs EventGraph del IDocumentStore compuesto (MEF-ADR-0036) + ruta Wolverine de cada evento de EnrutamientoEventos y guarda derivada de eventos de bus del dominio no declarados (issue #1804) + guardrails del sampler efectivo post-exporter y su ratio default + del flip de logs desacoplado del muestreo de trazas (issue #700) + del drop total de metricas via InMemoryExporter sin tumbar el TracerProvider (issue #764/#777) + del durability agent apagado en origen (MEF-ADR-0038)
+    Infraestructura/ComposicionContenedorTests.cs - Test de composicion del contenedor DI: BuildServiceProvider(ValidateOnBuild + ValidateScopes) + resolucion explicita de los routers (issue #319, MEF-ADR-0029) + guarda derivada de eventos aplicados vs EventGraph del IDocumentStore compuesto (MEF-ADR-0036) + guardrails del sampler efectivo post-exporter y su ratio default + del flip de logs desacoplado del muestreo de trazas (issue #700) + del drop total de metricas via InMemoryExporter sin tumbar el TracerProvider (issue #764/#777) + del durability agent apagado en origen (MEF-ADR-0038)
     ReadyCheckTests.cs                     - Mapeo probe-exitoso -> 200 / probe-fallido -> 503 con cuerpo diagnosticable, fake manual del probe (MEF-ADR-0031 seccion 6, issue #671/#675)
                                            - Proyecto de tests unitarios (xUnit v3 + AwesomeAssertions)
 

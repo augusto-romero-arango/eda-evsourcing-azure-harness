@@ -91,7 +91,7 @@ PIPELINE_TESTS=""
 PIPELINE_PR=""
 PIPELINE_ERROR=""
 LAST_AGENT_DURATION=0
-LAST_AGENT_DENIALS="null"
+LAST_AGENT_DENIALS=0
 CURRENT_STAGE="setup"
 HOLD_CAUSE_JSON="null" HOLD_NEXT_PROBE_JSON="null" HOLD_CEILING_JSON="null" HOLD_TOTAL=0
 PIPELINE_TMP_DIR=""
@@ -128,7 +128,6 @@ finalize_pipeline_exit() {
         record_failed_history
     fi
 
-    pipeline_execution_close "$exit_code"
     cleanup_pipeline_temporaries
     exit "$exit_code"
 }
@@ -334,9 +333,6 @@ HARNESS_IDENTITY_JSON="$(get_harness_identity_json "$MEFISTO_RUNTIME_RESUELTO")"
 if ! runtime_cli_available "$MEFISTO_RUNTIME_RESUELTO"; then
     abort "Falta el CLI del runtime resuelto ('$MEFISTO_RUNTIME_RESUELTO')"
 fi
-# Ejecucion preparada (#1860): una referencia para todo el pipeline, antes del worktree.
-pipeline_execution_open tooling "$(git rev-parse --show-toplevel)" "$(cd "$SCRIPT_DIR/.." && pwd -P)" "$RUNTIME_LIB_DIR" "$RUN_AGENT_BIN_DEFAULT" \
-    || abort "No se pudo abrir la ejecucion preparada del pipeline tooling"
 
 # --- Preparar directorio de pipeline ---
 mkdir -p "$LOG_DIR"
@@ -545,8 +541,7 @@ run_agent() {
         local args=(--runtime "$MEFISTO_RUNTIME_RESUELTO" --agent "$agent_id" --cwd "$WORKTREE_PATH" --prompt-file "$attempt_prompt" --system-file "$system_file" --event-log "$events_file" --events-log "$EVENTS_LOG_ABS" --redact-observability --timeout "$MEFISTO_AGENT_TIMEOUT_SECONDS")
         [ -n "$model" ] && args+=(--model "$model")
         [ -n "$resume_session" ] && args+=(--resume-session "$resume_session")
-        if pipeline_run_runner "$RUN_AGENT_BIN" "${args[@]}" >"$runner_file" 2>&1; then run_exit=0; else run_exit=$?; fi
-        pipeline_runner_started_or_abort "$agent"
+        if "$RUN_AGENT_BIN" "${args[@]}" >"$runner_file" 2>&1; then run_exit=0; else run_exit=$?; fi
         [ "$attempt_prompt" = "$prompt_file" ] || rm -f "$attempt_prompt"
         elapsed=$(( $(date +%s) - start_ts ))
         derive_stage_log_from_stream "$events_file" "" "$log_stage"
@@ -557,11 +552,8 @@ run_agent() {
         case "$agent" in writer) AGENT_WR_METRICS="$metrics_json" ;; reviewer) AGENT_RV_METRICS="$metrics_json" ;; esac
         local denials
         denials="$(agent_events_denials "$events_file")"
+        case "$denials" in ''|*[!0-9]*) denials=0 ;; esac
         LAST_AGENT_DENIALS="$denials"
-        if [ "$denials" = "null" ]; then
-            warn "$agent: denegaciones neutrales no medidas; no se reintenta por permisos"
-            echo "[$(date +%H:%M:%S)] DENIALS $agent: no_medidas" >> "$EVENTS_LOG_ABS"
-        fi
 
         # El retry publicado por permisos es unico y se decide solo con el
         # contador neutral. Aplica incluso si el CLI termino en success pero
@@ -571,7 +563,7 @@ run_agent() {
             || [ -n "$(git -C "$WORKTREE_PATH" status --porcelain -- . "${PIPELINE_OWN_WRITES[@]}" 2>/dev/null)" ]; then
             attempt_has_work=true
         fi
-        if [[ "$denials" =~ ^[0-9]+$ ]] && [ "$denials" -gt 0 ] && [ "$attempt_has_work" = false ] && [ "$denial_retry_used" = false ]; then
+        if [ "$denials" -gt 0 ] && [ "$attempt_has_work" = false ] && [ "$denial_retry_used" = false ]; then
             denial_retry_used=true
             resume_session=""
             warn "$agent: $denials denegacion(es) neutrales sin trabajo; reintentando una vez desde cero"

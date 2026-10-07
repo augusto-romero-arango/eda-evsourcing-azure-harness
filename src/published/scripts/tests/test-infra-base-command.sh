@@ -48,9 +48,9 @@ claude_body="$(< "$CLAUDE")"
 opencode_body="$(< "$OPENCODE")"
 contains "$claude_body" 'model: "haiku"' 'Claude materializa el perfil fast'
 absent "$opencode_body" 'model:' 'OpenCode no emite model'
-contains "$opencode_body" 'subtask: false' 'OpenCode no convierte infra-base en subtask'
+absent "$opencode_body" 'subtask' 'OpenCode no emite subtask'
 opencode_fm="$(awk 'NR == 1 { next } $0 == "---" { exit } { print }' "$OPENCODE")"
-contains "$opencode_fm" 'agent: "command-entry-infra-base"' 'OpenCode liga el command-entry de infra-base en el frontmatter'
+absent "$opencode_fm" 'agent:' 'OpenCode no emite agent en el frontmatter'
 contains "$claude_body" 'agente `mefisto:infra-base-scaffolder`' 'Claude delega con la tool Task'
 contains "$opencode_body" 'tool `task` con el agente `infra-base-scaffolder`' 'OpenCode delega con la tool task'
 contains "$claude_body" '/mefisto:infra' 'Claude resuelve command infra'

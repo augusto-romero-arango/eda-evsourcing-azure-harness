@@ -257,7 +257,6 @@ EOF
     # runtime se copia desde su frontera canonica; el fixture no trae shims.
     cp "$REPO_ROOT/src/internal/scripts/lib/_mefisto-common.sh" "$FAKE_MEFISTO/src/internal/scripts/lib/_mefisto-common.sh"
     cp "$REPO_ROOT/src/internal/scripts/lib/mefisto-state.sh" "$FAKE_MEFISTO/src/internal/scripts/lib/mefisto-state.sh"
-    cp "$REPO_ROOT/src/internal/scripts/lib/mefisto-test-inventory.sh" "$FAKE_MEFISTO/src/internal/scripts/lib/mefisto-test-inventory.sh"
     cp -R "$REPO_ROOT/src/runtime" "$FAKE_MEFISTO/src/runtime"
     cp "$REPO_ROOT/src/internal/prompts/noninteractive-system.md" "$FAKE_MEFISTO/src/internal/prompts/noninteractive-system.md"
     # Gate de neutralidad (issue #914): el pipeline lo invoca tras cada stage

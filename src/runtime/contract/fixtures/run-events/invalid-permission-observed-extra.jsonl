@@ -1,3 +1,0 @@
-{"v":1,"type":"run.started","ts":"2026-10-04T10:10:00Z","runtime":"fake","agent":"mefisto-writer","model":null,"cwd":"/tmp/worktree"}
-{"v":1,"type":"permission.observed","ts":"2026-10-04T10:10:01Z","session_id":null,"tool":null,"signal":"possible-rejection","evidence":"tool-error-text","ruleset":"RULESET_SENTINEL","patterns":"PATTERN_SENTINEL","command":"COMMAND_SENTINEL","token":"TOKEN_SENTINEL"}
-{"v":1,"type":"run.completed","ts":"2026-10-04T10:10:02Z","status":"success","runtime":"fake","model":null,"session_id":null,"duration_ms":2000,"tokens":{"input":null,"output":null},"estimated_cost_usd":null,"turns":null,"denials":null,"ttft_ms":null,"api_duration_ms":null,"error":null}

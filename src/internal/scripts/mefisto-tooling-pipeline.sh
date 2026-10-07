@@ -26,7 +26,6 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/lib/_mefisto-common.sh"
-source "$SCRIPT_DIR/lib/mefisto-test-inventory.sh"
 assert_in_mefisto || exit 1
 
 # Frontera explicita con el nucleo comun (MEF-ADR-0053): el pipeline conserva
@@ -1162,26 +1161,6 @@ Corrige las fugas en el worktree ($WORKTREE_PATH) y retoma con:
   ./.claude/scripts/mefisto-tooling-pipeline.sh $ISSUE_NUM --from-stage $stage${VARIANT_LABEL:+ --variant $VARIANT_LABEL}"
 }
 
-# --- Gate de cobertura de shims de pruebas (issue #1965) ---
-# Cierre de stage, tras scope y neutralidad: toda fuente canonica en
-# src/published/scripts/tests/ debe tener su shim homonimo en scripts/tests/
-# (o figurar en el registro de la lib). No ejecuta pruebas, es barato. A
-# diferencia de run_neutrality_gate no necesita `git add -A`: la lib recorre el
-# sistema de archivos del worktree, no `git ls-files`.
-run_test_shim_gate() {
-    local stage="$1" role="$2"
-    local out
-
-    if out="$(mefisto_test_inventory_check_canonical_coverage "$WORKTREE_PATH" 2>&1)"; then
-        success "Gate de shims de pruebas: cobertura completa"
-        return 0
-    fi
-    abort "Stage $stage fallido: el $role dejo fuentes de prueba canonicas sin shim (MEF-ADR-0049 decision 2):
-$out
-Crea el shim homonimo en scripts/tests/ por cada fuente listada (mismo patron de tres lineas de los shims existentes) en el worktree ($WORKTREE_PATH) y retoma con:
-  ./.claude/scripts/mefisto-tooling-pipeline.sh $ISSUE_NUM --from-stage $stage${VARIANT_LABEL:+ --variant $VARIANT_LABEL}"
-}
-
 # --- Bloque compartido: doctrina de neutralidad de runtime (issue #1468) ---
 # Se define UNA sola vez y se interpola sin cambios en STAGE1_PROMPT y
 # STAGE2_PROMPT para que no diverja entre los dos prompts. Este archivo vive
@@ -1233,9 +1212,6 @@ CONTEXTO DE EJECUCION:
 - Tienes permisos completos (bypassPermissions activo).
 - PROHIBIDO hacer 'git push' o 'gh pr create' (ni ninguna operacion de publicacion de rama/PR): eso es responsabilidad exclusiva del pipeline, nunca tuya.
 
-SHIMS DE PRUEBAS:
-Toda prueba nueva en src/published/scripts/tests/ (test-*.sh) requiere, en el mismo PR, su shim homonimo (mismo basename, archivo regular ejecutable) en scripts/tests/, con el patron de tres lineas de los shims existentes (MEF-ADR-0049 decision 2). Un gate de cierre de stage (mefisto_test_inventory_check_canonical_coverage) aborta la corrida si falta alguno.
-
 ECONOMIA DE TURNOS:
 Cada turno tuyo cuesta ~13 s de reloj (el 96,6% del tiempo de una corrida es el modelo escribiendo tokens, no las herramientas ejecutandose). El presupuesto completo del stage es ${MEFISTO_AGENT_TIMEOUT_SECONDS} s. Lo caro suele ser el turno, pero los tests tambien consumen ese presupuesto. Con eso en mente:
 - Agrupa en un mismo turno las tool calls independientes entre si (varias busquedas, varias lecturas, varias escrituras a archivos distintos). No las encadenes de a una: hoy el 82% de los turnos del pipeline gasta una sola tool call, y cada una de esas cadenas paga 13 s por eslabon.
@@ -1282,7 +1258,6 @@ Instrucciones:
     fi
 
     run_neutrality_gate 1 writer
-    run_test_shim_gate 1 writer
 
     auto_commit_if_needed "writer" "mefisto-tooling(#${ISSUE_NUM}): implementacion"
 
@@ -1372,7 +1347,6 @@ Instrucciones:
     fi
 
     run_neutrality_gate 2 reviewer
-    run_test_shim_gate 2 reviewer
 
     auto_commit_if_needed "reviewer" "mefisto-tooling(#${ISSUE_NUM}): revision y correcciones"
 

@@ -133,7 +133,6 @@ PIPELINE_PR=""
 HAS_BLOCKAGE=false
 PIPELINE_ERROR=""
 LAST_AGENT_DURATION=0
-LAST_AGENT_DENIALS="null"
 CURRENT_STAGE="setup"
 # Hold estructurado en el status (issue #1600, molde tooling-pipeline.sh l.96):
 # run_agent fija estas variables antes de cada espera (agent_hold_wait) y las
@@ -441,10 +440,6 @@ HARNESS_IDENTITY_JSON="$(get_harness_identity_json "$MEFISTO_RUNTIME_RESUELTO")"
 if ! runtime_cli_available "$MEFISTO_RUNTIME_RESUELTO"; then
     abort "Falta el CLI del runtime resuelto ('$MEFISTO_RUNTIME_RESUELTO')"
 fi
-# Ejecucion preparada (#1860): una referencia para todo el pipeline, antes del worktree.
-pipeline_execution_open tdd "$(git rev-parse --show-toplevel)" "$(cd "$SCRIPT_DIR/.." && pwd -P)" "$RUNTIME_LIB_DIR" "$RUN_AGENT_BIN_DEFAULT" \
-    || abort "No se pudo abrir la ejecucion preparada del pipeline tdd"
-trap 'pipeline_execution_close "$?"' EXIT
 if [ "$(printf '%s' "$HARNESS_IDENTITY_JSON" | jq -r '.identity_state')" != "complete" ]; then
     warn "Identidad de distribucion degradada: metadata ausente o invalida; version/commit se registran como null"
 fi
@@ -519,7 +514,7 @@ fi
 
 PIPELINE_TMP_DIR="$(mktemp -d -t mefisto-tdd)" || abort "No se pudo crear el directorio temporal del pipeline"
 [ -d "$PIPELINE_TMP_DIR" ] || abort "No se pudo crear el directorio temporal del pipeline"
-trap 'pipeline_execution_close "$?"; rm -rf "${PIPELINE_TMP_DIR:-}"' EXIT
+trap 'rm -rf "${PIPELINE_TMP_DIR:-}"' EXIT
 
 # ─── Invocacion neutral unica para stages sin politicas de run_agent ──────────
 # Debe declararse antes de Stage 0: Bash solo conoce una funcion despues de
@@ -533,8 +528,7 @@ invoke_agent_once() {
     start_ts=$(date +%s)
     local args=(--runtime "$MEFISTO_RUNTIME_RESUELTO" --agent "$agent" --cwd "$WORKTREE_PATH" --prompt-file "$prompt_file" --system-file "$system_file" --event-log "$events_file" --events-log "$EVENTS_LOG_ABS" --redact-observability --timeout "$MEFISTO_AGENT_TIMEOUT_SECONDS")
     [ -n "$model" ] && args+=(--model "$model")
-    if pipeline_run_runner "$RUN_AGENT_BIN" "${args[@]}" >"$runner_file" 2>&1; then run_exit=0; else run_exit=$?; fi
-    pipeline_runner_started_or_abort "$agent"
+    if "$RUN_AGENT_BIN" "${args[@]}" >"$runner_file" 2>&1; then run_exit=0; else run_exit=$?; fi
     derive_stage_log_from_stream "$events_file" "" "$log_file"
     LAST_AGENT_METRICS_JSON=$(compute_stage_metrics "$events_file")
     LAST_AGENT_DURATION=$(( $(date +%s) - start_ts ))
@@ -798,8 +792,7 @@ Al cerrar este stage, deja tu resumen en: $summary_path"
         local args=(--runtime "$MEFISTO_RUNTIME_RESUELTO" --agent "$agent" --cwd "$WORKTREE_PATH" --prompt-file "$attempt_prompt" --system-file "$system_file" --event-log "$events_file" --events-log "$EVENTS_LOG_ABS" --redact-observability --timeout "$MEFISTO_AGENT_TIMEOUT_SECONDS")
         [ -n "$AGENT_MODEL_OVERRIDE" ] && args+=(--model "$AGENT_MODEL_OVERRIDE")
         [ -n "$resume_session" ] && args+=(--resume-session "$resume_session")
-        if pipeline_run_runner "$RUN_AGENT_BIN" "${args[@]}" >"$runner_file" 2>&1; then run_exit=0; else run_exit=$?; fi
-        pipeline_runner_started_or_abort "$agent"
+        if "$RUN_AGENT_BIN" "${args[@]}" >"$runner_file" 2>&1; then run_exit=0; else run_exit=$?; fi
         [ "$attempt_prompt" = "$prompt_file" ] || rm -f "$attempt_prompt"
         elapsed=$(( $(date +%s) - start_ts ))
         derive_stage_log_from_stream "$events_file" "" "$log_stage"
@@ -811,14 +804,10 @@ Al cerrar este stage, deja tu resumen en: $summary_path"
         echo "$metrics_json" > "$(mefisto_state_path "metrics/tdd-${TIMESTAMP}-issue-${ISSUE_LOG_TAG}-stage-${stage}-${agent}.json")" 2>/dev/null || true
         local denials attempt_has_work=false
         denials="$(agent_events_denials "$events_file")"
-        LAST_AGENT_DENIALS="$denials"
-        if [ "$denials" = "null" ]; then
-            warn "$agent: denegaciones neutrales no medidas; no se reintenta por permisos"
-            echo "[$(date +%H:%M:%S)] DENIALS $agent: no_medidas" >> "$EVENTS_LOG_ABS"
-        fi
+        case "$denials" in ''|*[!0-9]*) denials=0 ;; esac
         if ! git -C "$WORKTREE_PATH" diff --quiet "$entry_commit"..HEAD -- . "${PIPELINE_OWN_WRITES[@]}" 2>/dev/null \
             || [ -n "$(git -C "$WORKTREE_PATH" status --porcelain -- tests/ src/ "${PIPELINE_OWN_WRITES[@]}" 2>/dev/null)" ]; then attempt_has_work=true; fi
-        if [[ "$denials" =~ ^[0-9]+$ ]] && [ "$denials" -gt 0 ] && [ "$attempt_has_work" = false ] && [ "$denial_retry_used" = false ]; then
+        if [ "$denials" -gt 0 ] && [ "$attempt_has_work" = false ] && [ "$denial_retry_used" = false ]; then
             denial_retry_used=true
             resume_session=""
             warn "$agent: $denials denegacion(es) neutrales sin trabajo; reintentando una vez desde cero"
@@ -985,33 +974,6 @@ PROHIBIDO hacer 'git push' o 'gh pr create' (ni ninguna operacion de publicacion
             abort "Stage 1 fallido: no se encontraron tests para ejecutar (exit code: 8) — el $STAGE1_AGENT no genero tests validos"
         else
             log "Fase roja confirmada (exit code: $g1_rc)"
-            # Aviso (no aborta) de tests preexistentes en rojo sin modificar (issue #1937).
-            # Solo write-side; cualquier fallo del analisis degrada a warn (CA-4).
-            if [ "$IS_PROJECTION" = false ]; then
-                PREEXISTING_RED_WARN_PATH=$(mefisto_state_path "preexisting-red-warning.md" "$WORKTREE_PATH" 2>/dev/null) || PREEXISTING_RED_WARN_PATH=""
-                [ -n "$PREEXISTING_RED_WARN_PATH" ] && rm -f "$PREEXISTING_RED_WARN_PATH"
-                pre_red_rc=0
-                PRE_RED_LIST=$(detect_preexisting_red_tests "$WORKTREE_PATH" "$SNAPSHOT_COMMIT" "$TEST_OUTPUT_G1" 2>/dev/null) || pre_red_rc=$?
-                if [ "$pre_red_rc" -ne 0 ]; then
-                    warn "No se pudo analizar si hay tests preexistentes en rojo (salida no parseable o snapshot no disponible); se continua"
-                elif [ -n "$PRE_RED_LIST" ] && [ -n "$PREEXISTING_RED_WARN_PATH" ]; then
-                    warn "Tests PREEXISTENTES en rojo que el $STAGE1_AGENT no modifico (no se aborta):"
-                    while IFS=$'\t' read -r pr_test pr_file; do
-                        [ -n "$pr_test" ] && warn "  - $pr_test ($pr_file)"
-                    done <<< "$PRE_RED_LIST"
-                    {
-                        echo "## Tests preexistentes en rojo sin modificar"
-                        echo
-                        echo "Hipotesis: pin o test preexistente que quiza el test-writer debia actualizar, o stub sobre codigo existente."
-                        echo
-                        echo "| Test | Archivo |"
-                        echo "|------|---------|"
-                        while IFS=$'\t' read -r pr_test pr_file; do
-                            [ -n "$pr_test" ] && echo "| \`$pr_test\` | \`$pr_file\` |"
-                        done <<< "$PRE_RED_LIST"
-                    } > "$PREEXISTING_RED_WARN_PATH" 2>/dev/null || warn "No se pudo escribir el aviso de tests preexistentes en rojo"
-                fi
-            fi
         fi
     fi
 

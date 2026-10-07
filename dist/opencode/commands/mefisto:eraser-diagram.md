@@ -1,7 +1,5 @@
 ---
 description: "Genera diagramas profesionales con la API de Eraser (sequence, architecture, flowchart, ERD y BPMN) y los renderiza con ERASER_API_TOKEN."
-agent: "command-entry-eraser-diagram"
-subtask: false
 ---
 <!-- GENERADO por src/published/scripts/generate-published-adapters.sh desde src/published/commands/eraser-diagram.md. No editar a mano. -->
 
@@ -32,34 +30,26 @@ Genera el codigo DSL siguiendo estrictamente la sintaxis documentada abajo segun
 - Un nodo por linea, pero los labels siempre en la misma linea
 - Usa `typeface clean` y `colorMode pastel` como defaults para legibilidad
 
-## Paso 3 - Renderizar con Eraser
+## Paso 3 - Llamar al API de Eraser
 
-IMPORTANTE: despues de generar el DSL, prepara el siguiente JSON regular en
-`.mefisto/pipeline/tmp/eraser-diagram-payload.json` con tus herramientas de
-archivo. Sustituye los dos marcadores por el DSL y el `diagramType` elegido; no
-incluyas `ERASER_API_TOKEN` en el archivo.
-
-```json
-{
-  "elements": [{
-    "type": "diagram",
-    "id": "diagram-1",
-    "code": "<DSL_GENERADO>",
-    "diagramType": "<TIPO>"
-  }],
-  "scale": 2,
-  "theme": "dark",
-  "background": true
-}
-```
-
-Ejecuta siempre el renderizador despues de preparar el archivo. El script toma
-la credencial exclusivamente del entorno y devuelve un JSON con `imageUrl` y
-`createEraserFileUrl`; no afirmes que el render fue exitoso si termina con
-error.
+IMPORTANTE: SIEMPRE ejecuta el curl despues de generar el DSL. Nunca te detengas solo con el DSL.
 
 ```bash
-MEFISTO_RUNTIME=opencode "${MEFISTO_PACKAGE_ROOT}/scripts/render-eraser-diagram.sh" --payload-file .mefisto/pipeline/tmp/eraser-diagram-payload.json
+curl -s -X POST https://app.eraser.io/api/render/elements \
+  -H "Content-Type: application/json" \
+  -H "X-Skill-Source: mefisto" \
+  -H "Authorization: Bearer ${ERASER_API_TOKEN}" \
+  -d '{
+    "elements": [{
+      "type": "diagram",
+      "id": "diagram-1",
+      "code": "<DSL_GENERADO>",
+      "diagramType": "<TIPO>"
+    }],
+    "scale": 2,
+    "theme": "dark",
+    "background": true
+  }'
 ```
 
 ## Paso 4 - Mostrar resultado

@@ -112,62 +112,24 @@ La firma diagnostica es **"compila + unit tests verdes pero revienta en runtime"
    {{mefisto:run appinsights-query.sh exceptions}}
    # busca el tipo de excepcion (p. ej. InvalidOperationException: "Unable to resolve service for type ...", la excepcion que lanza el contenedor Microsoft.Extensions.DependencyInjection del worker isolated) y su conteo en la ventana del deploy
    ```
-2. **Resuelve y localiza cada version por separado en las roots efectivas**. Una version vieja y una nueva pueden vivir en roots distintas. Ejecuta el bloque completo en una sola tool call: la funcion vuelve a invocar el resolver para cada version y no depende de variables de una llamada anterior ni inventa una root alternativa.
-    ```bash
-    WORKTREE_ROOT="$(git rev-parse --show-toplevel)" || exit 1
-    PACKAGE_ID_LOWER=<paquete-en-minusculas>
-    TFM=<TargetFramework>
-    ASSEMBLY=<Ensamblado-con-casing-real>.dll
-
-    resolve_assembly() {
-      PACKAGE_VERSION="$1"
-      # El resolver entrega el envelope tambien al fallar cerrado.
-      NUGET_RESOURCES="$( {{mefisto:run resolve-nuget-resources.sh --worktree-root "$WORKTREE_ROOT"}} )" || true
-      if [ "$(jq -r '.status // empty' <<< "$NUGET_RESOURCES" 2>/dev/null)" != resolved ]; then
-        printf '%s\n' 'Las roots NuGet estan unavailable o en conflicto; la inspeccion requerida queda no verificada.' >&2
-        return 1
-      fi
-      CANDIDATES=()
-      while IFS= read -r root; do
-        candidate="$root/$PACKAGE_ID_LOWER/$PACKAGE_VERSION/lib/$TFM/$ASSEMBLY"
-        [ -f "$candidate" ] && CANDIDATES+=("$candidate")
-      done < <(jq -r '.roots[].physicalRoot' <<< "$NUGET_RESOURCES")
-      [ "${#CANDIDATES[@]}" -gt 0 ] || {
-        printf '%s\n' "No se encontro $PACKAGE_ID_LOWER/$PACKAGE_VERSION/lib/$TFM/$ASSEMBLY en las roots resueltas; la inspeccion requerida queda no verificada." >&2
-        return 1
-      }
-      SELECTED_ASSEMBLY="${CANDIDATES[0]}"
-      for ((index = 1; index < ${#CANDIDATES[@]}; index++)); do
-        if ! cmp -s "$SELECTED_ASSEMBLY" "${CANDIDATES[$index]}"; then
-          printf 'Conflicto: candidatos NuGet con contenido distinto: %s | %s\n' "$SELECTED_ASSEMBLY" "${CANDIDATES[$index]}" >&2
-          return 1
-        fi
-      done
-    }
-
-    resolve_assembly <version-vieja> || exit 1
-    OLD_ASSEMBLY="$SELECTED_ASSEMBLY"
-    printf 'Assembly viejo seleccionado: %s\n' "$OLD_ASSEMBLY"
-    resolve_assembly <version-nueva> || exit 1
-    NEW_ASSEMBLY="$SELECTED_ASSEMBLY"
-    printf 'Assembly nuevo seleccionado: %s\n' "$NEW_ASSEMBLY"
-    ```
-    Cada llamada a `resolve_assembly` obtiene un envelope nuevo y compara solo los candidatos de esa version. Si cualquiera falla, no continúes a la decompilacion.
+2. **Localiza ambas versiones del paquete en el almacen local de paquetes NuGet**:
+   ```bash
+   ls ~/.nuget/packages/<paquete>/
+   # ej: ls ~/.nuget/packages/cosmos.eventsourcing/
+   ```
 3. **Decompila cada version con `ilspycmd`** (dotnet global tool). Si el tool no esta instalado, indica el comando de instalacion — **no lo instales por cuenta propia**:
    ```bash
    dotnet tool install -g ilspycmd
    ```
    Comando de decompilacion. Ojo con el casing: NuGet normaliza el id del paquete a minusculas para la **carpeta** del almacen local (`<paquete>`), pero el `.dll` conserva el casing real del **ensamblado** (`<Ensamblado>`), que suele ser PascalCase y puede diferir de la carpeta — una sustitucion literal del mismo placeholder en ambos sitios falla en sistemas de archivos sensibles a mayusculas (Linux). Placeholders: `<paquete>` (carpeta, minusculas), `<Ensamblado>.dll` (ensamblado, casing real), `<version-vieja>`, `<version-nueva>`, `<TargetFramework>`:
    ```bash
-    # Usa OLD_ASSEMBLY y NEW_ASSEMBLY seleccionadas en el mismo bloque anterior.
-    ilspycmd "$OLD_ASSEMBLY" -o {{mefisto:state-path tmp}}/decompiled-vieja
-    ilspycmd "$NEW_ASSEMBLY" -o {{mefisto:state-path tmp}}/decompiled-nueva
+   ilspycmd ~/.nuget/packages/<paquete>/<version-vieja>/lib/<TargetFramework>/<Ensamblado>.dll -o {{mefisto:state-path tmp}}/decompiled-vieja
+   ilspycmd ~/.nuget/packages/<paquete>/<version-nueva>/lib/<TargetFramework>/<Ensamblado>.dll -o {{mefisto:state-path tmp}}/decompiled-nueva
    ```
    Ejemplo concreto del casing (caso de origen): carpeta `cosmos.eventsourcing.critterstack`, ensamblado `Cosmos.EventSourcing.CritterStack.dll`, TargetFramework `net10.0` —
    ```bash
-    # OLD_ASSEMBLY y NEW_ASSEMBLY son las rutas seleccionadas por sus resoluciones separadas.
-    ilspycmd "$OLD_ASSEMBLY" -o {{mefisto:state-path tmp}}/decompiled-vieja
-    ilspycmd "$NEW_ASSEMBLY" -o {{mefisto:state-path tmp}}/decompiled-nueva
+   ilspycmd ~/.nuget/packages/cosmos.eventsourcing.critterstack/0.1.9/lib/net10.0/Cosmos.EventSourcing.CritterStack.dll -o {{mefisto:state-path tmp}}/decompiled-vieja
+   ilspycmd ~/.nuget/packages/cosmos.eventsourcing.critterstack/2.1.0/lib/net10.0/Cosmos.EventSourcing.CritterStack.dll -o {{mefisto:state-path tmp}}/decompiled-nueva
    ```
 4. **Diffea los tipos relevantes**: los metodos de extension de registro (los que el proyecto invoca en su `Program.cs`, p. ej. `AgregarWolverine*Router`) y los constructores de los servicios que el stacktrace senala como no resueltos:
    ```bash

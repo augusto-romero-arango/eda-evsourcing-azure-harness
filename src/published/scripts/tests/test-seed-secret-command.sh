@@ -29,11 +29,6 @@ contains "$body" '¿Continuar? (s/n)' 'pide confirmacion explicita'
 contains "$body" 'git switch -c seed-secret/' 'crea rama si se esta en main'
 contains "$body" 'detente sin editar ningun otro archivo' 'se detiene si el script falla'
 contains "$body" 'init -backend=false' 'solo init -backend=false'
-for command in '(cd "infra/environments/<env>" && terraform fmt -recursive ../..)' '(cd "infra/environments/<env>" && terraform init -backend=false)' '(cd "infra/environments/<env>" && terraform validate)'; do
-    contains "$body" "$command" "validacion local usa subshell para $command"
-done
-absent "$body" 'terraform -chdir=' 'validacion local no usa -chdir'
-contains "$body" 'command -v terraform' 'consulta canonica de disponibilidad'
 contains "$body" 'Key Vault Secrets User' 'verifica Secrets User'
 contains "$body" 'Nunca toques' 'regla: nunca Secrets Officer'
 contains "$body" 'Nunca ejecutes' 'regla: nunca plan/apply'

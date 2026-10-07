@@ -20,16 +20,6 @@
 
 set -euo pipefail
 
-# --- Frontera de entorno (issue #1740) ---
-# Este wrapper no puede distinguir un override intencional de uno heredado del
-# servidor tmux (que pudo nacer en otra distribucion/consumidor), asi que
-# descarta los overrides de path ANTES de sourcear nada y usa siempre las
-# raices de ESTA distribucion y de ESTE consumidor. Los pipelines invocados
-# directamente conservan sus overrides. Solo garantiza paths y runtime del hijo
-# tmux. El transporte de contextos/reservas por pane (issue #1861) viaja en el
-# mismo prefijo por proceso: nunca por set-environment global del servidor.
-unset MEFISTO_RUNTIME_LIB_DIR MEFISTO_MODELS_VALIDATOR MEFISTO_STATE_DIR MEFISTO_LEGACY_STATE_DIR
-
 # --- Funciones compartidas ---
 source "$(dirname "${BASH_SOURCE[0]}")/_pipeline-common.sh"
 
@@ -40,19 +30,11 @@ source "$(dirname "${BASH_SOURCE[0]}")/_pipeline-common.sh"
 # (mefisto_resolve_runtime) ocurre mas abajo, dentro de main(), despues del
 # punto de delegacion a Herdr y solo en los modos que lanzan un sub-pipeline.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-RUNTIME_LIB_DIR="$(cd "$SCRIPT_DIR/../src/runtime/lib" 2>/dev/null && pwd -P)" || RUNTIME_LIB_DIR=""
-# Con `|| ...` explicito: bajo `set -e` una sustitucion fallida (falta el
-# directorio contract/) abortaria en silencio, sin la causa del guard de abajo.
-MODELS_VALIDATOR="$(cd "$SCRIPT_DIR/../src/runtime/contract" 2>/dev/null && pwd -P)/models.validate.jq" \
-    || MODELS_VALIDATOR=""
+RUNTIME_LIB_DIR="${MEFISTO_RUNTIME_LIB_DIR:-$(cd "$SCRIPT_DIR/../src/runtime/lib" 2>/dev/null && pwd -P)}"
 [ -d "$RUNTIME_LIB_DIR" ] \
     || { echo "ERROR: no se encontro src/runtime/lib junto al paquete publicado" >&2; exit 1; }
 [ -f "$RUNTIME_LIB_DIR/mefisto-runtime.sh" ] \
     || { echo "ERROR: no se encontro mefisto-runtime.sh en la clausura publicada" >&2; exit 1; }
-[ -f "$RUNTIME_LIB_DIR/mefisto-models.sh" ] \
-    || { echo "ERROR: no se encontro mefisto-models.sh en la clausura publicada" >&2; exit 1; }
-[ -f "$MODELS_VALIDATOR" ] \
-    || { echo "ERROR: no se encontro models.validate.jq en la clausura publicada" >&2; exit 1; }
 source "$RUNTIME_LIB_DIR/mefisto-runtime.sh"
 
 # Guard defensivo: este pipeline es del lado publicado y solo aplica al consumidor.
@@ -96,73 +78,13 @@ RESOLVED_RUNTIME=""
 # PROJECT_ROOT: repo objetivo del consumidor (git toplevel del cwd del usuario),
 # donde se crean las sesiones tmux, los logs y events.log. NO se deriva de
 # SCRIPT_DIR porque el plugin ya no vive dentro del repo del consumidor.
-PROJECT_ROOT="$(cd "$_REPO_TOP" && pwd -P)"
-# Roots de estado de ESTE consumidor (canonica + legacy solo lectura); nunca las
-# heredadas del servidor tmux.
-export MEFISTO_STATE_DIR="$PROJECT_ROOT/.mefisto/pipeline"
-# La ruta legacy se compone por partes: el test del visor exige que este
-# script no la codifique como literal (solo se lee, nunca se escribe).
-_legacy_dir=".claude"
-export MEFISTO_LEGACY_STATE_DIR="$PROJECT_ROOT/$_legacy_dir/pipeline"
-unset _legacy_dir
+PROJECT_ROOT="$_REPO_TOP"
 EVENTS_LOG="$(mefisto_state_path 'events.log')"
 EVENTS_LOG_LEGACY="$MEFISTO_LEGACY_STATE_DIR/events.log"
 # CAFF: prefijo "caffeinate -i" (o vacio fuera de macOS), calculado UNA vez
 # por corrida y antepuesto al send-keys que lanza cada sub-pipeline -- issue
 # #800. Evita que el Mac entre en suspension idle durante la corrida.
 CAFF="$(caffeinate_prefix)"
-
-# pipeline_env_prefix
-#
-# Prefijo unico de TODOS los comandos de sub-pipeline enviados con send-keys
-# (issue #1740): descarta con `env -u` los cinco overrides heredables del
-# servidor tmux y asigna runtime resuelto, biblioteca/validador de esta
-# distribucion y las dos roots de estado de este consumidor. Valores quoteados
-# con printf %q; sin eval. No usa `env -i` (conserva HOME/PATH/credenciales).
-pipeline_env_prefix() {
-    printf 'env -u MEFISTO_RUNTIME_LIB_DIR -u MEFISTO_MODELS_VALIDATOR -u MEFISTO_STATE_DIR -u MEFISTO_LEGACY_STATE_DIR -u MEFISTO_RUN_AGENT_BIN -u MEFISTO_EXECUTION_CONTEXT -u MEFISTO_EXECUTION_DIGEST'
-    printf ' MEFISTO_RUNTIME=%q' "$RESOLVED_RUNTIME"
-    printf ' MEFISTO_RUNTIME_LIB_DIR=%q' "$RUNTIME_LIB_DIR"
-    printf ' MEFISTO_MODELS_VALIDATOR=%q' "$MODELS_VALIDATOR"
-    printf ' MEFISTO_STATE_DIR=%q' "$MEFISTO_STATE_DIR"
-    printf ' MEFISTO_LEGACY_STATE_DIR=%q' "$MEFISTO_LEGACY_STATE_DIR"
-    orchestrator_child_env_words
-}
-
-# wrapper_execution_open <comando-raiz>
-#
-# Referencia de ejecucion del wrapper (issue #1861): se abre una vez, solo cuando
-# hay que despachar, y se cierra al salir. Soltarla es seguro porque cada hijo ya
-# esta reservado (y anclado) en ella antes del send-keys. Sin perfil/runtime
-# autorizado (o con runtime Claude) no abre nada.
-WRAPPER_EXEC_OPEN=0
-wrapper_execution_open() {
-    [ "$WRAPPER_EXEC_OPEN" = 1 ] && return 0
-    WRAPPER_EXEC_OPEN=1
-    orchestrator_execution_open "$1" "$PROJECT_ROOT" "$(cd "$SCRIPT_DIR/.." && pwd -P)" "$RUNTIME_LIB_DIR" "${MEFISTO_RUN_AGENT_BIN:-}" \
-        || abort "No se pudo abrir la ejecucion preparada del wrapper (contexto invalido, ocupado o revocado); no se lanzo nada."
-    orchestrator_install_exit_trap
-}
-
-# dispatch_pipeline_keys <pane> <comando-raiz> <tipo-hijo|""> <resto-del-comando>
-#
-# Reserva el contexto hijo ANTES del send-keys y lo transporta en el prefijo por
-# proceso. send-keys devuelve al teclear el comando, no al admitir al hijo: el attach
-# lo hace el pipeline al arrancar. Si send-keys falla el comando no se tecleo (no
-# entregado) y solo entonces se retira la reserva.
-dispatch_pipeline_keys() {
-    local pipe_pane="$1" root_cmd="$2" kind="$3" tail_cmd="$4"
-    wrapper_execution_open "$root_cmd"
-    orchestrator_reserve_child "$kind" "$PROJECT_ROOT" \
-        || abort "No se pudo reservar el contexto de ejecucion del pipeline; no se lanzo nada."
-    if tmux send-keys -t "$pipe_pane" "$CAFF $(pipeline_env_prefix) $tail_cmd" Enter; then
-        [ -z "$ORCH_CHILD_ID" ] || log "Contexto hijo $ORCH_CHILD_ID reservado: el pipeline hace attach al arrancar (admision no confirmada hasta entonces)."
-        ORCH_CHILD_ID=""; ORCH_CHILD_CONTEXT=""; ORCH_CHILD_DIGEST=""
-    else
-        orchestrator_finish_child aborted || true
-        abort "tmux send-keys fallo en el pane $pipe_pane: el pipeline no se lanzo."
-    fi
-}
 
 # Normaliza la ruta de sub-script devuelta por resolve_pipeline a una ruta
 # absoluta dentro del plugin, para que el pane tmux la encuentre aunque su cwd
@@ -177,96 +99,6 @@ log()     { echo -e "${BLUE}[$(date +%H:%M:%S)]${NC} $1"; }
 success() { echo -e "${GREEN}${BOLD}✓${NC} $1"; }
 warn()    { echo -e "${YELLOW}⚠${NC} $1"; }
 abort()   { echo -e "\n${RED}${BOLD}✗ $1${NC}" >&2; exit 1; }
-
-# --- Preflight de autonomia (issue #1872, MEF-ADR-0055) ---
-# Gate de CONSULTA antes de crear panes: delega en autonomy-preflight.sh (#1870) un plan
-# cerrado derivado del routing YA resuelto (nunca del texto del issue). No es un segundo
-# evaluador, no reemplaza los gates del hijo (#1826/#1858), no pide aprobacion ni repara
-# perfil/permisos y no persiste reportes. `legacy` sin contexto (sin perfil, runtime sin
-# adopcion) conserva el flujo previo; cualquier otra salida (blocked, incomplete, 75 busy,
-# salida invalida, evaluador ausente) aborta ANTES de new-session/kill-session y nunca se
-# sustituye por legacy. ready-to-dispatch deja sus checks `deferred` al guard del hijo.
-# Los cmd_* fijan TMUX_PLAN_LAUNCH/TMUX_PLAN_ITEMS antes de handle_session_conflict, que
-# invoca el gate solo cuando se va a crear una sesion nueva (nunca en reuse/attach/help).
-TMUX_PLAN_LAUNCH=""
-TMUX_PLAN_ITEMS=()
-TMUX_PREFLIGHT_DONE=0
-# 1 solo para --scaffold: el catalogo de #1870 aun no admite pipelineKind scaffold bajo
-# launchKind pane (el evaluador rechaza el plan con exit 2). Sin contexto transportado ese
-# rechazo de protocolo no bloquea (conserva el flujo previo); con contexto sigue fallando cerrado.
-TMUX_PLAN_SCAFFOLD_GAP=0
-PREFLIGHT_STATUS=""
-PREFLIGHT_DIAG=""
-PREFLIGHT_DEFERRED=""
-
-# tmux_autonomy_preflight <launchKind> <numero:pipelineKind>...
-# 0 = legacy|ready-to-dispatch; 1 = no se puede lanzar (PREFLIGHT_STATUS/DIAG con codigos).
-tmux_autonomy_preflight() {
-    local launch="$1" bin plan out rc=0 src=direct args
-    shift
-    PREFLIGHT_STATUS=""; PREFLIGHT_DIAG=""; PREFLIGHT_DEFERRED=""
-    bin="$SCRIPT_DIR/autonomy-preflight.sh"
-    args=(--project-root "$PROJECT_ROOT" --runtime "$RESOLVED_RUNTIME")
-    src="$(pipeline_preflight_source)"
-    if [ "$src" != direct ]; then
-        args+=(--context "$MEFISTO_EXECUTION_CONTEXT")
-    fi
-    if [ ! -f "$bin" ]; then
-        PREFLIGHT_STATUS="unavailable"; PREFLIGHT_DIAG="PREFLIGHT_UNAVAILABLE"
-        return 1
-    fi
-    plan=$(jq -cn --arg s "$src" --arg l "$launch" '{schemaVersion:1,launchKind:$l,source:$s,requestedOperations:[],
-        issues:[$ARGS.positional[] | split(":") | {number:(.[0]|tonumber),pipelineKind:.[1]}]}' --args "$@" 2>/dev/null) \
-        || { PREFLIGHT_STATUS="unavailable"; PREFLIGHT_DIAG="PREFLIGHT_PLAN_INVALID"; return 1; }
-    out=$(printf '%s' "$plan" | bash "$bin" "${args[@]}" 2>/dev/null) || rc=$?
-    PREFLIGHT_STATUS=$(printf '%s' "$out" | jq -r '.status // empty' 2>/dev/null) || PREFLIGHT_STATUS=""
-    PREFLIGHT_DIAG=$(printf '%s' "$out" | jq -r '[.diagnostics[]? | select(type == "string" and test("^[A-Za-z0-9_#:.-]+$"))] | join(",")' 2>/dev/null) || PREFLIGHT_DIAG=""
-    PREFLIGHT_DEFERRED=$(printf '%s' "$out" | jq -r '[.checks[]? | select(.state == "deferred" and (.code|type) == "string" and (.owner|type) == "string") | "\(.code)@\(.owner)"] | map(select(test("^[A-Za-z0-9_#:./@-]+$"))) | join(",")' 2>/dev/null) || PREFLIGHT_DEFERRED=""
-    if [ "$rc" -eq 2 ] && [ -z "$PREFLIGHT_STATUS" ] && [ "$TMUX_PLAN_SCAFFOLD_GAP" = 1 ] && [ "$src" = direct ]; then
-        PREFLIGHT_STATUS="legacy"
-        return 0
-    fi
-    if [ "$rc" -eq 0 ]; then
-        case "$PREFLIGHT_STATUS" in
-            legacy)
-                # Un contexto transportado nunca degrada a legacy.
-                [ "$src" = command ] || return 0
-                PREFLIGHT_STATUS="invalid"; PREFLIGHT_DIAG="PREFLIGHT_LEGACY_WITH_CONTEXT"; return 1 ;;
-            ready-to-dispatch)
-                if printf '%s' "$out" | jq -e '(.checks | type == "array") and all(.checks[];
-                        (.state | IN("pass","deferred","not-applicable"))
-                        and (.state != "deferred" or ((.owner | type) == "string" and (.owner | length) > 0)))' >/dev/null 2>&1; then
-                    return 0
-                fi
-                PREFLIGHT_STATUS="invalid"; PREFLIGHT_DIAG="PREFLIGHT_CHECKS_INCONSISTENT"; return 1 ;;
-        esac
-    fi
-    if [ "$rc" -eq 75 ]; then
-        PREFLIGHT_STATUS="busy"; PREFLIGHT_DIAG="${PREFLIGHT_DIAG:-PREFLIGHT_BUSY}"
-    else
-        case "$PREFLIGHT_STATUS" in
-            blocked|incomplete) ;;
-            *) PREFLIGHT_STATUS="invalid"; PREFLIGHT_DIAG="${PREFLIGHT_DIAG:-PREFLIGHT_RC_$rc}" ;;
-        esac
-    fi
-    return 1
-}
-
-# tmux_preflight_gate: ejecuta el plan fijado por el cmd_* una sola vez; aborta (exit 1)
-# sin tocar tmux si no hay admision. Sin plan fijado no hace nada.
-tmux_preflight_gate() {
-    [ "$TMUX_PREFLIGHT_DONE" = 1 ] && return 0
-    [ ${#TMUX_PLAN_ITEMS[@]} -gt 0 ] || return 0
-    TMUX_PREFLIGHT_DONE=1
-    if tmux_autonomy_preflight "$TMUX_PLAN_LAUNCH" "${TMUX_PLAN_ITEMS[@]}"; then
-        if [ "$PREFLIGHT_STATUS" = "ready-to-dispatch" ]; then
-            log "Preflight de autonomia: $PREFLIGHT_STATUS"
-            [ -z "$PREFLIGHT_DEFERRED" ] || log "Verificaciones diferidas al guard del hijo (no es permiso efectivo futuro): $PREFLIGHT_DEFERRED"
-        fi
-        return 0
-    fi
-    abort "Preflight de autonomia: ${PREFLIGHT_STATUS} [${PREFLIGHT_DIAG:-sin-detalle}]. No se creo ni se altero ninguna sesion tmux ni se inicio ningun pipeline."
-}
 
 # --- Verificaciones previas ---
 check_tmux() {
@@ -400,10 +232,7 @@ prompt_session_conflict() {
 # Solo retorna (0) cuando el llamador debe proceder a crear la sesion.
 handle_session_conflict() {
     local session="$1"
-    if ! session_exists "$session"; then
-        tmux_preflight_gate
-        return 0
-    fi
+    session_exists "$session" || return 0
 
     local alive=false
     session_is_alive "$session" && alive=true
@@ -440,8 +269,6 @@ handle_session_conflict() {
             exit 0
             ;;
         replace)
-            # El gate corre ANTES de matar la sesion previa: una no-admision la deja intacta.
-            tmux_preflight_gate
             log "Sesion '$session' se reemplaza ($([ "$alive" = true ] && echo "estaba activa" || echo "estaba terminada"))..."
             tmux kill-session -t "$session" 2>/dev/null || true
             return 0
@@ -507,8 +334,6 @@ cmd_single() {
     check_tmux
     ensure_events_log
 
-    TMUX_PLAN_LAUNCH="pane"
-    TMUX_PLAN_ITEMS=("$issue:$(orchestrator_kind_for_script "$resolved")")
     handle_session_conflict "$session"
 
     log "Creando sesion tmux '$session' para issue #$issue ($pipeline_name)..."
@@ -529,15 +354,7 @@ cmd_single() {
     # por si el plugin esta instalado bajo una ruta con espacios (mismo criterio
     # que '$EVENTS_LOG').
     pipe_pane=$(tmux split-window -h -t "$tail_pane" -c "$PROJECT_ROOT" -P -F '#{pane_id}')
-    local child_kind root_cmd
-    child_kind="$(orchestrator_kind_for_script "$resolved")"
-    case "$child_kind" in
-        tooling) root_cmd="tooling" ;;
-        iac) root_cmd="infra" ;;
-        scaffold) root_cmd="scaffold" ;;
-        *) root_cmd="implement"; child_kind="tdd" ;;
-    esac
-    dispatch_pipeline_keys "$pipe_pane" "$root_cmd" "$child_kind" "'$resolved' $issue $extra_args"
+    tmux send-keys -t "$pipe_pane" "MEFISTO_RUNTIME=$(printf '%q' "$RESOLVED_RUNTIME") $CAFF '$resolved' $issue $extra_args" Enter
 
     tmux select-layout -t "$session:main" even-horizontal
 
@@ -576,18 +393,6 @@ cmd_batch() {
 
     check_tmux
     ensure_events_log
-
-    # Plan del batch que se delegara: mismo routing que usara batch-pipeline.sh.
-    local b_issue b_resolved b_kind
-    TMUX_PLAN_LAUNCH="sequential"
-    TMUX_PLAN_ITEMS=()
-    for b_issue in "${issues[@]}"; do
-        b_resolved=$(resolve_pipeline "$b_issue" "$pipeline_override" 2>/dev/null) || continue
-        [[ "$b_resolved" == SKIP:* ]] && continue
-        b_kind="$(orchestrator_kind_for_script "$b_resolved")"
-        [ -n "$b_kind" ] || continue
-        TMUX_PLAN_ITEMS+=("$b_issue:$b_kind")
-    done
     handle_session_conflict "$session"
 
     log "Creando sesion tmux '$session' para batch: issues ${issues_str}..."
@@ -604,7 +409,7 @@ cmd_batch() {
 
     # Pane derecho: batch pipeline
     pipe_pane=$(tmux split-window -h -t "$tail_pane" -c "$PROJECT_ROOT" -P -F '#{pane_id}')
-    dispatch_pipeline_keys "$pipe_pane" sequential "" "'$SCRIPT_DIR/batch-pipeline.sh' $pipeline_flag $issues_str"
+    tmux send-keys -t "$pipe_pane" "MEFISTO_RUNTIME=$(printf '%q' "$RESOLVED_RUNTIME") $CAFF '$SCRIPT_DIR/batch-pipeline.sh' $pipeline_flag $issues_str" Enter
 
     tmux select-layout -t "$session:main" even-horizontal
 
@@ -655,7 +460,6 @@ cmd_parallel() {
     # comportamiento para lotes con 0 o 1 projection.
     local resolved_issues=()
     local resolved_pipelines=()
-    local plan_items=()
     local projection_count=0
     for issue in "${issues[@]}"; do
         local facts rest is_projection resolved
@@ -673,7 +477,6 @@ cmd_parallel() {
         resolved_issues+=("$issue")
         # Ruta absoluta al sub-script del plugin (el pane corre con cwd=consumidor).
         resolved_pipelines+=("$(plugin_script "$resolved")")
-        plan_items+=("$issue:$(orchestrator_kind_for_script "$resolved")")
         [ "$is_projection" = "true" ] && projection_count=$((projection_count + 1))
     done
 
@@ -697,9 +500,6 @@ cmd_parallel() {
     [ -n "$max_parallel" ] && max_flag="--max-parallel $max_parallel"
 
     ensure_events_log
-    # Todos los issues ruteables se comprueban antes del primer split (un fallo deja cero panes).
-    TMUX_PLAN_LAUNCH="pane"
-    TMUX_PLAN_ITEMS=("${plan_items[@]}")
     handle_session_conflict "$session"
 
     log "Creando sesion tmux '$session' para issues paralelos: $issues_str..."
@@ -721,7 +521,7 @@ cmd_parallel() {
     local pipe_pane
     for i in "${!resolved_issues[@]}"; do
         pipe_pane=$(tmux split-window -h -t "$session:main" -c "$PROJECT_ROOT" -P -F '#{pane_id}')
-        dispatch_pipeline_keys "$pipe_pane" parallel "$(orchestrator_kind_for_script "${resolved_pipelines[$i]}")" "'${resolved_pipelines[$i]}' ${resolved_issues[$i]}"
+        tmux send-keys -t "$pipe_pane" "MEFISTO_RUNTIME=$(printf '%q' "$RESOLVED_RUNTIME") $CAFF '${resolved_pipelines[$i]}' ${resolved_issues[$i]}" Enter
         # Escalonar lanzamientos: 30s entre cada uno para evitar que multiples
         # invocaciones de claude -p compitan por recursos de API simultaneamente
         if [ "$i" -lt "$(( ${#resolved_issues[@]} - 1 ))" ]; then
@@ -766,8 +566,6 @@ cmd_tooling() {
     check_tmux
     ensure_events_log
 
-    TMUX_PLAN_LAUNCH="pane"
-    TMUX_PLAN_ITEMS=("$issue:tooling")
     handle_session_conflict "$session"
 
     log "Creando sesion tmux '$session' para tooling issue #$issue..."
@@ -781,7 +579,7 @@ cmd_tooling() {
     tmux send-keys -t "$tail_pane" "tail -F '$EVENTS_LOG' '$EVENTS_LOG_LEGACY'" Enter
 
     pipe_pane=$(tmux split-window -h -t "$tail_pane" -c "$PROJECT_ROOT" -P -F '#{pane_id}')
-    dispatch_pipeline_keys "$pipe_pane" tooling tooling "'$SCRIPT_DIR/tooling-pipeline.sh' $issue $extra_args"
+    tmux send-keys -t "$pipe_pane" "MEFISTO_RUNTIME=$(printf '%q' "$RESOLVED_RUNTIME") $CAFF '$SCRIPT_DIR/tooling-pipeline.sh' $issue $extra_args" Enter
 
     tmux select-layout -t "$session:main" even-horizontal
 
@@ -801,8 +599,6 @@ cmd_infra() {
     check_tmux
     ensure_events_log
 
-    TMUX_PLAN_LAUNCH="pane"
-    TMUX_PLAN_ITEMS=("$issue:iac")
     handle_session_conflict "$session"
 
     log "Creando sesion tmux '$session' para infra issue #$issue..."
@@ -816,7 +612,7 @@ cmd_infra() {
     tmux send-keys -t "$tail_pane" "tail -F '$EVENTS_LOG' '$EVENTS_LOG_LEGACY'" Enter
 
     pipe_pane=$(tmux split-window -h -t "$tail_pane" -c "$PROJECT_ROOT" -P -F '#{pane_id}')
-    dispatch_pipeline_keys "$pipe_pane" infra iac "'$SCRIPT_DIR/iac-pipeline.sh' $issue $extra_args"
+    tmux send-keys -t "$pipe_pane" "MEFISTO_RUNTIME=$(printf '%q' "$RESOLVED_RUNTIME") $CAFF '$SCRIPT_DIR/iac-pipeline.sh' $issue $extra_args" Enter
 
     tmux select-layout -t "$session:main" even-horizontal
 
@@ -863,10 +659,6 @@ cmd_scaffold() {
     check_tmux
     ensure_events_log
 
-    # Sin issue, el plan usa el identificador sintetico 1 (el evaluador solo exige un entero positivo).
-    TMUX_PLAN_LAUNCH="pane"
-    TMUX_PLAN_ITEMS=("${issue:-1}:scaffold")
-    TMUX_PLAN_SCAFFOLD_GAP=1
     handle_session_conflict "$session"
 
     local pipeline_args=""
@@ -884,7 +676,7 @@ cmd_scaffold() {
     tmux send-keys -t "$tail_pane" "tail -F '$EVENTS_LOG' '$EVENTS_LOG_LEGACY'" Enter
 
     pipe_pane=$(tmux split-window -h -t "$tail_pane" -c "$PROJECT_ROOT" -P -F '#{pane_id}')
-    dispatch_pipeline_keys "$pipe_pane" scaffold scaffold "'$SCRIPT_DIR/scaffold-pipeline.sh' $pipeline_args"
+    tmux send-keys -t "$pipe_pane" "MEFISTO_RUNTIME=$(printf '%q' "$RESOLVED_RUNTIME") $CAFF '$SCRIPT_DIR/scaffold-pipeline.sh' $pipeline_args" Enter
 
     tmux select-layout -t "$session:main" even-horizontal
 

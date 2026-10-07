@@ -28,23 +28,6 @@ const toolName = (input) => String(input?.tool ?? input?.toolName ?? "").toLower
 const args = (input) => input?.args && typeof input.args === "object" ? input.args : {};
 const successful = (output) => Number.isInteger(output?.metadata?.exitCode) && output.metadata.exitCode === 0;
 const modelComponent = (value) => typeof value === "string" && value.length > 0 && value.length <= 256 && !/[\/\u0000-\u001f\u007f]/.test(value);
-const observationIdentity = ["0.41.8","99656cb4818718e3a929f6f21d6e8268969f6c17"];
-const observationMarker = Symbol.for("mefisto.original-tool-observation.v1");
-const observationKey = (context, input) => JSON.stringify([observationIdentity[0], observationIdentity[1], context?.project?.id, context?.directory, sessionID(input), input?.callID]);
-const classifiedObservation = (value) => value === null || (value && typeof value === "object" && !Array.isArray(value) && Object.keys(value).length === 2 && (value.family === "test" && value.subcommand === "test" || value.family === "terraform" && ["plan", "apply", "init", "validate"].includes(value.subcommand)));
-const consumeOriginalObservation = (context, input) => {
-  const store = globalThis[observationMarker];
-  if (!(store instanceof Map)) return { found: false };
-  const key = observationKey(context, input);
-  if (!store.has(key)) return { found: false };
-  const value = store.get(key); store.delete(key);
-  return classifiedObservation(value) ? { found: true, value } : { found: false };
-};
-const classifyLegacyCommand = (command) => {
-  if (/^\s*dotnet\s+test(?:\s|$)/.test(command)) return { family: "test", subcommand: "test" };
-  const match = /^\s*terraform\s+(plan|apply|init|validate)(?:\s|$)/.exec(command);
-  return match ? { family: "terraform", subcommand: match[1] } : null;
-};
 
 export default async function mefistoObservability(context) {
   const root = rootOf(context);
@@ -83,16 +66,13 @@ export default async function mefistoObservability(context) {
       } catch (error) { observations.delete(key); throw error; }
     }),
     "tool.execute.after": async (input, output) => safe(context.client, "Mefisto: no se pudo registrar el resumen de herramienta.", async () => {
-      const tool = toolName(input); const inputArgs = args(input);
-      if (["write", "edit", "patch"].includes(tool)) { if (!root) return; if (typeof input?.sessionID === "string" && input.sessionID.length > 0) changed.add(input.sessionID); const candidate = inputArgs.filePath ?? inputArgs.file_path ?? inputArgs.path; const file = typeof candidate === "string" && candidate.length > 0 ? candidate : "(desconocido)"; await append(root, "events.log", { time: clock(), family: "archivo", file_path: file }); return; }
+      if (!root) return; const tool = toolName(input); const inputArgs = args(input);
+      if (["write", "edit", "patch"].includes(tool)) { if (typeof input?.sessionID === "string" && input.sessionID.length > 0) changed.add(input.sessionID); const candidate = inputArgs.filePath ?? inputArgs.file_path ?? inputArgs.path; const file = typeof candidate === "string" && candidate.length > 0 ? candidate : "(desconocido)"; await append(root, "events.log", { time: clock(), family: "archivo", file_path: file }); return; }
       if (!["bash", "shell"].includes(tool)) return;
       const command = typeof inputArgs.command === "string" ? inputArgs.command : "";
-      const observed = consumeOriginalObservation(context, input);
-      if (!root) return;
-      const classified = observed.found ? observed.value : classifyLegacyCommand(command);
-      if (!classified) return;
-      if (classified.family === "test") { await append(root, "events.log", { time: clock(), family: "test", result: successful(output) ? "PASS" : "FAIL" }); return; }
-      await append(root, "events.log", { time: clock(), family: "terraform", terraform_subcommand: classified.subcommand, result: successful(output) ? "OK" : "ERROR" });
+      if (/^\s*dotnet\s+test(?:\s|$)/.test(command)) { await append(root, "events.log", { time: clock(), family: "test", result: successful(output) ? "PASS" : "FAIL" }); return; }
+      const match = /^\s*terraform\s+(plan|apply|init|validate)(?:\s|$)/.exec(command);
+      if (match) await append(root, "events.log", { time: clock(), family: "terraform", terraform_subcommand: match[1], result: successful(output) ? "OK" : "ERROR" });
     }),
   };
 }

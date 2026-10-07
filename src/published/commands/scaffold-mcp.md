@@ -16,29 +16,23 @@ Lanza el agente `mcp-scaffolder`, que genera el proyecto de un servidor MCP (Mod
 
 El guard de consumidor de arriba aborta si el cwd es el repo de Mefisto: este skill es del paquete publicado y solo aplica al repo consumidor. Mefisto no expone servidores MCP sobre si mismo.
 
-## Pre-condicion 2: argumento `<proposito>` (opcional)
+## Pre-condicion 2: argumento `<proposito>`
 
-`$ARGUMENTS` puede traer el proposito de un servidor adicional (una palabra o frase corta, ej. `auditoria`). Uso, que debes mostrar si el usuario pide ayuda:
+`$ARGUMENTS` debe traer el proposito del servidor (una palabra o frase corta, ej. `Consultas`, `Comandos`, `consultas-turnos`). Si esta vacio, responde y detente:
 
 ```
-Uso: {{mefisto:command scaffold-mcp}} [<proposito>]
+Uso: {{mefisto:command scaffold-mcp}} <proposito>
 
 Ejemplos:
-  {{mefisto:command scaffold-mcp}}              (servidor General del BC)
-  {{mefisto:command scaffold-mcp}} auditoria    (servidor adicional)
+  {{mefisto:command scaffold-mcp}} Consultas
+  {{mefisto:command scaffold-mcp}} Comandos
 
-Sin argumento se genera el servidor General del BC (<RootNamespace>.Mcp.General, ruta
-/mcp-general): el servidor unico con el que empieza todo BC. Con argumento se genera un
-servidor adicional, nombrado por su razon de existir (ej. "auditoria"); solo se crea por
-necesidad demostrada (MEF-ADR-0047 decision 2). El nombre queda fijado en la ruta publica y en
-la audiencia OAuth, asi que elegirlo bien evita reconectar clientes. Se normaliza a
-PascalCase: "auditoria-fiscal" -> "AuditoriaFiscal".
+El proposito distingue servidores MCP del mismo BC (particion Consultas/Comandos por
+credencial, MEF-ADR-0047 seccion 2). Se normaliza a PascalCase: "consultas-turnos" ->
+"ConsultasTurnos".
 ```
 
-- Si `$ARGUMENTS` esta vacio, usa `PROPOSITO_PASCAL=General` y marca `ES_GENERAL=1`.
-- Si trae argumento, normaliza `<proposito>` a PascalCase (separa por espacios/guiones, mayuscula inicial de cada palabra, sin separadores) y guardalo como `PROPOSITO_PASCAL`.
-
-No hay ningun caso especial en la mecanica posterior: `General` se trata como cualquier otro proposito.
+Si trae argumento, normaliza `<proposito>` a PascalCase (separa por espacios/guiones, mayuscula inicial de cada palabra, sin separadores) y guardalo como `PROPOSITO_PASCAL`.
 
 
 ## Pre-condicion 3: config y tokens del harness
@@ -57,15 +51,6 @@ fi
 
 Si falta cualquiera de los dos, detente con el mensaje de arriba. Con `ROOT_NAMESPACE` y `PROPOSITO_PASCAL`, el proyecto a generar sera `${ROOT_NAMESPACE}.Mcp.${PROPOSITO_PASCAL}`.
 
-Si invocaste sin argumento (`PROPOSITO_PASCAL=General`) y ya existe `src/${ROOT_NAMESPACE}.Mcp.General/`, detente sin sobrescribir:
-
-```bash
-if [ "${ES_GENERAL:-0}" = "1" ] && [ -d "src/${ROOT_NAMESPACE}.Mcp.General" ]; then
-    echo "El servidor General del BC ya existe (src/${ROOT_NAMESPACE}.Mcp.General/). Para crear un servidor adicional pasa un proposito: {{mefisto:command scaffold-mcp}} <proposito> (MEF-ADR-0047 decision 2)."
-    exit 1
-fi
-```
-
 ## Proceso
 
 ### 1. Informar que se va a generar
@@ -80,8 +65,6 @@ fi
 ```
 
 Este paso es informativo: si el manifiesto falta, `jq` falla o el valor es nulo, `VERSION_LABEL` queda en "version desconocida" y el skill **continua** -- nunca aborta por esto.
-
-Si `ES_GENERAL=1`, antes del bloque siguiente anade la linea: "Sin proposito: se genera el servidor MCP General del BC".
 
 ```
 Se va a generar el servidor MCP <RootNamespace>.Mcp.{Proposito} con mefisto <VERSION_LABEL> (fases 1, 2, 3 e identidad/OAuth app-side, issues #768/#769/#770/#819):
@@ -108,19 +91,10 @@ Se va a generar el servidor MCP <RootNamespace>.Mcp.{Proposito} con mefisto <VER
                                                coercionados a fecha/GUID por la extension MCP;
                                                siempre generado y siempre cableado, sin importar
                                                tenancy.strategy, Azure/azure-functions-mcp-extension#129)
-      SesionUsuario.cs, DerivadorIdentidadTenantMcp.cs, IdentidadTenantMcpMiddleware.cs,
-      IdentidadTenantMcpMensajes.resx
-                                              (identidad derivada del token: org_id -> tenant,
-                                               sub -> usuario, rechazo .resx si el Bearer no es
-                                               validable; solo con multi-tenant-header, que suma
-                                               la ProjectReference a <RootNamespace>.TenantResolver,
-                                               MEF-ADR-0047 decisiones 3/6/7, #1934)
     MetadataRecursoProtegido/MetadataRecursoProtegidoFunction.cs
                                               (PRM RFC 9728 anonimo, MEF-ADR-0032 seccion 9)
     VersionCheck.cs / ReadyCheck.cs          (endpoints de gate, MEF-ADR-0048 seccion 3)
     Ejemplo/                                 (tool de ejemplo con el patron completo)
-    Sesion/ObtenerSesionTool.cs              (tool obtener_sesion: origen sesion | tenant_fijo;
-                                              solo con multi-tenant-header, #1934)
     README.md                                (onboarding del servidor)
 
   tests/<RootNamespace>.Mcp.{Proposito}.Tests/
@@ -132,19 +106,13 @@ Se va a generar el servidor MCP <RootNamespace>.Mcp.{Proposito} con mefisto <VER
                                               (nunca lanza, degrada a "no valido", #819)
     Infraestructura/ArgumentosCrudosMcpMiddlewareTests.cs
                                               (nucleo RestaurarTextoOriginal, nivel 1 sin host)
-    Infraestructura/IdentidadTenantMcpMiddlewareTests.cs, Sesion/ObtenerSesionToolTests.cs
-                                              (solo multi-tenant-header: el middleware publica
-                                               identidad ambiente y sesion sin sembrar el contexto,
-                                               rechazos, obtener_sesion en ambos origenes, #1934)
 
   tests/<RootNamespace>.Mcp.{Proposito}.SmokeTests/
     Fixtures/McpFixture.cs                   (sesion MCP real con ModelContextProtocol.Core)
     Handshake/ ComposicionDelHost/ Ejemplo/ Seguridad/
                                              (nivel 3: las cinco verificaciones canonicas de
                                               MEF-ADR-0048 seccion 2 -- handshake, tools/list
-                                              vivo, tool call, error path del .resx, 401 sin key;
-                                              con multi-tenant-header suma Identidad/: obtener_sesion
-                                              sin Bearer responde origen tenant_fijo, #1934)
+                                              vivo, tool call, error path del .resx, 401 sin key)
 
   infra/environments/dev/mcp-{proposito-kebab}.tf
     Storage + App Service Plan + Function App dedicados (modulos base del consumidor), con las
@@ -176,7 +144,7 @@ La lista canonica y autoritativa de artefactos es el parrafo **Alcance** de
 
 Solo despues de que el guard y las pre-condiciones hayan pasado:
 
-{{mefisto:launch-agent mcp-scaffolder Genera el servidor MCP de proposito <PROPOSITO_PASCAL> (el proposito ya normalizado a PascalCase, por ejemplo General o AuditoriaFiscal)}}
+{{mefisto:launch-agent mcp-scaffolder Genera el servidor MCP de proposito <PROPOSITO_PASCAL> (el proposito ya normalizado a PascalCase, por ejemplo ConsultasTurnos)}}
 
 ### 3. Tras terminar
 
@@ -196,4 +164,4 @@ Servidor MCP <RootNamespace>.Mcp.{Proposito} generado. Siguiente:
 
 - **No generes nada tu mismo.** Solo valida las pre-condiciones, informa y lanza el agente.
 - El agente es idempotente: no sobrescribe ningun artefacto ya generado (Program.cs, los seams, la tool de ejemplo si ya fue reemplazada, el README) -- ver `mcp-scaffolder.md`.
-- Sin argumento el proposito es siempre `General`; nunca inventes otro nombre.
+- Nunca inventes el proposito: si el usuario no lo da, pregunta o muestra el uso de arriba.

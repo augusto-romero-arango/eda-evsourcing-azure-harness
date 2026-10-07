@@ -38,7 +38,6 @@ case "$1" in
     projection-status)
         printf '{"schemaVersion":1,"status":"%s","configRoot":"/c","activeVersion":"%s","ledgerRelease":"%s"}\n' \
             "${STUB_PROJ:-enabled}" "${STUB_ACTIVE:-1.0.0}" "${STUB_ACTIVE:-1.0.0}" ;;
-    install) exit "${STUB_INSTALL_RC:-0}" ;;
     prune) echo "No hay releases podables." ;;
 esac
 exit 0
@@ -66,10 +65,6 @@ seq=$(log | grep '^launcher' | awk '{print $2}' | grep -v projection-status | he
 [ "$seq" = "install activate project status " ] && ok "secuencia" || ko "secuencia: $seq"
 has "$(log)" "launcher install 1.1.0" && has "$(log)" "gh release view --repo augusto-romero-arango/eda-evsourcing-azure-harness" && ok "version de gh" || ko "version de gh"
 has "$out" "Version cargada en esta sesion: 1.0.0" && has "$out" "Version destino: 1.1.0" && ok "salida" || ko "salida: $out"
-
-echo "[c2] opencode: busy se propaga sin traducirse"
-out=$(STUB_INSTALL_RC=75 MEFISTO_RUNTIME=opencode run); rc=$?
-[ "$rc" -eq 75 ] && has "$(log)" "launcher install 1.1.0" && ! has "$(log)" "launcher activate" && ok "busy conserva exit 75" || ko "busy fue traducido: rc=$rc log=$(log) out=$out"
 
 echo "[d] ya en la ultima version"
 out=$(STUB_ACTIVE=1.1.0 MEFISTO_RUNTIME=opencode run)

@@ -44,7 +44,7 @@ if printf '%s' "$permission" | jq -e '.websearch == "allow" and .webfetch == "al
 echo '[b] invocaciones de appinsights-query.sh'
 for var in claude_body opencode_body; do
     runtime="${var%_body}"
-    text="$(printf '%s\n' "${!var}" | grep -v '^permission: ')"
+    text="${!var}"
     total="$(printf '%s\n' "$text" | grep -c 'appinsights-query\.sh')"
     good="$(printf '%s\n' "$text" | grep -c "MEFISTO_RUNTIME=$runtime \"\${MEFISTO_PACKAGE_ROOT}/scripts/appinsights-query.sh\"")"
     if [ "$total" -gt 0 ] && [ "$total" -eq "$good" ]; then pass "$runtime: $good invocaciones via MEFISTO_PACKAGE_ROOT con su runtime"; else fail "$runtime: $good de $total invocaciones bien formadas"; fi
@@ -72,10 +72,11 @@ allowed() {
     printf '%s' "$permission" | jq -e --arg c "$1" '[.bash | to_entries[] | . as $e | select($e.value == "allow" and (($e.key | endswith("*")) and ($c | startswith($e.key | sub("\\*$"; ""))) or $e.key == $c))] | length > 0' >/dev/null 2>&1
 }
 commands="$(printf '%s\n' "$opencode_body" | awk '/^```bash$/ { f=1; next } /^```/ { f=0 } f' \
-    | grep -E '^[[:space:]]*(dotnet|gh|ls|git|ilspycmd|diff|date|MEFISTO_RUNTIME=[a-z]+ "[^"]+/scripts/appinsights-query.sh") ' | sed 's/^[[:space:]]*//; s/ *#.*$//' | sort -u)"
+    | grep -E '^[[:space:]]*(dotnet|gh|ls|git|ilspycmd|diff|date|MEFISTO_RUNTIME=[a-z]+ "[^"]+/scripts/appinsights-query.sh") ' | sed 's/^[[:space:]]*//; s/^MEFISTO_RUNTIME=[a-z]* //; s/ *#.*$//' | sort -u)"
 [ -n "$commands" ] && pass 'hay comandos en los bloques bash' || fail 'no se extrajeron comandos'
 while IFS= read -r cmd; do
     [ -n "$cmd" ] || continue
+    case "$cmd" in \"*) cmd="\${MEFISTO_PACKAGE_ROOT}/scripts/${cmd#*/scripts/}" ;; esac
     if allowed "$cmd"; then pass "allow casa: ${cmd:0:80}"; else fail "ninguna regla allow casa: $cmd"; fi
 done <<< "$commands"
 for denied in 'az monitor metrics list' 'az appservice plan show' 'curl http://x'; do

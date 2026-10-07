@@ -6,7 +6,7 @@
 # bash + jq + git + gh que el resto del harness ya usa).
 #
 # Palabras clave soportadas: type, required, properties, additionalProperties
-# (solo el valor `false`), enum, items, pattern, minLength, maxLength, oneOf (solo la
+# (solo el valor `false`), enum, items, pattern, minLength, oneOf (solo la
 # forma "dispatch por kind": cada rama declara properties.kind.enum con un
 # unico valor; se elige la rama cuyo kind coincide con el de la instancia y se
 # valida SOLO esa rama en profundidad -- mensajes de error especificos por
@@ -51,13 +51,8 @@ def validate($schema; $instance; $path):
 
         (if ($schema | has("minLength")) and (($instance | jtype) == "string")
             and (($instance | length) < $schema.minLength)
-          then "\($path): longitud minima \($schema.minLength), encontrado \($instance | length)"
-          else empty end),
-
-        (if ($schema | has("maxLength")) and (($instance | jtype) == "string")
-            and (($instance | length) > $schema.maxLength)
-          then "\($path): longitud maxima \($schema.maxLength), encontrado \($instance | length)"
-          else empty end),
+         then "\($path): longitud minima \($schema.minLength), encontrado \($instance | length)"
+         else empty end),
 
         (if ($schema | has("pattern")) and (($instance | jtype) == "string")
             and (($instance | test($schema.pattern)) | not)

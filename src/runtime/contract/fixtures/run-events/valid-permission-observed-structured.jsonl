@@ -1,3 +1,0 @@
-{"v":1,"type":"run.started","ts":"2026-10-04T10:00:00Z","runtime":"fake","agent":"mefisto-writer","model":null,"cwd":"/tmp/worktree"}
-{"v":1,"type":"permission.observed","ts":"2026-10-04T10:00:01Z","session_id":"session-1876","tool":"Bash","signal":"denied","evidence":"structured-error"}
-{"v":1,"type":"run.completed","ts":"2026-10-04T10:00:02Z","status":"success","runtime":"fake","model":null,"session_id":"session-1876","duration_ms":2000,"tokens":{"input":null,"output":null},"estimated_cost_usd":null,"turns":null,"denials":null,"ttft_ms":null,"api_duration_ms":null,"error":null}
