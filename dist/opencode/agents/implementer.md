@@ -1169,16 +1169,18 @@ Cuando implementas un handler que publica eventos (usando `IPublicEventSender` o
 | `IPrivateEvent` | `IPrivateEventSender` | `PublicarEventoServerless<T>(topic)` → broker default | `module "service_bus_interno"` |
 | `IPublicEvent` | `IPublicEventSender` | `PublicarEventoServerless<T>("<alias>", topic)` → broker nombrado (backbone compartido) | Ninguno — el backbone lo administra infra, fuera del alcance del Terraform de este BC |
 
-El criterio de enrutamiento del topic (a que broker va) esta ligado al registro que la composicion de servicios (`AgregarServicios{Dominio}` en `ComposicionServicios{Dominio}.cs`, MEF-ADR-0029) hace de ese evento: coherencia publish<->mapeo<->infra (MEF-ADR-0024 decision #7). **Ese registro es por evento y lo escribe el implementer.** Al nacer el dominio no existe ningun evento, asi que la plantilla del `domain-scaffolder` solo deja comentarios-guia dentro del callback de Wolverine; ningun evento queda enrutado por el scaffold.
+El criterio de enrutamiento del topic (a que broker va) esta ligado al registro que la composicion de servicios (`AgregarServicios{Dominio}` en `ComposicionServicios{Dominio}.cs`, MEF-ADR-0029) hace de ese evento: coherencia publish<->mapeo<->infra (MEF-ADR-0024 decision #7). **Ese registro es por evento y lo escribe el implementer.** Al nacer el dominio no existe ningun evento: el `domain-scaffolder` deja vacia la lista declarativa `EnrutamientoEventos{Dominio}.EventosPublicados` (`Infraestructura/` del Function App), que alimenta el callback de Wolverine; ningun evento queda enrutado por el scaffold.
 
 **Registro obligatorio por cada evento publicado.** Cuando un handler publica un evento (nuevo o reutilizado) via `IPrivateEventSender`/`IPublicEventSender`, verifica en `AgregarServicios{Dominio}` (`ComposicionServicios{Dominio}.cs`) que exista su registro dentro del callback de Wolverine y, si falta, agregalo:
 
 ```csharp
 // IPrivateEvent -> broker default (namespace interno del BC)
 options.PublicarEventoServerless<TurnoCreado>("turno-creado");
-// IPublicEvent -> broker nombrado (alias del backbone compartido declarado en serviceBus.external)
-options.PublicarEventoServerless<EmpleadoAsignado>("COSMOS", "empleado-asignado");
+// IPublicEvent -> broker nombrado (alias del backbone compartido declarado en serviceBus.external, en minusculas)
+options.PublicarEventoServerless<EmpleadoAsignado>("cosmos", "empleado-asignado");
 ```
+
+**Donde va el registro:** si el dominio tiene `EnrutamientoEventos{Dominio}` (scaffold posterior a #1804), cada evento publicado nuevo se agrega como entrada de `EventosPublicados` (`EventoPublicado.Privado<T>(topic)` / `EventoPublicado.Publico<T>(clave, topic)`), nunca como linea suelta en el callback; ver la plantilla del punto 6a-bis del `domain-scaffolder` y sus guardrails en `ComposicionContenedorTests`. Sin esa lista, la linea va directa en el callback como arriba.
 
 Registra siempre por tipo: **no** uses `PublicarEventosServerless(Assembly)` completo -- captura `IPrivateEvent` e `IPublicEvent` juntos y los enruta al mismo broker (ver el aviso en la plantilla de `ComposicionServicios{Dominio}` del `domain-scaffolder`).
 
@@ -1187,7 +1189,7 @@ Registra siempre por tipo: **no** uses `PublicarEventosServerless(Assembly)` com
 **El trio es una unidad que se completa en el mismo issue** (MEF-ADR-0024 decision #7):
 
 1. La llamada a `PublishAsync` en el handler.
-2. El registro `PublicarEventoServerless<T>(...)` en `ComposicionServicios{Dominio}`.
+2. El registro `PublicarEventoServerless<T>(...)` en `ComposicionServicios{Dominio}` (via su entrada en `EnrutamientoEventos{Dominio}` si la lista existe).
 3. El topic: en `topics_config` de `module "service_bus_interno"` para `IPrivateEvent`; para `IPublicEvent`, la necesidad documentada en la seccion "Infraestructura modificada" del resumen si el topic del backbone aun no existe.
 
 Ninguno de los tres se difiere a otro issue.

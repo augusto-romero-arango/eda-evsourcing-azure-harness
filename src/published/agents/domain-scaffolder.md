@@ -445,6 +445,58 @@ public static class IdentidadEventos{PascalCase}
 }
 ```
 
+**6a-bis. Crear `Infraestructura/EnrutamientoEventos{PascalCase}.cs`** en el Function App (issue #1804, MEF-ADR-0024 decision #7, MEF-ADR-0029): la lista declarativa de los eventos de bus que este dominio **publica**, con su topic y, para los publicos, la clave de broker. Es la contraparte de salida de `IdentidadEventos{PascalCase}.TiposPersistidos`: esa lista alimenta `AddEventTypes`, esta alimenta las lineas `PublicarEventoServerless<T>` de `ComposicionServicios{PascalCase}` (punto 6b), y `ComposicionContenedorTests` (Paso 2 punto 9) verifica ambas contra el contenedor real. No vive en `{PascalCase}.DomainEvents` como su paralela: sus entradas nombran tipos de `PrivateEvents`/`PublicEvents`, y `DomainEvents` es una isla sin `ProjectReference` (MEF-ADR-0039 decision 2). El Function App es el unico proyecto que ve los tres ensamblados. Nace vacia.
+
+```csharp
+using Cosmos.EventDriven.Abstractions;
+using Cosmos.EventDriven.CritterStack.AzureServiceBus;
+using Wolverine;
+
+namespace <RootNamespace>.{PascalCase}.Infraestructura;
+
+/// <summary>
+/// Un evento de bus que este dominio publica. <see cref="Registrar"/> es la linea
+/// <c>PublicarEventoServerless&lt;T&gt;</c> tipada que <c>ComposicionServicios{PascalCase}</c> aplica;
+/// <see cref="Broker"/> es null para el broker default (namespace interno).
+/// </summary>
+public sealed record EventoPublicado(Type Tipo, string Topic, string? Broker, Action<WolverineOptions> Registrar)
+{
+    public static EventoPublicado Privado<TEvento>(string topic)
+        where TEvento : class, IPrivateEvent
+        => new(typeof(TEvento), topic, null, options => options.PublicarEventoServerless<TEvento>(topic));
+
+    public static EventoPublicado Publico<TEvento>(string broker, string topic)
+        where TEvento : class, IPublicEvent
+        => new(typeof(TEvento), topic, broker, options => options.PublicarEventoServerless<TEvento>(broker, topic));
+}
+
+/// <summary>
+/// Eventos que el dominio {PascalCase} publica (MEF-ADR-0024 decision #7). Sin entrada aqui,
+/// PublishAsync descarta el evento en silencio.
+/// </summary>
+public static class EnrutamientoEventos{PascalCase}
+{
+    // Clave de broker en Wolverine: el alias de serviceBus.external EN MINUSCULAS. Wolverine
+    // normaliza a minusculas el esquema del Uri del broker nombrado ("cosmos://topic/..."), y una
+    // clave en mayusculas revienta la composicion con "Unknown Transport scheme" al registrar el
+    // primer evento publico.
+    public const string BrokerCosmos = "cosmos";
+
+    // Una entrada por evento publicado; el guardrail derivado de ComposicionContenedorTests exige
+    // cada IPrivateEvent/IPublicEvent de PrivateEvents.{PascalCase}/PublicEvents.{PascalCase}:
+    //   EventoPublicado.Privado<TurnoCreado>("turno-creado"),
+    //   EventoPublicado.Publico<EmpleadoAsignado>(BrokerCosmos, "empleado-asignado"),
+    public static IReadOnlyList<EventoPublicado> EventosPublicados { get; } = [];
+}
+```
+
+Si el Paso 0 no resolvio ningun alias `serviceBus.external` con `alcance == "compartido"`, omite la constante `BrokerCosmos` (y su linea de ejemplo). Si hay mas de uno, declara una constante por alias, siempre en minusculas.
+
+**Verificacion de la mecanica de enrutamiento (issue #1804, CA-1)**, por decompilacion de los paquetes pinneados (`Cosmos.EventDriven.*` 2.1.0, que arrastra `WolverineFx` 6.16.0) y por experimento local sobre el mismo wiring de este agente:
+- `MessageBus.PublishAsync<T>` resuelve `Runtime.RoutingFor(message.GetType()).RouteForPublish(...)` y, si no hay envelopes, solo llama `MessageTracking.NoRoutesFor` (una linea de log) y devuelve `ValueTask.CompletedTask`: **no lanza**. `SendAsync`, en cambio, si falla sin ruta: `EmptyMessageRouter<T>.RouteForSend` lanza `IndeterminateRoutesException`.
+- `WolverinePrivateEventSender`/`WolverinePublicEventSender` delegan en `IMessageBus.PublishAsync<IPrivateEvent|IPublicEvent>` sin ninguna verificacion propia ni opcion de modo estricto. No hay alternativa en el paquete; el unico guardrail disponible es el de composicion (Paso 2 punto 9).
+- `IWolverineRuntime.RoutingFor(type).Routes` se resuelve sobre el `ServiceProvider` sin arrancar el host y sin red. `Describe().Endpoint` da `asb://topic/{topic}` en el broker default y `{clave}://topic/{topic}` en el nombrado.
+
 **6b. Crear `Infraestructura/ComposicionServicios{PascalCase}.cs`** con el metodo de extension que concentra toda la composicion de DI que antes vivia inline en `Program.cs` (issue #319, MEF-ADR-0029). La seccion de brokers nombrados es **dinamica**, con la misma regla del Paso 6: un parametro y una linea `AgregarAzureServiceBusNombradoServerless` **por cada alias del backbone compartido** resuelto en el Paso 0. El ejemplo siguiente ilustra un dominio con un unico alias `COSMOS`:
 
 ```csharp
@@ -512,14 +564,19 @@ public static class ComposicionServicios{PascalCase}
                 // Broker default: namespace interno del BC (MEF-ADR-0024 decision #3, #7).
                 options.HabilitarAzureServiceBusParaServerLess(serviceBusInterno);
                 // Broker(s) nombrado(s): uno por alias del backbone compartido (MEF-ADR-0024 decision #4, #7).
-                // La clave de broker es el mismo alias declarado en serviceBus.external.
-                options.AgregarAzureServiceBusNombradoServerless("COSMOS", serviceBusCosmos);
-                // Enrutamiento por tipo (MEF-ADR-0024 decision #2, #4):
-                //   IPrivateEvent -> PublicarEventoServerless<T>(topic)            -> broker default  -> namespace interno
-                //   IPublicEvent  -> PublicarEventoServerless<T>("<alias>", topic) -> broker nombrado -> backbone compartido
+                // La clave de broker es el alias declarado en serviceBus.external, en minusculas.
+                options.AgregarAzureServiceBusNombradoServerless(EnrutamientoEventos{PascalCase}.BrokerCosmos, serviceBusCosmos);
+                // Enrutamiento por tipo (MEF-ADR-0024 decision #2, #4, #7), alimentado por la lista
+                // declarativa EnrutamientoEventos{PascalCase} (punto 6a-bis):
+                //   EventoPublicado.Privado<T>(topic)          -> broker default  -> namespace interno
+                //   EventoPublicado.Publico<T>(clave, topic)   -> broker nombrado -> backbone compartido
                 // AVISO: NO usar PublicarEventosServerless(Assembly contratos) completo: filtra por
                 //   IsAssignableTo(typeof(IEvent)), captura IPrivateEvent e IPublicEvent juntos y enruta
                 //   todo al mismo broker, rompiendo la separacion privado/publico. Registrar siempre por tipo.
+                foreach (var evento in EnrutamientoEventos{PascalCase}.EventosPublicados)
+                {
+                    evento.Registrar(options);
+                }
             });
 
         services.AgregarMartenEventStore();
@@ -671,7 +728,7 @@ public static class ComposicionServicios{PascalCase}
 
 **Fallback de connection string del exporter de metricas (MEF-ADR-0038 seccion 10):** el `PostConfigure<AzureMonitorExporterOptions>` de arriba no es un ajuste cosmetico -- sin el, un dominio nuevo sin `APPLICATIONINSIGHTS_CONNECTION_STRING` resuelta (greenfield antes de desplegar App Insights, o el arranque en frio en que la referencia `@Microsoft.KeyVault(...)` del Paso 4 todavia no resolvio) revienta al arrancar el host con `InvalidOperationException` al resolver el `MeterProvider` -- **incluso** con el drop total de arriba activo, porque el fallo ocurre al **construir** el exporter, antes de que exista ninguna medida que filtrar (asimetria frente al `TracerProvider`, que si se resuelve sin connection string). `PostConfigure` solo actua si ninguna fuente real (env var o Key Vault) resolvio antes la connection string, asi que el dummy nunca desplaza una real. Lo que **no** debes afirmar -- ni en el codigo generado ni en el reporte al usuario -- es que con el dummy no sale ningun byte: el drop total gobierna los instrumentos que pasan por las vistas del `MeterProviderBuilder`, no necesariamente el latido que el propio exporter emite sobre si mismo (`_APPRESOURCEPREVIEW_`), que MEF-ADR-0038 seccion 10 deja explicitamente como **gate abierto de medicion** -- ningun agente lo da por suprimido hasta cerrarlo con telemetria real post-deploy.
 
-Si el Paso 0 no resolvio ningun alias `serviceBus.external` con `alcance == "compartido"`, omite el parametro `serviceBusCosmos` y la linea `AgregarAzureServiceBusNombradoServerless`; deja solo el broker default y un comentario: `// Backbone compartido: sin alias "compartido" declarado en serviceBus.external todavia (MEF-ADR-0024 decision #4). Agrega su broker nombrado cuando el BC publique/consuma su primer evento publico.` Si hay mas de un alias, repite el par parametro + linea de registro por cada uno (y su argumento correspondiente en la llamada de `Program.cs` y en el test de composicion, Paso 2 punto 9). No wirees ningun alias con `alcance == "externo"` (integracion verdaderamente externa, diferida por MEF-ADR-0024 decision #5, default-off).
+Si el Paso 0 no resolvio ningun alias `serviceBus.external` con `alcance == "compartido"`, omite el parametro `serviceBusCosmos` y la linea `AgregarAzureServiceBusNombradoServerless` (el `foreach` sobre `EnrutamientoEventos{PascalCase}.EventosPublicados` se conserva siempre); deja solo el broker default y un comentario: `// Backbone compartido: sin alias "compartido" declarado en serviceBus.external todavia (MEF-ADR-0024 decision #4). Agrega su broker nombrado cuando el BC publique/consuma su primer evento publico.` Si hay mas de un alias, repite el par parametro + linea de registro por cada uno (y su argumento correspondiente en la llamada de `Program.cs` y en el test de composicion, Paso 2 punto 9). No wirees ningun alias con `alcance == "externo"` (integracion verdaderamente externa, diferida por MEF-ADR-0024 decision #5, default-off).
 
 Si el Paso 0 resolvio `tenancy.strategy = "multi-tenant-header"` (etapa b, MEF-ADR-0028), **reemplaza** la linea `services.AddScoped<ITenantResolver, TenantResolverMonoTenantPorDefecto>();` (y el `using Cosmos.MultiTenancy;` de arriba) por el registro del resolver `TenantExecutionContext` (biblioteca `src/<RootNamespace>.TenantResolver/`) -- ver el detalle completo (verificacion de presencia obligatoria, CA-6, y el fallback a "proponer", CA-7) en el punto 10f del Paso 1.
 
@@ -1771,8 +1828,9 @@ y valida el resultado con `BuildServiceProvider(ValidateOnBuild: true, ValidateS
 el guardrail que detecta en segundos, en CI, un registro faltante que de otro modo solo revienta
 en runtime (issue #221 del consumidor Bitakora.ControlAsistencia: `ITenantResolver` sin registrar
 paso "compila + unit tests verdes" y solo se detecto post-deploy en smoke tests). Gana ademas una
-guarda derivada de identidad de eventos (MEF-ADR-0036 CA-3/CA-4, ultimo test de la clase abajo),
-los dos guardrails deterministas del sampler de observabilidad (MEF-ADR-0038 seccion 4), el
+guarda derivada de identidad de eventos (MEF-ADR-0036 CA-3/CA-4), los dos guardrails de salida de
+eventos publicados (issue #1804: ruta resuelta por cada entrada de `EnrutamientoEventos{PascalCase}`
+y guarda derivada de que ningun `IPrivateEvent`/`IPublicEvent` del dominio falte en ella), los dos guardrails deterministas del sampler de observabilidad (MEF-ADR-0038 seccion 4), el
 guardrail del flip de logs desacoplado del muestreo de trazas (MEF-ADR-0038 seccion 9, issue #700),
 el guardrail del drop total de metricas (MEF-ADR-0038 seccion 10, issue #764/#777) y los dos
 guardrails del durability agent apagado en origen (MEF-ADR-0038 seccion 6, ultimos dos tests de la
@@ -1797,6 +1855,7 @@ using Microsoft.Extensions.Options;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Trace;
 using Wolverine;
+using Wolverine.Runtime;
 
 namespace <RootNamespace>.{PascalCase}.Tests.Infraestructura;
 
@@ -1904,6 +1963,53 @@ public class ComposicionContenedorTests
         var eventosRegistrados = store.Options.Events.AllKnownEventTypes().Select(e => e.EventType);
 
         eventosEsperados.Should().BeSubsetOf(eventosRegistrados);
+    }
+
+    // Guardrail de salida (issue #1804, MEF-ADR-0024 decision #7): PublishAsync sobre un tipo sin
+    // ruta no lanza, descarta en silencio. Para cada evento de EnrutamientoEventos{PascalCase},
+    // Wolverine debe resolver en el contenedor real (sin arrancar el host, sin red) una ruta al
+    // topic declarado en el broker correcto. Fact que recorre la lista, no Theory: en xUnit v3 una
+    // Theory sin filas falla con "No data found", y la lista nace vacia.
+    [Fact]
+    public async Task AgregarServicios{PascalCase}_EnrutaCadaEventoPublicadoASuTopic()
+    {
+        await using var proveedor = ConstruirProveedor();
+        var runtime = proveedor.GetRequiredService<IWolverineRuntime>();
+
+        foreach (var evento in EnrutamientoEventos{PascalCase}.EventosPublicados)
+        {
+            var destinoEsperado = new Uri($"{evento.Broker ?? "asb"}://topic/{evento.Topic}");
+            var destinos = runtime.RoutingFor(evento.Tipo).Routes.Select(r => r.Describe().Endpoint);
+
+            destinos.Should().Contain(destinoEsperado,
+                $"{evento.Tipo.FullName} esta declarado en EnrutamientoEventos{PascalCase} y Wolverine debe enrutarlo a ese topic y broker");
+        }
+    }
+
+    // Guarda derivada (issue #1804): todo IPrivateEvent/IPublicEvent del namespace de ESTE dominio
+    // en PrivateEvents/PublicEvents debe estar en EnrutamientoEventos{PascalCase}. El namespace es
+    // del productor (MEF-ADR-0039 decision 3), asi que los eventos de otros dominios que este solo
+    // consume no entran. Assembly.Load por nombre, no GetReferencedAssemblies: el compilador omite
+    // la referencia mientras el Function App no use ningun tipo del ensamblado.
+    [Fact]
+    public void EnrutamientoEventos{PascalCase}_DeclaraCadaEventoDeBusDelDominio()
+    {
+        var eventosDelDominio = new[]
+            {
+                (Ensamblado: "<RootNamespace>.PrivateEvents", Namespace: "<RootNamespace>.PrivateEvents.{PascalCase}", Marker: typeof(IPrivateEvent)),
+                (Ensamblado: "<RootNamespace>.PublicEvents", Namespace: "<RootNamespace>.PublicEvents.{PascalCase}", Marker: typeof(IPublicEvent)),
+            }
+            .SelectMany(origen => Assembly.Load(origen.Ensamblado).GetTypes()
+                .Where(t => t.Namespace == origen.Namespace
+                    && origen.Marker.IsAssignableFrom(t)
+                    && t is { IsAbstract: false, IsInterface: false }));
+        var declarados = EnrutamientoEventos{PascalCase}.EventosPublicados.Select(e => e.Tipo);
+
+        var faltantes = eventosDelDominio.Except(declarados).Select(t => t.FullName);
+
+        faltantes.Should().BeEmpty(
+            "cada evento de bus del dominio se declara en EnrutamientoEventos{PascalCase}.EventosPublicados " +
+            "(EventoPublicado.Privado<T>/Publico<T>); sin esa entrada PublishAsync lo descarta en silencio");
     }
 
     // Helper de reflection (MEF-ADR-0038 seccion 4): TracerProviderSdk.Sampler es una propiedad
@@ -3988,6 +4094,7 @@ Scaffold completado para el dominio "{kebab}":
     Infraestructura/RequestValidator.cs    - IRequestValidator + implementacion
     Infraestructura/EventStoreReadinessProbe.cs - IEventStoreReadinessProbe + implementacion: fuerza la materializacion de storage de Marten via FetchStreamStateAsync sobre un stream centinela, sin cache del positivo (MEF-ADR-0031 seccion 6)
     Infraestructura/TenantResolverMonoTenantPorDefecto.cs - ITenantResolver mono-tenant transitorio (MEF-ADR-0028). Solo en etapa (a) y en el fallback CA-7 de etapa (b); el auto-cableo de etapa (b) no lo genera (referencia src/<RootNamespace>.TenantResolver/ en su lugar)
+    Infraestructura/EnrutamientoEventos{PascalCase}.cs - Eventos de bus publicados con su topic y clave de broker (lista vacia al nacer, alimenta PublicarEventoServerless<T>) - issue #1804
     Infraestructura/ServiceBusDeserializador.cs - Helper de deserializacion case-insensitive
     Infraestructura/ServiceBusEndpointBase.cs   - Clase base para endpoints de ServiceBus (topic+subscription)
     Infraestructura/ServiceBusSessionEndpointBase.cs - Clase base para endpoints de fan-in (queue en modo sesion, MEF-ADR-0026)
@@ -4009,7 +4116,7 @@ Scaffold completado para el dominio "{kebab}":
     Infraestructura/ServiceBusEndpointBaseTests.cs - Tests de orquestacion (feliz, lock-lost, dead-letter, JSON invalido)
     Infraestructura/ServiceBusSessionEndpointBaseTests.cs - Tests de orquestacion de fan-in (feliz, lock-lost, dead-letter, Subject no reconocido)
     Infraestructura/PrivateEventEndpointBaseTests.cs - Tests de orquestacion del EventHandler directo (feliz, lock-lost, dead-letter, JSON invalido)
-    Infraestructura/ComposicionContenedorTests.cs - Test de composicion del contenedor DI: BuildServiceProvider(ValidateOnBuild + ValidateScopes) + resolucion explicita de los routers (issue #319, MEF-ADR-0029) + guarda derivada de eventos aplicados vs EventGraph del IDocumentStore compuesto (MEF-ADR-0036) + guardrails del sampler efectivo post-exporter y su ratio default + del flip de logs desacoplado del muestreo de trazas (issue #700) + del drop total de metricas via InMemoryExporter sin tumbar el TracerProvider (issue #764/#777) + del durability agent apagado en origen (MEF-ADR-0038)
+    Infraestructura/ComposicionContenedorTests.cs - Test de composicion del contenedor DI: BuildServiceProvider(ValidateOnBuild + ValidateScopes) + resolucion explicita de los routers (issue #319, MEF-ADR-0029) + guarda derivada de eventos aplicados vs EventGraph del IDocumentStore compuesto (MEF-ADR-0036) + ruta Wolverine de cada evento de EnrutamientoEventos y guarda derivada de eventos de bus del dominio no declarados (issue #1804) + guardrails del sampler efectivo post-exporter y su ratio default + del flip de logs desacoplado del muestreo de trazas (issue #700) + del drop total de metricas via InMemoryExporter sin tumbar el TracerProvider (issue #764/#777) + del durability agent apagado en origen (MEF-ADR-0038)
     ReadyCheckTests.cs                     - Mapeo probe-exitoso -> 200 / probe-fallido -> 503 con cuerpo diagnosticable, fake manual del probe (MEF-ADR-0031 seccion 6, issue #671/#675)
                                            - Proyecto de tests unitarios (xUnit v3 + AwesomeAssertions)
 
