@@ -3416,11 +3416,21 @@ jobs:
     steps:
       - id: check
         name: Decidir si corresponde desplegar este dominio
+        # Los datos del evento entran por 'env', nunca como ${{ }} dentro del 'run': un dato
+        # controlable por quien crea la rama (head_branch) se sustituiria como texto y
+        # se volveria codigo (script injection, hardening de GitHub Actions).
         env:
           GH_TOKEN: ${{ github.token }}
+          EVENTO: ${{ github.event_name }}
+          RUN_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          RUN_EVENTO: ${{ github.event.workflow_run.event }}
+          RUN_RAMA: ${{ github.event.workflow_run.head_branch }}
+          RUN_REPO: ${{ github.event.workflow_run.head_repository.full_name }}
+          RUN_SHA: ${{ github.event.workflow_run.head_sha }}
+          REPO: ${{ github.repository }}
         run: |
           # push directo (src/**) o workflow_dispatch: siempre despliega.
-          if [ "${{ github.event_name }}" != "workflow_run" ]; then
+          if [ "$EVENTO" != "workflow_run" ]; then
             echo "debe_desplegar=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -3428,13 +3438,17 @@ jobs:
           # cualquier corrida suya (plan o apply) dispara este workflow_run, asi que
           # hay que filtrar explicitamente por la corrida de 'apply' (rama main,
           # exitosa) y no reaccionar a un plan sobre una PR de infra sin mergear.
-          if [ "${{ github.event.workflow_run.conclusion }}" != "success" ] || \
-             [ "${{ github.event.workflow_run.head_branch }}" != "main" ]; then
+          # Ademas exige origen confiable: corrida disparada por push y del mismo repo
+          # (head_branch solo no prueba de que repositorio viene el commit).
+          if [ "$RUN_CONCLUSION" != "success" ] || \
+             [ "$RUN_RAMA" != "main" ] || \
+             [ "$RUN_EVENTO" != "push" ] || \
+             [ "$RUN_REPO" != "$REPO" ]; then
             echo "debe_desplegar=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           # ...y el PR mergeado toco este dominio.
-          PR_NUM=$(gh api "repos/${{ github.repository }}/commits/${{ github.event.workflow_run.head_sha }}/pulls" --jq '.[0].number // empty')
+          PR_NUM=$(gh api "repos/${REPO}/commits/${RUN_SHA}/pulls" --jq '.[0].number // empty')
           if [ -z "$PR_NUM" ]; then
             echo "debe_desplegar=false" >> "$GITHUB_OUTPUT"
             exit 0
@@ -3449,15 +3463,17 @@ jobs:
           # hace su entrada en 'paths'. Si esta lista y la de 'paths' se desincronizan, el
           # modo de fallo es silencioso: el push despliega, pero la corrida encadenada
           # detras del apply de infra no, y se pierde el orden infra->codigo.
-          if gh api "repos/${{ github.repository }}/pulls/${PR_NUM}/files" --paginate --jq '.[].filename' | grep -qE '^src/<RootNamespace>\.({PascalCase}(\.DomainEvents)?|PublicEvents|PrivateEvents)/'; then
+          if gh api "repos/${REPO}/pulls/${PR_NUM}/files" --paginate --jq '.[].filename' | grep -qE '^src/<RootNamespace>\.({PascalCase}(\.DomainEvents)?|PublicEvents|PrivateEvents)/'; then
             echo "debe_desplegar=true" >> "$GITHUB_OUTPUT"
           else
             echo "debe_desplegar=false" >> "$GITHUB_OUTPUT"
           fi
 
   build-and-test:
+    # Guarda de origen repetida junto al checkout (CodeQL actions/untrusted-checkout): este job
+    # compila el head_sha de una corrida ajena; solo se confia en un push a main del mismo repo.
     needs: determinar-alcance
-    if: needs.determinar-alcance.outputs.debe_desplegar == 'true'
+    if: needs.determinar-alcance.outputs.debe_desplegar == 'true' && (github.event_name != 'workflow_run' || (github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch == 'main' && github.event.workflow_run.head_repository.full_name == github.repository))
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -3485,7 +3501,8 @@ jobs:
     # Un PR valida el artefacto con build-and-test, pero nunca obtiene OIDC, publica ni
     # despliega. La frontera queda en este job, no solo en el filtro del trigger: evita
     # que un cambio futuro de paths o un nuevo trigger exponga Azure desde un PR.
-    if: github.event_name != 'pull_request' && needs.determinar-alcance.outputs.debe_desplegar == 'true'
+    # Guarda de origen repetida junto al checkout con OIDC (CodeQL actions/untrusted-checkout).
+    if: github.event_name != 'pull_request' && needs.determinar-alcance.outputs.debe_desplegar == 'true' && (github.event_name != 'workflow_run' || (github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch == 'main' && github.event.workflow_run.head_repository.full_name == github.repository))
     runs-on: ubuntu-latest
     permissions:
       id-token: write   # requerido para el login OIDC de azure/login (sin secret) - MEF-ADR-0022
