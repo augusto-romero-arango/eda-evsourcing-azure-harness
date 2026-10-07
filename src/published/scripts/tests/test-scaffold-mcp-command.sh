@@ -31,6 +31,12 @@ contains "$body" '{{mefisto:command install-apim}}' 'referencia install-apim'
 contains "$body" 'Se va a generar el servidor MCP' 'aviso de lo que se genera'
 contains "$body" 'No generes nada tu mismo' 'regla: no generar'
 contains "$body" 'idempotente' 'regla: idempotente'
+contains "$body" 'Uso: {{mefisto:command scaffold-mcp}} [<proposito>]' 'proposito opcional en la ayuda'
+contains "$body" 'PROPOSITO_PASCAL=General' 'sin argumento usa General'
+contains "$body" 'servidor MCP General del BC' 'resumen previo informa el servidor General'
+contains "$body" 'Mcp.General/' 'detecta Mcp.General existente'
+contains "$body" 'pasa un proposito' 'mensaje de parada indica pasar un proposito'
+absent "$body" 'Consultas/Comandos' 'ayuda sin particion Consultas/Comandos'
 guard_line="$(grep -nF '{{mefisto:assert-consumer-repo}}' "$SOURCE" | cut -d: -f1)"
 usage_line="$(grep -nF 'Uso:' "$SOURCE" | head -1 | cut -d: -f1)"
 config_line="$(grep -nF 'namespacePrefix' "$SOURCE" | head -1 | cut -d: -f1)"
