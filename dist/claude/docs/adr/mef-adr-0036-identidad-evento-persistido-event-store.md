@@ -283,6 +283,17 @@ El test standalone es decorativo: prueba que la funcion de registro, aislada, pr
 esperado -- pero no prueba que **el contenedor real** vaya a resolver ese mismo alias, que es la
 unica pregunta que importa en produccion.
 
+**Una guarda de lista exacta o conteo no forma parte de los guardrails del marco.** Un test que
+compara `TiposPersistidos` (o los tipos del `EventGraph`) contra una lista de tipos escrita a mano, o
+que fija su cantidad (p. ej. `TiposPersistidos_ContieneExactamenteLosVeinticuatroEventos`), es un
+oraculo literal: no detecta un defecto, detecta un **cambio** -- falla con cada evento nuevo y obliga
+a editarlo (y a renombrar el metodo si el conteo esta en el nombre). Al encontrarla en un proyecto se
+**elimina** si el proyecto ya tiene el guardrail 1, o se **reemplaza por el guardrail 1** si no lo
+tiene. La proteccion frente al borrado o renombre de un evento registrado la da el guardrail 2: si se
+borra el tipo, el `typeof(Evento)` del test no compila; si se renombra la clase, el alias literal no
+coincide. La lista exacta no agrega cobertura: borrarla junto con el tipo exige el mismo "recuerdo"
+que la razon de arriba descarta como oraculo.
+
 **Ninguno de los dos guardrails requiere Postgres.** `IReadOnlyEventStoreOptions.AllKnownEventTypes()`
 (verificado en `Marten.Events`, expuesto por `IDocumentStore.Options.Events` sin cast) es calculo puro
 en memoria sobre el `EventGraph` ya construido -- ningun guardrail necesita una conexion real, solo el
@@ -375,6 +386,15 @@ pero el consumidor no tiene con que hacerlos converger hasta que ese hueco se ci
 entonces como **deteccion** (y como recordatorio del hueco cada vez que el gate corre), no como algo que
 el consumidor pueda arreglar hoy.
 
+**(d) La regla de "sin lista exacta" tiene un alcance acotado.** La prohibicion de la seccion 4 alcanza
+solo a las guardas de lista exacta o conteo de los **tipos persistidos** (`TiposPersistidos`,
+`EventGraph`). **No** alcanza a las tablas evento->topic de los tests de composicion (enrutamiento de
+bus, MEF-ADR-0024 decision 7) ni a los tests de dominio Given/When/Then (MEF-ADR-0002): son oraculos de
+otra pregunta (a que topic va un evento; que comportamiento produce un comando) y se mantienen. El
+guardrail 2 existe solo para los eventos agregados desde que el test-writer lo genera
+(`agents/test-writer.md`, seccion 6f): que un consumidor no lo tenga para eventos antiguos es una
+frontera conocida, no un motivo para conservar la lista exacta.
+
 ## Alternativas consideradas
 
 ### Alt 1: upcasting como mecanismo general de migracion
@@ -413,6 +433,18 @@ esos streams (por ejemplo, una migracion de datos fuera de banda sin ventana de 
 disponible); en ese caso, el `UPDATE` sustituye al despliegue 1 del protocolo de la seccion 5, pero
 introduce el riesgo de tocar produccion con SQL manual en vez de con el mecanismo que Marten ya provee
 para este caso.
+
+### Alt 5: mantener la lista exacta de tipos persistidos
+
+**Descartada**. Es un detector de cambios, no de defectos: falla con cada evento nuevo y exige editarla
+(y renombrar el metodo si lleva el conteo), lo que causo abortos del pipeline TDD en el consumidor de
+referencia. Su unico valor -- detectar el borrado o renombre de un evento registrado -- ya lo cubre el
+guardrail 2 (seccion 4).
+
+### Alt 6: snapshot de alias congelados que solo crece
+
+**Descartada**. Duplica el guardrail 2: un alias literal sobre el contenedor real ya congela la
+identidad de cada evento, sin un artefacto adicional que mantener.
 
 ## Consecuencias
 
@@ -557,3 +589,8 @@ para este caso.
   confirmacion humana sobre el `--dry-run` real de `scripts/purge-store.sh` (issue #725) y validacion
   final relanzando los smoke tests fallidos. La regla de que la purga pertenece al mismo despliegue que
   el movimiento de tipos queda intacta -- este skill fija el **como**, no el **cuando**.
+- 2026-10-07: enmienda (issue #2059). La seccion 4 declara que una guarda de lista exacta o conteo de
+  los tipos persistidos no forma parte de los guardrails del marco: se elimina si el proyecto tiene el
+  guardrail 1, o se reemplaza por el. La proteccion frente a borrado o renombre la da el guardrail 2. La
+  seccion 6 (d) acota el alcance (tablas evento->topic y tests de dominio quedan fuera) y declara la
+  frontera del guardrail 2 en eventos antiguos. Alternativas 5 y 6 registran lo descartado.
