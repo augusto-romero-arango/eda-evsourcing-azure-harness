@@ -435,7 +435,10 @@ export const register: Register = on => {
       const numWidth = numberWidth(visible)
       // Solo 'tras #N' ocupa columna: sin dependencias no se marca.
       const afterWidth = Math.min(16, Math.max(0, ...visible.map(i => reasonOf(i).length)))
-      const titleWidth = Math.max(12, body - numWidth - afterWidth - 9)
+      // Ancho exacto de la fila: el prefijo '5: ' de la tecla (solo en borradores), el numero, un espacio
+      // y, si alguno depende de otro, la columna 'tras #N'. El titulo ocupa el resto hasta el marco.
+      const keyPrefix = tab === 'borrador' ? 3 : 0
+      const titleWidth = Math.max(12, body - keyPrefix - numWidth - 1 - (afterWidth > 0 ? afterWidth + 2 : 0))
       const more = list
         ? [
             list.blockedCount > 0 ? `${list.blockedCount} bloqueados` : '',
