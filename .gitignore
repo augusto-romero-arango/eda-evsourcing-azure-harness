@@ -13,3 +13,6 @@ pipeline-state/
 
 # Logs ad-hoc en la raiz
 *.log
+
+# Tipos que Claude Code regenera junto a cada mod al cargarlo (MEF-ADR-0055)
+.claude/mods/*/.claude-plugin/types/
