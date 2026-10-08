@@ -54,6 +54,8 @@ Si tu proyecto no encaja con este stack, este harness no es para ti.
 
 ## Instalación
 
+**Requisito de versión:** el plugin requiere Claude Code >= 2.1.287, la versión que publicó los mods: `hooks/hooks.json` declara la clave `modules`, y una versión anterior podría rechazar el archivo entero y dejarte sin `.plugin-root`, `sessions.jsonl` ni el recordatorio de field notes (MEF-ADR-0055). `/mefisto:onboard` lo verifica (`claude update` para actualizar).
+
 ### OpenCode: bootstrap, upgrade y rollback
 
 **Camino recomendado desde Claude Code:** ejecuta `/mefisto:upgrade`. Actualiza Claude y consulta el estado estructurado de la proyeccion OpenCode sin leer `opencode.json`, providers, modelos ni credenciales. Si OpenCode ya estaba habilitado (incluso si esta `stale`), alinea, activa y reproyecta automaticamente la misma release; si esta deshabilitado, pide una unica confirmacion para bootstrap o reactivacion. Si se declina, conserva el modo solo Claude: no crea ni reproyecta OpenCode. Un conflicto se informa y nunca se repara automaticamente. El resultado separa la version cargada por la sesion, la destino en disco y la identidad verificable de ambas distribuciones; luego requiere `/reload-plugins` o reiniciar la sesion.

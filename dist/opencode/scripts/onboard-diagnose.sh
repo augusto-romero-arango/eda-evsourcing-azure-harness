@@ -11,7 +11,8 @@
 # para la entrega real que lo evidencio). Como script en disco, este archivo
 # nunca pasa por esa sustitucion: commands/onboard.md solo lo invoca por ruta.
 #
-# Reporta, sin tocar nada, el checklist de 9 secciones de /onboard: config,
+# Reporta, sin tocar nada, el checklist de 9 secciones de /onboard: config
+# (con la version minima de Claude Code, MEF-ADR-0055, como fila 1b),
 # directivas canónicas en AGENTS.md y su puente CLAUDE.md, estructura de carpetas, labels de GitHub,
 # CI hacia Azure, secretos que alimentan la siembra en Key Vault, el registro
 # secrets[], la bifurcacion de dos caminos de auth (tenancy.strategy) y el
@@ -100,6 +101,48 @@ _onboard_resolve_runtime() {
         resolved=$(source "$lib_dir/mefisto-runtime.sh" && mefisto_resolve_runtime 2>/dev/null) || resolved=""
     fi
     ONBOARD_RUNTIME="${resolved:-claude}"
+}
+
+# _claude_version_meets <version> <minima>
+# Retorna 0 si el primer semver de <version> (p. ej. "2.1.287 (Claude Code)")
+# es >= <minima>; 1 si es menor; 2 si <version> no trae un semver reconocible.
+_claude_version_meets() {
+    local raw="$1" min="$2" v a b c x y z
+    v=$(printf '%s' "$raw" | grep -Eo '[0-9]+\.[0-9]+\.[0-9]+' | head -n1)
+    [ -n "$v" ] || return 2
+    IFS=. read -r a b c <<< "$v"
+    IFS=. read -r x y z <<< "$min"
+    a=$((10#$a)); b=$((10#$b)); c=$((10#$c)); x=$((10#$x)); y=$((10#$y)); z=$((10#$z))
+    if [ "$a" -ne "$x" ]; then [ "$a" -gt "$x" ]; return; fi
+    if [ "$b" -ne "$y" ]; then [ "$b" -gt "$y" ]; return; fi
+    [ "$c" -ge "$z" ]
+}
+
+# _check_claude_version [runtime] [version_output]
+# Version minima de Claude Code para el plugin publicado (MEF-ADR-0055): el
+# hooks.json lleva la clave "modules". Deja CLAUDE_VERSION_STATE/_DETAIL.
+# Bajo un runtime distinto de "claude" es informativo (INFO), MEF-ADR-0050/0053.
+# Sin 2do argumento consulta "claude --version" (binario del PATH).
+CLAUDE_MIN_VERSION="2.1.287"
+_check_claude_version() {
+    local runtime="${1:-claude}" out="" rc
+    if [ "$runtime" != "claude" ]; then
+        CLAUDE_VERSION_STATE="INFO"
+        CLAUDE_VERSION_DETAIL="version minima de Claude Code ${CLAUDE_MIN_VERSION}: no aplica bajo el runtime $runtime"
+        return 0
+    fi
+    if [ "$#" -ge 2 ]; then
+        out="$2"
+    elif command -v claude >/dev/null 2>&1; then
+        out=$(claude --version 2>/dev/null) || out=""
+    fi
+    _claude_version_meets "$out" "$CLAUDE_MIN_VERSION"; rc=$?
+    case "$rc" in
+        0) CLAUDE_VERSION_STATE="OK"; CLAUDE_VERSION_DETAIL="Claude Code $(printf '%s' "$out" | grep -Eo '[0-9]+\.[0-9]+\.[0-9]+' | head -n1) >= ${CLAUDE_MIN_VERSION}" ;;
+        1) CLAUDE_VERSION_STATE="FALTA"; CLAUDE_VERSION_DETAIL="Claude Code $(printf '%s' "$out" | grep -Eo '[0-9]+\.[0-9]+\.[0-9]+' | head -n1) < ${CLAUDE_MIN_VERSION} (los mods de hooks/hooks.json requieren >= ${CLAUDE_MIN_VERSION})" ;;
+        *) CLAUDE_VERSION_STATE="NV"; CLAUDE_VERSION_DETAIL="no se pudo determinar la version de Claude Code (claude no esta en el PATH o su salida no trae version)" ;;
+    esac
+    return 0
 }
 
 # _check_consumer_directives [agents_md] [claude_md] [runtime]
@@ -284,6 +327,17 @@ main() {
         row NV "no se hallo load_harness_config del plugin (config sin validar)"
         if [ -f ".mefisto/harness.config.json" ]; then echo "                  (el config canonico .mefisto/harness.config.json si existe)"; elif [ -f ".claude/harness.config.json" ]; then echo "                  (solo existe el fallback legacy .claude/harness.config.json)"; else echo "                  (no existe config canonico ni fallback legacy)"; fi
         ACTIONS="${ACTIONS}  - No se pudo resolver el plugin para reusar load_harness_config; reinstala mefisto o reabre la sesion (hook SessionStart).
+"
+    fi
+
+    # --- 1b. Version minima de Claude Code (MEF-ADR-0055) ---
+    echo ""
+    echo "Version de Claude Code (minima ${CLAUDE_MIN_VERSION}):"
+    _onboard_resolve_runtime
+    _check_claude_version "$ONBOARD_RUNTIME"
+    row "$CLAUDE_VERSION_STATE" "$CLAUDE_VERSION_DETAIL"
+    if [ "$CLAUDE_VERSION_STATE" = "FALTA" ]; then
+        ACTIONS="${ACTIONS}  - Actualiza Claude Code a ${CLAUDE_MIN_VERSION} o superior (\`claude update\`).
 "
     fi
 
