@@ -165,6 +165,20 @@
         "R2"
       ],
       "motivo": "Mods de Claude Code del propio Mefisto (MEF-ADR-0055): artefactos exclusivos del adaptador Claude, como mefisto-scope-hook.sh. Nombrar `claude --agent mefisto-planner` es su contrato: mefisto-planner-board se activa leyendo ese flag de la linea de comando de su proceso y lo documenta en su README y tests. Ningun pipeline los invoca."
+    },
+    {
+      "path": "hooks/*.ts",
+      "rules": [
+        "R2"
+      ],
+      "motivo": "Modulos del mod publicado bajo hooks/ (MEF-ADR-0055): artefactos exclusivos del paquete Claude. El tablero del planner se activa leyendo `--agent mefisto:planner` de la linea de comando del proceso, igual que .claude/mods/**. Ningun pipeline los invoca."
+    },
+    {
+      "path": "hooks/*.tsx",
+      "rules": [
+        "R2"
+      ],
+      "motivo": "Modulos del mod publicado bajo hooks/ (MEF-ADR-0055): artefactos exclusivos del paquete Claude. El tablero del planner se activa leyendo `--agent mefisto:planner` de la linea de comando del proceso, igual que .claude/mods/**. Ningun pipeline los invoca."
     }
   ],
   "not_migrated": [
