@@ -39,6 +39,7 @@ declare module 'claude-code' {
       stepsInTurn: number
       isWorking: boolean
       focus: BoardFocus | null
+      isConfirmingClose: boolean
       flash: BoardFlash | null
       refine: BoardList | null
       develop: BoardList | null
