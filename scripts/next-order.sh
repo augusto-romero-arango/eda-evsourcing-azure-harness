@@ -3,7 +3,7 @@
 # 'estado:listo' abiertos del repo consumidor (issue #940).
 #
 # Copia hermana deliberada de src/internal/scripts/mefisto-next-order.sh
-# (issue #936), MEF-ADR-0018 regla de tres: el lado publicado no puede
+# (issue #936; el modo --refinement y --json se portaron en #2079), MEF-ADR-0018 regla de tres: el lado publicado no puede
 # depender de src/internal/ (MEF-ADR-0019), asi que el algoritmo se duplica en
 # vez de compartirse via source. Cualquier fix al calculo del orden (Kahn,
 # deteccion de ciclos, bloqueos externos/indirectos) debe aplicarse a AMBAS
@@ -19,10 +19,25 @@
 # unico adaptador publicado hoy.
 #
 # Uso:
-#   scripts/next-order.sh
-#   scripts/next-order.sh --launch-command "/mefisto:sequential"
-#   (sin mas argumentos: opera sobre TODO el universo 'estado:listo' abierto
-#   del repo consumidor)
+#   scripts/next-order.sh [--refinement] [--json] [--launch-command "<texto>"]
+#   (sin flags: opera sobre TODO el universo 'estado:listo' abierto del repo
+#   consumidor y emite texto)
+#
+#   --refinement  Orden de REFINAMIENTO: el universo son los 'estado:borrador'
+#                 abiertos. Una dependencia ya 'estado:listo' (abierta) o
+#                 cerrada cuenta como satisfecha. Un borrador que depende de
+#                 otro va despues de el. Lo consume el modo refinar del planner
+#                 publicado y el tablero del planner (MEF-ADR-0055 decision 1:
+#                 el orden vive aqui, el tablero solo lo lee). Ultima linea de
+#                 texto: 'Siguiente a refinar: #N' (o '(sin borradores
+#                 refinables)').
+#   --json        Salida estructurada en vez de texto (un objeto JSON en
+#                 stdout, mismos exit codes): mode, items[] (position, number,
+#                 title, tipo, after[], hasDepsSection), blocked[] (number, by,
+#                 reason: external|indirect), cycles[][] y launch. 'tipo' es el
+#                 label 'tipo:*' sin prefijo, o null. 'launch' es
+#                 '<--launch-command><numeros>' en modo lanzamiento, y null en
+#                 --refinement o sin items.
 #
 # Cada linea del orden incluye el label 'tipo:' del issue ('N. #123
 # [tipo:feature] Titulo -- tras #A'): el consumidor lo necesita para decidir
@@ -36,6 +51,7 @@
 #   1 -- no hay ningun issue lanzable (universo vacio, o todos los issues
 #        quedaron en ciclos y/o bloqueados)
 #   2 -- fallo 'gh issue list', o se invoco con argumentos invalidos
+#   (con --json, 0 y 1 emiten igualmente un JSON valido)
 #
 # El guard de entorno (cwd = repo de Mefisto, o cwd fuera de un repo git)
 # tambien sale con 1, con mensaje en stderr: es la convencion de todos los
@@ -91,18 +107,23 @@ fi
 unset _REPO_TOP
 
 LAUNCH_COMMAND="/mefisto:sequential"
+MODE="launch"
+AS_JSON=0
+USAGE='Uso: scripts/next-order.sh [--refinement] [--json] [--launch-command "<texto>"]'
 
 while [ "$#" -gt 0 ]; do
     case "$1" in
+        --refinement) MODE="refinement"; shift ;;
+        --json) AS_JSON=1; shift ;;
         --launch-command)
             if [ "$#" -lt 2 ]; then
                 echo "ERROR: --launch-command requiere un argumento." >&2
-                echo 'Uso: scripts/next-order.sh [--launch-command "<texto>"]' >&2
+                echo "$USAGE" >&2
                 exit 2
             fi
             if [ -z "$2" ]; then
                 echo "ERROR: --launch-command no admite texto vacio (la ultima linea quedaria sin comando)." >&2
-                echo 'Uso: scripts/next-order.sh [--launch-command "<texto>"]' >&2
+                echo "$USAGE" >&2
                 exit 2
             fi
             LAUNCH_COMMAND="$2"
@@ -110,18 +131,40 @@ while [ "$#" -gt 0 ]; do
             ;;
         *)
             echo "ERROR: argumento desconocido: $1." >&2
-            echo 'Uso: scripts/next-order.sh [--launch-command "<texto>"]' >&2
+            echo "$USAGE" >&2
             exit 2
             ;;
     esac
 done
 
+LABEL="estado:listo"
+[ "$MODE" = "refinement" ] && LABEL="estado:borrador"
+
 ISSUE_LIMIT=200
 
-if ! ISSUES_JSON=$(gh issue list --label "estado:listo" --state open --limit "$ISSUE_LIMIT" --json number,title,body,labels 2>/dev/null); then
-    echo "ERROR: fallo 'gh issue list --label estado:listo --state open'." >&2
+if ! ISSUES_JSON=$(gh issue list --label "$LABEL" --state open --limit "$ISSUE_LIMIT" --json number,title,body,labels 2>/dev/null); then
+    echo "ERROR: fallo 'gh issue list --label $LABEL --state open'." >&2
     exit 2
 fi
+
+# En refinamiento, un 'estado:listo' abierto ya esta refinado: satisface la
+# dependencia de un borrador sin formar parte del universo.
+LISTO_NUMS=""
+if [ "$MODE" = "refinement" ]; then
+    if ! LISTO_JSON=$(gh issue list --label "estado:listo" --state open --limit "$ISSUE_LIMIT" --json number 2>/dev/null); then
+        echo "ERROR: fallo 'gh issue list --label estado:listo --state open'." >&2
+        exit 2
+    fi
+    LISTO_NUMS=$(echo "$LISTO_JSON" | jq -r '.[].number')
+fi
+
+is_listo() {
+    local target="$1" n
+    for n in $LISTO_NUMS; do
+        [ "$n" = "$target" ] && return 0
+    done
+    return 1
+}
 
 NUMS=$(echo "$ISSUES_JSON" | jq -r '.[].number' | sort -n)
 
@@ -162,6 +205,12 @@ in_universe() {
     return 1
 }
 
+# Valor del label 'tipo:*' sin prefijo, o cadena vacia si no tiene (para JSON).
+tipo_plain_of() {
+    echo "$ISSUES_JSON" | jq -r --argjson n "$1" \
+        '.[] | select(.number==$n) | [.labels[]?.name] | map(select(startswith("tipo:"))) | first // "" | sub("^tipo:"; "")'
+}
+
 # Estado (issue o PR) de una dependencia -- solo se consulta para
 # dependencias FUERA del universo.
 dep_state_of() {
@@ -186,15 +235,20 @@ format_dep_list() {
 NUM=()
 TITLE=()
 TIPO=()
+TIPO_PLAIN=()
+HAS_SECTION=()  # 1 si el body declara '## Dependencias'
 DEPS_IN=()      # dependencias abiertas intra-universo
 EXCLUDED=()     # 1 si ya se sabe que no puede entrar al orden
 BLOCKED_MSGS=""
+BLOCKED_TSV=""  # numero<TAB>dependencia<TAB>razon, para --json
 
 for ISSUE in $NUMS; do
-    DEPS=$(body_of "$ISSUE" \
+    BODY=$(body_of "$ISSUE")
+    DEPS=$(printf '%s\n' "$BODY" \
         | awk '/^##[[:space:]]*[Dd]ependencias/{f=1;next} /^##[[:space:]]/{f=0} f' \
         | grep -ioE '(Depende de|Bloqueado por)[[:space:]]+#[0-9]+' \
         | grep -oE '[0-9]+' | sort -u)
+    if printf '%s\n' "$BODY" | grep -qE '^##[[:space:]]*[Dd]ependencias'; then SECTION=1; else SECTION=0; fi
 
     INSET=""
     IS_BLOCKED=0
@@ -204,14 +258,18 @@ for ISSUE in $NUMS; do
             INSET="$INSET $DEP"
             continue
         fi
+        is_listo "$DEP" && continue
         case "$(dep_state_of "$DEP")" in CLOSED|MERGED) continue ;; esac
         IS_BLOCKED=1
-        BLOCKED_MSGS="${BLOCKED_MSGS}#$ISSUE bloqueado por #$DEP: fuera de estado:listo, estado OPEN"$'\n'
+        BLOCKED_MSGS="${BLOCKED_MSGS}#$ISSUE bloqueado por #$DEP: fuera de $LABEL, estado OPEN"$'\n'
+        BLOCKED_TSV="${BLOCKED_TSV}$ISSUE"$'\t'"$DEP"$'\t'"external"$'\n'
     done
 
     NUM+=("$ISSUE")
     TITLE+=("$(title_of "$ISSUE")")
     TIPO+=("$(tipo_of "$ISSUE")")
+    TIPO_PLAIN+=("$(tipo_plain_of "$ISSUE")")
+    HAS_SECTION+=("$SECTION")
     DEPS_IN+=("$INSET")
     EXCLUDED+=("$IS_BLOCKED")
 done
@@ -271,6 +329,7 @@ done
 
 CYCLE_MSGS=""
 CYCLE_NUMS=""   # numeros de issue que son miembros de algun ciclo
+CYCLE_LINES=""  # un ciclo por linea, sus numeros separados por espacio
 COLOR=()
 STACK=()
 for ((i = 0; i < COUNT; i++)); do COLOR[i]="white"; done
@@ -287,13 +346,16 @@ emit_cycle() {
     local anchor="$1" pos path n k
     pos=$(stack_index_of "$anchor") || return 0
     path=""
+    members=""
     for ((k = pos; k < ${#STACK[@]}; k++)); do
         n=${NUM[${STACK[k]}]}
         case " $CYCLE_NUMS " in *" $n "*) ;; *) CYCLE_NUMS="$CYCLE_NUMS $n" ;; esac
         if [ -z "$path" ]; then path="#$n"; else path="$path -> #$n"; fi
+        members="$members $n"
     done
     path="$path -> #${NUM[anchor]}"
     CYCLE_MSGS="${CYCLE_MSGS}ciclo: $path"$'\n'
+    CYCLE_LINES="${CYCLE_LINES}${members# }"$'\n'
 }
 
 dfs_visit() {
@@ -329,10 +391,53 @@ for ((i = 0; i < COUNT; i++)); do
         DEP_IDX=$(index_of "$DEP") || continue
         [ "${RESOLVED[DEP_IDX]}" -eq 1 ] && continue
         INDIRECT_MSGS="${INDIRECT_MSGS}#${NUM[i]} bloqueado por #$DEP: excluido del orden"$'\n'
+        BLOCKED_TSV="${BLOCKED_TSV}${NUM[i]}"$'\t'"$DEP"$'\t'"indirect"$'\n'
     done
 done
 
 # --- Salida ------------------------------------------------------------------
+
+LAUNCH_NUMS=""
+for idx in ${ORDER[@]+"${ORDER[@]}"}; do
+    LAUNCH_NUMS="$LAUNCH_NUMS ${NUM[idx]}"
+done
+
+if [ "$AS_JSON" -eq 1 ]; then
+    ITEMS_TSV=""
+    pos=1
+    for idx in ${ORDER[@]+"${ORDER[@]}"}; do
+        ITEMS_TSV="${ITEMS_TSV}$pos"$'\t'"${NUM[idx]}"$'\t'"${HAS_SECTION[idx]}"$'\t'"${DEPS_IN[idx]# }"$'\t'"${TIPO_PLAIN[idx]}"$'\t'"${TITLE[idx]}"$'\n'
+        pos=$((pos + 1))
+    done
+    LAUNCH_LINE=""
+    [ "$MODE" = "launch" ] && [ -n "$LAUNCH_NUMS" ] && LAUNCH_LINE="$LAUNCH_COMMAND$LAUNCH_NUMS"
+    jq -n \
+        --arg mode "$MODE" \
+        --arg items "$ITEMS_TSV" \
+        --arg blocked "$BLOCKED_TSV" \
+        --arg cycles "$CYCLE_LINES" \
+        --arg launch "$LAUNCH_LINE" '
+        def lines: split("\n") | map(select(length > 0));
+        def nums: split(" ") | map(select(length > 0) | tonumber);
+        {
+          mode: $mode,
+          items: ($items | lines | map(split("\t") | {
+            position: (.[0] | tonumber),
+            number: (.[1] | tonumber),
+            title: (.[5:] | join("\t")),
+            tipo: (if .[4] == "" then null else .[4] end),
+            after: (.[3] | nums | sort),
+            hasDepsSection: (.[2] == "1")
+          })),
+          blocked: ($blocked | lines | map(split("\t") | {
+            number: (.[0] | tonumber), by: (.[1] | tonumber), reason: .[2]
+          })),
+          cycles: ($cycles | lines | map(nums)),
+          launch: (if $launch == "" then null else $launch end)
+        }'
+    [ "${#ORDER[@]}" -gt 0 ] && exit 0
+    exit 1
+fi
 
 if [ -z "$CYCLE_MSGS" ] && [ -z "$BLOCKED_MSGS" ] && [ -z "$INDIRECT_MSGS" ]; then
     echo "Sin ciclos ni bloqueos externos."
@@ -343,7 +448,6 @@ echo
 
 if [ "${#ORDER[@]}" -gt 0 ]; then
     pos=1
-    LAUNCH_NUMS=""
     for idx in "${ORDER[@]}"; do
         if [ -z "${DEPS_IN[idx]}" ]; then
             JUST="sin dependencias abiertas"
@@ -353,12 +457,19 @@ if [ "${#ORDER[@]}" -gt 0 ]; then
             JUST="tras $(format_dep_list ${DEPS_IN[idx]})"
         fi
         echo "$pos. #${NUM[idx]} [${TIPO[idx]}] ${TITLE[idx]} -- $JUST"
-        LAUNCH_NUMS="$LAUNCH_NUMS ${NUM[idx]}"
         pos=$((pos + 1))
     done
-    printf '%s\n' "$LAUNCH_COMMAND$LAUNCH_NUMS"
+    if [ "$MODE" = "refinement" ]; then
+        echo "Siguiente a refinar: #${NUM[${ORDER[0]}]}"
+    else
+        printf '%s\n' "$LAUNCH_COMMAND$LAUNCH_NUMS"
+    fi
     exit 0
 fi
 
-printf '%s\n' "$LAUNCH_COMMAND (sin issues lanzables)"
+if [ "$MODE" = "refinement" ]; then
+    echo "Siguiente a refinar: (sin borradores refinables)"
+else
+    printf '%s\n' "$LAUNCH_COMMAND (sin issues lanzables)"
+fi
 exit 1

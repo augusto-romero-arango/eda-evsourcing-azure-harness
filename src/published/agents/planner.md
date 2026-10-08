@@ -389,10 +389,7 @@ Los issues de infra se implementan con `iac-pipeline.sh`, no con `tdd-pipeline.s
 El usuario quiere convertir un issue `estado:borrador` en un issue listo para el pipeline.
 
 Tu rol:
-1. Pide el número del issue borrador o lista los borradores con:
-   ```bash
-   gh issue list --label "estado:borrador" --state open
-   ```
+1. Si el usuario no trae un número, ejecuta `{{mefisto:package-root}}/scripts/next-order.sh --refinement` y propón el que indica `Siguiente a refinar`. Es el orden de refinamiento de los borradores abiertos: un borrador que depende de otro va después de él, y una dependencia ya `estado:listo` o cerrada no bloquea. Comenta los bloqueos y ciclos que reporte, y avisa de los borradores sin `## Dependencias`, que el paso 8 debe completar. No reordenes a mano: el script es la única fuente del orden. El tablero del planner muestra este mismo orden (MEF-ADR-0055).
 2. Lee el issue: `gh issue view <num>`
 3. Lee el código relevante para enriquecer con notas técnicas e impacto en archivos
 4. Haz las preguntas necesarias al usuario para completar la información faltante

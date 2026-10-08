@@ -44,6 +44,9 @@
 #             '/mefisto:sequential'.
 #   [Q]       '--launch-command' sin argumento, o con texto vacio, -> exit 2.
 #
+#   [R]       --json: esquema, campo tipo, launch y exit codes (#2079).
+#   [S]       --refinement (texto y combinado con --json) (#2079).
+#
 # Uso: scripts/tests/test-next-order.sh
 # Exit code: 0 si todos los checks pasan, 1 si alguno falla.
 
@@ -108,6 +111,10 @@ set -uo pipefail
 DATA="${FAKE_DATA_DIR:?FAKE_DATA_DIR no seteado}"
 
 if [ "$1" = "issue" ] && [ "$2" = "list" ]; then
+    case " $* " in
+        *" estado:listo "*) [ -f "$DATA/listo_list.json" ] && { cat "$DATA/listo_list.json"; exit 0; } ;;
+        *" estado:borrador "*) [ -f "$DATA/borrador_list.json" ] && { cat "$DATA/borrador_list.json"; exit 0; } ;;
+    esac
     cat "$DATA/issue_list.json"
     exit 0
 fi
@@ -137,6 +144,8 @@ write_gh_stub
 
 reset_fixtures() { rm -rf "$FAKE_DATA"; mkdir -p "$FAKE_DATA"; }
 set_issue_list() { cat > "$FAKE_DATA/issue_list.json"; }
+set_borrador_list() { cat > "$FAKE_DATA/borrador_list.json"; }
+set_listo_list() { cat > "$FAKE_DATA/listo_list.json"; }
 set_state() { echo "$2" > "$FAKE_DATA/$1.state"; }
 set_pr_state() { echo "$2" > "$FAKE_DATA/$1.pr_state"; }
 
@@ -656,6 +665,144 @@ if [ "$RC" -eq 2 ] && echo "$OUTPUT" | grep -q "no admite texto vacio"; then
     pass "Q: --launch-command con texto vacio -> exit 2 con mensaje claro"
 else
     fail "Q: se esperaba exit 2 por texto vacio, se obtuvo $RC: $OUTPUT"
+fi
+
+# -------- Bloque R: --json --------
+
+echo ""
+echo "[R] --json: esquema, tipo, launch y exit codes"
+
+reset_fixtures
+set_issue_list <<'EOF'
+[
+ {"number":601,"title":"Base","body":"## Dependencias\nNinguna","labels":[{"name":"tipo:feature"},{"name":"estado:listo"}]},
+ {"number":602,"title":"Sobre base","body":"## Dependencias\nDepende de #601","labels":[{"name":"tipo:tooling"}]},
+ {"number":603,"title":"Sin tipo ni seccion","body":"nada","labels":[]},
+ {"number":604,"title":"Bloqueado","body":"## Dependencias\nDepende de #900","labels":[]}
+]
+EOF
+set_state 900 OPEN
+
+OUTPUT=$(run_script --json)
+RC=$?
+if [ "$RC" -eq 0 ] && echo "$OUTPUT" | jq -e . >/dev/null 2>&1; then
+    pass "R: exit 0 y JSON valido"
+else
+    fail "R: exit/JSON invalido ($RC): $OUTPUT"
+fi
+if echo "$OUTPUT" | jq -e '.mode=="launch" and (.items|map(.number)==[601,602,603])
+    and .items[0].position==1 and .items[1].after==[601] and .items[0].hasDepsSection==true
+    and .items[2].hasDepsSection==false' >/dev/null; then
+    pass "R: mode, items (position, number, after, hasDepsSection)"
+else
+    fail "R: items inesperados: $OUTPUT"
+fi
+if echo "$OUTPUT" | jq -e '.items[0].tipo=="feature" and .items[1].tipo=="tooling" and .items[2].tipo==null' >/dev/null; then
+    pass "R: tipo sin prefijo o null"
+else
+    fail "R: tipo inesperado: $OUTPUT"
+fi
+if echo "$OUTPUT" | jq -e '.blocked==[{"number":604,"by":900,"reason":"external"}] and .cycles==[]
+    and .launch=="/mefisto:sequential 601 602 603"' >/dev/null; then
+    pass "R: blocked, cycles y launch por defecto"
+else
+    fail "R: blocked/launch inesperado: $OUTPUT"
+fi
+OUTPUT=$(run_script --json --launch-command "/otro:cmd")
+if echo "$OUTPUT" | jq -e '.launch=="/otro:cmd 601 602 603"' >/dev/null; then
+    pass "R: launch respeta --launch-command"
+else
+    fail "R: launch no respeto --launch-command: $OUTPUT"
+fi
+
+reset_fixtures
+set_issue_list <<'EOF'
+[{"number":611,"title":"A","body":"## Dependencias\nDepende de #612","labels":[]},
+ {"number":612,"title":"B","body":"## Dependencias\nDepende de #611","labels":[]}]
+EOF
+OUTPUT=$(run_script --json)
+RC=$?
+if [ "$RC" -eq 1 ] && echo "$OUTPUT" | jq -e '.items==[] and .launch==null and (.cycles|length)==1 and (.cycles[0]|sort)==[611,612]' >/dev/null; then
+    pass "R: sin items -> exit 1, JSON valido, launch null, ciclo reportado"
+else
+    fail "R: caso sin items inesperado ($RC): $OUTPUT"
+fi
+
+reset_fixtures
+set_issue_list <<'EOF'
+[]
+EOF
+OUTPUT=$(run_script --json)
+RC=$?
+if [ "$RC" -eq 1 ] && echo "$OUTPUT" | jq -e '.items==[] and .launch==null' >/dev/null; then
+    pass "R: universo vacio -> exit 1 con JSON valido"
+else
+    fail "R: universo vacio inesperado ($RC): $OUTPUT"
+fi
+
+# -------- Bloque S: --refinement --------
+
+echo ""
+echo "[S] --refinement: orden de borradores, dependencias listo/cerradas, ultima linea"
+
+reset_fixtures
+set_borrador_list <<'EOF'
+[
+ {"number":702,"title":"Depende de 705","body":"## Dependencias\nDepende de #705","labels":[{"name":"tipo:feature"}]},
+ {"number":703,"title":"Depende de listo","body":"## Dependencias\nDepende de #800","labels":[{"name":"tipo:tooling"}]},
+ {"number":705,"title":"Base","body":"## Dependencias\nNinguna","labels":[]},
+ {"number":706,"title":"Depende de cerrado","body":"## Dependencias\nDepende de #801","labels":[]}
+]
+EOF
+set_listo_list <<'EOF'
+[{"number":800}]
+EOF
+set_state 801 CLOSED
+
+OUTPUT=$(run_script --refinement)
+RC=$?
+ORDER_NUMS=$(echo "$OUTPUT" | grep -oE '^[0-9]+\. #[0-9]+' | grep -oE '#[0-9]+' | tr '\n' ' ')
+if [ "$RC" -eq 0 ] && [ "$ORDER_NUMS" = "#703 #705 #702 #706 " ]; then
+    pass "S: orden de refinamiento (dependiente despues; listo y cerrada no bloquean)"
+else
+    fail "S: orden inesperado ($RC, '$ORDER_NUMS'): $OUTPUT"
+fi
+if [ "$(echo "$OUTPUT" | tail -1)" = "Siguiente a refinar: #703" ]; then
+    pass "S: ultima linea 'Siguiente a refinar: #703'"
+else
+    fail "S: ultima linea inesperada: $OUTPUT"
+fi
+if echo "$OUTPUT" | grep -q "^1\. #703 \[tipo:tooling\] "; then
+    pass "S: texto conserva '[tipo:X]' por linea"
+else
+    fail "S: falta '[tipo:X]': $OUTPUT"
+fi
+
+OUTPUT=$(run_script --refinement --json)
+RC=$?
+if [ "$RC" -eq 0 ] && echo "$OUTPUT" | jq -e '.mode=="refinement" and .launch==null
+    and (.items|map(.number)==[703,705,702,706]) and .items[0].tipo=="tooling" and .items[1].tipo==null
+    and .items[2].after==[705]' >/dev/null; then
+    pass "S: --refinement --json combina (mode, launch null, tipo, after)"
+else
+    fail "S: combinacion inesperada ($RC): $OUTPUT"
+fi
+
+reset_fixtures
+set_borrador_list <<'EOF'
+[{"number":710,"title":"Bloq","body":"## Dependencias\nDepende de #901","labels":[]}]
+EOF
+set_listo_list <<'EOF'
+[]
+EOF
+set_state 901 OPEN
+OUTPUT=$(run_script --refinement)
+RC=$?
+if [ "$RC" -eq 1 ] && echo "$OUTPUT" | grep -q "#710 bloqueado por #901: fuera de estado:borrador" \
+    && [ "$(echo "$OUTPUT" | tail -1)" = "Siguiente a refinar: (sin borradores refinables)" ]; then
+    pass "S: sin borradores refinables -> exit 1 y linea explicita"
+else
+    fail "S: caso sin refinables inesperado ($RC): $OUTPUT"
 fi
 
 # -------- Resumen --------
