@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { finishedFromHistory, parseEvent, relative, pickEventsFile, steps, stampToMs, toolingIssueOf, withModUi } from './logic'
+import { agentFlagOf, waitingFace, cropGrid, pageOf, parseNextOrder, sequentialOf, finishedFromHistory, mascotPose, parseEvent, usedColumns, relative, pickEventsFile, steps, stampToMs, toolingIssueOf, withModUi } from './logic'
 
 test('detecta el lanzamiento de /mefisto-tooling', async () => {
   expect(toolingIssueOf('MEFISTO_RUNTIME=claude ./.claude/scripts/mefisto-tmux-pipeline.sh --tooling 2059')).toBe('2059')
@@ -59,4 +59,57 @@ test('acorta las rutas del worktree', async () => {
 test('antepone MEFISTO_UI=mod sin pisar uno explicito', async () => {
   expect(withModUi('MEFISTO_RUNTIME=claude ./x.sh --tooling 1')).toBe('MEFISTO_UI=mod MEFISTO_RUNTIME=claude ./x.sh --tooling 1')
   expect(withModUi('MEFISTO_UI=tmux ./x.sh --tooling 1')).toBe('MEFISTO_UI=tmux ./x.sh --tooling 1')
+})
+
+test('la mascota toma el rol del stage y la pose del ultimo evento', async () => {
+  const run = { issue: '1', title: '', stage: '1-writer', state: 'running', startedMs: 0, finishedMs: null, agents: {}, pr: null, lastError: null, eventsFile: null } as const
+  const tool = (text: string) => ({ ts: '', kind: 'tool', text }) as const
+  expect(mascotPose(run, undefined)).toEqual({ role: 'desarrollador', state: 'pensando' })
+  expect(mascotPose(run, tool('Bash ls'))).toEqual({ role: 'desarrollador', state: 'trabajando' })
+  expect(mascotPose(run, { ts: '', kind: 'text', text: 'hola' })).toEqual({ role: 'desarrollador', state: 'pensando' })
+  const reviewer = { ...run, stage: '2-reviewer' }
+  expect(mascotPose(reviewer, tool('Read a.md'))).toEqual({ role: 'revisor', state: 'trabajando' })
+  expect(mascotPose(reviewer, tool('Edit a.md'))).toEqual({ role: 'revisor', state: 'corrigiendo' })
+  expect(mascotPose({ ...run, state: 'completed' }, undefined)).toEqual({ role: 'revisor', state: 'aprobado' })
+  expect(mascotPose({ ...run, state: 'failed' }, tool('Bash x'))).toEqual({ role: 'desarrollador', state: 'error' })
+})
+
+test('recorta las columnas vacias comunes a todos los cuadros', async () => {
+  const cols = usedColumns([['..a.', '....'], ['.b..', '    ']])
+  expect(cols).toEqual({ from: 1, to: 2 })
+  expect(cropGrid(['..a.', '....'], cols)).toEqual(['.a', '..'])
+})
+
+test('lee los listos de next-order, vacio y con fallo', async () => {
+  const json = JSON.stringify({ items: [{ number: 7, title: 'Uno', after: [5] }], blocked: [1], cycles: [], launch: '/mefisto-sequential 7' })
+  expect(parseNextOrder(0, json, '')).toEqual({
+    items: [{ number: 7, title: 'Uno', after: [5] }], blockedCount: 1, cycleCount: 0, launch: '/mefisto-sequential 7', error: null,
+  })
+  expect(parseNextOrder(1, '{"items":[],"launch":null}', '').items).toEqual([])
+  expect(parseNextOrder(2, '', 'gh: no auth\n').error).toBe('gh: no auth')
+})
+
+test('un listo suelto tambien sale por /mefisto-sequential', async () => {
+  expect(sequentialOf(1746)).toBe('/mefisto-sequential 1746')
+})
+
+test('reconoce la sesion del planner por su --agent', async () => {
+  expect(agentFlagOf('claude --agent mefisto-planner')).toBe('mefisto-planner')
+  expect(agentFlagOf('claude --agent=mefisto-planner --model opus')).toBe('mefisto-planner')
+  expect(agentFlagOf('claude')).toBe(null)
+})
+
+test('pagina los listos y vuelve a la primera si la lista se achica', async () => {
+  expect(pageOf(1, 7, 5)).toEqual({ page: 1, pages: 2 })
+  expect(pageOf(2, 7, 5)).toEqual({ page: 0, pages: 2 })
+})
+
+test('en espera: reloj de arena y ojos que miran de un lado al otro mientras trabaja', async () => {
+  const base = Array(12).fill('.'.repeat(18))
+  expect(waitingFace(base, null)[6]).toBe('YYYY.rrEErrEErr.tt')
+  expect(waitingFace(base, null)[7]).toBe('gyyg.rrEErrEErr..t')
+  expect(waitingFace(base, null)[9]).toBe('g..g..rrrrMMMr..t.')
+  expect(waitingFace(base, 0)[6]).toBe('YYYY.rEErrEErrr.tt')
+  expect(waitingFace(base, 1)[7]).toBe('g..g.rrrEErrEEr..t')
+  expect(waitingFace(base, 1)[10]).toBe('gyyg..............')
 })
