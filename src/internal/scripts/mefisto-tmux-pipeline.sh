@@ -548,6 +548,44 @@ cmd_tooling_detached() {
     log "Reporte: $report_log"
 }
 
+# cmd_batch_detached <issue>...
+#
+# MEFISTO_UI=mod (MEF-ADR-0055), mismo criterio que cmd_tooling_detached: el
+# batch corre desacoplado (nohup), sin sesion tmux ni pane herdr, y el mod
+# mefisto-monitor lo sigue desde pipeline-status-mefisto-batch.json y el status
+# de cada eslabon. Las validaciones de flags ya las hizo preflight_batch_start.
+cmd_batch_detached() {
+    extract_wrapper_flags "$@"
+    local issues=()
+    [ ${#REMAINING_ARGS[@]} -gt 0 ] && issues=("${REMAINING_ARGS[@]}")
+    [ ${#issues[@]} -gt 0 ] || abort "Debes especificar al menos un issue. Uso: --batch 42 43 44"
+    # Los issues viajan dentro del string de `bash -c`: solo se aceptan numeros.
+    local n
+    for n in "${issues[@]}"; do
+        [[ "$n" =~ ^[0-9]+$ ]] || abort "Issue invalido para --batch: '$n' (solo numeros)."
+    done
+
+    ensure_events_log
+    local logs_dir report_log
+    logs_dir="$(mefisto_state_path "logs")"
+    mkdir -p "$logs_dir"
+    report_log="$logs_dir/mefisto-batch-run-$(date +%Y%m%d-%H%M%S).report.log"
+
+    local env_unset=(-u HERDR_ENV -u MEFISTO_UI)
+    local v
+    while IFS='=' read -r v _; do
+        case "$v" in
+            HERDR_*) env_unset+=(-u "$v") ;;
+        esac
+    done < <(env)
+
+    (cd "$PROJECT_ROOT" && nohup env "${env_unset[@]}" bash -c "${ENV_PREFIX}$CAFF $BATCH_SCRIPT_Q ${issues[*]}" \
+        >"$report_log" 2>&1 </dev/null &)
+
+    success "Batch pipeline interno iniciado: issues ${issues[*]} (sin pane: lo sigue el mod mefisto-monitor)"
+    log "Reporte: $report_log"
+}
+
 cmd_batch() {
     # --verbose se extrae ANTES de construir issues_str (CA-2): cmd_batch lo
     # manda sin comillas por send-keys a mefisto-batch-pipeline.sh, que lo
@@ -645,6 +683,12 @@ fi
 if [ "${MEFISTO_UI:-}" = "mod" ] && [ "${1:-}" = "--tooling" ]; then
     shift
     cmd_tooling_detached "$@"
+    exit 0
+fi
+
+if [ "${MEFISTO_UI:-}" = "mod" ] && [ "${1:-}" = "--batch" ]; then
+    shift
+    cmd_batch_detached "$@"
     exit 0
 fi
 

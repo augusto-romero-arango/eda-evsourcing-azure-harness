@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { agentFlagOf, readyRows, titlesOf, toolingOf, waitingFace, cropGrid, pageOf, parseNextOrder, sequentialOf, finishedFromHistory, mascotPose, parseEvent, usedColumns, relative, pickEventsFile, steps, stampToMs, toolingIssueOf, withModUi } from './logic'
+import { agentFlagOf, batchFromStatus, batchIssuesOf, batchPr, batchSummary, issueMark, newlyMerged, readyRows, titlesOf, toolingOf, waitingFace, cropGrid, pageOf, parseNextOrder, sequentialOf, finishedFromHistory, mascotPose, parseEvent, usedColumns, relative, pickEventsFile, steps, stampToMs, toolingIssueOf, withModUi } from './logic'
 
 test('detecta el lanzamiento de /mefisto-tooling', async () => {
   expect(toolingIssueOf('MEFISTO_RUNTIME=claude ./.claude/scripts/mefisto-tmux-pipeline.sh --tooling 2059')).toBe('2059')
@@ -123,4 +123,31 @@ test('la lista muestra los lanzables con tecla y al final los bloqueados sin tec
     { number: 2082, title: 'Crear el tablero', reason: '', isLaunchable: false },
   ])
   expect(titlesOf('no json')).toEqual({})
+})
+
+test('detecta el lanzamiento del batch y sus issues en orden', async () => {
+  expect(batchIssuesOf('MEFISTO_UI=mod ./.claude/scripts/mefisto-tmux-pipeline.sh --batch 1746 2079 2080')).toEqual(['1746', '2079', '2080'])
+  expect(batchIssuesOf('./.claude/scripts/mefisto-tmux-pipeline.sh --tooling 2059')).toBe(null)
+})
+
+test('lee el estado del batch e ignora el de un batch anterior', async () => {
+  const prev = { issues: [], state: 'running', current: null, stopRequested: false, holdSeconds: 0, startedMs: 0, finishedMs: null } as const
+  const raw = JSON.stringify({
+    started: '20261008-190000', state: 'running', current: '2079', stop_requested: false, hold_seconds: 120,
+    issues: [{ issue: '1746', status: 'completado (PR #2093 mergeado)', pr: '2093' }, { issue: '2079', status: 'en curso', pr: null }],
+  })
+  const batch = batchFromStatus(raw, prev, stampToMs('20261008-185959'))
+  expect(batch.current).toBe('2079')
+  expect(batch.issues.map(i => issueMark(i.status))).toEqual(['done', 'current'])
+  expect(batchPr(batch)).toBe('2093')
+  expect(batchFromStatus(raw, prev, stampToMs('20261008-200000'))).toBe(prev)
+  expect(batchSummary({ ...batch, issues: [...batch.issues, { issue: '3', status: 'ERROR: x', pr: null }, { issue: '4', status: 'aplazado (parada)', pr: null }] }))
+    .toBe('✓ 1 mergeados · ✗ 1 fallidos · ⏸ 1 aplazados · espera 2m')
+})
+
+test('avisa una sola vez por issue mergeado', async () => {
+  const before = [{ issue: '1', status: 'en curso', pr: '9' }]
+  const after = [{ issue: '1', status: 'completado (PR #9 mergeado)', pr: '9' }]
+  expect(newlyMerged(before, after).map(i => i.issue)).toEqual(['1'])
+  expect(newlyMerged(after, after)).toEqual([])
 })

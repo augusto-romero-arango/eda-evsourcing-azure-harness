@@ -24,7 +24,14 @@ sesiones `-p` no los cargan. Para probar una copia suelta: `claude --plugin-dir 
   orden de `mefisto-next-order.sh` (se refresca cada minuto y al cerrar una corrida). Con el prompt vacio,
   `1` escribe la linea de `/mefisto-sequential` con todos y `5`-`9` la de un solo issue; `0` pagina. Todo
   sale por `/mefisto-sequential`, aunque sea uno, y queda en el prompt sin Enter para ajustarlo antes de lanzar.
-  `/mefisto-monitor refresh` la actualiza a mano. Por ahora el monitor no sigue las corridas de `--batch`.
+  `/mefisto-monitor refresh` la actualiza a mano.
+- `/mefisto-sequential` (`--batch`) corre desacoplado y la banda lo sigue desde
+  `pipeline-status-mefisto-batch.json`: avance `N/M`, la cola (`✓` mergeado, `●` en curso, `✗` fallido, `⏸`
+  aplazado) y el issue en curso con su mascota, pasos y ultimas lineas. `1` detiene tras el issue en curso
+  (pide confirmar; escribe la misma senal que `/mefisto-batch-stop`), `2` abre el PR del issue en curso o del
+  ultimo mergeado, `3` el log (acumula todos los issues). Al terminar: resumen (mergeados, fallidos, aplazados,
+  espera por rate limit), los PRs de cada issue y `4` cierra. Un toast avisa cada merge.
+  `/mefisto-monitor batch <issues>` reengancha un sequential ya lanzado.
 - Durante la corrida la misma banda muestra la mascota del agente activo (animada), issue, stage, tiempo, los
   pasos y las ultimas lineas del agente; `3` abre el monitor con el log completo. Al terminar, con el prompt
   vacio: `1` mergea el PR (confirma y encola `/mefisto-merge`), `2` lo abre en GitHub, `3` abre el monitor y
