@@ -36,11 +36,10 @@ En otra sesion, `/mefisto-board on` lo enciende a mano.
 |---|---|
 | `1` / `2` | En reposo: `Quiero explorar: ` / `Refina el borrador #N` en el prompt |
 | `3` / `4` | Abre o cierra la lista de borradores / listos |
-| `5`-`9` | Borradores: `Refina el borrador #N` en el prompt |
-| `5`-`8`, `9` | Listos: `/mefisto-tooling N` o el `/mefisto-sequential` del batch, escrito sin Enter en el pane `ejecucion` de herdr (portapapeles fuera de herdr) |
+| `5`-`9` | Borradores: `Refina el borrador #N` en el prompt. Listos es solo lectura: el planner no lanza trabajo |
 | `0` | Siguiente pagina |
 
-`/mefisto-board [refresh|borradores|listos|batch|cerrar|on|off]` cubre lo mismo sin teclas.
+`/mefisto-board [refresh|borradores|listos|cerrar|on|off]` cubre lo mismo sin teclas.
 
 ## Verificar un cambio
 
