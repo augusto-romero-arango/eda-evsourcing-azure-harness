@@ -57,7 +57,7 @@ test('acorta las rutas del worktree', async () => {
 })
 
 test('antepone MEFISTO_UI=mod sin pisar uno explicito', async () => {
-  expect(withModUi('MEFISTO_RUNTIME=claude ./x.sh --tooling 1')).toBe('MEFISTO_UI=mod MEFISTO_RUNTIME=claude ./x.sh --tooling 1')
+  expect(withModUi('MEFISTO_RUNTIME=claude ./.claude/scripts/mefisto-tmux-pipeline.sh --tooling 1')).toBe('MEFISTO_RUNTIME=claude MEFISTO_UI=mod ./.claude/scripts/mefisto-tmux-pipeline.sh --tooling 1')
   expect(withModUi('MEFISTO_UI=tmux ./x.sh --tooling 1')).toBe('MEFISTO_UI=tmux ./x.sh --tooling 1')
 })
 
@@ -150,4 +150,11 @@ test('avisa una sola vez por issue mergeado', async () => {
   const after = [{ issue: '1', status: 'completado (PR #9 mergeado)', pr: '9' }]
   expect(newlyMerged(before, after).map(i => i.issue)).toEqual(['1'])
   expect(newlyMerged(after, after)).toEqual([])
+})
+
+test('MEFISTO_UI=mod llega al wrapper aunque vaya dentro de un comando compuesto', async () => {
+  expect(withModUi('./.claude/scripts/mefisto-tmux-pipeline.sh --tooling 7')).toBe('MEFISTO_UI=mod ./.claude/scripts/mefisto-tmux-pipeline.sh --tooling 7')
+  expect(withModUi('MEFISTO_RUNTIME=claude ./.claude/scripts/mefisto-validate-batch-deps.sh 2080; rc=$?; [ "$rc" -eq 0 ] && MEFISTO_RUNTIME=claude ./.claude/scripts/mefisto-tmux-pipeline.sh --batch 2080'))
+    .toBe('MEFISTO_RUNTIME=claude ./.claude/scripts/mefisto-validate-batch-deps.sh 2080; rc=$?; [ "$rc" -eq 0 ] && MEFISTO_RUNTIME=claude MEFISTO_UI=mod ./.claude/scripts/mefisto-tmux-pipeline.sh --batch 2080')
+  expect(withModUi('MEFISTO_UI=tmux ./.claude/scripts/mefisto-tmux-pipeline.sh --tooling 7')).toBe('MEFISTO_UI=tmux ./.claude/scripts/mefisto-tmux-pipeline.sh --tooling 7')
 })
