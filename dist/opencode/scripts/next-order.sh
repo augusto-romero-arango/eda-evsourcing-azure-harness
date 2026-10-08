@@ -3,7 +3,8 @@
 # 'estado:listo' abiertos del repo consumidor (issue #940).
 #
 # Copia hermana deliberada de src/internal/scripts/mefisto-next-order.sh
-# (issue #936; el modo --refinement y --json se portaron en #2079), MEF-ADR-0018 regla de tres: el lado publicado no puede
+# (issue #936; --refinement y --json portados en #2079), MEF-ADR-0018 regla
+# de tres: el lado publicado no puede
 # depender de src/internal/ (MEF-ADR-0019), asi que el algoritmo se duplica en
 # vez de compartirse via source. Cualquier fix al calculo del orden (Kahn,
 # deteccion de ciclos, bloqueos externos/indirectos) debe aplicarse a AMBAS
