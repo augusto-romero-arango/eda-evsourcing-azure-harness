@@ -15,6 +15,7 @@ Con el mod cargado, `/mefisto-tooling <n>` corre sin pane externo (`MEFISTO_UI=m
 
 - La banda sobre el prompt muestra issue, stage y tiempo. Al terminar, con el prompt vacio:
   `1` mergea el PR (confirma y encola `/mefisto-merge`), `2` lo abre en GitHub, `3` abre el monitor y `4` lo cierra.
+- Cuando el PR queda mergeado (desde la banda, `/mefisto-merge` o GitHub), el monitor se cierra solo.
 - `/mefisto-monitor [issue|merge|close]` abre el monitor enfocado, sigue un issue o ejecuta la accion.
 - Dentro del monitor: `m` mergea, `v` abre el PR, `c` cierra; `ctrl+x tab` lo enfoca y `esc` vuelve al prompt.
 

@@ -23,6 +23,7 @@ const MAX_LINES = 200
 const STATUS_GRACE_MS = 30_000
 const PANE_ROWS = 16
 const FIXED_ROWS = 7
+const PR_CHECK_MS = 15_000
 
 const runAtom = atom({ plugin: 'mefisto-monitor', key: 'run' } as const, null)
 const linesAtom = atom({ plugin: 'mefisto-monitor', key: 'lines' } as const, [])
@@ -33,6 +34,7 @@ type Tail = { path: string; stream: AsyncGenerator<unknown, unknown> }
 let tail: Tail | null = null
 let watchSinceMs = 0
 let isPolling = false
+let lastPrCheckMs = 0
 
 async function stopTail() {
   const current = tail
@@ -126,6 +128,7 @@ async function poll($: EngineInterface) {
   try {
     await update($, nowAtom, () => Date.now())
     const prev = await read($, runAtom)
+    if (prev?.state === 'completed') await closeIfMerged($, prev)
     if (!prev || prev.state !== 'running') return
 
     let next: MonitorRun = prev
@@ -156,6 +159,19 @@ async function poll($: EngineInterface) {
   }
 }
 
+// El PR mergeado da la corrida por terminada: venga del boton, de /mefisto-merge tecleado o de GitHub.
+async function closeIfMerged($: EngineInterface, run: MonitorRun) {
+  const pr = prNumber(run.pr)
+  if (!pr || Date.now() - lastPrCheckMs < PR_CHECK_MS) return
+  lastPrCheckMs = Date.now()
+  const { exitCode, stdout } = await $.process
+    .run(['gh', 'pr', 'view', pr, '--json', 'state', '-q', '.state'])
+    .catch(() => ({ exitCode: 1, stdout: '' }))
+  if (exitCode !== 0 || stdout.trim() !== 'MERGED') return
+  await closeRun($)
+  $.ui.toast(`PR #${pr} mergeado · monitor de #${run.issue} cerrado`)
+}
+
 async function openPane($: EngineInterface, isFocused = false) {
   return $.ui.open({ id: PANE, title: 'mefisto', rows: PANE_ROWS, ...(isFocused ? { focus: true as const } : {}) })
 }
@@ -182,7 +198,8 @@ async function merge($: EngineInterface) {
     .ask(`¿Mergear el PR #${pr} con /mefisto-merge?`, ['Mergear', 'Cancelar'])
     .catch(() => 'Cancelar')
   if (answer !== 'Mergear') return
-  $.ui.toast(`/mefisto-merge ${pr} en cola: corre cuando la sesión quede libre`)
+  $.ui.toast(`/mefisto-merge ${pr} en cola: el monitor se cierra cuando el PR quede mergeado`)
+  lastPrCheckMs = 0
   await $.command.run({ command: 'mefisto-merge', args: pr })
 }
 

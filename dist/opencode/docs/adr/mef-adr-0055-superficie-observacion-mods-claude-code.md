@@ -54,6 +54,7 @@ Toda accion con efecto sale del mod hacia un skill o comando que ya existe. Nunc
 - **Mergear** confirma con `$.ui.ask` y encola `/mefisto-merge <pr>` con `$.command.run`. Reutiliza squash, borrado de rama y `--reconcile-pr`.
 - **Ver PR** ejecuta `gh pr view <pr> --web`.
 - **Cerrar** solo oculta el monitor y olvida la corrida, sin tocar PR ni issue.
+- **Cierre automatico**: con la corrida terminada, el mod consulta el estado del PR (`gh pr view`, cada 15 s) y, cuando queda `MERGED`, se cierra solo. Da igual si el merge vino del boton, de `/mefisto-merge` tecleado o de GitHub.
 
 `$.command.run` espera a que la sesion quede libre; el mod lo anuncia con un toast.
 
