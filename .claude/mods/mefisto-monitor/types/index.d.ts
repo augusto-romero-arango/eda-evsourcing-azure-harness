@@ -50,9 +50,7 @@ declare module 'claude-code' {
       isExecutionSession: boolean
       ready: ReadyList | null
       readyPage: number
-      pendingLaunch: number | null
       batch: BatchRun | null
-      isConfirmingStop: boolean
     }
   }
 }

@@ -98,9 +98,7 @@ const nowAtom = atom({ plugin: 'mefisto-monitor', key: 'now' } as const, 0)
 const executionAtom = atom({ plugin: 'mefisto-monitor', key: 'isExecutionSession' } as const, false)
 const readyAtom = atom({ plugin: 'mefisto-monitor', key: 'ready' } as const, null)
 const readyPageAtom = atom({ plugin: 'mefisto-monitor', key: 'readyPage' } as const, 0)
-const pendingAtom = atom({ plugin: 'mefisto-monitor', key: 'pendingLaunch' } as const, null)
 const batchAtom = atom({ plugin: 'mefisto-monitor', key: 'batch' } as const, null)
-const confirmStopAtom = atom({ plugin: 'mefisto-monitor', key: 'isConfirmingStop' } as const, false)
 
 type Tail = { path: string; stream: AsyncGenerator<unknown, unknown> }
 
@@ -190,7 +188,6 @@ async function watchBatch($: EngineInterface, issues: string[], sinceMs: number)
   }
   await update($, runAtom, () => null)
   await update($, linesAtom, () => [])
-  await update($, confirmStopAtom, () => false)
   await update($, batchAtom, () => batch)
 }
 
@@ -228,14 +225,12 @@ async function pollBatch($: EngineInterface) {
     return
   }
   await stopTail()
-  await update($, confirmStopAtom, () => false)
   $.ui.toast(`sequential terminado: ${batchSummary(settled)}`)
   $.ui.status(settled.state === 'failed' ? `mefisto · sequential con fallos` : undefined)
 }
 
 // Parada suave: la misma senal que /mefisto-batch-stop. Termina el eslabon en curso (con su merge) y no sigue.
 async function requestStop($: EngineInterface) {
-  await update($, confirmStopAtom, () => false)
   await $.fs.write(BATCH_STOP, '')
   await update($, batchAtom, b => (b ? { ...b, stopRequested: true } : b))
   $.ui.toast('parada pedida: termina el issue en curso y no arranca los siguientes')
@@ -343,7 +338,6 @@ async function toggleLog($: EngineInterface) {
 async function closeRun($: EngineInterface) {
   await stopTail()
   await update($, batchAtom, () => null)
-  await update($, confirmStopAtom, () => false)
   await update($, runAtom, () => null)
   await update($, linesAtom, () => [])
   $.ui.status(undefined)
@@ -405,13 +399,30 @@ async function refreshReady($: EngineInterface) {
 
 // La banda escribe el comando sin Enter: se lanza a mano, con la opcion de ajustarlo antes.
 async function fill($: EngineInterface, text: string) {
-  await update($, pendingAtom, () => null)
   await $.prompt.fill({ text, mode: 'replace' })
 }
 
-// Un solo issue pregunta en la banda si va con merge automatico (sequential, el default) o deja el PR (tooling).
-async function choose($: EngineInterface, issue: number | null) {
-  await update($, pendingAtom, () => issue)
+// Las confirmaciones van en el dialogo nativo, abajo junto al prompt; la banda queda para informar. Esc cancela.
+const WITH_MERGE = 'Con merge (sequential)'
+const ONLY_PR = 'Solo PR (tooling)'
+
+async function choose($: EngineInterface, issue: number) {
+  const answer = await $.ui
+    .ask(`¿Cómo desarrollar #${issue}?`, { header: 'Lanzar', options: [WITH_MERGE, ONLY_PR] })
+    .catch(() => null)
+  if (answer === WITH_MERGE) await fill($, sequentialOf(issue))
+  else if (answer === ONLY_PR) await fill($, toolingOf(issue))
+}
+
+async function confirmStop($: EngineInterface) {
+  const current = (await read($, batchAtom))?.current
+  const answer = await $.ui
+    .ask(`¿Detener el sequential tras ${current ? `#${current}` : 'el issue en curso'}?`, {
+      header: 'Detener',
+      options: ['Detener tras el actual', 'Seguir'],
+    })
+    .catch(() => null)
+  if (answer === 'Detener tras el actual') await requestStop($)
 }
 
 async function nextReadyPage($: EngineInterface) {
@@ -498,7 +509,6 @@ export const register: Register = on => {
     if (batch) {
       // El sequential: avance y cola arriba, el eslabon en curso abajo con su mascota, pasos y ultimas lineas.
       const lines = await read($, linesAtom)
-      const isConfirmingStop = await read($, confirmStopAtom)
       const inner = Math.max(40, (e.props.bodyColumns ?? 80) - 4)
       const body = Math.max(30, inner - MASCOT_WIDTH - 2)
       const c = batchCounts(batch.issues)
@@ -540,22 +550,14 @@ export const register: Register = on => {
               {batch.state === 'failed' && <Text color="error"> · con fallos</Text>}
               <Text dimColor> {elapsed(end - batch.startedMs)}</Text>
             </Text>
-            {isConfirmingStop ? (
-              <Box gap={2}>
-                <Text color="warning">¿detener tras #{batch.current ?? '…'}?</Text>
-                <Button key="stop-yes" hotkey="1" plain variant="primary" label="sí" onPress={() => void requestStop($)} />
-                <Button key="stop-no" hotkey="2" plain label="no" onPress={() => void update($, confirmStopAtom, () => false)} />
-              </Box>
-            ) : (
-              <Box gap={2}>
-                {isRunning && !batch.stopRequested && (
-                  <Button key="batch-stop" hotkey="1" plain label="detener" onPress={() => void update($, confirmStopAtom, () => true)} />
-                )}
-                {pr && <Button key="batch-pr" hotkey="2" plain label={`ver PR #${pr}`} onPress={() => void openPr($)} />}
-                <Button key="batch-log" hotkey="3" plain dimColor={isRunning} label="log" onPress={() => void toggleLog($)} />
-                {!isRunning && <Button key="batch-close" hotkey="4" plain label="cerrar" onPress={() => void closeRun($)} />}
-              </Box>
-            )}
+            <Box gap={2}>
+              {isRunning && !batch.stopRequested && (
+                <Button key="batch-stop" hotkey="1" plain label="detener" onPress={() => void confirmStop($)} />
+              )}
+              {pr && <Button key="batch-pr" hotkey="2" plain label={`ver PR #${pr}`} onPress={() => void openPr($)} />}
+              <Button key="batch-log" hotkey="3" plain dimColor={isRunning} label="log" onPress={() => void toggleLog($)} />
+              {!isRunning && <Button key="batch-close" hotkey="4" plain label="cerrar" onPress={() => void closeRun($)} />}
+            </Box>
           </Box>
           <Box gap={2} height={RASTER_ROWS + 1} alignItems="flex-start">
             {mascot}
@@ -611,7 +613,6 @@ export const register: Register = on => {
     }
     if (!run) {
       const ready = await read($, readyAtom)
-      const pending = await read($, pendingAtom)
       const inner = Math.max(40, (e.props.bodyColumns ?? 80) - 4)
       const body = Math.max(30, inner - MASCOT_WIDTH - 2)
       const { page, pages } = pageOf(await read($, readyPageAtom), ready ? readyRows(ready).length : 0, READY_ROWS)
@@ -641,20 +642,9 @@ export const register: Register = on => {
           <Box justifyContent="space-between">
             <Text>
               <Text color="claude">mefisto</Text>
-              {pending !== null ? (
-                <Text color="warning"> · #{pending}</Text>
-              ) : (
-                <Text dimColor> · listos {ready ? readyRows(ready).length : '…'}</Text>
-              )}
+              <Text dimColor> · listos {ready ? readyRows(ready).length : '…'}</Text>
             </Text>
-            {pending !== null ? (
-              <Box gap={2}>
-                <Button key="launch-sequential" hotkey="1" plain variant="primary" label="con merge"
-                  onPress={() => void fill($, sequentialOf(pending))} />
-                <Button key="launch-tooling" hotkey="2" plain label="solo PR" onPress={() => void fill($, toolingOf(pending))} />
-                <Button key="launch-cancel" hotkey="3" plain dimColor label="cancelar" onPress={() => void choose($, null)} />
-              </Box>
-            ) : ready?.launch ? (
+            {ready?.launch ? (
               <Button key="ready-all" hotkey="1" plain label={clip(ready.launch, inner - 24)} onPress={() => void fill($, ready.launch ?? '')} />
             ) : (
               <Text dimColor>sin batch lanzable</Text>
@@ -691,12 +681,10 @@ export const register: Register = on => {
               ))}
               <Box justifyContent="space-between">
                 <Text dimColor wrap="truncate-end">
-                  {pending !== null
-                    ? '1 /mefisto-sequential: mergea solo · 2 /mefisto-tooling: deja el PR'
-                    : '1 todos · 5-9 uno (con o sin merge) · al prompt, sin Enter'}
+                  1 todos · 5-9 uno (con o sin merge) · al prompt, sin Enter
                 </Text>
                 <Box gap={2}>
-                  {pending === null && more !== '' && <Text dimColor>{more}</Text>}
+                  {more !== '' && <Text dimColor>{more}</Text>}
                   {pages > 1 && (
                     <Button key="ready-page" hotkey="0" plain dimColor label={`página ${page + 1}/${pages} ▸`}
                       onPress={() => void nextReadyPage($)} />

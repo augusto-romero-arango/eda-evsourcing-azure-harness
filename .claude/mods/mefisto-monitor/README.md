@@ -22,13 +22,14 @@ sesiones `-p` no los cargan. Para probar una copia suelta: `claude --plugin-dir 
 
 - En reposo, en toda sesion interactiva que no sea la del planner, la banda lista los `estado:listo` en el
   orden de `mefisto-next-order.sh` (se refresca cada minuto y al cerrar una corrida). Con el prompt vacio,
-  `1` escribe la linea de `/mefisto-sequential` con todos y `5`-`9` la de un solo issue; `0` pagina. Todo
-  sale por `/mefisto-sequential`, aunque sea uno, y queda en el prompt sin Enter para ajustarlo antes de lanzar.
+  `1` escribe la linea de `/mefisto-sequential` con todos y `5`-`9` toma un solo issue: el dialogo nativo,
+  junto al prompt, pregunta si va con merge (`/mefisto-sequential`) o solo PR (`/mefisto-tooling`). El comando
+  queda en el prompt sin Enter para ajustarlo antes de lanzar; `0` pagina. Los bloqueados se ven al final, sin tecla.
   `/mefisto-monitor refresh` la actualiza a mano.
 - `/mefisto-sequential` (`--batch`) corre desacoplado y la banda lo sigue desde
   `pipeline-status-mefisto-batch.json`: avance `N/M`, la cola (`✓` mergeado, `●` en curso, `✗` fallido, `⏸`
   aplazado) y el issue en curso con su mascota, pasos y ultimas lineas. `1` detiene tras el issue en curso
-  (pide confirmar; escribe la misma senal que `/mefisto-batch-stop`), `2` abre el PR del issue en curso o del
+  (confirma en el dialogo nativo junto al prompt; escribe la misma senal que `/mefisto-batch-stop`), `2` abre el PR del issue en curso o del
   ultimo mergeado, `3` el log (acumula todos los issues). Al terminar: resumen (mergeados, fallidos, aplazados,
   espera por rate limit), los PRs de cada issue y `4` cierra. Un toast avisa cada merge.
   `/mefisto-monitor batch <issues>` reengancha un sequential ya lanzado.
