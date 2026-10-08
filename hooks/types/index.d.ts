@@ -30,7 +30,7 @@ export type BoardFlash = { text: string; untilMs: number }
 
 declare module 'claude-code' {
   interface PluginState {
-    'mefisto-planner-board': {
+    mefisto: {
       isActive: boolean
       isPlannerSession: boolean
       isExpanded: boolean

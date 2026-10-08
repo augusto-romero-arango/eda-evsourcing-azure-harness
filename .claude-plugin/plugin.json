@@ -6,5 +6,6 @@
     "name": "Augusto Romero Arango"
   },
   "homepage": "https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness",
-  "license": "PROPRIETARY"
+  "license": "PROPRIETARY",
+  "types": "./hooks/types/index.d.ts"
 }

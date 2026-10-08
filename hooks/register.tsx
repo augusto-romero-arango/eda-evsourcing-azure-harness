@@ -40,22 +40,22 @@ const FLASH_MS = 8_000
 // con listas viejas de next-order y el poll ya no vuelve a refrescar. Se repite forzado tras este margen.
 const SETTLE_MS = 15_000
 
-const activeAtom = atom({ plugin: 'mefisto-planner-board', key: 'isActive' } as const, false)
-const plannerAtom = atom({ plugin: 'mefisto-planner-board', key: 'isPlannerSession' } as const, false)
-const expandedAtom = atom({ plugin: 'mefisto-planner-board', key: 'isExpanded' } as const, false)
-const pageAtom = atom({ plugin: 'mefisto-planner-board', key: 'page' } as const, 0)
-const tabAtom = atom({ plugin: 'mefisto-planner-board', key: 'tab' } as const, 'borrador')
-const focusAtom = atom({ plugin: 'mefisto-planner-board', key: 'focus' } as const, null)
-const confirmAtom = atom({ plugin: 'mefisto-planner-board', key: 'isConfirmingClose' } as const, false)
-const flashAtom = atom({ plugin: 'mefisto-planner-board', key: 'flash' } as const, null)
-const refineAtom = atom({ plugin: 'mefisto-planner-board', key: 'refine' } as const, null)
-const developAtom = atom({ plugin: 'mefisto-planner-board', key: 'develop' } as const, null)
-const updatedAtom = atom({ plugin: 'mefisto-planner-board', key: 'updatedMs' } as const, 0)
-const signatureAtom = atom({ plugin: 'mefisto-planner-board', key: 'signature' } as const, '')
-const frameAtom = atom({ plugin: 'mefisto-planner-board', key: 'frame' } as const, 0)
-const stepsAtom = atom({ plugin: 'mefisto-planner-board', key: 'stepsInTurn' } as const, 0)
-const workingAtom = atom({ plugin: 'mefisto-planner-board', key: 'isWorking' } as const, false)
-const knownAtom = atom({ plugin: 'mefisto-planner-board', key: 'known' } as const, [])
+const activeAtom = atom({ plugin: 'mefisto', key: 'isActive' } as const, false)
+const plannerAtom = atom({ plugin: 'mefisto', key: 'isPlannerSession' } as const, false)
+const expandedAtom = atom({ plugin: 'mefisto', key: 'isExpanded' } as const, false)
+const pageAtom = atom({ plugin: 'mefisto', key: 'page' } as const, 0)
+const tabAtom = atom({ plugin: 'mefisto', key: 'tab' } as const, 'borrador')
+const focusAtom = atom({ plugin: 'mefisto', key: 'focus' } as const, null)
+const confirmAtom = atom({ plugin: 'mefisto', key: 'isConfirmingClose' } as const, false)
+const flashAtom = atom({ plugin: 'mefisto', key: 'flash' } as const, null)
+const refineAtom = atom({ plugin: 'mefisto', key: 'refine' } as const, null)
+const developAtom = atom({ plugin: 'mefisto', key: 'develop' } as const, null)
+const updatedAtom = atom({ plugin: 'mefisto', key: 'updatedMs' } as const, 0)
+const signatureAtom = atom({ plugin: 'mefisto', key: 'signature' } as const, '')
+const frameAtom = atom({ plugin: 'mefisto', key: 'frame' } as const, 0)
+const stepsAtom = atom({ plugin: 'mefisto', key: 'stepsInTurn' } as const, 0)
+const workingAtom = atom({ plugin: 'mefisto', key: 'isWorking' } as const, false)
+const knownAtom = atom({ plugin: 'mefisto', key: 'known' } as const, [])
 
 let isInteractive = false
 let isRefreshing = false
@@ -64,15 +64,14 @@ let timer: { cancel: () => void } | null = null
 let animation: { cancel: () => void } | null = null
 const ANIMATION_MS = 600
 
-// Raiz del plugin: CLAUDE_PLUGIN_ROOT si el engine la expone; si no, el archivo que escribe el SessionStart del plugin.
+// Raiz del plugin: la que el engine expone como $.plugin.root; si faltara, el archivo que escribe el SessionStart del plugin.
 async function pluginRoot($: EngineInterface): Promise<string | null> {
-  const fromEnv = await $.env.get('CLAUDE_PLUGIN_ROOT').catch(() => undefined)
-  if (fromEnv) return fromEnv
+  const own = $.plugin.root
+  if (own) return own
   const top = await $.process.run(['git', 'rev-parse', '--show-toplevel']).catch(() => ({ exitCode: 1, stdout: '' }))
   const base = top.exitCode === 0 ? top.stdout.trim() : await $.session.cwd()
-  const file = await $.process.run(['cat', `${base}/.mefisto/pipeline/.plugin-root`]).catch(() => ({ exitCode: 1, stdout: '' }))
-  const root = file.exitCode === 0 ? file.stdout.trim() : ''
-  return root !== '' ? root : null
+  const root = await $.fs.read(`${base}/.mefisto/pipeline/.plugin-root`).catch(() => '')
+  return typeof root === 'string' && root.trim() !== '' ? root.trim() : null
 }
 
 async function runNextOrder($: EngineInterface, args: string[]): Promise<BoardList> {
