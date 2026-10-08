@@ -11,7 +11,8 @@
 # para la entrega real que lo evidencio). Como script en disco, este archivo
 # nunca pasa por esa sustitucion: commands/onboard.md solo lo invoca por ruta.
 #
-# Reporta, sin tocar nada, el checklist de 9 secciones de /onboard: config,
+# Reporta, sin tocar nada, el checklist de 9 secciones de /onboard: config
+# (con la version minima de Claude Code, MEF-ADR-0055, como fila 1b),
 # directivas canónicas en AGENTS.md y su puente CLAUDE.md, estructura de carpetas, labels de GitHub,
 # CI hacia Azure, secretos que alimentan la siembra en Key Vault, el registro
 # secrets[], la bifurcacion de dos caminos de auth (tenancy.strategy) y el
