@@ -117,7 +117,7 @@ Si en cambio resolviste el bloqueo (no agotaste 5 intentos), **omite el bloque a
 ```markdown
 ### Resolucion de bloqueo heredado
 
-(Solo cuando aplicaste la excepcion "bugs de framework, contradicciones estructurales del plan o assert de estado sin stream o guarda de inventario desactualizada", no cuando agotaste 5 intentos sin resolverlo.)
+(Solo cuando aplicaste la excepcion "bugs de framework, contradicciones estructurales del plan, assert de estado sin stream o guarda de inventario desactualizada", no cuando agotaste 5 intentos sin resolverlo.)
 
 | Test afectado | Naturaleza del problema | Accion tomada | Donde queda cubierto el CA |
 |---|---|---|---|
