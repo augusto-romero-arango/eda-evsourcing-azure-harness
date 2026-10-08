@@ -95,6 +95,7 @@ let isPolling = false
 // Una sesion no interactiva (los agentes de los pipelines) no tiene a nadie mirando: el mod no reescribe ni sigue nada.
 let isInteractive = false
 let lastPrCheckMs = 0
+let isLogOpen = false
 let isRefreshingReady = false
 let readyTimer: { cancel: () => void } | null = null
 
@@ -234,7 +235,19 @@ async function closeIfMerged($: EngineInterface, run: MonitorRun) {
 }
 
 async function openPane($: EngineInterface, isFocused = false) {
+  isLogOpen = true
   return $.ui.open({ id: PANE, title: 'mefisto', rows: PANE_ROWS, ...(isFocused ? { focus: true as const } : {}) })
+}
+
+async function closeLog($: EngineInterface) {
+  isLogOpen = false
+  await $.ui.close({ id: PANE })
+}
+
+// La tecla 3 de la banda abre el log o, si ya estaba abierto, lo cierra.
+async function toggleLog($: EngineInterface) {
+  if (isLogOpen) await closeLog($)
+  else await openPane($, true)
 }
 
 async function closeRun($: EngineInterface) {
@@ -363,12 +376,9 @@ export const register: Register = on => {
     return { text: 'Monitor abierto.' }
   })
 
+  // Cerrar el log solo cierra el pane: la banda conserva la corrida (y su PR) hasta que se cierre con 4.
   on('ui.close', { id: PANE }, async ($, e, next) => {
-    const run = await read($, runAtom)
-    if (run && run.state !== 'running') {
-      await stopTail()
-      await update($, runAtom, () => null)
-    }
+    isLogOpen = false
     return next(e)
   })
 
@@ -509,7 +519,7 @@ export const register: Register = on => {
               <Button key="band-merge" hotkey="1" plain variant="primary" label="mergear" onPress={() => void merge($)} />
             )}
             {run.state === 'completed' && pr && <Button key="band-web" hotkey="2" plain label="ver PR" onPress={() => void openPr($)} />}
-            <Button key="band-open" hotkey="3" plain dimColor={run.state === 'running'} label="log" onPress={() => void openPane($, true)} />
+            <Button key="band-open" hotkey="3" plain dimColor={run.state === 'running'} label="log" onPress={() => void toggleLog($)} />
             {run.state !== 'running' && <Button key="band-close" hotkey="4" plain label="cerrar" onPress={() => void closeRun($)} />}
           </Box>
         </Box>
@@ -584,10 +594,10 @@ export const register: Register = on => {
               <Text color="success" bold>✓ {pr ? `PR #${pr} creado` : 'terminado'}</Text>
               {pr && <Button key="merge" hotkey="m" plain variant="primary" label={`Mergear #${pr}`} onPress={() => void merge($)} />}
               {pr && <Button key="web" hotkey="v" plain label="Ver en GitHub" onPress={() => void openPr($)} />}
-              <Button key="close" hotkey="c" plain label="Cerrar monitor" role="dismiss" onPress={() => void closeRun($)} />
+              <Button key="close" hotkey="c" plain label="Cerrar log" role="dismiss" onPress={() => void closeLog($)} />
             </Box>
             <Text dimColor wrap="truncate-end">
-              {pr ? `m: /mefisto-merge ${pr} (squash + borra rama) · ` : ''}c: oculta el monitor, no toca el PR · ctrl+x tab enfoca · esc vuelve al prompt
+              {pr ? `m: /mefisto-merge ${pr} (squash + borra rama) · ` : ''}c: cierra el log, la banda sigue · ctrl+x tab enfoca · esc vuelve al prompt
             </Text>
           </Box>
         )}
@@ -595,11 +605,16 @@ export const register: Register = on => {
           <Box flexDirection="column">
             <Text color="error" wrap="wrap">✗ falló en {stageName(run.stage)}{run.lastError ? `: ${run.lastError}` : ''}</Text>
             <Box gap={2}>
-              <Button key="close" hotkey="c" plain label="Cerrar monitor" role="dismiss" onPress={() => void closeRun($)} />
+              <Button key="close" hotkey="c" plain label="Cerrar log" role="dismiss" onPress={() => void closeLog($)} />
             </Box>
           </Box>
         )}
-        {run.state === 'running' && <Text dimColor>ctrl+x tab enfoca · esc vuelve al prompt · /mefisto-monitor reabre</Text>}
+        {run.state === 'running' && (
+          <Box gap={2}>
+            <Button key="close" hotkey="c" plain label="Cerrar log" role="dismiss" onPress={() => void closeLog($)} />
+            <Text dimColor>3 en la banda también lo cierra · ctrl+x tab enfoca · esc vuelve al prompt</Text>
+          </Box>
+        )}
         <Text dimColor>{'─'.repeat(Math.min(width, 80))}</Text>
         <Box flexDirection="column">
           {lines.length === 0 && <Text dimColor>esperando eventos del agente…</Text>}
