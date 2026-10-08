@@ -180,6 +180,7 @@ COMMIT_TAR="$COMMIT_OUT/mefisto-opencode-v1.2.3.tar.gz"; COMMIT_SHA="$COMMIT_TAR
 [ -f "$COMMIT_TAR" ] && ! cmp -s "$WORK/primero.tar.gz" "$COMMIT_TAR" && ! cmp -s "$WORK/primero.tar.gz.sha256" "$COMMIT_SHA" && tar -xOzf "$COMMIT_TAR" mefisto-manifest.json | jq -e '.version == "1.2.3" and .commit == "abcdef0123456789abcdef0123456789abcdef01"' >/dev/null && pass 'cambiar solo commit cambia manifiesto y checksum' || fail 'cambio de commit no altero deterministicamente el asset'
 cp "$COMMIT_TAR" "$WORK/commit-primero.tar.gz"; cp "$COMMIT_SHA" "$WORK/commit-primero.sha256"; run_package --output "$COMMIT_OUT" >/dev/null
 cmp -s "$COMMIT_TAR" "$WORK/commit-primero.tar.gz" && cmp -s "$COMMIT_SHA" "$WORK/commit-primero.sha256" && pass 'cambio de commit permanece reproducible' || fail 'cambio de commit no fue reproducible'
+if tar -tzf "$COMMIT_TAR" | grep -Eq '(^|/)hooks/|register\.tsx'; then fail 'el paquete OpenCode incluye modulos de hooks/'; else pass 'el paquete OpenCode no incluye hooks/register.tsx ni otros modulos de hooks/'; fi
 
 printf '\nResultado: %s PASS, %s FAIL\n' "$PASS" "$FAIL"
 exit "$FAIL"
