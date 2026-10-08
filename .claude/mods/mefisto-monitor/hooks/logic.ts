@@ -1,4 +1,4 @@
-import type { LogLine, MonitorAgent, MonitorRun, ReadyItem, ReadyList } from '../types'
+import type { BlockedItem, LogLine, MonitorAgent, MonitorRun, ReadyItem, ReadyList } from '../types'
 
 export const STATE_DIR = '.mefisto/pipeline'
 export const LOG_DIR = `${STATE_DIR}/logs`
@@ -232,14 +232,14 @@ export const READY_ROWS = 5
 
 type NextOrderJson = {
   items?: { number: number; title: string; after?: number[] }[]
-  blocked?: unknown[]
+  blocked?: { number?: number; by?: number }[]
   cycles?: unknown[]
   launch?: string | null
 }
 
 /** Exit 0 (hay orden) y 1 (vacio) traen JSON valido; 2 es un fallo de gh o de argumentos. */
-export function parseNextOrder(exitCode: number, stdout: string, stderr: string): ReadyList {
-  const empty = { items: [], blockedCount: 0, cycleCount: 0, launch: null }
+export function parseNextOrder(exitCode: number, stdout: string, stderr: string, titles: Record<number, string> = {}): ReadyList {
+  const empty = { items: [], blocked: [], cycleCount: 0, launch: null }
   if (exitCode !== 0 && exitCode !== 1) {
     return { ...empty, error: stderr.split('\n').find(l => l.trim() !== '')?.trim() || `exit ${exitCode}` }
   }
@@ -251,15 +251,52 @@ export function parseNextOrder(exitCode: number, stdout: string, stderr: string)
   }
   return {
     items: (json.items ?? []).map(i => ({ number: i.number, title: i.title, after: i.after ?? [] })),
-    blockedCount: (json.blocked ?? []).length,
+    blocked: blockedOf(json.blocked ?? [], titles),
     cycleCount: (json.cycles ?? []).length,
     launch: json.launch ?? null,
     error: null,
   }
 }
 
+/** next-order da una fila por par issue-dependencia: se agrupan por issue para contar issues, no pares. */
+function blockedOf(rows: { number?: number; by?: number }[], titles: Record<number, string>): BlockedItem[] {
+  const out: BlockedItem[] = []
+  for (const r of rows) {
+    if (typeof r.number !== 'number') continue
+    const item = out.find(b => b.number === r.number) ?? out[out.push({ number: r.number, title: titles[r.number] ?? '', by: [] }) - 1]
+    if (item && typeof r.by === 'number' && !item.by.includes(r.by)) item.by.push(r.by)
+  }
+  return out
+}
+
+export type ReadyRow = { number: number; title: string; reason: string; isLaunchable: boolean }
+
+/**
+ * Todos los estado:listo de la banda: primero los lanzables en el orden de next-order y al final los bloqueados,
+ * visibles para armar un sequential a mano pero atenuados y sin tecla.
+ */
+export function readyRows(list: ReadyList): ReadyRow[] {
+  return [
+    ...list.items.map(i => ({ number: i.number, title: i.title, reason: reasonOf(i), isLaunchable: true })),
+    ...list.blocked.map(b => ({ number: b.number, title: b.title, reason: '', isLaunchable: false })),
+  ]
+}
+
+/** Titulos de los estado:listo abiertos (`gh issue list --json number,title`): next-order no los da para los bloqueados. */
+export function titlesOf(stdout: string): Record<number, string> {
+  try {
+    const rows = JSON.parse(stdout) as { number: number; title: string }[]
+    return Object.fromEntries(rows.map(r => [r.number, r.title]))
+  } catch {
+    return {}
+  }
+}
+
 /** Todo se lanza por /mefisto-sequential, aunque sea un solo issue: la cadena mergea y sincroniza main. */
 export const sequentialOf = (issue: number) => `/mefisto-sequential ${issue}`
+
+/** Un solo issue sin merge automatico: /mefisto-tooling deja el PR abierto para revisarlo. */
+export const toolingOf = (issue: number) => `/mefisto-tooling ${issue}`
 
 export function reasonOf(item: ReadyItem): string {
   return item.after.length > 0 ? `tras ${item.after.map(n => `#${n}`).join(' ')}` : ''

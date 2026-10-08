@@ -25,8 +25,10 @@ sesiones `-p` no los cargan. Para probar una copia suelta: `claude --plugin-dir 
   `1` escribe la linea de `/mefisto-sequential` con todos y `5`-`9` la de un solo issue; `0` pagina. Todo
   sale por `/mefisto-sequential`, aunque sea uno, y queda en el prompt sin Enter para ajustarlo antes de lanzar.
   `/mefisto-monitor refresh` la actualiza a mano. Por ahora el monitor no sigue las corridas de `--batch`.
-- La banda sobre el prompt muestra issue, stage y tiempo. Al terminar, con el prompt vacio:
-  `1` mergea el PR (confirma y encola `/mefisto-merge`), `2` lo abre en GitHub, `3` abre el monitor y `4` lo cierra.
+- Durante la corrida la misma banda muestra la mascota del agente activo (animada), issue, stage, tiempo, los
+  pasos y las ultimas lineas del agente; `3` abre el monitor con el log completo. Al terminar, con el prompt
+  vacio: `1` mergea el PR (confirma y encola `/mefisto-merge`), `2` lo abre en GitHub, `3` abre el monitor y
+  `4` lo cierra y vuelve a los listos.
 - Cuando el PR queda mergeado (desde la banda, `/mefisto-merge` o GitHub), el monitor se cierra solo.
 - `/mefisto-monitor [issue|merge|close]` abre el monitor enfocado, sigue un issue o ejecuta la accion.
 - Dentro del monitor: `m` mergea, `v` abre el PR, `c` cierra; `ctrl+x tab` lo enfoca y `esc` vuelve al prompt.

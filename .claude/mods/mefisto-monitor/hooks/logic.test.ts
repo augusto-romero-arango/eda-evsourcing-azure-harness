@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { agentFlagOf, waitingFace, cropGrid, pageOf, parseNextOrder, sequentialOf, finishedFromHistory, mascotPose, parseEvent, usedColumns, relative, pickEventsFile, steps, stampToMs, toolingIssueOf, withModUi } from './logic'
+import { agentFlagOf, readyRows, titlesOf, toolingOf, waitingFace, cropGrid, pageOf, parseNextOrder, sequentialOf, finishedFromHistory, mascotPose, parseEvent, usedColumns, relative, pickEventsFile, steps, stampToMs, toolingIssueOf, withModUi } from './logic'
 
 test('detecta el lanzamiento de /mefisto-tooling', async () => {
   expect(toolingIssueOf('MEFISTO_RUNTIME=claude ./.claude/scripts/mefisto-tmux-pipeline.sh --tooling 2059')).toBe('2059')
@@ -81,16 +81,17 @@ test('recorta las columnas vacias comunes a todos los cuadros', async () => {
 })
 
 test('lee los listos de next-order, vacio y con fallo', async () => {
-  const json = JSON.stringify({ items: [{ number: 7, title: 'Uno', after: [5] }], blocked: [1], cycles: [], launch: '/mefisto-sequential 7' })
+  const json = JSON.stringify({ items: [{ number: 7, title: 'Uno', after: [5] }], blocked: [{ number: 9, by: 3 }, { number: 9, by: 4 }], cycles: [], launch: '/mefisto-sequential 7' })
   expect(parseNextOrder(0, json, '')).toEqual({
-    items: [{ number: 7, title: 'Uno', after: [5] }], blockedCount: 1, cycleCount: 0, launch: '/mefisto-sequential 7', error: null,
+    items: [{ number: 7, title: 'Uno', after: [5] }], blocked: [{ number: 9, title: '', by: [3, 4] }], cycleCount: 0, launch: '/mefisto-sequential 7', error: null,
   })
   expect(parseNextOrder(1, '{"items":[],"launch":null}', '').items).toEqual([])
   expect(parseNextOrder(2, '', 'gh: no auth\n').error).toBe('gh: no auth')
 })
 
-test('un listo suelto tambien sale por /mefisto-sequential', async () => {
+test('un listo suelto sale por /mefisto-sequential o, sin merge, por /mefisto-tooling', async () => {
   expect(sequentialOf(1746)).toBe('/mefisto-sequential 1746')
+  expect(toolingOf(1746)).toBe('/mefisto-tooling 1746')
 })
 
 test('reconoce la sesion del planner por su --agent', async () => {
@@ -112,4 +113,14 @@ test('en espera: reloj de arena y ojos que miran de un lado al otro mientras tra
   expect(waitingFace(base, 0)[6]).toBe('YYYY.rEErrEErrr.tt')
   expect(waitingFace(base, 1)[7]).toBe('g..g.rrrEErrEEr..t')
   expect(waitingFace(base, 1)[10]).toBe('gyyg..............')
+})
+
+test('la lista muestra los lanzables con tecla y al final los bloqueados sin tecla', async () => {
+  const json = JSON.stringify({ items: [{ number: 1746, title: 'Proteger main', after: [] }], blocked: [{ number: 2082, by: 2080 }, { number: 2082, by: 2081 }] })
+  const list = parseNextOrder(0, json, '', titlesOf('[{"number":2082,"title":"Crear el tablero"}]'))
+  expect(readyRows(list)).toEqual([
+    { number: 1746, title: 'Proteger main', reason: '', isLaunchable: true },
+    { number: 2082, title: 'Crear el tablero', reason: '', isLaunchable: false },
+  ])
+  expect(titlesOf('no json')).toEqual({})
 })
