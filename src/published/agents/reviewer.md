@@ -117,10 +117,11 @@ Si en cambio resolviste el bloqueo (no agotaste 5 intentos), **omite el bloque a
 ```markdown
 ### Resolucion de bloqueo heredado
 
-(Solo cuando aplicaste la excepcion "bugs de framework, contradicciones estructurales del plan o assert de estado sin stream", no cuando agotaste 5 intentos sin resolverlo.)
+(Solo cuando aplicaste la excepcion "bugs de framework, contradicciones estructurales del plan o assert de estado sin stream o guarda de inventario desactualizada", no cuando agotaste 5 intentos sin resolverlo.)
 
 | Test afectado | Naturaleza del problema | Accion tomada | Donde queda cubierto el CA |
 |---|---|---|---|
+| (guarda de inventario) ej: `TiposPersistidos_ContieneExactamenteLosVeintitresEventos` | Guarda desactualizada: falta el evento nuevo de la rama | Agregada la entrada `X` y conteo 23->24; fuente de verdad verificada: alias contra MEF-ADR-0036 (sin `MapEventType`), topic contra `EnrutamientoEventos{Dominio}` y Terraform | El test cubre el inventario con el tipo nuevo |
 | ej: `TurnoCreadoNotificacionSerializacionTests.RoundTrip_*` | Contradiccion estructural: el CA pedia que este test de `PublicEvents.Tests` reusara `ConfiguracionSerializacionProgramacion` de `Programacion.DomainEvents`, dependencia imposible (MEF-ADR-0039 decision 7: `PublicEvents.Tests` referencia unicamente `PublicEvents`) | Archivo eliminado de `PublicEvents.Tests`: el refactor del issue volvio imposible la precondicion del test sin violar MEF-ADR-0039 | CA-5 cubierto por `TurnoCreadoNotificacionSerializacionMartenTests` en `Programacion.Tests/Eventos/` (el proyecto de tests del dominio si alcanza los tres ensamblados via el Function App) |
 ```
 
@@ -130,7 +131,7 @@ Esta tabla deja trazabilidad de cuando el reviewer actua como resolvedor de bloq
 
 **Importante**: NO modifiques tests para hacerlos pasar. Solo cambia implementaciones.
 
-**Excepcion: bugs de framework, contradicciones estructurales del plan o assert de estado sin stream.** Puedes modificar o eliminar tests en estos casos:
+**Excepcion: bugs de framework, contradicciones estructurales del plan, assert de estado sin stream o guarda de inventario desactualizada.** Puedes modificar o eliminar tests en estos casos:
 
 1. **Bugs de framework** (caso original): un test usa un overload incorrecto del harness (`Then(evento)` en lugar de `Then(streamId, null, evento)`, o `And<T,P>(selector, valor)` en lugar de `And<T,P>(streamId, selector, valor)`) y el aggregate tiene stream ID compuesto (no GUID). Esto es un **bug en el test**, no una modificacion para hacerlo pasar. Corregir el overload es equivalente a corregir un typo — el intent del test no cambia. En este caso:
    1. Identifica el stream ID correcto (busca `ComputarStreamId` en el aggregate)
@@ -144,7 +145,14 @@ Esta tabla deja trazabilidad de cuando el reviewer actua como resolvedor de bloq
 
 3. **Assert de estado sobre un stream que el escenario nunca crea** (caso Bitakora.ControlAsistencia #744): un test con `And<TAggregate,P>(...)` (assert de estado) cuyo `Given` nunca crea ese stream, de modo que el harness falla (ej. `ArgumentNullException('entidad')`) sin importar la implementacion; tipicamente un escenario que espera una excepcion. Corrige el test preservando su intent: retira el assert de estado cuando el escenario espera una excepcion (o agrega al `Given` el evento que crea el stream si el intent era verificar estado). Solo aplica a este defecto del propio test: si el stream si se crea y el assert falla, el defecto es del codigo de produccion y sigue prohibido tocar el test. Confirma con `dotnet test`.
 
-Los tres casos: el intent del test no cambia (o el CA se cubre de otra forma equivalente). Documenta la accion en el reporte bajo "Resolucion de bloqueo heredado" con el formato indicado debajo del bloque "Reporte de bloqueo - Reviewer".
+4. **Guarda de inventario desactualizada** (caso Bitakora.ControlAsistencia #889/#894/#883): un test **preexistente** que enumera tipos del dominio (p. ej. `TiposPersistidos` de `IdentidadEventos{Dominio}`, o un inventario evento->topic del test de composicion, tambien si esta declarado dentro del test) y falla **solo** porque falta un tipo **creado en esta rama**. Puedes agregar ese tipo y, si el test fija un conteo, ajustar el conteo; **nada mas**. Antes de agregar la entrada verifica:
+   1. el **alias** contra MEF-ADR-0036: nombre efectivo en el `EventGraph`, sin un `MapEventType` que lo cambie;
+   2. el **topic** contra el registro de publicacion del dominio (`PublicarEventoServerless<T>` / `EnrutamientoEventos{Dominio}`) y su Terraform (MEF-ADR-0001 y MEF-ADR-0024 decision 7).
+   Si no puedes confirmar alias o topic, **no ajustes la guarda**: deja el bloqueo documentado en el reporte. Si el test falla por otra razon, el defecto es de produccion y sigue prohibido tocarlo. Confirma con `dotnet test`.
+
+   **Prohibido en esta categoria**: borrar o debilitar asserts; cambiar valores esperados que no sean la entrada del tipo nuevo (y su conteo); tocar tests de otras features sin declararlo en la tabla "Resolucion de bloqueo heredado".
+
+Los cuatro casos: el intent del test no cambia (o el CA se cubre de otra forma equivalente). Documenta la accion en el reporte bajo "Resolucion de bloqueo heredado" con el formato indicado debajo del bloque "Reporte de bloqueo - Reviewer".
 
 **Lo que sigue prohibido**: eliminar tests para forzar que pase la suite cuando el codigo de produccion tiene un defecto real, o cuando los CAs no quedan cubiertos por ningun otro test. La excepcion no es licencia para "limpiar" tests legitimos.
 
