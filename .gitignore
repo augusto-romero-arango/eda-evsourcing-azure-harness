@@ -16,3 +16,6 @@ pipeline-state/
 
 # Tipos que Claude Code regenera junto a cada mod al cargarlo (MEF-ADR-0055)
 .claude/mods/*/.claude-plugin/types/
+
+# Tipos que Claude Code regenera junto al plugin (MEF-ADR-0055)
+.claude-plugin/types/
