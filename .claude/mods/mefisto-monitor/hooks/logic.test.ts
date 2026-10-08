@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { agentFlagOf, batchFromStatus, batchIssuesOf, batchPr, batchSummary, issueMark, newlyMerged, readyRows, titlesOf, toolingOf, waitingFace, cropGrid, pageOf, parseNextOrder, sequentialOf, finishedFromHistory, mascotPose, parseEvent, usedColumns, relative, pickEventsFile, steps, stampToMs, toolingIssueOf, withModUi } from './logic'
+import { agentFlagOf, fmtCost, issueStatsFromHistory, statsTotal, batchFromStatus, batchIssuesOf, batchPr, batchSummary, issueMark, newlyMerged, readyRows, titlesOf, toolingOf, waitingFace, cropGrid, pageOf, parseNextOrder, sequentialOf, finishedFromHistory, mascotPose, parseEvent, usedColumns, relative, pickEventsFile, steps, stampToMs, toolingIssueOf, withModUi } from './logic'
 
 test('detecta el lanzamiento de /mefisto-tooling', async () => {
   expect(toolingIssueOf('MEFISTO_RUNTIME=claude ./.claude/scripts/mefisto-tmux-pipeline.sh --tooling 2059')).toBe('2059')
@@ -131,7 +131,7 @@ test('detecta el lanzamiento del batch y sus issues en orden', async () => {
 })
 
 test('lee el estado del batch e ignora el de un batch anterior', async () => {
-  const prev = { issues: [], state: 'running', current: null, stopRequested: false, holdSeconds: 0, startedMs: 0, finishedMs: null } as const
+  const prev = { issues: [], state: 'running', current: null, stopRequested: false, holdSeconds: 0, startedMs: 0, finishedMs: null, stats: {} } as const
   const raw = JSON.stringify({
     started: '20261008-190000', state: 'running', current: '2079', stop_requested: false, hold_seconds: 120,
     issues: [{ issue: '1746', status: 'completado (PR #2093 mergeado)', pr: '2093' }, { issue: '2079', status: 'en curso', pr: null }],
@@ -157,4 +157,24 @@ test('MEFISTO_UI=mod llega al wrapper aunque vaya dentro de un comando compuesto
   expect(withModUi('MEFISTO_RUNTIME=claude ./.claude/scripts/mefisto-validate-batch-deps.sh 2080; rc=$?; [ "$rc" -eq 0 ] && MEFISTO_RUNTIME=claude ./.claude/scripts/mefisto-tmux-pipeline.sh --batch 2080'))
     .toBe('MEFISTO_RUNTIME=claude ./.claude/scripts/mefisto-validate-batch-deps.sh 2080; rc=$?; [ "$rc" -eq 0 ] && MEFISTO_RUNTIME=claude MEFISTO_UI=mod ./.claude/scripts/mefisto-tmux-pipeline.sh --batch 2080')
   expect(withModUi('MEFISTO_UI=tmux ./.claude/scripts/mefisto-tmux-pipeline.sh --tooling 7')).toBe('MEFISTO_UI=tmux ./.claude/scripts/mefisto-tmux-pipeline.sh --tooling 7')
+})
+
+test('duracion y costo de cada issue terminado desde el historial', async () => {
+  const entry = (issue: string, started: string, finished: string, costs: (number | null)[]) =>
+    JSON.stringify({
+      issue, pipeline: 'mefisto-tooling', started, finished,
+      agents: Object.fromEntries(costs.map((c, i) => [`a${i}`, { metrics: { estimated_cost_usd: c } }])),
+    })
+  const tail = [
+    entry('2080', '20261008-100000', '2026-10-08T10:05:00', [0.1, 0.25]),
+    entry('2081', '20261008-090000', '2026-10-08T09:01:00', [1]),
+    entry('2081', '20261008-101000', '2026-10-08T10:12:30', [null]),
+    'no json',
+  ].join('\n')
+  const stats = issueStatsFromHistory(tail, ['2080', '2081'], stampToMs('20261008-095959'))
+  expect(stats['2080']).toEqual({ durationMs: 300_000, costUsd: 0.35 })
+  expect(stats['2081']).toEqual({ durationMs: 150_000, costUsd: null })
+  expect(fmtCost(0.35)).toBe('$0.35')
+  expect(fmtCost(null)).toBe('$?')
+  expect(statsTotal(Object.values(stats))).toEqual({ durationMs: 450_000, costUsd: 0.35 })
 })
