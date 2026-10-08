@@ -63,15 +63,9 @@
 
 set -uo pipefail
 
-dependencies_section() {
-    awk '/^##[[:space:]]*[Dd]ependencias/{f=1;next} /^##[[:space:]]/{f=0} f'
-}
+# shellcheck source=/dev/null
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/mefisto-deps.sh"
 
-# Emite solo las dependencias forward canónicas de una sección Dependencias.
-forward_dependencies() {
-    dependencies_section | grep -ioE '(Depende de|Bloqueado por)[[:space:]]+#[0-9]+' \
-        | grep -oE '[0-9]+' | sort -u
-}
 
 contains_number() {
     local numbers="$1" target="$2" number
@@ -115,7 +109,7 @@ reconcile_pr() {
             had_error=1
             continue
         fi
-        deps=$(printf '%s\n' "$body" | forward_dependencies)
+        deps=$(printf '%s\n' "$body" | mefisto_forward_dependencies)
         candidate=0
         for closed in $closed_issues; do
             if contains_number "$deps" "$closed"; then
@@ -125,7 +119,7 @@ reconcile_pr() {
         done
         if [ "$candidate" -ne 1 ]; then
             for closed in $closed_issues; do
-                if printf '%s\n' "$body" | dependencies_section | grep -qE "#$closed([^0-9]|$)"; then
+                if printf '%s\n' "$body" | mefisto_dependencies_section | grep -qE "#$closed([^0-9]|$)"; then
                     echo "WARNING: issue #$blocked referencia el issue recién cerrado #$closed en '## Dependencias' sin redacción canónica parseable ('Depende de #N' / 'Bloqueado por #N'); no se pudo evaluar su desbloqueo automático." >&2
                     break
                 fi
@@ -212,7 +206,7 @@ for ISSUE in $BATCH; do
     # refs inversas/notas ('Consumido por', 'Bloquea'/'Bloquea a', 'se traslada
     # a', 'Relacionado con', prosa). Se leen de TODOS los issues del batch, no
     # solo de los que llevan 'bloqueado'.
-    DEPS=$(gh issue view "$ISSUE" --json body -q '.body' | forward_dependencies)
+    DEPS=$(gh issue view "$ISSUE" --json body -q '.body' | mefisto_forward_dependencies)
 
     ISSUE_REAL=""    # bloqueos reales de ESTE issue
     ISSUE_ORDER=""   # deps tipo (a) de ESTE issue, resueltas por el orden del batch

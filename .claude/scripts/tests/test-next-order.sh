@@ -32,6 +32,12 @@
 #   [M]       Dependiente de un ciclo: queda fuera del orden, se reporta, y no
 #             se confunde con un miembro del ciclo.
 #   [N]       Higiene de formato: la cabecera no arranca con lineas en blanco.
+#   [O]       --refinement: el universo es estado:borrador; un borrador que
+#             depende de otro va despues de el.
+#   [P]       --refinement: una dependencia 'estado:listo' abierta esta
+#             satisfecha; una abierta sin estado bloquea.
+#   [Q]       --json: objeto valido con items (after, hasDepsSection),
+#             blocked, cycles y launch; mismos exit codes.
 #
 # Uso: .claude/scripts/tests/test-next-order.sh
 # Exit code: 0 si todos los chequeos pasan, 1 si alguno falla.
@@ -84,12 +90,18 @@ trap cleanup EXIT
 #   issue_list.json      -- respuesta de 'gh issue list --json number,title,body'
 #   <num>.state           -- estado de una dependencia-issue fuera del listado
 #   <num>.pr_state        -- estado de una dependencia que en realidad es un PR
+#   listo_nums            -- en --refinement, los numeros 'estado:listo' abiertos
+#                            (la consulta de borradores sigue en issue_list.json)
 cat > "$FAKE_BIN/gh" <<'EOF'
 #!/usr/bin/env bash
 set -uo pipefail
 DATA="${FAKE_DATA_DIR:?FAKE_DATA_DIR no seteado}"
 
 if [ "$1" = "issue" ] && [ "$2" = "list" ]; then
+    if [ -f "$DATA/listo_nums" ] && [[ " $* " == *" estado:listo "* ]]; then
+        cat "$DATA/listo_nums"
+        exit 0
+    fi
     cat "$DATA/issue_list.json"
     exit 0
 fi
@@ -115,6 +127,7 @@ fi
 exit 1
 EOF
 chmod +x "$FAKE_BIN/gh"
+cp "$FAKE_BIN/gh" "$FAKE_BIN/gh.normal"
 
 reset_fixtures() { rm -rf "$FAKE_DATA"; mkdir -p "$FAKE_DATA"; }
 set_issue_list() { cat > "$FAKE_DATA/issue_list.json"; }
@@ -415,37 +428,7 @@ else
 fi
 
 # Restaurar el stub normal para el resto de los bloques.
-cat > "$FAKE_BIN/gh" <<'EOF'
-#!/usr/bin/env bash
-set -uo pipefail
-DATA="${FAKE_DATA_DIR:?FAKE_DATA_DIR no seteado}"
-
-if [ "$1" = "issue" ] && [ "$2" = "list" ]; then
-    cat "$DATA/issue_list.json"
-    exit 0
-fi
-
-if [ "$1" = "issue" ] && [ "$2" = "view" ]; then
-    num="$3"
-    if [ -f "$DATA/$num.state" ]; then
-        cat "$DATA/$num.state"
-        exit 0
-    fi
-    exit 1
-fi
-
-if [ "$1" = "pr" ] && [ "$2" = "view" ]; then
-    num="$3"
-    if [ -f "$DATA/$num.pr_state" ]; then
-        cat "$DATA/$num.pr_state"
-        exit 0
-    fi
-    exit 1
-fi
-
-exit 1
-EOF
-chmod +x "$FAKE_BIN/gh"
+cp "$FAKE_BIN/gh.normal" "$FAKE_BIN/gh"
 
 # -------- Bloque K: guardas --------
 
@@ -576,6 +559,116 @@ if [ -n "$(echo "$OUTPUT" | head -1)" ]; then
     pass "N: la primera linea de la salida es contenido, no una linea en blanco"
 else
     fail "N: la salida arranca con una linea en blanco: $OUTPUT"
+fi
+
+# -------- Bloque O: --refinement, borrador tras borrador --------
+
+echo ""
+echo "[O] --refinement: 602 depende del borrador 601, 603 no declara '## Dependencias'"
+
+reset_fixtures
+set_issue_list <<'EOF'
+[
+  {"number":601,"title":"Base borrador","body":"## Dependencias\n\nNinguna."},
+  {"number":602,"title":"Sobre la base","body":"## Dependencias\n\nDepende de #601"},
+  {"number":603,"title":"Idea suelta","body":"## Idea\n\nAlgo."}
+]
+EOF
+: > "$FAKE_DATA/listo_nums"
+
+OUTPUT=$(run_script --refinement)
+RC=$?
+if [ "$RC" -eq 0 ] \
+    && echo "$OUTPUT" | grep -q "^1\. #601 Base borrador -- sin dependencias abiertas$" \
+    && echo "$OUTPUT" | grep -q "^2\. #602 Sobre la base -- tras #601$" \
+    && echo "$OUTPUT" | grep -q "^3\. #603 Idea suelta -- sin dependencias abiertas$"; then
+    pass "O: orden de refinamiento 601, 602 (tras #601), 603"
+    if echo "$OUTPUT" | tail -1 | grep -q "^Siguiente a refinar: #601$"; then
+        pass "O: la ultima linea sugiere el siguiente a refinar, no un /mefisto-sequential"
+    else
+        fail "O: ultima linea inesperada: $(echo "$OUTPUT" | tail -1)"
+    fi
+else
+    fail "O: orden inesperado (exit $RC): $OUTPUT"
+fi
+
+# -------- Bloque P: --refinement, dependencia listo satisfecha y abierta sin estado --------
+
+echo ""
+echo "[P] --refinement: 611 depende de un listo abierto (#950), 612 de un abierto sin estado (#951)"
+
+reset_fixtures
+set_issue_list <<'EOF'
+[
+  {"number":611,"title":"Tras un listo","body":"## Dependencias\n\nDepende de #950"},
+  {"number":612,"title":"Tras algo abierto","body":"## Dependencias\n\nDepende de #951"}
+]
+EOF
+printf '950\n' > "$FAKE_DATA/listo_nums"
+set_state 951 "OPEN"
+
+OUTPUT=$(run_script --refinement)
+RC=$?
+if [ "$RC" -eq 0 ] && echo "$OUTPUT" | grep -q "^1\. #611 Tras un listo -- sin dependencias abiertas$"; then
+    pass "P: una dependencia estado:listo abierta no bloquea el refinamiento"
+else
+    fail "P: #611 deberia ser refinable (exit $RC): $OUTPUT"
+fi
+if echo "$OUTPUT" | grep -q "^#612 bloqueado por #951: fuera de estado:borrador, estado OPEN$"; then
+    pass "P: una dependencia abierta sin estado bloquea y se reporta"
+else
+    fail "P: falta el bloqueo de #612: $OUTPUT"
+fi
+
+# -------- Bloque Q: --json --------
+
+echo ""
+echo "[Q] --json: objeto estructurado con items, blocked, cycles y launch"
+
+reset_fixtures
+set_issue_list <<'EOF'
+[
+  {"number":621,"title":"Base","body":"## Dependencias\n\nNinguna."},
+  {"number":622,"title":"Tras base","body":"## Dependencias\n\nDepende de #621"},
+  {"number":623,"title":"Bloqueado","body":"## Dependencias\n\nDepende de #952"},
+  {"number":624,"title":"Ciclo A","body":"## Dependencias\n\nDepende de #625"},
+  {"number":625,"title":"Ciclo B","body":"## Dependencias\n\nDepende de #624"},
+  {"number":626,"title":"Sin seccion","body":"Texto"}
+]
+EOF
+set_state 952 "OPEN"
+
+OUTPUT=$(run_script --json)
+RC=$?
+if [ "$RC" -eq 0 ] && echo "$OUTPUT" | jq -e . >/dev/null 2>&1; then
+    pass "Q: JSON valido y exit 0"
+else
+    fail "Q: JSON invalido o exit $RC: $OUTPUT"
+fi
+GOT=$(echo "$OUTPUT" | jq -c '[.mode, [.items[].number], .items[1].after, .launch]')
+if [ "$GOT" = '["launch",[621,622,626],[621],"/mefisto-sequential 621 622 626"]' ]; then
+    pass "Q: mode, orden, after y launch correctos"
+else
+    fail "Q: items/launch inesperados: $GOT"
+fi
+GOT=$(echo "$OUTPUT" | jq -c '[([.items[] | select(.number==626) | .hasDepsSection][0]), .blocked, .cycles]')
+if [ "$GOT" = '[false,[{"number":623,"by":952,"reason":"external"}],[[624,625]]]' ]; then
+    pass "Q: hasDepsSection, blocked y cycles correctos"
+else
+    fail "Q: blocked/cycles inesperados: $GOT"
+fi
+
+reset_fixtures
+set_issue_list <<'EOF'
+[]
+EOF
+OUTPUT=$(run_script --json --refinement)
+RC=$?
+GOT=$(echo "$OUTPUT" | jq -c '[.mode, .items, .launch]')
+if [ "$RC" -eq 1 ] && [ "$GOT" = '["refinement",[],null]' ]; then
+    pass "Q: universo vacio -> exit 1 con items vacios y launch null"
+else
+    fail "Q: universo vacio inesperado (exit $RC): $OUTPUT"
 fi
 
 # -------- Resumen --------

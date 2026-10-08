@@ -1,0 +1,7 @@
+{
+  "name": "mefisto-planner-board",
+  "version": "0.1.0",
+  "description": "Tablero del planner de Mefisto sobre el prompt: borradores en orden de refinamiento e issues listos en orden de lanzamiento.",
+  "author": { "name": "Mefisto" },
+  "types": "./types/index.d.ts"
+}

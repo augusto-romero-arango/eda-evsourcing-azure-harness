@@ -2,7 +2,7 @@
 
 - **Fecha**: 2026-10-08
 - **Estado**: aceptado
-- **Aplica a**: el lado interno de MEF-ADR-0019, fase 1: el monitor de `/mefisto-tooling`. Sequential, el lado publicado y los issues que genera el reviewer quedan para enmiendas posteriores. Se apoya en MEF-ADR-0049 (adaptadores por runtime) y en MEF-ADR-0050 (neutralidad de toda operacion), y reserva el identificador `0055` (MEF-ADR-0030).
+- **Aplica a**: el lado interno de MEF-ADR-0019: el monitor de `/mefisto-tooling` y el tablero del planner (decision 8). Sequential, el lado publicado y los issues que genera el reviewer quedan para enmiendas posteriores. Se apoya en MEF-ADR-0049 (adaptadores por runtime) y en MEF-ADR-0050 (neutralidad de toda operacion), y reserva el identificador `0055` (MEF-ADR-0030).
 
 ## Contexto
 
@@ -74,7 +74,7 @@ Un mod es un artefacto **exclusivo del adaptador Claude**, igual que `mefisto-sc
 - `types/index.d.ts`
 - `hooks/*.test.ts`
 
-No se edita el `hooks/hooks.json` publicado. La ruta queda registrada en `is_path_in_mefisto_scope` y en la politica OpenCode generada, antes de poblarla (MEF-ADR-0019 seccion E). Los tipos que el engine regenera en `.claude-plugin/types/` no se versionan. La sesion de ejecucion carga el mod con `claude --plugin-dir .claude/mods/<mod>`, porque `CLAUDE_CODE_PLUGIN_DIRS` no se acepta en los settings del proyecto.
+No se edita el `hooks/hooks.json` publicado. La ruta queda registrada en `is_path_in_mefisto_scope` y en la politica OpenCode generada, antes de poblarla (MEF-ADR-0019 seccion E). Los tipos que el engine regenera en `.claude-plugin/types/` no se versionan. Se cargan desde el marketplace de carpeta `.claude/mods/.claude-plugin/marketplace.json` (`mefisto-mods`), instalado una vez por checkout en alcance `local` (`claude plugin marketplace add ./.claude/mods --scope local` y `claude plugin install <mod>@mefisto-mods --scope local`). Esa configuracion vive en `.claude/settings.local.json`, que no se versiona y no existe en los worktrees de los pipelines, por lo que las sesiones `-p` de los agentes nunca cargan los mods. Un marketplace de carpeta se lee desde la propia carpeta: un cambio se aplica con `/reload-plugins`. `--plugin-dir` queda para probar una copia suelta.
 
 ### 5. Encaje con la neutralidad
 
@@ -95,6 +95,28 @@ El mod activa el modo: su hook `tool.call` antepone `MEFISTO_UI=mod` al comando 
 - Antes de commitear, el mod pasa `claude plugin validate`, `claude plugin test` y `tsc` con el tsconfig del header de tipos.
 - Version minima: Claude Code 2.1.287.
 
+### 8. Tablero del planner: `mefisto-planner-board`
+
+La sesion del planner tiene su propio mod, que muestra que se esta haciendo y que sigue.
+
+- **Activacion**: solo en una sesion interactiva cuyo proceso es `claude --agent mefisto-planner`. El mod lo
+  lee de la linea de comando de su proceso padre (`ps`) y, como respaldo, de la fila `agent-setting` del
+  transcript de la sesion. Los eventos clasicos (`SessionStart` con `agent_type`) no llegan a un modulo cargado
+  con `--plugin-dir`, verificado el 2026-10-08. Un planner lanzado como subagente o con `-p` no dibuja ni
+  consulta nada.
+- **Foco** (dos estados, del lenguaje real de uso):
+  - *refinar #N* empieza con un mensaje que pide refinar #N y termina cuando #N recibe `estado:listo`.
+  - *explorar* es cualquier otra conversacion desde reposo, con la primera linea del mensaje como tema.
+  - Ambos terminan tambien con el cierre del planner (`mefisto-field-note.sh`). Los borradores creados en el
+    foco se anotan como su resultado, pero nunca lo cierran.
+- **Orden**: las listas vienen de `mefisto-next-order.sh --json`, y el orden de refinamiento de
+  `--refinement`. El mod no calcula dependencias (decision 1).
+- **El planner no ejecuta**: el comando de un issue listo (`/mefisto-tooling N`, o el `/mefisto-sequential`
+  del batch) se escribe sin Enter en el pane de ejecucion de herdr (`herdr pane send-text`). Si no hay pane
+  hermano con etiqueta `ejecucion`, va al portapapeles.
+- **Alto fijo**: la lista ocupa siempre las mismas filas y pagina con `0`, asi que la banda no cambia de alto
+  con la cantidad de issues.
+
 ## Consecuencias
 
 - La sesion de ejecucion muestra el avance y ofrece el merge sin cambiar de pane, y la fila de herdr baja de tres panes a dos.
@@ -104,4 +126,5 @@ El mod activa el modo: su hook `tool.call` antepone `MEFISTO_UI=mod` al comando 
 
 ## Control de cambios
 
+- 2026-10-08: decision 8 (tablero del planner) y orden de refinamiento en `mefisto-next-order.sh`.
 - 2026-10-08: version inicial.

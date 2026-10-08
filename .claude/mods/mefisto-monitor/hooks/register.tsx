@@ -34,6 +34,8 @@ type Tail = { path: string; stream: AsyncGenerator<unknown, unknown> }
 let tail: Tail | null = null
 let watchSinceMs = 0
 let isPolling = false
+// Una sesion no interactiva (los agentes de los pipelines) no tiene a nadie mirando: el mod no reescribe ni sigue nada.
+let isInteractive = false
 let lastPrCheckMs = 0
 
 async function stopTail() {
@@ -205,6 +207,7 @@ async function merge($: EngineInterface) {
 
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
+    isInteractive = e.isInteractive
     await $.command.register({
       name: 'mefisto-monitor',
       description: 'Abre el monitor de /mefisto-tooling (con <issue> sigue esa corrida; merge | close)',
@@ -218,7 +221,7 @@ export const register: Register = on => {
   })
 
   on('tool.call', { tool: 'Bash' }, async ($, e, next) => {
-    const issue = toolingIssueOf(e.command)
+    const issue = isInteractive ? toolingIssueOf(e.command) : null
     if (!issue) return next(e)
     const ran = await next({ ...e, command: withModUi(e.command) })
     if (ran.deny === undefined && ran.isError !== true) {

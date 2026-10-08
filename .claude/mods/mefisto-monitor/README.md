@@ -5,11 +5,18 @@ Solo lee `.mefisto/pipeline/`; sus acciones delegan en `/mefisto-merge` y `gh`.
 
 ## Cargarlo
 
+Una sola vez por checkout. Los mods se instalan en alcance `local` (`.claude/settings.local.json`, no
+versionado) desde el marketplace de carpeta `.claude/mods/`:
+
 ```bash
-claude --plugin-dir .claude/mods/mefisto-monitor
+claude plugin marketplace add ./.claude/mods --scope local
+claude plugin install mefisto-monitor@mefisto-mods --scope local
+claude plugin install mefisto-planner-board@mefisto-mods --scope local
 ```
 
-Con el mod cargado, `/mefisto-tooling <n>` corre sin pane externo (`MEFISTO_UI=mod`).
+Desde ahi cargan solos en toda sesion de este checkout, sin `--plugin-dir`, y se leen de la carpeta: un cambio
+se aplica con `/reload-plugins`. Los worktrees de los pipelines no tienen `settings.local.json`, asi que sus
+sesiones `-p` no los cargan. Para probar una copia suelta: `claude --plugin-dir .claude/mods/<mod>`.
 
 ## Uso
 

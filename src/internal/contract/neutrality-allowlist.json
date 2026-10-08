@@ -158,6 +158,13 @@
         "ALL"
       ],
       "motivo": "El propio gate: sus comentarios de cabecera describen R1-R4 citando literalmente los patrones que persigue (alias de modelo, `claude -p`/`claude --agent`/`opencode run`, `CLAUDE_PLUGIN_ROOT`/`CLAUDE_PROJECT_DIR`/`.claude/pipeline`), y R1_REGEX/R2_REGEX/R3_REGEX los contienen literalmente en su definicion. Un detector basado en grep necesariamente contiene el texto que busca; autorreferenciarse evita un falso positivo permanente sobre si mismo."
+    },
+    {
+      "path": ".claude/mods/**",
+      "rules": [
+        "R2"
+      ],
+      "motivo": "Mods de Claude Code del propio Mefisto (MEF-ADR-0055): artefactos exclusivos del adaptador Claude, como mefisto-scope-hook.sh. Nombrar `claude --agent mefisto-planner` es su contrato: mefisto-planner-board se activa leyendo ese flag de la linea de comando de su proceso y lo documenta en su README y tests. Ningun pipeline los invoca."
     }
   ],
   "not_migrated": [
