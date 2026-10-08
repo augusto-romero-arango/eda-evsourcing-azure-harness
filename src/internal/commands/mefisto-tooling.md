@@ -122,6 +122,13 @@ Pipeline mefisto-tooling corriendo en un pane de este workspace (visor en vivo d
 Usa /mefisto-work-status para ver el progreso sin salir de aqui.
 ```
 
+Si la salida del script dice `sin pane: lo sigue el mod mefisto-monitor` (modo `MEFISTO_UI=mod`, MEF-ADR-0055: el mod de esta sesion antepuso ese modo al comando), no hay pane ni sesion que adjuntar. Responde con:
+
+```
+Pipeline mefisto-tooling corriendo sin pane: lo sigue el monitor de esta sesion.
+La linea sobre el prompt muestra el avance; al terminar, 1 mergea, 2 abre el PR, 3 abre el monitor, 4 lo cierra.
+```
+
 Fuera de herdr responde con:
 
 ```
