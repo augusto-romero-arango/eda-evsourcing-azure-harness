@@ -1,4 +1,4 @@
-import type { BatchIssue, BatchRun, BlockedItem, LogLine, MonitorAgent, MonitorRun, ReadyItem, ReadyList } from '../types'
+import type { BatchIssue, BatchRun, IssueStats, BlockedItem, LogLine, MonitorAgent, MonitorRun, ReadyItem, ReadyList } from '../types'
 
 export const STATE_DIR = '.mefisto/pipeline'
 export const LOG_DIR = `${STATE_DIR}/logs`
@@ -25,9 +25,15 @@ export function batchIssuesOf(command: string): string[] | null {
   return m?.[1] ? (m[1].match(/\d+/g) ?? []) : null
 }
 
-/** Antepone MEFISTO_UI=mod: el wrapper corre el pipeline sin pane y este mod es el visor (MEF-ADR-0055). */
+/**
+ * Pone MEFISTO_UI=mod justo delante de cada invocacion del wrapper: corre el pipeline sin pane y este mod es el
+ * visor (MEF-ADR-0055). Al inicio del comando no basta: /mefisto-sequential lanza un comando compuesto
+ * (`validador ...; ... && MEFISTO_RUNTIME=claude ./mefisto-tmux-pipeline.sh --batch ...`) y la asignacion solo
+ * llegaria al primer comando.
+ */
 export function withModUi(command: string): string {
-  return /(^|\s)MEFISTO_UI=/.test(command) ? command : `MEFISTO_UI=mod ${command}`
+  if (/(^|\s)MEFISTO_UI=/.test(command)) return command
+  return command.replace(/(\S*mefisto-tmux-pipeline\.sh)\b/g, 'MEFISTO_UI=mod $1')
 }
 
 export function stampToMs(stamp: string): number {
@@ -384,6 +390,7 @@ export function batchFromStatus(raw: string, prev: BatchRun, sinceMs: number): B
     holdSeconds: s.hold_seconds ?? 0,
     startedMs: startedMs || prev.startedMs,
     finishedMs: state === 'running' ? null : (prev.finishedMs ?? Date.now()),
+    stats: prev.stats ?? {},
   }
 }
 
@@ -429,4 +436,49 @@ export function batchSummary(batch: BatchRun): string {
     c.deferred > 0 ? `⏸ ${c.deferred} aplazados` : '',
     hold,
   ].filter(Boolean).join(' · ')
+}
+
+type StatsEntry = {
+  issue?: string
+  pipeline?: string
+  started?: string
+  finished?: string
+  agents?: Record<string, { metrics?: { estimated_cost_usd?: number | null } }>
+}
+
+/**
+ * Duracion y costo de las corridas de tooling de estos issues, desde el final del historial: la ultima de cada
+ * issue arrancada en o despues de `sinceMs`. El costo suma el estimado de cada agente (null si ninguno lo da).
+ */
+export function issueStatsFromHistory(tail: string, issues: string[], sinceMs: number): Record<string, IssueStats> {
+  const out: Record<string, IssueStats> = {}
+  for (const line of tail.split('\n')) {
+    let h: StatsEntry
+    try {
+      h = JSON.parse(line)
+    } catch {
+      continue
+    }
+    const issue = String(h.issue ?? '')
+    if (h.pipeline !== 'mefisto-tooling' || !issues.includes(issue) || !h.started || !h.finished) continue
+    const startedMs = stampToMs(h.started)
+    const finishedMs = new Date(h.finished).getTime()
+    if (startedMs + 1000 < sinceMs || Number.isNaN(finishedMs)) continue
+    const costs = Object.values(h.agents ?? {})
+      .map(a => a.metrics?.estimated_cost_usd)
+      .filter((c): c is number => typeof c === 'number')
+    out[issue] = { durationMs: Math.max(0, finishedMs - startedMs), costUsd: costs.length > 0 ? costs.reduce((a, b) => a + b, 0) : null }
+  }
+  return out
+}
+
+export const fmtCost = (usd: number | null) => (usd === null ? '$?' : `$${usd.toFixed(2)}`)
+
+/** Total de lo terminado: duracion sumada y costo sumado (sin contar los que no lo informan). */
+export function statsTotal(stats: IssueStats[]): IssueStats {
+  const costs = stats.map(s => s.costUsd).filter((c): c is number => c !== null)
+  return {
+    durationMs: stats.reduce((a, s) => a + s.durationMs, 0),
+    costUsd: costs.length > 0 ? costs.reduce((a, b) => a + b, 0) : null,
+  }
 }

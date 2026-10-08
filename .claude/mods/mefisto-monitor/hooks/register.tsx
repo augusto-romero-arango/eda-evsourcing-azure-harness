@@ -21,6 +21,9 @@ import {
   elapsed,
   cropGrid,
   finishedFromHistory,
+  fmtCost,
+  issueStatsFromHistory,
+  statsTotal,
   issueMark,
   mascotPose,
   newlyMerged,
@@ -52,6 +55,7 @@ const FIXED_ROWS = 7
 const PR_CHECK_MS = 15_000
 const READY_POLL_MS = 60_000
 const BAND_LOG_ROWS = 3
+const STATS_EVERY_MS = 5_000
 const SCRIPT_TIMEOUT_MS = 180_000
 
 // Recorte comun a todos los cuadros que usa el monitor, calculado una vez: sin margen y sin saltos al alternar.
@@ -103,6 +107,7 @@ type Tail = { path: string; stream: AsyncGenerator<unknown, unknown> }
 let tail: Tail | null = null
 let watchSinceMs = 0
 let batchSinceMs = 0
+let lastStatsReadMs = 0
 let isPolling = false
 // Una sesion no interactiva (los agentes de los pipelines) no tiene a nadie mirando: el mod no reescribe ni sigue nada.
 let isInteractive = false
@@ -181,6 +186,7 @@ async function watchBatch($: EngineInterface, issues: string[], sinceMs: number)
     holdSeconds: 0,
     startedMs: Date.now(),
     finishedMs: null,
+    stats: {},
   }
   await update($, runAtom, () => null)
   await update($, linesAtom, () => [])
@@ -188,13 +194,30 @@ async function watchBatch($: EngineInterface, issues: string[], sinceMs: number)
   await update($, batchAtom, () => batch)
 }
 
+// Duracion y costo de cada terminado: se leen del historial cuando aparece uno que todavia no los tiene, a lo
+// sumo cada STATS_EVERY_MS (un fallido antes de escribir su historial no los tendra nunca).
+async function withStats($: EngineInterface, batch: BatchRun): Promise<BatchRun> {
+  const stats = batch.stats ?? {}
+  const missing = batch.issues.filter(i => ['done', 'failed'].includes(issueMark(i.status)) && !stats[i.issue])
+  if (missing.length === 0 || Date.now() - lastStatsReadMs < STATS_EVERY_MS) return batch
+  lastStatsReadMs = Date.now()
+  const { stdout } = await $.process.run(['tail', '-n', '200', HISTORY]).catch(() => ({ stdout: '' }))
+  return { ...batch, stats: { ...stats, ...issueStatsFromHistory(stdout, missing.map(i => i.issue), batch.startedMs) } }
+}
+
 async function pollBatch($: EngineInterface) {
   const batch = await read($, batchAtom)
-  if (!batch || batch.state !== 'running') return
+  if (!batch) return
+  if (batch.state !== 'running') {
+    const filled = await withStats($, batch)
+    if (filled !== batch) await update($, batchAtom, () => filled)
+    return
+  }
   let next = batch
   if (await $.fs.exists(BATCH_STATUS)) next = batchFromStatus(await $.fs.read(BATCH_STATUS).catch(() => ''), batch, batchSinceMs)
   next = { ...next, stopRequested: next.stopRequested || (await $.fs.exists(BATCH_STOP)) }
   for (const i of newlyMerged(batch.issues, next.issues)) $.ui.toast(`#${i.issue} mergeado${i.pr ? ` · PR #${i.pr}` : ''}`)
+  next = await withStats($, next)
   const settled = next
   await update($, batchAtom, () => settled)
   const run = await read($, runAtom)
@@ -496,12 +519,15 @@ export const register: Register = on => {
         ) : (
           <Box width={MASCOT_WIDTH} />
         )
-      const recent = lines.filter(l => l.ts !== '').slice(-2)
+      const recent = lines.filter(l => l.ts !== '').slice(-3)
       const markText = (m: ReturnType<typeof issueMark>) =>
         m === 'done' ? '✓' : m === 'failed' ? '✗' : m === 'deferred' ? '⏸' : m === 'current' ? '●' : '○'
       const markColor = (m: ReturnType<typeof issueMark>) =>
         m === 'done' ? ('success' as const) : m === 'failed' ? ('error' as const) : m === 'current' ? ('warning' as const) : undefined
       const failedIssue = batch.issues.find(i => issueMark(i.status) === 'failed')
+      const doneRows = batch.issues.filter(i => ['done', 'failed'].includes(issueMark(i.status)))
+      const stats = batch.stats ?? {}
+      const total = statsTotal(doneRows.map(i => stats[i.issue]).filter(st => st !== undefined))
       return (
         <Box flexDirection="column" borderStyle="round" borderColor="claude" borderDimColor paddingX={1}>
           <Box justifyContent="space-between">
@@ -547,6 +573,7 @@ export const register: Register = on => {
                 })}
               </Text>
               {isRunning && run && run.title !== '' && <Text dimColor wrap="truncate-end">#{run.issue} {run.title}</Text>}
+              {isRunning && run && <Text> </Text>}
               {isRunning && !run && <Text dimColor>preparando el primer issue…</Text>}
               {isRunning &&
                 recent.map(line => (
@@ -558,13 +585,27 @@ export const register: Register = on => {
               {!isRunning && failedIssue && (
                 <Text color="error" wrap="truncate-end">#{failedIssue.issue} {failedIssue.status.replace(/^ERROR:\s*/, '')}</Text>
               )}
-              {!isRunning && (
+            </Box>
+          </Box>
+          {doneRows.length > 0 && (
+            <Box flexDirection="column">
+              {doneRows.map(i => {
+                const st = stats[i.issue]
+                const m = issueMark(i.status)
+                return (
+                  <Text wrap="truncate-end" color={markColor(m)}>
+                    {`${markText(m)} ${padEnd(`#${i.issue}`, 7)} ${padEnd(i.pr ? `PR #${i.pr}` : 'sin PR', 10)} `}
+                    <Text dimColor>{st ? `${padEnd(elapsed(st.durationMs), 8)} ${fmtCost(st.costUsd)}` : '…'}</Text>
+                  </Text>
+                )
+              })}
+              {doneRows.length > 1 && (
                 <Text dimColor wrap="truncate-end">
-                  PRs: {batch.issues.filter(i => i.pr).map(i => `#${i.issue}→#${i.pr}`).join(' · ') || 'ninguno'}
+                  {`  total ${padEnd(String(doneRows.length), 15)} ${padEnd(elapsed(total.durationMs), 8)} ${fmtCost(total.costUsd)}`}
                 </Text>
               )}
             </Box>
-          </Box>
+          )}
         </Box>
       )
     }
