@@ -1041,7 +1041,7 @@ auto_commit_if_needed() {
     # src/runtime/ y dist/ se registran en #1043 (MEF-ADR-0053). Todas estas
     # entradas respetan la secuencia de MEF-ADR-0019 seccion E; ver
     # is_path_in_mefisto_scope (_mefisto-common.sh) para el detalle.
-    local paths="commands/ agents/ scripts/ hooks/ docs/ .claude-plugin/ .claude/commands/ .claude/agents/ .claude/scripts/ .claude/settings.json changelog.d/ src/internal/ src/published/ src/runtime/ dist/ .opencode/agents/ .opencode/commands/ .opencode/plugins/ .opencode/skills/ AGENTS.md opencode.json README.md CHANGELOG.md CLAUDE.md .gitignore"
+    local paths="commands/ agents/ scripts/ hooks/ docs/ .claude-plugin/ .claude/commands/ .claude/agents/ .claude/scripts/ .claude/mods/ .claude/settings.json changelog.d/ src/internal/ src/published/ src/runtime/ dist/ .opencode/agents/ .opencode/commands/ .opencode/plugins/ .opencode/skills/ AGENTS.md opencode.json README.md CHANGELOG.md CLAUDE.md .gitignore"
 
     if [ -n "$(git -C "$WORKTREE_PATH" status --porcelain -- $paths 2>/dev/null)" ]; then
         log "Haciendo commit automatico (fase $phase)..."
@@ -1192,6 +1192,7 @@ ALCANCE DE ESCRITURA PERMITIDO:
 - docs/            (ADRs, testing, field-notes, cheatsheets)
 - .claude-plugin/  (plugin.json, marketplace.json)
 - .claude/commands/, .claude/agents/, .claude/scripts/  (skills/agentes/pipelines INTERNOS de Mefisto)
+- .claude/mods/  (mods de Claude Code del propio Mefisto, MEF-ADR-0055)
 - .claude/settings.json  (hooks del pipeline interno; entrada EXACTA, no toda .claude/)
 - src/internal/  (layout interno de runtime/proveedor neutral, MEF-ADR-0049; src/ fuera de internal/ sigue fuera de scope)
 - src/published/, src/runtime/, dist/  (layout publicado multi-runtime de MEF-ADR-0053; registrado antes de poblarlo)
@@ -1306,7 +1307,7 @@ Tu tarea: revisa la calidad de los cambios producidos por el writer.
 
 ALCANCE DE ESCRITURA PERMITIDO (igual al del writer):
 commands/, agents/, scripts/, hooks/, docs/, .claude-plugin/,
-.claude/commands/, .claude/agents/, .claude/scripts/, .claude/settings.json,
+.claude/commands/, .claude/agents/, .claude/scripts/, .claude/mods/, .claude/settings.json,
 src/internal/, src/published/, src/runtime/, dist/, .opencode/agents/, .opencode/commands/, .opencode/plugins/, .opencode/skills/,
 AGENTS.md, opencode.json, changelog.d/, README.md, CHANGELOG.md, CLAUDE.md, .gitignore.
 

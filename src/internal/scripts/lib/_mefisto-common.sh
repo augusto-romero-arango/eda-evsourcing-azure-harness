@@ -225,6 +225,11 @@ get_harness_sha() {
 #   .claude/skills/          Agent Skills internos (MEF-ADR-0033)
 #   .claude/agents/          Agentes internos
 #   .claude/scripts/         Pipelines internos
+#   .claude/mods/            Mods de Claude Code del propio Mefisto (MEF-ADR-0055): plugins de
+#                            function hooks exclusivos del adaptador Claude, lectores puros del
+#                            contrato de estado de .mefisto/pipeline/. Registrada antes de poblarla
+#                            (MEF-ADR-0019 seccion E). Deliberadamente NO se replica en
+#                            is_path_in_consumer_blocklist: hoy no se publica ningun mod.
 #   .claude/settings.json    Hooks del pipeline interno. Entrada EXACTA, no .claude/*:
 #                            .claude/harness.config.json y el legado de estado
 #                            previo a MEF-ADR-0049 siguen fuera.
@@ -292,7 +297,7 @@ is_path_in_mefisto_scope() {
         commands/*|skills/*|agents/*|scripts/*|hooks/*|docs/*) return 0 ;;
         src/internal/*|src/published/*|src/runtime/*|dist/*) return 0 ;;
         .claude-plugin/*) return 0 ;;
-        .claude/commands/*|.claude/skills/*|.claude/agents/*|.claude/scripts/*) return 0 ;;
+        .claude/commands/*|.claude/skills/*|.claude/agents/*|.claude/scripts/*|.claude/mods/*) return 0 ;;
         .claude/settings.json) return 0 ;;
         .opencode/agents/*|.opencode/commands/*|.opencode/plugins/*|.opencode/skills/*) return 0 ;;
         .mcp.json) return 0 ;;
@@ -337,7 +342,7 @@ validate_mefisto_scope_changes() {
         printf '  - %s\n' "${violations[@]}" >&2
         echo "" >&2
         echo "Mefisto solo permite cambios en: commands/, skills/, agents/, scripts/," >&2
-        echo "hooks/, docs/, .claude-plugin/, .claude/{commands,skills,agents,scripts}/," >&2
+        echo "hooks/, docs/, .claude-plugin/, .claude/{commands,skills,agents,scripts,mods}/," >&2
         echo ".claude/settings.json, .mcp.json, src/{internal,published,runtime}/, dist/," >&2
         echo ".opencode/{agents,commands,plugins,skills}/, .github/{workflows,rulesets}/, AGENTS.md, opencode.json," >&2
         echo "changelog.d/, README.md, CHANGELOG.md, CLAUDE.md, .gitignore" >&2

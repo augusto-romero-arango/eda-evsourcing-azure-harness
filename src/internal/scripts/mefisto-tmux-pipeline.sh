@@ -504,6 +504,50 @@ cmd_tooling() {
     print_connect_hint "$session"
 }
 
+# cmd_tooling_detached <issue> [flags...]
+#
+# MEFISTO_UI=mod (MEF-ADR-0055): la sesion de Claude Code que lanzo el skill
+# muestra el avance en su mod mefisto-monitor, asi que no se abre ni sesion tmux
+# ni pane herdr. El pipeline corre desacoplado (nohup) para sobrevivir al cierre
+# de esa sesion, con el mismo string de comando que el pane tmux re-parsea y
+# sin las variables HERDR_* (mismo aislamiento que cmd_pane_runner del lado
+# herdr). --verbose no aplica: el mod ya es el visor.
+cmd_tooling_detached() {
+    extract_wrapper_flags "$@"
+    if [ ${#REMAINING_ARGS[@]} -gt 0 ]; then
+        set -- "${REMAINING_ARGS[@]}"
+    else
+        set --
+    fi
+    [ $# -lt 1 ] && abort "Falta el numero de issue. Uso: --tooling <issue> [--from-stage N]"
+    local issue="$1"
+
+    ensure_events_log
+    local logs_dir report_log
+    logs_dir="$(mefisto_state_path "logs")"
+    mkdir -p "$logs_dir"
+    report_log="$logs_dir/mefisto-tooling-run-$(date +%Y%m%d-%H%M%S)-issue-$issue.report.log"
+
+    local pipeline_cmd="$TOOLING_SCRIPT_Q $issue"
+    [ -n "$FROM_STAGE_EXTRA" ] && pipeline_cmd="$pipeline_cmd $FROM_STAGE_EXTRA"
+    [ -n "$MODELS_EXTRA" ] && pipeline_cmd="$pipeline_cmd $MODELS_EXTRA"
+    [ -n "$VARIANT_EXTRA" ] && pipeline_cmd="$pipeline_cmd $VARIANT_EXTRA"
+
+    local env_unset=(-u HERDR_ENV -u MEFISTO_UI)
+    local v
+    while IFS='=' read -r v _; do
+        case "$v" in
+            HERDR_*) env_unset+=(-u "$v") ;;
+        esac
+    done < <(env)
+
+    (cd "$PROJECT_ROOT" && nohup env "${env_unset[@]}" bash -c "${ENV_PREFIX}$CAFF $pipeline_cmd" \
+        >"$report_log" 2>&1 </dev/null &)
+
+    success "Pipeline mefisto-tooling iniciado para issue #$issue (sin pane: lo sigue el mod mefisto-monitor)"
+    log "Reporte: $report_log"
+}
+
 cmd_batch() {
     # --verbose se extrae ANTES de construir issues_str (CA-2): cmd_batch lo
     # manda sin comillas por send-keys a mefisto-batch-pipeline.sh, que lo
@@ -596,6 +640,12 @@ fi
 # --attach, todo sigue igual que siempre.
 if [ "$1" = "--batch" ]; then
     preflight_batch_start "${@:2}"
+fi
+
+if [ "${MEFISTO_UI:-}" = "mod" ] && [ "${1:-}" = "--tooling" ]; then
+    shift
+    cmd_tooling_detached "$@"
+    exit 0
 fi
 
 if should_delegate_to_herdr "$@"; then

@@ -108,6 +108,7 @@
         { "pattern": ".claude/skills/**", "value": "allow" },
         { "pattern": ".claude/agents/**", "value": "allow" },
         { "pattern": ".claude/scripts/**", "value": "allow" },
+        { "pattern": ".claude/mods/**", "value": "allow" },
         { "pattern": ".claude/settings.json", "value": "allow" },
         { "pattern": ".opencode/agents/**", "value": "allow" },
         { "pattern": ".opencode/commands/**", "value": "allow" },
