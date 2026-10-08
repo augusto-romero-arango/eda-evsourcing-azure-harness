@@ -41,6 +41,18 @@ absent "$body" '.claude/' 'fuente no referencia rutas .claude/'
 absent "$body" 'CLAUDE_' 'fuente no referencia variables CLAUDE_*'
 absent "$body" 'PLUGIN_ROOT' 'fuente no reconstruye PLUGIN_ROOT a mano'
 
+echo '[fuente] guardas de inventario de eventos (#2058)'
+contains "$body" '## Guardas de inventario de eventos: agregar un evento' 'seccion de guardas de inventario presente'
+contains "$body" 'agrega un evento persistido o de bus' 'la seccion declara su activacion'
+contains "$body" '**Lista exacta / conteo**' 'clasifica lista exacta/conteo'
+contains "$body" '**Tabla evento->topic**' 'clasifica tabla evento->topic'
+contains "$body" 'eliminar `<Test>`' 'instruye eliminar la guarda cuando existe la derivada'
+contains "$body" 'reemplazar `<Test>` por la guarda derivada' 'instruye reemplazar cuando no existe la derivada'
+contains "$body" 'RegistraTodosLosEventosPersistidos' 'referencia el patron del domain-scaffolder'
+contains "$body" '(typeof(Evento), "topic")' 'exige el par exacto tipo-topic'
+contains "$body" 'tests de dominio Given/When/Then' 'excluye los tests de dominio'
+contains "$body" '- [ ] **Guardas de inventario de eventos**' 'checklist pre-listo incluye el item'
+
 echo '[salidas] adaptadores y mirror'
 for file in "$CLAUDE" "$OPENCODE"; do [ -f "$file" ] && pass "existe ${file#"$REPO_ROOT/"}" || fail "falta ${file#"$REPO_ROOT/"}"; done
 claude_body="$(< "$CLAUDE")"
