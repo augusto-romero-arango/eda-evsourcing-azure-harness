@@ -1347,6 +1347,17 @@ una limitacion del framework, o un malentendido del requisito]
 
 4. **Termina normalmente** (exit 0). No es un error — es un yield controlado.
 
+#### Camino corto: test defectuoso diagnosticado de entrada
+
+Si diagnosticas que un test esta mal planteado (no "no se como hacerlo pasar"; ej. un `And<TAggregate,...>` sobre un stream que el `Given` del escenario nunca crea, de modo que el harness falla antes de evaluar tu implementacion), **no agotes los 5 intentos**: escribe `{{mefisto:state-path blockage-report.md}}` de inmediato, con el formato de arriba, y:
+
+- En "Hipotesis", marca explicitamente **test defectuoso** y explica por que el test es el que esta mal.
+- En "Tests bloqueados", pon el test y el error literal; en "Intentos enfocados" el numero real (puede ser 0).
+- En "Enfoques intentados", la evidencia: que asserta el test, que crea (o no) el escenario y por que ningun cambio en produccion puede ponerlo verde.
+- Sigue sin modificar el test. Haz commit del progreso parcial y termina normalmente (exit 0).
+
+**La unica senal valida de un test defectuoso es `blockage-report.md`.** Senalarlo solo en el resumen de stage (una seccion tipo "Test defectuoso" u otra prosa) esta prohibido: el gate del pipeline no lee el resumen, no continua al reviewer y el pipeline aborta. No confundir con `## Issue incompleto` (primera linea canonica, detiene el pipeline sin reviewer): este camino usa el reporte de tests bloqueados, que si continua al reviewer.
+
 ### 5. Verificar infraestructura (si aplica)
 
 Si el handler publica un evento (privado o publico), verifica primero que `ComposicionServicios{Dominio}` registra `PublicarEventoServerless<T>(...)` para ese tipo con el broker que le corresponde, y agregalo si falta (seccion "Infraestructura (topics y subscriptions)", trio publish/mapeo/topic).
