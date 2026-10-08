@@ -1102,6 +1102,26 @@ PROHIBIDO hacer 'git push' o 'gh pr create' (ni ninguna operacion de publicacion
             warn "Stage 2: hay tests rojos pero el $STAGE2_AGENT reporto bloqueo — continuando al reviewer"
             echo "[$(date +%H:%M:%S)] BLOCKAGE: $STAGE2_AGENT reporto tests bloqueados, continuando" >> "$EVENTS_LOG_ABS"
             HAS_BLOCKAGE=true
+        elif G2_PRE_LIST=$(preexisting_red_only "$WORKTREE_PATH" "$SNAPSHOT_COMMIT" "$TEST_OUTPUT_G2"); then
+            # Issue #2062: firma "test preexistente que la implementacion volvio rojo":
+            # el pipeline genera el reporte y enruta al reviewer sin depender del agente.
+            mkdir -p "$(dirname "$BLOCKAGE_REPORT_CANONICAL")"
+            {
+                echo "## Reporte de bloqueo - generado por el pipeline"
+                echo
+                echo "Todos los tests en rojo existian en el snapshot y el test-writer no los modifico (pin desactualizado o guarda de inventario)."
+                echo
+                echo "### Tests rojos preexistentes"
+                printf '%s\n' "$G2_PRE_LIST" | awk -F'\t' '{print "- `" $1 "` (" $2 ")"}'
+                echo
+                echo "### Salida de los tests"
+                echo '```'
+                printf '%s\n' "$TEST_OUTPUT_G2" | sed 's/\x1b\[[0-9;]*m//g' | tail -60
+                echo '```'
+            } > "$BLOCKAGE_REPORT_CANONICAL"
+            warn "Stage 2: todos los tests rojos son preexistentes no modificados — reporte generado, continuando al reviewer"
+            echo "[$(date +%H:%M:%S)] BLOCKAGE: pipeline detecto solo rojos preexistentes, continuando al reviewer" >> "$EVENTS_LOG_ABS"
+            HAS_BLOCKAGE=true
         else
             echo "$TEST_OUTPUT_G2" | tail -20
             abort "Stage 2 fallido: no todos los tests pasan después del $STAGE2_AGENT (exit code: $g2_rc). Revisa $LOG_DIR_ABS/stage-2-${STAGE2_AGENT}.log"
@@ -1346,10 +1366,11 @@ Nota: el $STAGE1_AGENT señalizo que la fase roja del Stage 1 era estructuralmen
             BLOCKAGE_REPORT_CANONICAL="$(mefisto_state_path 'blockage-report.md' "$WORKTREE_PATH")"
             STAGE3_PROMPT="$STAGE3_PROMPT
 
-ATENCION: El implementer reporto tests bloqueados. Lee el reporte en $BLOCKAGE_REPORT_CANONICAL y sigue las instrucciones de tu seccion 2b para intentar resolverlos."
+ATENCION: hay tests bloqueados tras la fase verde (reportados por el implementer o detectados por el pipeline como tests preexistentes que la implementacion volvio rojos). Lee el reporte en $BLOCKAGE_REPORT_CANONICAL y sigue las instrucciones de tu seccion 2b para intentar resolverlos."
         fi
     fi
 
+    STAGE3_BASE_HEAD=$(git -C "$WORKTREE_PATH" rev-parse HEAD 2>/dev/null || true)
     run_agent "3" "reviewer" "$STAGE3_PROMPT"
 
     # Gate 3: tests deben seguir pasando (exit code 0 = verde)
@@ -1366,6 +1387,12 @@ ATENCION: El implementer reporto tests bloqueados. Lee el reporte en $BLOCKAGE_R
             echo "$TEST_OUTPUT_G3" | tail -20
             abort "Stage 3 fallido: el reviewer rompió tests al refactorizar (exit code: $g3_rc). Revisa $LOG_DIR_ABS/stage-3-reviewer.log"
         fi
+    elif [ "${HAS_BLOCKAGE:-false}" = true ]; then
+        # Issue #2062: el reviewer resolvio el bloqueo; el PR no debe salir bloqueado.
+        log "Stage 3: el reviewer resolvio los tests bloqueados — el PR no se marca bloqueado"
+        echo "[$(date +%H:%M:%S)] BLOCKAGE_RESOLVED: reviewer resolvio tests bloqueados" >> "$EVENTS_LOG_ABS"
+        HAS_BLOCKAGE=false
+        BLOCKAGE_RESOLVED=true
     fi
 
     # Verificación adicional para refactoring: no deben perderse tests
@@ -1383,6 +1410,11 @@ ATENCION: El implementer reporto tests bloqueados. Lee el reporte en $BLOCKAGE_R
 
     # Auto-commit de seguridad
     auto_commit_if_needed "refactor" "refactor(hu-${ISSUE_NUM:-?}): revisión y refactor"
+
+    # Issue #2062: tests tocados por el reviewer (diff HEAD Stage 2 vs HEAD Stage 3)
+    if [ -n "${STAGE3_BASE_HEAD:-}" ]; then
+        REVIEWER_TOUCHED_TESTS=$(list_reviewer_touched_tests "$WORKTREE_PATH" "$STAGE3_BASE_HEAD" || true)
+    fi
 
     AGENT_RV_DUR=$LAST_AGENT_DURATION
     AGENT_RV_METRICS_JSON=$LAST_AGENT_METRICS_JSON
@@ -2294,6 +2326,15 @@ $BLOCKAGE_CONTENT
                 --repo "$REPO_SLUG_PR" >>"$LOG_FILE" 2>&1 \
                 || warn "No se pudo comentar reporte de bloqueo en el PR"
         fi
+    fi
+
+    # Issue #2062: avisar al humano de los tests que ajusto el reviewer
+    if [ -n "${REVIEWER_TOUCHED_TESTS:-}" ] && [ -n "${PR_URL:-}" ]; then
+        BLOCKAGE_REPORT="$(mefisto_state_read_first 'blockage-report.md' "$WORKTREE_PATH" 2>/dev/null || true)"
+        REVIEW_ISSUE_URL=$(create_reviewer_tests_review_issue "$REPO_SLUG_PR" "${ISSUE_NUM:-?}" "$PR_URL" \
+            "$WORKTREE_PATH" "$STAGE3_BASE_HEAD" "$REVIEWER_TOUCHED_TESTS" "${TEST_OUTPUT_G2:-}" "$BLOCKAGE_REPORT") \
+            && success "Issue de revision de tests creado: $REVIEW_ISSUE_URL" \
+            || warn "No se pudo crear el issue de revision de los tests ajustados por el reviewer"
     fi
 
     if [ -n "$ISSUE_NUM" ]; then

@@ -1036,6 +1036,87 @@ detect_preexisting_red_tests() {
     return 0
 }
 
+# preexisting_red_only <worktree> <snapshot_commit> <test_output>
+#
+# Issue #2062 (Gate 2): imprime la lista de detect_preexisting_red_tests solo si
+# TODOS los tests en rojo de <test_output> son preexistentes no modificados.
+# Exit: 0 todos preexistentes (lista en stdout); 1 hay algun rojo fuera de la
+# lista; 2 el analisis fallo o la salida no es parseable.
+preexisting_red_only() {
+    local worktree="$1" snapshot="$2" output="$3"
+    local list rc=0 names name method
+    list=$(detect_preexisting_red_tests "$worktree" "$snapshot" "$output" 2>/dev/null) || rc=$?
+    [ "$rc" -eq 0 ] || return 2
+    [ -n "$list" ] || return 1
+    names=$(printf '%s\n' "$output" | sed 's/\x1b\[[0-9;]*m//g' \
+        | sed -nE 's/^[[:space:]]*(failed|✗|×)[[:space:]]+([^[:space:]]+).*/\2/p') || return 2
+    [ -n "$names" ] || return 2
+    while IFS= read -r name; do
+        [ -n "$name" ] || continue
+        method="${name%%(*}"
+        method="${method##*.}"
+        printf '%s\n' "$list" | cut -f1 | grep -qxF -- "$method" || return 1
+    done <<< "$names"
+    printf '%s\n' "$list"
+    return 0
+}
+
+# list_reviewer_touched_tests <worktree> <base_head>
+#
+# Issue #2062: archivos de tests/ modificados, renombrados o eliminados entre
+# <base_head> (HEAD de Stage 2) y el HEAD actual (Stage 3). Un archivo por linea.
+list_reviewer_touched_tests() {
+    local worktree="$1" base="$2"
+    git -C "$worktree" diff --name-only --diff-filter=MDR "$base" HEAD -- 'tests/' 2>/dev/null
+}
+
+# create_reviewer_tests_review_issue <repo_slug> <issue_num> <pr_url> <worktree> <base_head> <files> <g2_output> <report_file>
+#
+# Issue #2062: crea en el repo consumidor un issue (sin labels) pidiendo revisar
+# los tests que el reviewer ajusto. Imprime la URL. Exit != 0 si gh falla.
+create_reviewer_tests_review_issue() {
+    local repo="$1" issue_num="$2" pr_url="$3" worktree="$4" base="$5" files="$6" g2_out="$7" report="$8"
+    local diff_txt report_txt red_txt body f
+    local -a args=()
+    while IFS= read -r f; do [ -n "$f" ] && args+=("$f"); done <<< "$files"
+    diff_txt=$(git -C "$worktree" diff "$base" HEAD -- "${args[@]}" 2>/dev/null | head -c 20000)
+    red_txt=$(printf '%s\n' "$g2_out" | sed 's/\x1b\[[0-9;]*m//g' | tail -60)
+    [ -n "$red_txt" ] || red_txt="(salida del Gate 2 no disponible)"
+    report_txt=""
+    [ -f "$report" ] && report_txt=$(cat "$report")
+    [ -n "$report_txt" ] || report_txt="(sin reporte de bloqueo)"
+    body="El reviewer ajusto o elimino tests existentes al resolver tests en rojo tras la fase verde. Requiere revision humana.
+
+Issue original: #${issue_num}
+PR: ${pr_url}
+
+## Salida de los tests rojos (Gate 2)
+
+\`\`\`
+${red_txt}
+\`\`\`
+
+## Que paso (reporte de bloqueo / resolucion)
+
+${report_txt}
+
+## Tests tocados
+
+$(printf '%s\n' "$files" | sed 's/^/- /')
+
+<details>
+<summary>Diff de los tests tocados</summary>
+
+\`\`\`diff
+${diff_txt}
+\`\`\`
+
+</details>"
+    gh issue create --repo "$repo" \
+        --title "Revisar los tests ajustados por el reviewer en #${issue_num}" \
+        --body "$body" 2>/dev/null
+}
+
 # --- Derivacion de log legible desde eventos de agente ----------------------
 
 # derive_stage_log_from_stream <events_file> <legacy_stderr_file> <out_file>
