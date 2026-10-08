@@ -1366,7 +1366,7 @@ Nota: el $STAGE1_AGENT señalizo que la fase roja del Stage 1 era estructuralmen
             BLOCKAGE_REPORT_CANONICAL="$(mefisto_state_path 'blockage-report.md' "$WORKTREE_PATH")"
             STAGE3_PROMPT="$STAGE3_PROMPT
 
-ATENCION: El implementer reporto tests bloqueados. Lee el reporte en $BLOCKAGE_REPORT_CANONICAL y sigue las instrucciones de tu seccion 2b para intentar resolverlos."
+ATENCION: hay tests bloqueados tras la fase verde (reportados por el implementer o detectados por el pipeline como tests preexistentes que la implementacion volvio rojos). Lee el reporte en $BLOCKAGE_REPORT_CANONICAL y sigue las instrucciones de tu seccion 2b para intentar resolverlos."
         fi
     fi
 
