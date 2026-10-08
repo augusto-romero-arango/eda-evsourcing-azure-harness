@@ -5,9 +5,11 @@ import {
   createdIssueOf,
   isIssueCreate,
   isPlannerClosing,
-  isPlannerMainThread,
   issueMarkedListo,
+  agentFlagOf,
+  agentSettingOf,
   executionPaneOf,
+  transcriptPathOf,
   pageOf,
   parseNextOrder,
   reasonOf,
@@ -15,13 +17,6 @@ import {
   signatureOf,
   topicOf,
 } from './logic'
-
-test('solo el hilo principal de --agent mefisto-planner activa el tablero', async () => {
-  expect(isPlannerMainThread({ agent_type: 'mefisto-planner' })).toBe(true)
-  expect(isPlannerMainThread({ agent_type: 'mefisto-planner', agent_id: 'a1' })).toBe(false)
-  expect(isPlannerMainThread({ agent_type: 'general-purpose' })).toBe(false)
-  expect(isPlannerMainThread({})).toBe(false)
-})
 
 test('lee el JSON de next-order, vacio y con fallo', async () => {
   const ok = parseNextOrder(
@@ -95,4 +90,20 @@ test('encuentra el pane de ejecucion hermano del planner', async () => {
   expect(executionPaneOf(list, 'w9:p1')).toBe('w9:p3')
   expect(executionPaneOf(list, 'w0:p1')).toBe(null)
   expect(executionPaneOf('no json', 'w9:p1')).toBe(null)
+})
+
+test('reconoce la sesion del planner por su transcript', async () => {
+  const planner = '{"type":"user"}\n{"type":"agent-setting","agentSetting":"mefisto-planner","sessionId":"s"}\n'
+  expect(agentSettingOf(planner)).toBe('mefisto-planner')
+  expect(agentSettingOf('{"type":"user"}\n')).toBe(null)
+  expect(agentSettingOf('roto\n{"type":"agent-setting","agentSetting":"otro"}')).toBe('otro')
+  expect(transcriptPathOf('/h/.claude', '/Users/a/Cosmos/eda-evsourcing-azure-harness', 'id1')).toBe(
+    '/h/.claude/projects/-Users-a-Cosmos-eda-evsourcing-azure-harness/id1.jsonl',
+  )
+})
+
+test('lee el --agent de la linea de comando del proceso', async () => {
+  expect(agentFlagOf('claude --agent mefisto-planner --plugin-dir /x')).toBe('mefisto-planner')
+  expect(agentFlagOf('/usr/local/bin/claude --agent=mefisto-planner')).toBe('mefisto-planner')
+  expect(agentFlagOf('claude --plugin-dir /x')).toBe(null)
 })

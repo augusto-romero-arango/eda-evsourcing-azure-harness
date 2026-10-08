@@ -4,6 +4,9 @@ import type { EngineInterface, Register } from 'claude-code'
 import type { BoardFocus, BoardList, BoardTab } from '../types'
 import {
   NEXT_ORDER,
+  agentFlagOf,
+  agentSettingOf,
+  transcriptPathOf,
   arrivals,
   clip,
   clockOf,
@@ -11,7 +14,6 @@ import {
   createdText,
   isIssueCreate,
   isPlannerClosing,
-  isPlannerMainThread,
   issueMarkedListo,
   numberWidth,
   executionPaneOf,
@@ -26,6 +28,7 @@ import {
   topicOf,
 } from './logic'
 
+const PLANNER_AGENT = 'mefisto-planner'
 const POLL_MS = 60_000
 const SCRIPT_TIMEOUT_MS = 180_000
 const FLASH_MS = 8_000
@@ -93,6 +96,39 @@ async function deactivate($: EngineInterface) {
   timer?.cancel()
   timer = null
   await update($, activeAtom, () => false)
+}
+
+const DETECT_TRIES = 20
+const DETECT_EVERY_MS = 3_000
+
+// El agente principal de la sesion. Los eventos clasicos no llegan a un modulo cargado con --plugin-dir,
+// asi que se lee primero la linea de comando del proceso de Claude Code (padre del `sh` que corre aqui) y,
+// si no se puede, el inicio del transcript, que solo existe tras el primer mensaje: por eso se reintenta.
+async function detectPlanner($: EngineInterface, triesLeft: number) {
+  if (!isInteractive || (await read($, activeAtom))) return
+  const ps = await $.process.run(['sh', '-c', 'ps -o args= -p "$PPID"']).catch(() => ({ exitCode: 1, stdout: '' }))
+  const cmdline = ps.exitCode === 0 ? ps.stdout.trim() : ''
+  if (/\bclaude\b/.test(cmdline)) {
+    if (agentFlagOf(cmdline) === PLANNER_AGENT) await claimPlanner($)
+    return
+  }
+  const home = (await $.env.get('CLAUDE_CONFIG_DIR')) ?? `${(await $.env.get('HOME')) ?? ''}/.claude`
+  const path = transcriptPathOf(home, await $.session.cwd(), await $.session.id())
+  const { stdout } = await $.process.run(['head', '-c', '200000', path]).catch(() => ({ stdout: '' }))
+  const agent = agentSettingOf(stdout)
+  if (agent === PLANNER_AGENT) {
+    await claimPlanner($)
+    return
+  }
+  if (agent === null && triesLeft > 0) $.clock.after(DETECT_EVERY_MS, () => void detectPlanner($, triesLeft - 1))
+}
+
+// Marca la sesion como del planner y la activa si ya se sabe que es interactiva. Devuelve si la activo ahora.
+async function claimPlanner($: EngineInterface): Promise<boolean> {
+  await update($, plannerAtom, () => true)
+  if (!isInteractive || (await read($, activeAtom))) return false
+  await activate($)
+  return true
 }
 
 async function startFocus($: EngineInterface, focus: BoardFocus) {
@@ -201,20 +237,12 @@ export const register: Register = on => {
     })
     const isWanted = (await read($, activeAtom)) || (await read($, plannerAtom))
     if (isInteractive && isWanted) await activate($)
+    else if (isInteractive) void detectPlanner($, DETECT_TRIES)
     return next(e)
   })
 
-  // SessionStart (classic) puede llegar antes o despues de session.start: se recuerda que es el planner
-  // y activa quien llegue segundo, ya con isInteractive conocido.
-  on('classic.SessionStart', async ($, e, next) => {
-    if (isPlannerMainThread(e)) {
-      await update($, plannerAtom, () => true)
-      if (isInteractive && !(await read($, activeAtom))) await activate($)
-    }
-    return next(e)
-  }).catch(($, e, next) => next(e))
-
   on('prompt.submit', async ($, e, next) => {
+    if (e.origin.kind === 'composer' && !(await read($, activeAtom))) await detectPlanner($, 0)
     if (e.origin.kind === 'composer' && (await read($, activeAtom))) await onPrompt($, e.text)
     return next(e)
   }).catch(($, e, next) => next(e))

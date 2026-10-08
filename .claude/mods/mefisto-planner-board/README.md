@@ -10,8 +10,8 @@ haciendo (refinar #N o explorar un tema) y da acceso a los borradores y listos e
 claude --agent mefisto-planner --plugin-dir .claude/mods/mefisto-planner-board
 ```
 
-Solo se activa en el hilo principal de una sesion interactiva `--agent mefisto-planner`. Un planner lanzado
-como subagente o con `-p` no lo ve. En otra sesion, `/mefisto-board on` lo enciende a mano.
+Solo se activa en una sesion interactiva cuyo proceso es `claude --agent mefisto-planner` (lo lee de la linea
+de comando del proceso, o del transcript como respaldo). Un planner lanzado como subagente o con `-p` no lo ve. En otra sesion, `/mefisto-board on` lo enciende a mano.
 
 ## Estados
 

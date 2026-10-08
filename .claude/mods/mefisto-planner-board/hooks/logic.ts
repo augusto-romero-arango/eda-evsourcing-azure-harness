@@ -1,14 +1,8 @@
 import type { BoardItem, BoardList } from '../types'
 
 export const NEXT_ORDER = './.claude/scripts/mefisto-next-order.sh'
-export const PLANNER = 'mefisto-planner'
 /** Filas fijas de la lista: la banda no cambia de alto con la cantidad de issues. */
 export const LIST_ROWS = 5
-
-/** El hilo principal de una sesion `claude --agent mefisto-planner`: un subagente trae agent_id. */
-export function isPlannerMainThread(e: { agent_type?: string; agent_id?: string }): boolean {
-  return e.agent_type === PLANNER && !e.agent_id
-}
 
 type NextOrderJson = {
   items?: { number: number; title: string; after?: number[]; hasDepsSection?: boolean }[]
@@ -180,4 +174,34 @@ export function executionPaneOf(listJson: string, currentPaneId: string): string
   )
   const sameRuntime = candidates.find(p => current.agent && p.agent === current.agent)
   return (sameRuntime ?? candidates[0])?.pane_id ?? null
+}
+
+/** Ruta del transcript de una sesion: ~/.claude/projects/<cwd con lo no alfanumerico como '-'>/<id>.jsonl. */
+export function transcriptPathOf(configDir: string, cwd: string, sessionId: string): string {
+  return `${configDir}/projects/${cwd.replace(/[^A-Za-z0-9]/g, '-')}/${sessionId}.jsonl`
+}
+
+/**
+ * `claude --agent mefisto-planner` deja en el transcript de la sesion filas
+ * `{"type":"agent-setting","agentSetting":"mefisto-planner"}`; manda la ultima. Un planner lanzado como
+ * subagente escribe en el transcript del subagente, nunca en el de la sesion que lo lanzo.
+ */
+export function agentSettingOf(transcript: string): string | null {
+  let found: string | null = null
+  for (const line of transcript.split('\n')) {
+    if (!line.includes('"agent-setting"')) continue
+    try {
+      const row = JSON.parse(line)
+      if (row.type === 'agent-setting' && typeof row.agentSetting === 'string') found = row.agentSetting
+    } catch {
+      continue
+    }
+  }
+  return found
+}
+
+/** El `--agent` de una linea de comando de Claude Code (`--agent x` o `--agent=x`), o null. */
+export function agentFlagOf(cmdline: string): string | null {
+  const m = /(?:^|\s)--agent(?:=|\s+)(\S+)/.exec(cmdline)
+  return m ? (m[1] ?? null) : null
 }

@@ -99,8 +99,10 @@ El mod activa el modo: su hook `tool.call` antepone `MEFISTO_UI=mod` al comando 
 
 La sesion del planner tiene su propio mod, que muestra que se esta haciendo y que sigue.
 
-- **Activacion**: solo en el hilo principal de una sesion interactiva `claude --agent mefisto-planner`
-  (`agent_type` del SessionStart sin `agent_id`). Un planner lanzado como subagente o con `-p` no dibuja ni
+- **Activacion**: solo en una sesion interactiva cuyo proceso es `claude --agent mefisto-planner`. El mod lo
+  lee de la linea de comando de su proceso padre (`ps`) y, como respaldo, de la fila `agent-setting` del
+  transcript de la sesion. Los eventos clasicos (`SessionStart` con `agent_type`) no llegan a un modulo cargado
+  con `--plugin-dir`, verificado el 2026-10-08. Un planner lanzado como subagente o con `-p` no dibuja ni
   consulta nada.
 - **Foco** (dos estados, del lenguaje real de uso):
   - *refinar #N* empieza con un mensaje que pide refinar #N y termina cuando #N recibe `estado:listo`.
