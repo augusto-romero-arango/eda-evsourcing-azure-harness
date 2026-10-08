@@ -2,7 +2,7 @@
 
 - **Fecha**: 2026-10-08
 - **Estado**: aceptado
-- **Aplica a**: el lado interno de MEF-ADR-0019: el monitor de `/mefisto-tooling` y el tablero del planner (decision 8). Sequential, el lado publicado y los issues que genera el reviewer quedan para enmiendas posteriores. Se apoya en MEF-ADR-0049 (adaptadores por runtime) y en MEF-ADR-0050 (neutralidad de toda operacion), y reserva el identificador `0055` (MEF-ADR-0030).
+- **Aplica a**: el monitor de `/mefisto-tooling` (lado interno de MEF-ADR-0019) y el tablero del planner en sus dos lados, interno y publicado (decision 8). Sequential, los mods publicados de `/tooling`, `/implement`, `/parallel` e `/infra` y los issues que genera el reviewer quedan para enmiendas posteriores. Se apoya en MEF-ADR-0049 (adaptadores por runtime) y en MEF-ADR-0050 (neutralidad de toda operacion), y reserva el identificador `0055` (MEF-ADR-0030).
 
 ## Contexto
 
@@ -29,7 +29,7 @@ Este ADR fija cuatro cosas: la regla de diseno de los mods del propio Mefisto, s
 
 ### Que queda fuera de este ADR
 
-- El monitor de `/mefisto-sequential` (progreso N de M) y los mods del lado publicado (`/tooling`, `/implement`, `/parallel`, `/infra`).
+- El monitor de `/mefisto-sequential` (progreso N de M) y los mods del lado publicado de `/tooling`, `/implement`, `/parallel` e `/infra`. Del lado publicado solo entra el tablero del planner.
 - La lista de issues que el reviewer crea por reglas violadas, con su accion de cierre. Es exclusiva del lado consumidor (`create_reviewer_tests_review_issue`).
 - Una superficie equivalente para OpenCode, cuyos plugins de TUI v2 no declaran estabilidad.
 
@@ -64,9 +64,14 @@ Las acciones viven en la banda sobre el prompt (`AbovePrompt`), con hotkeys nume
 
 El pane de detalle (stages y live log) es secundario. `/mefisto-monitor` lo abre ya enfocado, porque abierto por la persona se coloca a cualquier ancho. Cada accion tiene ademas un subcomando (`/mefisto-monitor merge|close`) por si las teclas no responden.
 
-### 4. Ubicacion: `.claude/mods/<mod>/`
+### 4. Ubicacion: una por lado
 
-Un mod es un artefacto **exclusivo del adaptador Claude**, igual que `mefisto-scope-hook.sh` (MEF-ADR-0049 decision 2). Vive en `.claude/mods/<mod>/` con la forma de plugin de mods:
+Un mod es un artefacto **exclusivo del adaptador Claude**, igual que `mefisto-scope-hook.sh` (MEF-ADR-0049 decision 2). Tiene dos ubicaciones, una por lado de MEF-ADR-0019:
+
+- **Interno**: `.claude/mods/<mod>/`, cargado desde un marketplace de carpeta en alcance `local` (detalle abajo).
+- **Publicado**: bajo `hooks/` del plugin `mefisto` (modulos, tipos y tsconfig). El `hooks/hooks.json` publicado es salida del generador del adaptador Claude (MEF-ADR-0049), y ese generador emite tambien `modules`. `hooks/*` ya esta cubierto por los gates de scope de ambos lados (MEF-ADR-0019).
+
+Del lado interno, el mod vive en `.claude/mods/<mod>/` con la forma de plugin de mods:
 
 - `.claude-plugin/plugin.json`
 - `hooks/hooks.json` con `modules`
@@ -74,7 +79,7 @@ Un mod es un artefacto **exclusivo del adaptador Claude**, igual que `mefisto-sc
 - `types/index.d.ts`
 - `hooks/*.test.ts`
 
-No se edita el `hooks/hooks.json` publicado. La ruta queda registrada en `is_path_in_mefisto_scope` y en la politica OpenCode generada, antes de poblarla (MEF-ADR-0019 seccion E). Los tipos que el engine regenera en `.claude-plugin/types/` no se versionan. Se cargan desde el marketplace de carpeta `.claude/mods/.claude-plugin/marketplace.json` (`mefisto-mods`), instalado una vez por checkout en alcance `local` (`claude plugin marketplace add ./.claude/mods --scope local` y `claude plugin install <mod>@mefisto-mods --scope local`). Esa configuracion vive en `.claude/settings.local.json`, que no se versiona y no existe en los worktrees de los pipelines, por lo que las sesiones `-p` de los agentes nunca cargan los mods. Un marketplace de carpeta se lee desde la propia carpeta: un cambio se aplica con `/reload-plugins`. `--plugin-dir` queda para probar una copia suelta.
+La ruta queda registrada en `is_path_in_mefisto_scope` y en la politica OpenCode generada, antes de poblarla (MEF-ADR-0019 seccion E). Los tipos que el engine regenera en `.claude-plugin/types/` no se versionan. Se cargan desde el marketplace de carpeta `.claude/mods/.claude-plugin/marketplace.json` (`mefisto-mods`), instalado una vez por checkout en alcance `local` (`claude plugin marketplace add ./.claude/mods --scope local` y `claude plugin install <mod>@mefisto-mods --scope local`). Esa configuracion vive en `.claude/settings.local.json`, que no se versiona y no existe en los worktrees de los pipelines, por lo que las sesiones `-p` de los agentes nunca cargan los mods. Un marketplace de carpeta se lee desde la propia carpeta: un cambio se aplica con `/reload-plugins`. `--plugin-dir` queda para probar una copia suelta.
 
 ### 5. Encaje con la neutralidad
 
@@ -93,13 +98,24 @@ El mod activa el modo: su hook `tool.call` antepone `MEFISTO_UI=mod` al comando 
 - Las funciones que reciben `$` se declaran en el nivel superior del modulo. `claude plugin validate` rechaza pasar `$` a closures.
 - El estado que dibuja va en `$.state` (atoms), no en variables del modulo, porque sobrevive al hot-reload. En `session.start` se reabre cualquier seguimiento de proceso.
 - Antes de commitear, el mod pasa `claude plugin validate`, `claude plugin test` y `tsc` con el tsconfig del header de tipos.
-- Version minima: Claude Code 2.1.287.
+- Version minima: Claude Code 2.1.287, tambien para el plugin `mefisto` publicado; `/onboard` verifica esa version en el consumidor (#2083).
 
-### 8. Tablero del planner: `mefisto-planner-board`
+### 8. Tablero del planner
 
-La sesion del planner tiene su propio mod, que muestra que se esta haciendo y que sigue.
+La sesion del planner tiene su propio mod, que muestra que se esta haciendo y que sigue. Es un unico tablero con una version por lado, y estas son las diferencias:
 
-- **Activacion**: solo en una sesion interactiva cuyo proceso es `claude --agent mefisto-planner`. El mod lo
+| | Interno | Publicado |
+|---|---|---|
+| Agente | `mefisto-planner` | `mefisto:planner` |
+| Cierre | `mefisto-field-note.sh` | `field-note.sh` |
+| Script de orden | `.claude/scripts/mefisto-next-order.sh` | `next-order.sh`, ubicado desde la raiz del plugin |
+| Lanzar trabajo | el planner no lanza | el planner no lanza |
+
+La raiz del plugin publicado la resuelve el propio tablero; el ADR no fija el mecanismo.
+
+**Los dos tableros son totalmente independientes.** No comparten codigo y no hay obligacion de sincronizarlos: un fix o una mejora en uno no se replica en el otro, y pueden divergir. Ninguna cabecera de copia hermana los vincula y ningun cambio de un lado toca los archivos del otro. El interno solo sirvio de punto de partida del port. Es lo opuesto a la regla de tres de `next-order.sh` (MEF-ADR-0018), que obliga a mantener sincronizadas sus copias; esa regla no aplica entre los dos tableros.
+
+- **Activacion**: solo en una sesion interactiva cuyo proceso es el agente del planner (`claude --agent <agente>`). El mod lo
   lee de la linea de comando de su proceso padre (`ps`) y, como respaldo, de la fila `agent-setting` del
   transcript de la sesion. Los eventos clasicos (`SessionStart` con `agent_type`) no llegan a un modulo cargado
   con `--plugin-dir`, verificado el 2026-10-08. Un planner lanzado como subagente o con `-p` no dibuja ni
@@ -107,11 +123,11 @@ La sesion del planner tiene su propio mod, que muestra que se esta haciendo y qu
 - **Foco** (dos estados, del lenguaje real de uso):
   - *refinar #N* empieza con un mensaje que pide refinar #N y termina cuando #N recibe `estado:listo`.
   - *explorar* es cualquier otra conversacion desde reposo, con la primera linea del mensaje como tema.
-  - Ambos terminan tambien con el cierre del planner (`mefisto-field-note.sh`). Los borradores creados en el
+  - Ambos terminan tambien con el cierre del planner (ver tabla). Los borradores creados en el
     foco se anotan como su resultado, pero nunca lo cierran.
-- **Orden**: las listas vienen de `mefisto-next-order.sh --json`, y el orden de refinamiento de
-  `--refinement`. El mod no calcula dependencias (decision 1).
-- **El planner no lanza trabajo**: la lista de listos es solo lectura, sin acciones. Lanzar `/mefisto-tooling` o `/mefisto-sequential` no es tarea del planner; esa superficie se resolvera aparte.
+- **Orden**: las listas vienen del script de orden de la tabla con `--json`, y el orden de refinamiento de
+  `--refinement`. Ninguno de los dos tableros calcula dependencias (decision 1).
+- **El planner no lanza trabajo**: la lista de listos es solo lectura, sin acciones. Lanzar el pipeline de tooling o la cadena secuencial no es tarea del planner; esa superficie se resolvera aparte.
 - **Alto fijo**: la lista ocupa siempre las mismas filas y pagina con `0`, asi que la banda no cambia de alto
   con la cantidad de issues.
 
@@ -124,5 +140,6 @@ La sesion del planner tiene su propio mod, que muestra que se esta haciendo y qu
 
 ## Control de cambios
 
+- 2026-10-08: generalizacion al tablero del planner publicado: aplica a ambos lados, decision 4 con dos ubicaciones, decision 8 con tabla de diferencias por lado y tableros independientes, version minima 2.1.287 del plugin publicado.
 - 2026-10-08: decision 8 (tablero del planner) y orden de refinamiento en `mefisto-next-order.sh`.
 - 2026-10-08: version inicial.
