@@ -4,11 +4,13 @@ import {
   arrivals,
   createdIssueOf,
   isIssueCreate,
+  cropGrid,
+  mascotPose,
+  usedColumns,
   isPlannerClosing,
   issueMarkedListo,
   agentFlagOf,
   agentSettingOf,
-  executionPaneOf,
   transcriptPathOf,
   pageOf,
   parseNextOrder,
@@ -47,11 +49,10 @@ test('avisa solo de borradores y listos nuevos, nunca en el primer refresco', as
   expect(arrivals(issues, [1])).toEqual([{ number: 2, title: 'nuevo borrador', kind: 'borrador' }])
 })
 
-test('la razon solo dice lo que aporta', async () => {
+test('la razon solo dice de que depende', async () => {
   const item = { number: 5, title: 't', after: [3, 4], hasDepsSection: true }
-  expect(reasonOf(item)).toEqual({ text: 'tras #3 #4', isWarning: false })
-  expect(reasonOf({ ...item, after: [] })).toEqual({ text: '', isWarning: false })
-  expect(reasonOf({ ...item, hasDepsSection: false })).toEqual({ text: 'sin ## Dependencias', isWarning: true })
+  expect(reasonOf(item)).toBe('tras #3 #4')
+  expect(reasonOf({ ...item, after: [], hasDepsSection: false })).toBe('')
 })
 
 test('el mensaje marca el foco: refinar #N o explorar con tema', async () => {
@@ -76,22 +77,6 @@ test('pagina con su tamaño y vuelve a la primera si la lista se achica', async 
   expect(pageOf(0, 0, 5)).toEqual({ page: 0, pages: 1 })
 })
 
-test('encuentra el pane de ejecucion hermano del planner', async () => {
-  const list = JSON.stringify({
-    result: {
-      panes: [
-        { pane_id: 'w9:p1', tab_id: 'w9:t1', label: 'planner [claude]', agent: 'claude' },
-        { pane_id: 'w9:p3', tab_id: 'w9:t1', label: 'ejecucion [claude]', agent: 'claude' },
-        { pane_id: 'w9:p5', tab_id: 'w9:t1', label: 'ejecucion [opencode]', agent: 'opencode' },
-        { pane_id: 'w8:p2', tab_id: 'w8:t1', label: 'ejecucion [claude]', agent: 'claude' },
-      ],
-    },
-  })
-  expect(executionPaneOf(list, 'w9:p1')).toBe('w9:p3')
-  expect(executionPaneOf(list, 'w0:p1')).toBe(null)
-  expect(executionPaneOf('no json', 'w9:p1')).toBe(null)
-})
-
 test('reconoce la sesion del planner por su transcript', async () => {
   const planner = '{"type":"user"}\n{"type":"agent-setting","agentSetting":"mefisto-planner","sessionId":"s"}\n'
   expect(agentSettingOf(planner)).toBe('mefisto-planner')
@@ -107,3 +92,18 @@ test('lee el --agent de la linea de comando del proceso', async () => {
   expect(agentFlagOf('/usr/local/bin/claude --agent=mefisto-planner')).toBe('mefisto-planner')
   expect(agentFlagOf('claude --plugin-dir /x')).toBe(null)
 })
+
+test('la mascota es siempre la del planner', async () => {
+  expect(mascotPose(true, 2, false)).toBe('planeando')
+  expect(mascotPose(true, 0, false)).toBe('pensando')
+  expect(mascotPose(false, 3, true)).toBe('listo')
+  expect(mascotPose(false, 0, false)).toBe('planeando')
+})
+
+test('recorta las columnas vacias comunes a todos los cuadros', async () => {
+  const a = ['..x...', '...x..']
+  const b = ['....x.', '..x...']
+  expect(usedColumns([a, b])).toEqual({ from: 2, to: 4 })
+  expect(cropGrid(a, { from: 2, to: 4 })).toEqual(['x..', '.x.'])
+})
+

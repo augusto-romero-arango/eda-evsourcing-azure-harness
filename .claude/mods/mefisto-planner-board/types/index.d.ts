@@ -21,6 +21,7 @@ export type BoardFocus = {
   issue: number | null
   topic: string
   created: number[]
+  startedMs: number
 }
 
 /** Resumen breve que la banda muestra al cerrar un foco. */
@@ -34,6 +35,9 @@ declare module 'claude-code' {
       isExpanded: boolean
       tab: BoardTab
       page: number
+      frame: 0 | 1
+      stepsInTurn: number
+      isWorking: boolean
       focus: BoardFocus | null
       flash: BoardFlash | null
       refine: BoardList | null

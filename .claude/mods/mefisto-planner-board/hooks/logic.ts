@@ -72,11 +72,9 @@ export function arrivals(issues: OpenIssue[], known: number[]): Arrival[] {
   return out
 }
 
-/** Solo lo que aporta: de que depende, o el aviso de que falta la seccion. "Sin dependencias" no se escribe. */
-export function reasonOf(item: BoardItem): { text: string; isWarning: boolean } {
-  if (!item.hasDepsSection) return { text: 'sin ## Dependencias', isWarning: true }
-  if (item.after.length > 0) return { text: `tras ${item.after.map(n => `#${n}`).join(' ')}`, isWarning: false }
-  return { text: '', isWarning: false }
+/** De que depende el issue (`tras #A #B`), o vacio si no depende de nada abierto. */
+export function reasonOf(item: BoardItem): string {
+  return item.after.length > 0 ? `tras ${item.after.map(n => `#${n}`).join(' ')}` : ''
 }
 
 /** Ancho comun de la columna de numeros (#801 y #1981 alineados). */
@@ -143,37 +141,15 @@ export function createdText(created: number[]): string {
   return created.length > 0 ? `creó ${created.map(n => `#${n}`).join(' ')}` : ''
 }
 
-/** Issues por pagina: en listos la ultima fila es la del batch (/mefisto-sequential). */
-export function pageSizeOf(tab: 'borrador' | 'listo'): number {
-  return tab === 'listo' ? LIST_ROWS - 1 : LIST_ROWS
+/** Issues por pagina, igual en las dos listas. */
+export function pageSizeOf(_tab: 'borrador' | 'listo'): number {
+  return LIST_ROWS
 }
 
 /** Pagina valida (0-based) para una lista de `total` items; vuelve a 0 si la lista se achico. */
 export function pageOf(page: number, total: number, size: number): { page: number; pages: number } {
   const pages = Math.max(1, Math.ceil(total / size))
   return { page: page >= 0 && page < pages ? page : 0, pages }
-}
-
-type HerdrPane = { pane_id: string; tab_id?: string; label?: string; agent?: string }
-
-/**
- * El pane de ejecucion hermano del planner en herdr: misma pestaña, etiqueta que empieza por
- * "ejecucion" y, si hay varias, la del mismo runtime que el planner (`ejecucion [claude]`).
- */
-export function executionPaneOf(listJson: string, currentPaneId: string): string | null {
-  let panes: HerdrPane[]
-  try {
-    panes = JSON.parse(listJson)?.result?.panes ?? []
-  } catch {
-    return null
-  }
-  const current = panes.find(p => p.pane_id === currentPaneId)
-  if (!current) return null
-  const candidates = panes.filter(
-    p => p.pane_id !== currentPaneId && p.tab_id === current.tab_id && /^ejecuci[oó]n\b/i.test(p.label ?? ''),
-  )
-  const sameRuntime = candidates.find(p => current.agent && p.agent === current.agent)
-  return (sameRuntime ?? candidates[0])?.pane_id ?? null
 }
 
 /** Ruta del transcript de una sesion: ~/.claude/projects/<cwd con lo no alfanumerico como '-'>/<id>.jsonl. */
@@ -204,4 +180,37 @@ export function agentSettingOf(transcript: string): string | null {
 export function agentFlagOf(cmdline: string): string | null {
   const m = /(?:^|\s)--agent(?:=|\s+)(\S+)/.exec(cmdline)
   return m ? (m[1] ?? null) : null
+}
+
+export type MascotState = 'planeando' | 'pensando' | 'listo'
+
+/** Siempre la mascota del planner: trabajando con herramientas planea, sin ellas piensa y al cerrar un foco queda lista. */
+export function mascotPose(isWorking: boolean, stepsInTurn: number, hasFlash: boolean): MascotState {
+  if (isWorking) return stepsInTurn > 0 ? 'planeando' : 'pensando'
+  if (hasFlash) return 'listo'
+  return 'planeando'
+}
+
+type Grid = readonly string[]
+
+/** Columnas con algun pixel visible en cualquiera de los cuadros: recorta el margen sin que la mascota salte. */
+export function usedColumns(grids: readonly Grid[]): { from: number; to: number } {
+  let from = Infinity
+  let to = -1
+  for (const g of grids) {
+    for (const row of g) {
+      for (let x = 0; x < row.length; x++) {
+        const c = row[x]
+        if (c !== '.' && c !== ' ') {
+          from = Math.min(from, x)
+          to = Math.max(to, x)
+        }
+      }
+    }
+  }
+  return to < 0 ? { from: 0, to: 0 } : { from, to }
+}
+
+export function cropGrid(grid: Grid, cols: { from: number; to: number }): Grid {
+  return grid.map(row => row.slice(cols.from, cols.to + 1).padEnd(cols.to - cols.from + 1, '.'))
 }

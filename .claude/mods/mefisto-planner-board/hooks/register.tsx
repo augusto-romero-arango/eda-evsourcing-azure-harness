@@ -9,14 +9,15 @@ import {
   transcriptPathOf,
   arrivals,
   clip,
-  clockOf,
   createdIssueOf,
   createdText,
+  cropGrid,
   isIssueCreate,
+  usedColumns,
+  mascotPose,
   isPlannerClosing,
   issueMarkedListo,
   numberWidth,
-  executionPaneOf,
   padEnd,
   pageOf,
   pageSizeOf,
@@ -27,6 +28,7 @@ import {
   signatureOf,
   topicOf,
 } from './logic'
+import { DEFAULT_COLOR, HEIGHT, PALETTE, RASTER_ROWS, sprite } from './sprites'
 
 const PLANNER_AGENT = 'mefisto-planner'
 const POLL_MS = 60_000
@@ -44,11 +46,16 @@ const refineAtom = atom({ plugin: 'mefisto-planner-board', key: 'refine' } as co
 const developAtom = atom({ plugin: 'mefisto-planner-board', key: 'develop' } as const, null)
 const updatedAtom = atom({ plugin: 'mefisto-planner-board', key: 'updatedMs' } as const, 0)
 const signatureAtom = atom({ plugin: 'mefisto-planner-board', key: 'signature' } as const, '')
+const frameAtom = atom({ plugin: 'mefisto-planner-board', key: 'frame' } as const, 0)
+const stepsAtom = atom({ plugin: 'mefisto-planner-board', key: 'stepsInTurn' } as const, 0)
+const workingAtom = atom({ plugin: 'mefisto-planner-board', key: 'isWorking' } as const, false)
 const knownAtom = atom({ plugin: 'mefisto-planner-board', key: 'known' } as const, [])
 
 let isInteractive = false
 let isRefreshing = false
 let timer: { cancel: () => void } | null = null
+let animation: { cancel: () => void } | null = null
+const ANIMATION_MS = 600
 
 async function runNextOrder($: EngineInterface, args: string[]): Promise<BoardList> {
   const { exitCode, stdout, stderr } = await $.process
@@ -131,6 +138,42 @@ async function claimPlanner($: EngineInterface): Promise<boolean> {
   return true
 }
 
+// Cada instruccion del agente (una herramienta, o tu mensaje que abre el turno) alterna el cuadro A/B.
+async function step($: EngineInterface, isNewTurn: boolean) {
+  await update($, frameAtom, f => (f === 1 ? 0 : 1))
+  await update($, stepsAtom, n => (isNewTurn ? 0 : (n ?? 0) + 1))
+}
+
+// Recorte comun a todos los cuadros del planner, calculado una vez: sin margen y sin saltos al alternar.
+const MASCOT_STATES = ['planeando', 'pensando', 'listo'] as const
+const MASCOT_COLS = usedColumns(MASCOT_STATES.flatMap(state => [sprite('planner', state, 0), sprite('planner', state, 1)]))
+const MASCOT_WIDTH = MASCOT_COLS.to - MASCOT_COLS.from + 1
+
+/** Celdas del Raster (dos pixeles por celda con ▀/▄), como toRasterCells de sprites.ts pero con el ancho recortado. */
+function mascotCells(grid: readonly string[]): string {
+  const color = (ch: string | undefined) => (!ch || ch === '.' || ch === ' ' ? null : (PALETTE[ch] ?? null))
+  const words: number[] = []
+  for (let y = 0; y < HEIGHT; y += 2) {
+    for (let x = 0; x < MASCOT_WIDTH; x++) {
+      const top = color(grid[y]?.[x])
+      const bottom = color(grid[y + 1]?.[x])
+      if (top !== null) words.push(0x2580, top, bottom ?? DEFAULT_COLOR)
+      else if (bottom !== null) words.push(0x2584, bottom, DEFAULT_COLOR)
+      else words.push(0x20, DEFAULT_COLOR, DEFAULT_COLOR)
+    }
+  }
+  let bin = ''
+  for (const b of new Uint8Array(Uint32Array.from(words).buffer)) bin += String.fromCharCode(b)
+  return btoa(bin)
+}
+
+// Mientras Claude trabaja (pensando o con herramientas) la mascota alterna sola; en reposo queda quieta.
+async function setWorking($: EngineInterface, isWorking: boolean) {
+  await update($, workingAtom, () => isWorking)
+  animation?.cancel()
+  animation = isWorking ? $.clock.every(ANIMATION_MS, () => void update($, frameAtom, f => (f === 1 ? 0 : 1))) : null
+}
+
 async function startFocus($: EngineInterface, focus: BoardFocus) {
   await update($, flashAtom, () => null)
   await update($, focusAtom, () => focus)
@@ -157,11 +200,11 @@ async function onPrompt($: EngineInterface, text: string) {
   const target = refineTargetOf(text)
   if (target !== null && !(focus?.kind === 'refinar' && focus.issue === target)) {
     const known = (await read($, refineAtom))?.items.find(i => i.number === target)
-    await startFocus($, { kind: 'refinar', issue: target, topic: known?.title ?? '', created: [] })
+    await startFocus($, { kind: 'refinar', issue: target, topic: known?.title ?? '', created: [], startedMs: Date.now() })
     return
   }
   if (!focus && target === null && text.trim() !== '' && !text.trim().startsWith('/')) {
-    await startFocus($, { kind: 'explorar', issue: null, topic: topicOf(text), created: [] })
+    await startFocus($, { kind: 'explorar', issue: null, topic: topicOf(text), created: [], startedMs: Date.now() })
   }
 }
 
@@ -185,6 +228,7 @@ async function onBash($: EngineInterface, command: string, output: string) {
 
 // La misma tecla abre su lista o, si ya estaba abierta, la cierra.
 async function toggleList($: EngineInterface, tab: BoardTab) {
+  if (await read($, focusAtom)) return
   const isOpen = (await read($, expandedAtom)) && (await read($, tabAtom)) === tab
   await update($, tabAtom, () => tab)
   await update($, pageAtom, () => 0)
@@ -203,49 +247,36 @@ async function fill($: EngineInterface, text: string) {
   await $.prompt.fill({ text, mode: 'replace' })
 }
 
-// El planner no ejecuta: el comando queda escrito, sin Enter, en el pane de ejecucion de herdr para
-// editarlo antes de lanzarlo. Fuera de herdr, o sin ese pane, va al portapapeles.
-async function sendToExecution($: EngineInterface, text: string, surface: 'terminal' | 'desktop' | 'vscode' | 'mobile') {
-  const current = await $.env.get('HERDR_PANE_ID')
-  if (current) {
-    const { exitCode, stdout } = await $.process.run(['herdr', 'pane', 'list']).catch(() => ({ exitCode: 1, stdout: '' }))
-    const target = exitCode === 0 ? executionPaneOf(stdout, current) : null
-    if (target) {
-      const sent = await $.process.run(['herdr', 'pane', 'send-text', target, text]).catch(() => ({ exitCode: 1 }))
-      if (sent.exitCode === 0) {
-        $.ui.toast(`En el pane de ejecución, sin Enter: ${text}`)
-        return
-      }
-    }
-  }
-  await copyText($, text, surface)
-}
-
-async function copyText($: EngineInterface, text: string, surface: 'terminal' | 'desktop' | 'vscode' | 'mobile') {
-  const copied = await $.ui.copy({ text, surface })
-  $.ui.toast(copied.isCopied ? `Copiado: ${text}` : `No se pudo copiar: ${text}`)
-}
-
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     isInteractive = e.isInteractive
     await $.command.register({
       name: 'mefisto-board',
-      description: 'Tablero del planner: refresh | borradores | listos | batch | cerrar | on | off',
-      argumentHint: '[refresh|borradores|listos|batch|cerrar|on|off]',
+      description: 'Tablero del planner: refresh | borradores | listos | cerrar | on | off',
+      argumentHint: '[refresh|borradores|listos|cerrar|on|off]',
       immediate: true,
     })
     const isWanted = (await read($, activeAtom)) || (await read($, plannerAtom))
     if (isInteractive && isWanted) await activate($)
+    if (isInteractive && (await read($, workingAtom))) await setWorking($, true)
     else if (isInteractive) void detectPlanner($, DETECT_TRIES)
     return next(e)
   })
 
   on('prompt.submit', async ($, e, next) => {
     if (e.origin.kind === 'composer' && !(await read($, activeAtom))) await detectPlanner($, 0)
+    if (await read($, activeAtom)) {
+      await step($, true)
+      await setWorking($, true)
+    }
     if (e.origin.kind === 'composer' && (await read($, activeAtom))) await onPrompt($, e.text)
     return next(e)
   }).catch(($, e, next) => next(e))
+
+  on('tool.call', async ($, e, next) => {
+    if (await read($, activeAtom)) await step($, false)
+    return next(e)
+  })
 
   on('tool.call', { tool: 'Bash' }, async ($, e, next) => {
     const ran = await next(e)
@@ -254,6 +285,12 @@ export const register: Register = on => {
       await onBash($, e.command, output).catch(() => undefined)
     }
     return ran
+  })
+
+  on('turn.complete', async ($, e, next) => {
+    const done = await next(e)
+    if (await read($, activeAtom)) await setWorking($, false)
+    return done
   })
 
   on('command.run', { command: 'mefisto-board' }, async ($, e) => {
@@ -269,12 +306,6 @@ export const register: Register = on => {
     if (arg === 'borradores' || arg === 'listos') {
       await toggleList($, arg === 'borradores' ? 'borrador' : 'listo')
       return { text: `Lista de ${arg} alternada.` }
-    }
-    if (arg === 'batch') {
-      const launch = (await read($, developAtom))?.launch
-      if (!launch) return { text: 'No hay batch lanzable.' }
-      const copied = await $.ui.copy({ text: launch })
-      return { text: copied.isCopied ? `Copiado: ${launch}` : launch }
     }
     if (arg === 'cerrar') {
       const focus = await read($, focusAtom)
@@ -322,7 +353,6 @@ export const register: Register = on => {
             <Text bold wrap="truncate-end">{clip(label, Math.max(20, inner - created.length - 46))}</Text>
             {created !== '' && <Text color="success">{created}</Text>}
           </Box>
-          {listButtons}
         </Box>
       )
     } else if (flash && flash.untilMs > Date.now()) {
@@ -336,7 +366,6 @@ export const register: Register = on => {
       head = (
         <Box justifyContent="space-between">
           <Box gap={3}>
-            <Text dimColor>planner ·</Text>
             <Button key="mode-explorar" hotkey="1" plain label="explorar" onPress={() => void fill($, 'Quiero explorar: ')} />
             {suggested !== null && (
               <Button key="mode-refinar" hotkey="2" plain label={`refinar #${suggested}`}
@@ -348,79 +377,122 @@ export const register: Register = on => {
       )
     }
 
-    if (!isExpanded) {
-      return (
-        <Box flexDirection="column" borderStyle="round" borderColor="claude" borderDimColor paddingX={1}>
-          {head}
+    const body = Math.max(30, inner - MASCOT_WIDTH - 2)
+    const frame = await read($, frameAtom)
+    const isWorking = e.props.isWorking || (await read($, workingAtom))
+    const state = mascotPose(isWorking, await read($, stepsAtom), !!flash && flash.untilMs > Date.now())
+    const grid = cropGrid(sprite('planner', state, frame), MASCOT_COLS)
+    const elements = $.ui.resolve(e)
+    const mascot =
+      'Raster' in elements ? (
+        <elements.Raster key="mefisto-mascota" columns={MASCOT_WIDTH} rows={RASTER_ROWS} cells={mascotCells(grid)} />
+      ) : (
+        <Box width={MASCOT_WIDTH} />
+      )
+
+    const updatedMs = await read($, updatedAtom)
+    let content
+    if (focus) {
+      const minutes = Math.max(0, Math.floor((Date.now() - (focus.startedMs ?? Date.now())) / 60_000))
+      const what = focus.kind === 'refinar' ? `Refinando #${focus.issue}` : 'Explorando'
+      const ends =
+        focus.kind === 'refinar'
+          ? `termina al pasar #${focus.issue} a estado:listo o con el cierre`
+          : 'termina con el cierre del planner'
+      content = (
+        <Box flexDirection="column" width={body}>
+          <Text bold color="claude">{what}{minutes > 0 ? ` · ${minutes} min` : ''}</Text>
+          <Text wrap="wrap">{clip(focus.topic || ' ', body * 2 - 2)}</Text>
+          <Text color={focus.created.length > 0 ? 'success' : undefined} dimColor={focus.created.length === 0}>
+            {focus.created.length > 0 ? createdText(focus.created) : 'sin borradores nuevos'}
+          </Text>
+          <Text dimColor wrap="truncate-end">{ends}</Text>
+          <Text dimColor>/mefisto-board cerrar lo cierra a mano</Text>
+        </Box>
+      )
+    } else if (!isExpanded) {
+      const nextRefine = refine?.items.slice(0, 2) ?? []
+      const nextDevelop = develop?.items[0]
+      content = (
+        <Box flexDirection="column" width={body}>
+          <Text dimColor>siguiente a refinar</Text>
+          {[0, 1].map(i => (
+            <Text key={`r-${i}`} dimColor={i > 0} wrap="truncate-end">
+              {nextRefine[i] ? `#${nextRefine[i].number}  ${clip(nextRefine[i].title, body - 8)}` : ' '}
+            </Text>
+          ))}
+          <Text dimColor>siguiente a desarrollar</Text>
+          <Text wrap="truncate-end">{nextDevelop ? `#${nextDevelop.number}  ${clip(nextDevelop.title, body - 8)}` : ' '}</Text>
+          <Text dimColor>{updatedMs ? ' ' : 'cargando…'}</Text>
+        </Box>
+      )
+    } else {
+      const list = tab === 'borrador' ? refine : develop
+      const size = pageSizeOf(tab)
+      const { page, pages } = pageOf(await read($, pageAtom), list?.items.length ?? 0, size)
+      const visible = list?.items.slice(page * size, (page + 1) * size) ?? []
+      const blankRows = Math.max(0, size - Math.max(visible.length, 1))
+      const numWidth = numberWidth(visible)
+      // Solo 'tras #N' ocupa columna: sin dependencias no se marca.
+      const afterWidth = Math.min(16, Math.max(0, ...visible.map(i => reasonOf(i).length)))
+      const titleWidth = Math.max(12, body - numWidth - afterWidth - 9)
+      const more = list
+        ? [
+            list.blockedCount > 0 ? `${list.blockedCount} bloqueados` : '',
+            list.cycleCount > 0 ? `${list.cycleCount} en ciclo` : '',
+          ].filter(Boolean).join(' · ')
+        : ''
+      const hint = tab === 'borrador' ? '5-9 al prompt' : ''
+      content = (
+        <Box flexDirection="column" width={body}>
+          {list?.error && <Text color="error">next-order falló: {clip(list.error, body - 20)}</Text>}
+          {list && !list.error && visible.length === 0 && (
+            <Text dimColor>{tab === 'borrador' ? 'Sin borradores refinables.' : 'Sin issues lanzables.'}</Text>
+          )}
+          {visible.map((item, i) => {
+            const reason = reasonOf(item)
+            return (
+              <Box>
+                {tab === 'borrador' ? (
+                  <Button
+                    key={`item-${item.number}`}
+                    hotkey={String(i + 5)}
+                    plain
+                    dimColor={page > 0 || i > 0}
+                    label={`${padEnd(`#${item.number}`, numWidth)} ${padEnd(clip(item.title, titleWidth), titleWidth)}`}
+                    onPress={() => void fill($, `Refina el borrador #${item.number}`)}
+                  />
+                ) : (
+                  <Text dimColor={page > 0 || i > 0}>
+                    {`${padEnd(`#${item.number}`, numWidth)} ${padEnd(clip(item.title, titleWidth), titleWidth)}`}
+                  </Text>
+                )}
+                <Text dimColor>{reason ? `  ${clip(reason, afterWidth)}` : ''}</Text>
+              </Box>
+            )
+          })}
+          {Array.from({ length: blankRows }, (_, i) => (
+            <Text key={`blank-${i}`}> </Text>
+          ))}
+          <Box justifyContent="space-between">
+            <Text dimColor>{hint}</Text>
+            <Box gap={2}>
+              {more !== '' && <Text dimColor>{more}</Text>}
+              {pages > 1 && (
+                <Button key="next-page" hotkey="0" plain dimColor label={`página ${page + 1}/${pages} ▸`} onPress={() => void nextPage($)} />
+              )}
+            </Box>
+          </Box>
         </Box>
       )
     }
 
-    const updatedMs = await read($, updatedAtom)
-    const list = tab === 'borrador' ? refine : develop
-    const size = pageSizeOf(tab)
-    const { page, pages } = pageOf(await read($, pageAtom), list?.items.length ?? 0, size)
-    const visible = list?.items.slice(page * size, (page + 1) * size) ?? []
-    const blankRows = Math.max(0, size - Math.max(visible.length, 1))
-    const numWidth = numberWidth(visible)
-    const reasonWidth = Math.min(24, Math.max(0, ...visible.map(i => reasonOf(i).text.length)))
-    const titleWidth = Math.max(16, inner - numWidth - reasonWidth - 9)
-    const surface = e.surface
-    const more = list
-      ? [
-          list.blockedCount > 0 ? `${list.blockedCount} bloqueados` : '',
-          list.cycleCount > 0 ? `${list.cycleCount} en ciclo` : '',
-        ].filter(Boolean).join(' · ')
-      : ''
-    const hint = tab === 'borrador' ? '5-9 lo escribe en el prompt' : '5-8 /mefisto-tooling · 9 batch · al pane de ejecución, sin Enter'
-
     return (
       <Box flexDirection="column" borderStyle="round" borderColor="claude" borderDimColor paddingX={1}>
         {head}
-        {list?.error && <Text color="error">next-order falló: {clip(list.error, inner - 20)}</Text>}
-        {list && !list.error && visible.length === 0 && (
-          <Text dimColor>{tab === 'borrador' ? 'Sin borradores refinables.' : 'Sin issues lanzables.'}</Text>
-        )}
-        {visible.map((item, i) => {
-          const reason = reasonOf(item)
-          return (
-            <Box>
-              <Button
-                key={`item-${item.number}`}
-                hotkey={String(i + 5)}
-                plain
-                dimColor={page > 0 || i > 0}
-                label={`${padEnd(`#${item.number}`, numWidth)}  ${padEnd(clip(item.title, titleWidth), titleWidth)}`}
-                onPress={() =>
-                  void (tab === 'borrador'
-                    ? fill($, `Refina el borrador #${item.number}`)
-                    : sendToExecution($, `/mefisto-tooling ${item.number}`, surface))
-                }
-              />
-              <Text color={reason.isWarning ? 'warning' : undefined} dimColor={!reason.isWarning}>
-                {'  '}{clip(reason.text, reasonWidth)}
-              </Text>
-            </Box>
-          )
-        })}
-        {Array.from({ length: blankRows }, (_, i) => (
-          <Text key={`blank-${i}`}> </Text>
-        ))}
-        {tab === 'listo' &&
-          (develop?.launch ? (
-            <Button key="send-batch" hotkey="9" plain label={clip(develop.launch, inner - 4)}
-              onPress={() => void sendToExecution($, develop.launch ?? '', surface)} />
-          ) : (
-            <Text dimColor>sin batch lanzable</Text>
-          ))}
-        <Box justifyContent="space-between">
-          <Text dimColor>{hint}{updatedMs ? ` · ${clockOf(updatedMs)}` : ' · cargando…'}</Text>
-          <Box gap={2}>
-            {more !== '' && <Text dimColor>{more}</Text>}
-            {pages > 1 && (
-              <Button key="next-page" hotkey="0" plain dimColor label={`página ${page + 1}/${pages} ▸`} onPress={() => void nextPage($)} />
-            )}
-          </Box>
+        <Box gap={2} height={RASTER_ROWS + 1} alignItems="flex-start">
+          {mascot}
+          <Box marginTop={1}>{content}</Box>
         </Box>
       </Box>
     )

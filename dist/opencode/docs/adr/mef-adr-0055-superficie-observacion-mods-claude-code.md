@@ -111,9 +111,7 @@ La sesion del planner tiene su propio mod, que muestra que se esta haciendo y qu
     foco se anotan como su resultado, pero nunca lo cierran.
 - **Orden**: las listas vienen de `mefisto-next-order.sh --json`, y el orden de refinamiento de
   `--refinement`. El mod no calcula dependencias (decision 1).
-- **El planner no ejecuta**: el comando de un issue listo (`/mefisto-tooling N`, o el `/mefisto-sequential`
-  del batch) se escribe sin Enter en el pane de ejecucion de herdr (`herdr pane send-text`). Si no hay pane
-  hermano con etiqueta `ejecucion`, va al portapapeles.
+- **El planner no lanza trabajo**: la lista de listos es solo lectura, sin acciones. Lanzar `/mefisto-tooling` o `/mefisto-sequential` no es tarea del planner; esa superficie se resolvera aparte.
 - **Alto fijo**: la lista ocupa siempre las mismas filas y pagina con `0`, asi que la banda no cambia de alto
   con la cantidad de issues.
 
