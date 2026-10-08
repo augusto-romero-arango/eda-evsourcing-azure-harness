@@ -98,7 +98,7 @@ El mod activa el modo: su hook `tool.call` antepone `MEFISTO_UI=mod` al comando 
 - Las funciones que reciben `$` se declaran en el nivel superior del modulo. `claude plugin validate` rechaza pasar `$` a closures.
 - El estado que dibuja va en `$.state` (atoms), no en variables del modulo, porque sobrevive al hot-reload. En `session.start` se reabre cualquier seguimiento de proceso.
 - Antes de commitear, el mod pasa `claude plugin validate`, `claude plugin test` y `tsc` con el tsconfig del header de tipos.
-- Version minima: Claude Code 2.1.287, tambien para el plugin `mefisto` publicado, cuya presencia verifica `/onboard`.
+- Version minima: Claude Code 2.1.287, tambien para el plugin `mefisto` publicado; `/onboard` verifica esa version en el consumidor (#2083).
 
 ### 8. Tablero del planner
 
@@ -126,7 +126,7 @@ La raiz del plugin publicado la resuelve el propio tablero; el ADR no fija el me
   - Ambos terminan tambien con el cierre del planner (ver tabla). Los borradores creados en el
     foco se anotan como su resultado, pero nunca lo cierran.
 - **Orden**: las listas vienen del script de orden de la tabla con `--json`, y el orden de refinamiento de
-  `--refinement`. El mod no calcula dependencias (decision 1), tampoco el publicado.
+  `--refinement`. Ninguno de los dos tableros calcula dependencias (decision 1).
 - **El planner no lanza trabajo**: la lista de listos es solo lectura, sin acciones. Lanzar el pipeline de tooling o la cadena secuencial no es tarea del planner; esa superficie se resolvera aparte.
 - **Alto fijo**: la lista ocupa siempre las mismas filas y pagina con `0`, asi que la banda no cambia de alto
   con la cantidad de issues.
