@@ -1,13 +1,26 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { LogLine, MonitorRun } from '../types'
+import type { LogLine, MonitorRun, ReadyList } from '../types'
 import {
   HISTORY,
   LOG_DIR,
+  NEXT_ORDER,
+  PLANNER_AGENT,
+  READY_ROWS,
+  agentFlagOf,
   agentOfEventsFile,
+  clip,
   elapsed,
+  cropGrid,
   finishedFromHistory,
+  mascotPose,
+  padEnd,
+  pageOf,
+  parseNextOrder,
+  reasonOf,
+  sequentialOf,
+  waitingFace,
   parseEvent,
   pickEventsFile,
   prNumber,
@@ -15,8 +28,10 @@ import {
   statusPath,
   steps,
   toolingIssueOf,
+  usedColumns,
   withModUi,
 } from './logic'
+import { DEFAULT_COLOR, HEIGHT, PALETTE, RASTER_ROWS, face, sprite } from './sprites'
 
 const PANE = 'mefisto-monitor'
 const MAX_LINES = 200
@@ -24,10 +39,49 @@ const STATUS_GRACE_MS = 30_000
 const PANE_ROWS = 16
 const FIXED_ROWS = 7
 const PR_CHECK_MS = 15_000
+const READY_POLL_MS = 60_000
+const SCRIPT_TIMEOUT_MS = 180_000
+
+// Recorte comun a todos los cuadros que usa el monitor, calculado una vez: sin margen y sin saltos al alternar.
+const MASCOT_POSES = [
+  ['desarrollador', 'trabajando'],
+  ['desarrollador', 'pensando'],
+  ['desarrollador', 'error'],
+  ['revisor', 'trabajando'],
+  ['revisor', 'pensando'],
+  ['revisor', 'corrigiendo'],
+  ['revisor', 'aprobado'],
+] as const
+const MASCOT_COLS = usedColumns([
+  ...MASCOT_POSES.flatMap(([role, state]) => [sprite(role, state, 0), sprite(role, state, 1)]),
+  face('normal'),
+])
+const MASCOT_WIDTH = MASCOT_COLS.to - MASCOT_COLS.from + 1
+
+/** Celdas del Raster (dos pixeles por celda con ▀/▄), como toRasterCells de sprites.ts pero con el ancho recortado. */
+function mascotCells(grid: readonly string[]): string {
+  const color = (ch: string | undefined) => (!ch || ch === '.' || ch === ' ' ? null : (PALETTE[ch] ?? null))
+  const words: number[] = []
+  for (let y = 0; y < HEIGHT; y += 2) {
+    for (let x = 0; x < MASCOT_WIDTH; x++) {
+      const top = color(grid[y]?.[x])
+      const bottom = color(grid[y + 1]?.[x])
+      if (top !== null) words.push(0x2580, top, bottom ?? DEFAULT_COLOR)
+      else if (bottom !== null) words.push(0x2584, bottom, DEFAULT_COLOR)
+      else words.push(0x20, DEFAULT_COLOR, DEFAULT_COLOR)
+    }
+  }
+  let bin = ''
+  for (const b of new Uint8Array(Uint32Array.from(words).buffer)) bin += String.fromCharCode(b)
+  return btoa(bin)
+}
 
 const runAtom = atom({ plugin: 'mefisto-monitor', key: 'run' } as const, null)
 const linesAtom = atom({ plugin: 'mefisto-monitor', key: 'lines' } as const, [])
 const nowAtom = atom({ plugin: 'mefisto-monitor', key: 'now' } as const, 0)
+const executionAtom = atom({ plugin: 'mefisto-monitor', key: 'isExecutionSession' } as const, false)
+const readyAtom = atom({ plugin: 'mefisto-monitor', key: 'ready' } as const, null)
+const readyPageAtom = atom({ plugin: 'mefisto-monitor', key: 'readyPage' } as const, 0)
 
 type Tail = { path: string; stream: AsyncGenerator<unknown, unknown> }
 
@@ -37,6 +91,8 @@ let isPolling = false
 // Una sesion no interactiva (los agentes de los pipelines) no tiene a nadie mirando: el mod no reescribe ni sigue nada.
 let isInteractive = false
 let lastPrCheckMs = 0
+let isRefreshingReady = false
+let readyTimer: { cancel: () => void } | null = null
 
 async function stopTail() {
   const current = tail
@@ -184,6 +240,7 @@ async function closeRun($: EngineInterface) {
   await update($, linesAtom, () => [])
   $.ui.status(undefined)
   await $.ui.close({ id: PANE })
+  void refreshReady($)
 }
 
 async function openPr($: EngineInterface) {
@@ -205,18 +262,56 @@ async function merge($: EngineInterface) {
   await $.command.run({ command: 'mefisto-merge', args: pr })
 }
 
+// La sesion de ejecucion es cualquier sesion interactiva que no sea la del planner: el planner no lanza
+// trabajo (su tablero deja los listos en solo lectura). Se lee el --agent de la linea de comando del
+// proceso de Claude Code, padre del `sh` que corre aqui; si no se puede leer, la sesion cuenta como de ejecucion.
+async function detectExecution($: EngineInterface) {
+  const ps = await $.process.run(['sh', '-c', 'ps -o args= -p "$PPID"']).catch(() => ({ exitCode: 1, stdout: '' }))
+  const cmdline = ps.exitCode === 0 ? ps.stdout.trim() : ''
+  if (agentFlagOf(cmdline) === PLANNER_AGENT) return
+  await update($, executionAtom, () => true)
+  readyTimer?.cancel()
+  readyTimer = $.clock.every(READY_POLL_MS, () => void refreshReady($))
+  void refreshReady($)
+}
+
+async function refreshReady($: EngineInterface) {
+  if (isRefreshingReady || !(await read($, executionAtom))) return
+  isRefreshingReady = true
+  try {
+    const { exitCode, stdout, stderr } = await $.process
+      .run([NEXT_ORDER, '--json'], { timeoutMs: SCRIPT_TIMEOUT_MS })
+      .catch(err => ({ exitCode: 2, stdout: '', stderr: String(err) }))
+    const ready: ReadyList = parseNextOrder(exitCode, stdout, stderr)
+    await update($, readyAtom, () => ready)
+  } finally {
+    isRefreshingReady = false
+  }
+}
+
+// La banda escribe el comando sin Enter: se lanza a mano, con la opcion de ajustarlo antes.
+async function fill($: EngineInterface, text: string) {
+  await $.prompt.fill({ text, mode: 'replace' })
+}
+
+async function nextReadyPage($: EngineInterface) {
+  const total = (await read($, readyAtom))?.items.length ?? 0
+  await update($, readyPageAtom, p => pageOf((p ?? 0) + 1, total, READY_ROWS).page)
+}
+
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     isInteractive = e.isInteractive
     await $.command.register({
       name: 'mefisto-monitor',
-      description: 'Abre el monitor de /mefisto-tooling (con <issue> sigue esa corrida; merge | close)',
-      argumentHint: '[issue|merge|close]',
+      description: 'Abre el monitor de /mefisto-tooling (con <issue> sigue esa corrida; merge | close | refresh)',
+      argumentHint: '[issue|merge|close|refresh]',
       immediate: true,
     })
     // Tras un hot-reload el tail del modulo anterior murio: se fuerza a reabrirlo.
     await update($, runAtom, run => (run && run.state === 'running' ? { ...run, eventsFile: null } : run))
     $.clock.every(1000, () => void poll($))
+    if (isInteractive) void detectExecution($)
     return next(e)
   })
 
@@ -241,6 +336,10 @@ export const register: Register = on => {
       await closeRun($)
       return { text: 'Monitor cerrado.' }
     }
+    if (arg === 'refresh') {
+      await refreshReady($)
+      return { text: 'Listos actualizados.' }
+    }
     if (arg === 'merge') {
       await merge($)
       return { text: 'Merge solicitado.' }
@@ -261,9 +360,89 @@ export const register: Register = on => {
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     const run = await read($, runAtom)
-    if (!run || e.props.hasSurvey) return next(e)
+    if (e.props.hasSurvey) return next(e)
+    if (!run && !(await read($, executionAtom))) return next(e)
     const now = await read($, nowAtom)
     const { Box, Text, Button } = $.ui.resolve(e)
+    if (!run) {
+      const ready = await read($, readyAtom)
+      const inner = Math.max(40, (e.props.bodyColumns ?? 80) - 4)
+      const body = Math.max(30, inner - MASCOT_WIDTH - 2)
+      const { page, pages } = pageOf(await read($, readyPageAtom), ready?.items.length ?? 0, READY_ROWS)
+      const visible = ready?.items.slice(page * READY_ROWS, (page + 1) * READY_ROWS) ?? []
+      const numWidth = Math.max(4, ...visible.map(i => String(i.number).length + 1))
+      const afterWidth = Math.min(16, Math.max(0, ...visible.map(i => reasonOf(i).length)))
+      // El prefijo '5: ' de la tecla, el numero, un espacio y, si alguno depende de otro, la columna 'tras #N'.
+      const titleWidth = Math.max(12, body - 3 - numWidth - 1 - (afterWidth > 0 ? afterWidth + 2 : 0))
+      const more = ready
+        ? [
+            ready.blockedCount > 0 ? `${ready.blockedCount} bloqueados` : '',
+            ready.cycleCount > 0 ? `${ready.cycleCount} en ciclo` : '',
+          ].filter(Boolean).join(' · ')
+        : ''
+      // En espera de que se lance algo; mientras Claude trabaja en la sesion, mira de lado a lado y corre la arena.
+      const tick = e.props.isWorking ? Math.floor((now || Date.now()) / 1000) : null
+      const grid = cropGrid(waitingFace(face('normal'), tick), MASCOT_COLS)
+      const elements = $.ui.resolve(e)
+      const mascot =
+        'Raster' in elements ? (
+          <elements.Raster key="mefisto-mascota" columns={MASCOT_WIDTH} rows={RASTER_ROWS} cells={mascotCells(grid)} />
+        ) : (
+          <Box width={MASCOT_WIDTH} />
+        )
+      return (
+        <Box flexDirection="column" borderStyle="round" borderColor="claude" borderDimColor paddingX={1}>
+          <Box justifyContent="space-between">
+            <Text>
+              <Text color="claude">mefisto</Text>
+              <Text dimColor> · listos {ready ? ready.items.length : '…'}</Text>
+            </Text>
+            {ready?.launch ? (
+              <Button key="ready-all" hotkey="1" plain label={clip(ready.launch, inner - 24)} onPress={() => void fill($, ready.launch ?? '')} />
+            ) : (
+              <Text dimColor>sin batch lanzable</Text>
+            )}
+          </Box>
+          <Box gap={2} height={RASTER_ROWS + 1} alignItems="flex-start">
+            {mascot}
+            <Box flexDirection="column" width={body} marginTop={1}>
+              {!ready && <Text dimColor>cargando…</Text>}
+              {ready?.error && <Text color="error">next-order falló: {clip(ready.error, body - 20)}</Text>}
+              {ready && !ready.error && visible.length === 0 && <Text dimColor>Sin issues lanzables.</Text>}
+              {visible.map((item, i) => {
+                const reason = reasonOf(item)
+                return (
+                  <Box>
+                    <Button
+                      key={`ready-${item.number}`}
+                      hotkey={String(i + 5)}
+                      plain
+                      dimColor={page > 0 || i > 0}
+                      label={`${padEnd(`#${item.number}`, numWidth)} ${padEnd(clip(item.title, titleWidth), titleWidth)}`}
+                      onPress={() => void fill($, sequentialOf(item.number))}
+                    />
+                    <Text dimColor>{reason ? `  ${clip(reason, afterWidth)}` : ''}</Text>
+                  </Box>
+                )
+              })}
+              {Array.from({ length: Math.max(0, READY_ROWS - Math.max(visible.length, 1)) }, (_, i) => (
+                <Text key={`ready-blank-${i}`}> </Text>
+              ))}
+              <Box justifyContent="space-between">
+                <Text dimColor wrap="truncate-end">1 todos · 5-9 uno · al prompt, sin Enter</Text>
+                <Box gap={2}>
+                  {more !== '' && <Text dimColor>{more}</Text>}
+                  {pages > 1 && (
+                    <Button key="ready-page" hotkey="0" plain dimColor label={`página ${page + 1}/${pages} ▸`}
+                      onPress={() => void nextReadyPage($)} />
+                  )}
+                </Box>
+              </Box>
+            </Box>
+          </Box>
+        </Box>
+      )
+    }
     if (run.state === 'running') {
       return (
         <Box>
@@ -306,47 +485,65 @@ export const register: Register = on => {
     const end = run.finishedMs ?? (now || Date.now())
     const pr = prNumber(run.pr)
 
+    // La pose cambia con cada evento; mientras corre, el poll de cada segundo alterna el cuadro A/B.
+    const pose = mascotPose(run, lines[lines.length - 1])
+    const frame = run.state === 'running' ? (Math.floor((now || Date.now()) / 1000) % 2 === 0 ? 0 : 1) : 0
+    const grid = cropGrid(sprite(pose.role, pose.state, frame), MASCOT_COLS)
+    const elements = $.ui.resolve(e)
+    const mascot =
+      'Raster' in elements ? (
+        <elements.Raster key="mefisto-mascota" columns={MASCOT_WIDTH} rows={RASTER_ROWS} cells={mascotCells(grid)} />
+      ) : (
+        <Box width={MASCOT_WIDTH} />
+      )
+    const inner = Math.max(20, width - MASCOT_WIDTH - 2)
+
     return (
       <Box flexDirection="column" width={width}>
-        <Box justifyContent="space-between">
-          <Text bold color="claude">mefisto-tooling #{run.issue}</Text>
-          <Text dimColor>{elapsed(end - run.startedMs)}</Text>
-        </Box>
-        {run.title !== '' && <Text wrap="truncate-end">{run.title}</Text>}
-        <Box>
-          {steps(run).map((s, i) => (
-            <Text
-              color={s.mark === 'done' ? 'success' : s.mark === 'failed' ? 'error' : s.mark === 'current' ? 'warning' : undefined}
-              dimColor={s.mark === 'pending'}
-            >
-              {i > 0 ? ' ─ ' : ''}
-              {s.mark === 'done' ? '✓' : s.mark === 'failed' ? '✗' : s.mark === 'current' ? '●' : '○'} {s.name}
-              {agentDuration(run, s.name)}
-            </Text>
-          ))}
-        </Box>
-        {run.state === 'completed' && (
-          <Box flexDirection="column">
-            <Box gap={3}>
-              <Text color="success" bold>✓ {pr ? `PR #${pr} creado` : 'terminado'}</Text>
-              {pr && <Button key="merge" hotkey="m" plain variant="primary" label={`Mergear #${pr}`} onPress={() => void merge($)} />}
-              {pr && <Button key="web" hotkey="v" plain label="Ver en GitHub" onPress={() => void openPr($)} />}
-              <Button key="close" hotkey="c" plain label="Cerrar monitor" role="dismiss" onPress={() => void closeRun($)} />
+        <Box gap={2}>
+          {mascot}
+          <Box flexDirection="column" width={inner}>
+            <Box justifyContent="space-between">
+              <Text bold color="claude">mefisto-tooling #{run.issue}</Text>
+              <Text dimColor>{elapsed(end - run.startedMs)}</Text>
             </Box>
-            <Text dimColor wrap="truncate-end">
-              {pr ? `m: /mefisto-merge ${pr} (squash + borra rama) · ` : ''}c: oculta el monitor, no toca el PR · ctrl+x tab enfoca · esc vuelve al prompt
-            </Text>
-          </Box>
-        )}
-        {run.state === 'failed' && (
-          <Box flexDirection="column">
-            <Text color="error" wrap="wrap">✗ falló en {stageName(run.stage)}{run.lastError ? `: ${run.lastError}` : ''}</Text>
-            <Box gap={2}>
-              <Button key="close" hotkey="c" plain label="Cerrar monitor" role="dismiss" onPress={() => void closeRun($)} />
+            {run.title !== '' && <Text wrap="truncate-end">{run.title}</Text>}
+            <Box>
+              {steps(run).map((s, i) => (
+                <Text
+                  color={s.mark === 'done' ? 'success' : s.mark === 'failed' ? 'error' : s.mark === 'current' ? 'warning' : undefined}
+                  dimColor={s.mark === 'pending'}
+                >
+                  {i > 0 ? ' ─ ' : ''}
+                  {s.mark === 'done' ? '✓' : s.mark === 'failed' ? '✗' : s.mark === 'current' ? '●' : '○'} {s.name}
+                  {agentDuration(run, s.name)}
+                </Text>
+              ))}
             </Box>
+            {run.state === 'completed' && (
+              <Box flexDirection="column">
+                <Box gap={3}>
+                  <Text color="success" bold>✓ {pr ? `PR #${pr} creado` : 'terminado'}</Text>
+                  {pr && <Button key="merge" hotkey="m" plain variant="primary" label={`Mergear #${pr}`} onPress={() => void merge($)} />}
+                  {pr && <Button key="web" hotkey="v" plain label="Ver en GitHub" onPress={() => void openPr($)} />}
+                  <Button key="close" hotkey="c" plain label="Cerrar monitor" role="dismiss" onPress={() => void closeRun($)} />
+                </Box>
+                <Text dimColor wrap="truncate-end">
+                  {pr ? `m: /mefisto-merge ${pr} (squash + borra rama) · ` : ''}c: oculta el monitor, no toca el PR · ctrl+x tab enfoca · esc vuelve al prompt
+                </Text>
+              </Box>
+            )}
+            {run.state === 'failed' && (
+              <Box flexDirection="column">
+                <Text color="error" wrap="wrap">✗ falló en {stageName(run.stage)}{run.lastError ? `: ${run.lastError}` : ''}</Text>
+                <Box gap={2}>
+                  <Button key="close" hotkey="c" plain label="Cerrar monitor" role="dismiss" onPress={() => void closeRun($)} />
+                </Box>
+              </Box>
+            )}
+            {run.state === 'running' && <Text dimColor>ctrl+x tab enfoca · esc vuelve al prompt · /mefisto-monitor reabre</Text>}
           </Box>
-        )}
-        {run.state === 'running' && <Text dimColor>ctrl+x tab enfoca · esc vuelve al prompt · /mefisto-monitor reabre</Text>}
+        </Box>
         <Text dimColor>{'─'.repeat(Math.min(width, 80))}</Text>
         <Box flexDirection="column">
           {lines.length === 0 && <Text dimColor>esperando eventos del agente…</Text>}

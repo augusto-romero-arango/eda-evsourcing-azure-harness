@@ -1,4 +1,4 @@
-import type { LogLine, MonitorAgent, MonitorRun } from '../types'
+import type { LogLine, MonitorAgent, MonitorRun, ReadyItem, ReadyList } from '../types'
 
 export const STATE_DIR = '.mefisto/pipeline'
 export const LOG_DIR = `${STATE_DIR}/logs`
@@ -106,7 +106,7 @@ export function agentOfEventsFile(name: string): string {
   return EVENTS.exec(name)?.[2] ?? ''
 }
 
-const clip = (text: string, max: number) => {
+export const clip = (text: string, max: number) => {
   const one = text.replace(/\s+/g, ' ').trim()
   return one.length > max ? `${one.slice(0, max - 1)}…` : one
 }
@@ -185,4 +185,124 @@ export function elapsed(ms: number): string {
 
 export function prNumber(pr: string | null): string | null {
   return pr ? (/(\d+)\/?$/.exec(pr)?.[1] ?? null) : null
+}
+
+export type MascotPose = { role: 'desarrollador' | 'revisor'; state: string }
+
+const EDITS = /^(Edit|Write|MultiEdit|NotebookEdit)\b/
+
+/** El rol sale del stage y la pose del ultimo evento: herramienta trabaja, texto piensa, edicion del reviewer corrige. */
+export function mascotPose(run: MonitorRun, last: LogLine | undefined): MascotPose {
+  if (run.state === 'completed') return { role: 'revisor', state: 'aprobado' }
+  if (run.state === 'failed') return { role: 'desarrollador', state: 'error' }
+  const role = run.stage === '2-reviewer' ? 'revisor' : 'desarrollador'
+  if (!last || last.kind !== 'tool') return { role, state: 'pensando' }
+  if (role === 'revisor' && EDITS.test(last.text)) return { role, state: 'corrigiendo' }
+  return { role, state: 'trabajando' }
+}
+
+type Grid = readonly string[]
+
+/** Columnas con algun pixel visible en cualquiera de los cuadros: recorta el margen sin que la mascota salte. */
+export function usedColumns(grids: readonly Grid[]): { from: number; to: number } {
+  let from = Infinity
+  let to = -1
+  for (const g of grids) {
+    for (const row of g) {
+      for (let x = 0; x < row.length; x++) {
+        const c = row[x]
+        if (c !== '.' && c !== ' ') {
+          from = Math.min(from, x)
+          to = Math.max(to, x)
+        }
+      }
+    }
+  }
+  return to < 0 ? { from: 0, to: 0 } : { from, to }
+}
+
+export function cropGrid(grid: Grid, cols: { from: number; to: number }): Grid {
+  return grid.map(row => row.slice(cols.from, cols.to + 1).padEnd(cols.to - cols.from + 1, '.'))
+}
+
+export const NEXT_ORDER = './.claude/scripts/mefisto-next-order.sh'
+export const PLANNER_AGENT = 'mefisto-planner'
+/** Filas fijas de la lista de listos: la banda no cambia de alto con la cantidad de issues. */
+export const READY_ROWS = 5
+
+type NextOrderJson = {
+  items?: { number: number; title: string; after?: number[] }[]
+  blocked?: unknown[]
+  cycles?: unknown[]
+  launch?: string | null
+}
+
+/** Exit 0 (hay orden) y 1 (vacio) traen JSON valido; 2 es un fallo de gh o de argumentos. */
+export function parseNextOrder(exitCode: number, stdout: string, stderr: string): ReadyList {
+  const empty = { items: [], blockedCount: 0, cycleCount: 0, launch: null }
+  if (exitCode !== 0 && exitCode !== 1) {
+    return { ...empty, error: stderr.split('\n').find(l => l.trim() !== '')?.trim() || `exit ${exitCode}` }
+  }
+  let json: NextOrderJson
+  try {
+    json = JSON.parse(stdout)
+  } catch {
+    return { ...empty, error: 'salida de next-order no es JSON' }
+  }
+  return {
+    items: (json.items ?? []).map(i => ({ number: i.number, title: i.title, after: i.after ?? [] })),
+    blockedCount: (json.blocked ?? []).length,
+    cycleCount: (json.cycles ?? []).length,
+    launch: json.launch ?? null,
+    error: null,
+  }
+}
+
+/** Todo se lanza por /mefisto-sequential, aunque sea un solo issue: la cadena mergea y sincroniza main. */
+export const sequentialOf = (issue: number) => `/mefisto-sequential ${issue}`
+
+export function reasonOf(item: ReadyItem): string {
+  return item.after.length > 0 ? `tras ${item.after.map(n => `#${n}`).join(' ')}` : ''
+}
+
+export function padEnd(text: string, width: number): string {
+  return text.length >= width ? text : text + ' '.repeat(width - text.length)
+}
+
+/** Pagina valida (0-based) para una lista de `total` items; vuelve a 0 si la lista se achico. */
+export function pageOf(page: number, total: number, size: number): { page: number; pages: number } {
+  const pages = Math.max(1, Math.ceil(total / size))
+  return { page: page >= 0 && page < pages ? page : 0, pages }
+}
+
+/** El `--agent` de una linea de comando de Claude Code (`--agent x` o `--agent=x`), o null. */
+export function agentFlagOf(cmdline: string): string | null {
+  const m = /(?:^|\s)--agent(?:=|\s+)(\S+)/.exec(cmdline)
+  return m ? (m[1] ?? null) : null
+}
+
+/**
+ * Mefisto en espera, sobre la cara 'normal': boca plana corrida a un lado y un reloj de arena a la izquierda.
+ * Mientras Claude trabaja en la sesion, en cada tick los ojos miran de un lado al otro y la arena cambia de
+ * mitad; en reposo mira al frente con la arena arriba.
+ */
+const HOURGLASS = [
+  ['YYYY', 'gyyg', '.yg.', 'g..g', 'g..g', 'YYYY'],
+  ['YYYY', 'g..g', '.gg.', 'g..g', 'gyyg', 'YYYY'],
+] as const
+
+export function waitingFace(base: Grid, tick: number | null): Grid {
+  const eyes =
+    tick === null ? ['.....rrEErrEErr.tt', '.....rrEErrEErr..t']
+    : tick % 2 === 0 ? ['.....rEErrEErrr.tt', '.....rEErrEErrr..t']
+    : ['.....rrrEErrEEr.tt', '.....rrrEErrEEr..t']
+  const glass = HOURGLASS[tick !== null && tick % 2 === 1 ? 1 : 0]
+  return base.map((row, y) => {
+    let out = row
+    if (y === 6 || y === 7) out = eyes[y - 6] ?? out
+    if (y === 9) out = '......rrrrMMMr..t.'
+    const g = y >= 6 ? glass[y - 6] : undefined
+    if (g) out = [...out].map((c, x) => (x < g.length && g[x] !== '.' ? g[x] : c)).join('')
+    return out
+  })
 }
