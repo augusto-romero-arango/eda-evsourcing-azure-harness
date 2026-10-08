@@ -116,6 +116,11 @@ export function topicOf(prompt: string): string {
   return clip(line.replace(/^quiero explorar:\s*/i, ''), 70)
 }
 
+/** Un cambio de issues hecho por el planner (crear, editar, cerrar, reabrir): sus listas pueden haber cambiado. */
+export function isIssueChange(command: string): boolean {
+  return /\bgh\s+issue\s+(create|edit|close|reopen)\b/.test(command)
+}
+
 export function isIssueCreate(command: string): boolean {
   return /\bgh\s+issue\s+create\b/.test(command)
 }

@@ -16,7 +16,9 @@ export type MonitorRun = {
 export type ReadyItem = { number: number; title: string; after: number[] }
 
 /** Listos en el orden de mefisto-next-order.sh, con la linea de /mefisto-sequential que los lanza a todos. */
-export type ReadyList = { items: ReadyItem[]; blockedCount: number; cycleCount: number; launch: string | null; error: string | null }
+export type BlockedItem = { number: number; title: string; by: number[] }
+
+export type ReadyList = { items: ReadyItem[]; blocked: BlockedItem[]; cycleCount: number; launch: string | null; error: string | null }
 
 export type LogKind = 'start' | 'tool' | 'text' | 'fail' | 'done'
 
@@ -31,6 +33,7 @@ declare module 'claude-code' {
       isExecutionSession: boolean
       ready: ReadyList | null
       readyPage: number
+      pendingLaunch: number | null
     }
   }
 }

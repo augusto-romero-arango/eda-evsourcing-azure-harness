@@ -2,6 +2,7 @@ import { expect, test } from 'claude-code/testing'
 
 import {
   arrivals,
+  isIssueChange,
   createdIssueOf,
   isIssueCreate,
   cropGrid,
@@ -107,3 +108,10 @@ test('recorta las columnas vacias comunes a todos los cuadros', async () => {
   expect(cropGrid(a, { from: 2, to: 4 })).toEqual(['x..', '.x.'])
 })
 
+
+test('reconoce los cambios de issues que obligan a refrescar las listas', async () => {
+  expect(isIssueChange('gh issue edit 2080 --add-label estado:listo')).toBe(true)
+  expect(isIssueChange('gh issue create --title x')).toBe(true)
+  expect(isIssueChange('gh issue close 12')).toBe(true)
+  expect(isIssueChange('gh issue view 12')).toBe(false)
+})

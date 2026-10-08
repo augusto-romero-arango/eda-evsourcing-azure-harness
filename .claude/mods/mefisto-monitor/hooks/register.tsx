@@ -18,8 +18,10 @@ import {
   padEnd,
   pageOf,
   parseNextOrder,
-  reasonOf,
+  readyRows,
   sequentialOf,
+  titlesOf,
+  toolingOf,
   waitingFace,
   parseEvent,
   pickEventsFile,
@@ -40,6 +42,7 @@ const PANE_ROWS = 16
 const FIXED_ROWS = 7
 const PR_CHECK_MS = 15_000
 const READY_POLL_MS = 60_000
+const BAND_LOG_ROWS = 3
 const SCRIPT_TIMEOUT_MS = 180_000
 
 // Recorte comun a todos los cuadros que usa el monitor, calculado una vez: sin margen y sin saltos al alternar.
@@ -82,6 +85,7 @@ const nowAtom = atom({ plugin: 'mefisto-monitor', key: 'now' } as const, 0)
 const executionAtom = atom({ plugin: 'mefisto-monitor', key: 'isExecutionSession' } as const, false)
 const readyAtom = atom({ plugin: 'mefisto-monitor', key: 'ready' } as const, null)
 const readyPageAtom = atom({ plugin: 'mefisto-monitor', key: 'readyPage' } as const, 0)
+const pendingAtom = atom({ plugin: 'mefisto-monitor', key: 'pendingLaunch' } as const, null)
 
 type Tail = { path: string; stream: AsyncGenerator<unknown, unknown> }
 
@@ -153,7 +157,6 @@ async function watch($: EngineInterface, issue: string, sinceMs: number) {
 
 async function finish($: EngineInterface, run: MonitorRun) {
   await stopTail()
-  await openPane($, true).catch(() => undefined)
   if (run.state === 'completed') {
     const pr = prNumber(run.pr)
     $.ui.toast(pr ? `#${run.issue} terminó · PR #${pr} listo` : `#${run.issue} terminó`)
@@ -279,10 +282,15 @@ async function refreshReady($: EngineInterface) {
   if (isRefreshingReady || !(await read($, executionAtom))) return
   isRefreshingReady = true
   try {
-    const { exitCode, stdout, stderr } = await $.process
-      .run([NEXT_ORDER, '--json'], { timeoutMs: SCRIPT_TIMEOUT_MS })
-      .catch(err => ({ exitCode: 2, stdout: '', stderr: String(err) }))
-    const ready: ReadyList = parseNextOrder(exitCode, stdout, stderr)
+    const [order, listos] = await Promise.all([
+      $.process
+        .run([NEXT_ORDER, '--json'], { timeoutMs: SCRIPT_TIMEOUT_MS })
+        .catch(err => ({ exitCode: 2, stdout: '', stderr: String(err) })),
+      $.process
+        .run(['gh', 'issue', 'list', '--state', 'open', '--label', 'estado:listo', '--limit', '200', '--json', 'number,title'])
+        .catch(() => ({ exitCode: 1, stdout: '' })),
+    ])
+    const ready: ReadyList = parseNextOrder(order.exitCode, order.stdout, order.stderr, titlesOf(listos.stdout))
     await update($, readyAtom, () => ready)
   } finally {
     isRefreshingReady = false
@@ -291,11 +299,18 @@ async function refreshReady($: EngineInterface) {
 
 // La banda escribe el comando sin Enter: se lanza a mano, con la opcion de ajustarlo antes.
 async function fill($: EngineInterface, text: string) {
+  await update($, pendingAtom, () => null)
   await $.prompt.fill({ text, mode: 'replace' })
 }
 
+// Un solo issue pregunta en la banda si va con merge automatico (sequential, el default) o deja el PR (tooling).
+async function choose($: EngineInterface, issue: number | null) {
+  await update($, pendingAtom, () => issue)
+}
+
 async function nextReadyPage($: EngineInterface) {
-  const total = (await read($, readyAtom))?.items.length ?? 0
+  const ready = await read($, readyAtom)
+  const total = ready ? readyRows(ready).length : 0
   await update($, readyPageAtom, p => pageOf((p ?? 0) + 1, total, READY_ROWS).page)
 }
 
@@ -321,11 +336,6 @@ export const register: Register = on => {
     const ran = await next({ ...e, command: withModUi(e.command) })
     if (ran.deny === undefined && ran.isError !== true) {
       await watch($, issue, Date.now() - 5_000)
-      const opened = await openPane($)
-      if (!opened.isPlaced) {
-        $.ui.log(`mefisto-monitor: el pane espera sin dibujarse (${opened.reason}). Ábrelo con /mefisto-monitor.`)
-        $.ui.toast('mefisto: usa /mefisto-monitor para ver el pane')
-      }
     }
     return ran
   })
@@ -344,7 +354,11 @@ export const register: Register = on => {
       await merge($)
       return { text: 'Merge solicitado.' }
     }
-    if (/^#?\d+$/.test(arg)) await watch($, arg.replace('#', ''), 0)
+    // La banda sigue la corrida; el pane es solo el log completo y se abre a pedido.
+    if (/^#?\d+$/.test(arg)) {
+      await watch($, arg.replace('#', ''), 0)
+      return { text: `Siguiendo #${arg.replace('#', '')} en la banda.` }
+    }
     await openPane($, true)
     return { text: 'Monitor abierto.' }
   })
@@ -366,17 +380,18 @@ export const register: Register = on => {
     const { Box, Text, Button } = $.ui.resolve(e)
     if (!run) {
       const ready = await read($, readyAtom)
+      const pending = await read($, pendingAtom)
       const inner = Math.max(40, (e.props.bodyColumns ?? 80) - 4)
       const body = Math.max(30, inner - MASCOT_WIDTH - 2)
-      const { page, pages } = pageOf(await read($, readyPageAtom), ready?.items.length ?? 0, READY_ROWS)
-      const visible = ready?.items.slice(page * READY_ROWS, (page + 1) * READY_ROWS) ?? []
+      const { page, pages } = pageOf(await read($, readyPageAtom), ready ? readyRows(ready).length : 0, READY_ROWS)
+      const rows = ready ? readyRows(ready) : []
+      const visible = rows.slice(page * READY_ROWS, (page + 1) * READY_ROWS)
       const numWidth = Math.max(4, ...visible.map(i => String(i.number).length + 1))
-      const afterWidth = Math.min(16, Math.max(0, ...visible.map(i => reasonOf(i).length)))
+      const afterWidth = Math.min(24, Math.max(0, ...visible.map(i => i.reason.length)))
       // El prefijo '5: ' de la tecla, el numero, un espacio y, si alguno depende de otro, la columna 'tras #N'.
       const titleWidth = Math.max(12, body - 3 - numWidth - 1 - (afterWidth > 0 ? afterWidth + 2 : 0))
       const more = ready
         ? [
-            ready.blockedCount > 0 ? `${ready.blockedCount} bloqueados` : '',
             ready.cycleCount > 0 ? `${ready.cycleCount} en ciclo` : '',
           ].filter(Boolean).join(' · ')
         : ''
@@ -395,9 +410,20 @@ export const register: Register = on => {
           <Box justifyContent="space-between">
             <Text>
               <Text color="claude">mefisto</Text>
-              <Text dimColor> · listos {ready ? ready.items.length : '…'}</Text>
+              {pending !== null ? (
+                <Text color="warning"> · #{pending}</Text>
+              ) : (
+                <Text dimColor> · listos {ready ? readyRows(ready).length : '…'}</Text>
+              )}
             </Text>
-            {ready?.launch ? (
+            {pending !== null ? (
+              <Box gap={2}>
+                <Button key="launch-sequential" hotkey="1" plain variant="primary" label="con merge"
+                  onPress={() => void fill($, sequentialOf(pending))} />
+                <Button key="launch-tooling" hotkey="2" plain label="solo PR" onPress={() => void fill($, toolingOf(pending))} />
+                <Button key="launch-cancel" hotkey="3" plain dimColor label="cancelar" onPress={() => void choose($, null)} />
+              </Box>
+            ) : ready?.launch ? (
               <Button key="ready-all" hotkey="1" plain label={clip(ready.launch, inner - 24)} onPress={() => void fill($, ready.launch ?? '')} />
             ) : (
               <Text dimColor>sin batch lanzable</Text>
@@ -408,20 +434,24 @@ export const register: Register = on => {
             <Box flexDirection="column" width={body} marginTop={1}>
               {!ready && <Text dimColor>cargando…</Text>}
               {ready?.error && <Text color="error">next-order falló: {clip(ready.error, body - 20)}</Text>}
-              {ready && !ready.error && visible.length === 0 && <Text dimColor>Sin issues lanzables.</Text>}
+              {ready && !ready.error && visible.length === 0 && <Text dimColor>Sin issues en estado:listo.</Text>}
               {visible.map((item, i) => {
-                const reason = reasonOf(item)
+                const label = `${padEnd(`#${item.number}`, numWidth)} ${padEnd(clip(item.title, titleWidth), titleWidth)}`
                 return (
                   <Box>
-                    <Button
-                      key={`ready-${item.number}`}
-                      hotkey={String(i + 5)}
-                      plain
-                      dimColor={page > 0 || i > 0}
-                      label={`${padEnd(`#${item.number}`, numWidth)} ${padEnd(clip(item.title, titleWidth), titleWidth)}`}
-                      onPress={() => void fill($, sequentialOf(item.number))}
-                    />
-                    <Text dimColor>{reason ? `  ${clip(reason, afterWidth)}` : ''}</Text>
+                    {item.isLaunchable ? (
+                      <Button
+                        key={`ready-${item.number}`}
+                        hotkey={String(i + 5)}
+                        plain
+                        dimColor={page > 0 || i > 0}
+                        label={label}
+                        onPress={() => void choose($, item.number)}
+                      />
+                    ) : (
+                      <Text dimColor>{`   ${label}`}</Text>
+                    )}
+                    <Text dimColor>{item.reason ? `  ${clip(item.reason, afterWidth)}` : ''}</Text>
                   </Box>
                 )
               })}
@@ -429,9 +459,13 @@ export const register: Register = on => {
                 <Text key={`ready-blank-${i}`}> </Text>
               ))}
               <Box justifyContent="space-between">
-                <Text dimColor wrap="truncate-end">1 todos · 5-9 uno · al prompt, sin Enter</Text>
+                <Text dimColor wrap="truncate-end">
+                  {pending !== null
+                    ? '1 /mefisto-sequential: mergea solo · 2 /mefisto-tooling: deja el PR'
+                    : '1 todos · 5-9 uno (con o sin merge) · al prompt, sin Enter'}
+                </Text>
                 <Box gap={2}>
-                  {more !== '' && <Text dimColor>{more}</Text>}
+                  {pending === null && more !== '' && <Text dimColor>{more}</Text>}
                   {pages > 1 && (
                     <Button key="ready-page" hotkey="0" plain dimColor label={`página ${page + 1}/${pages} ▸`}
                       onPress={() => void nextReadyPage($)} />
@@ -443,27 +477,67 @@ export const register: Register = on => {
         </Box>
       )
     }
-    if (run.state === 'running') {
-      return (
-        <Box>
-          <Text color="claude">mefisto</Text>
-          <Text dimColor> · #{run.issue} {stageName(run.stage)} {elapsed((now || Date.now()) - run.startedMs)}</Text>
-        </Box>
-      )
-    }
+    // La corrida ocupa la misma banda que la espera: la mascota del agente activo, los pasos y lo ultimo que hizo.
+    const lines = await read($, linesAtom)
+    const inner = Math.max(40, (e.props.bodyColumns ?? 80) - 4)
+    const body = Math.max(30, inner - MASCOT_WIDTH - 2)
+    const end = run.finishedMs ?? (now || Date.now())
     const pr = prNumber(run.pr)
+    const pose = mascotPose(run, lines[lines.length - 1])
+    const frame = run.state === 'running' ? (Math.floor((now || Date.now()) / 1000) % 2 === 0 ? 0 : 1) : 0
+    const grid = cropGrid(sprite(pose.role, pose.state, frame), MASCOT_COLS)
+    const elements = $.ui.resolve(e)
+    const mascot =
+      'Raster' in elements ? (
+        <elements.Raster key="mefisto-mascota" columns={MASCOT_WIDTH} rows={RASTER_ROWS} cells={mascotCells(grid)} />
+      ) : (
+        <Box width={MASCOT_WIDTH} />
+      )
+    const recent = lines.filter(l => l.ts !== '').slice(-BAND_LOG_ROWS)
     return (
-      <Box gap={3}>
-        <Text>
-          <Text color="claude">mefisto</Text>
-          <Text color={run.state === 'completed' ? 'success' : 'error'}>
-            {' '}#{run.issue} {run.state === 'completed' ? `✓ ${pr ? `PR #${pr}` : 'terminado'}` : `✗ ${stageName(run.stage)}`}
+      <Box flexDirection="column" borderStyle="round" borderColor="claude" borderDimColor paddingX={1}>
+        <Box justifyContent="space-between">
+          <Text wrap="truncate-end">
+            <Text color="claude">mefisto</Text>
+            {run.state === 'running' && <Text> · #{run.issue} {stageName(run.stage)}</Text>}
+            {run.state === 'completed' && <Text color="success"> · #{run.issue} ✓ {pr ? `PR #${pr}` : 'terminado'}</Text>}
+            {run.state === 'failed' && <Text color="error"> · #{run.issue} ✗ {stageName(run.stage)}</Text>}
+            <Text dimColor> {elapsed(end - run.startedMs)}</Text>
           </Text>
-        </Text>
-        {pr && <Button key="band-merge" hotkey="1" plain variant="primary" label={`Mergear #${pr}`} onPress={() => void merge($)} />}
-        {pr && <Button key="band-web" hotkey="2" plain label="Ver PR" onPress={() => void openPr($)} />}
-        <Button key="band-open" hotkey="3" plain label="Monitor" onPress={() => void openPane($, true)} />
-        <Button key="band-close" hotkey="4" plain label="Cerrar" onPress={() => void closeRun($)} />
+          <Box gap={2}>
+            {run.state === 'completed' && pr && (
+              <Button key="band-merge" hotkey="1" plain variant="primary" label="mergear" onPress={() => void merge($)} />
+            )}
+            {run.state === 'completed' && pr && <Button key="band-web" hotkey="2" plain label="ver PR" onPress={() => void openPr($)} />}
+            <Button key="band-open" hotkey="3" plain dimColor={run.state === 'running'} label="log" onPress={() => void openPane($, true)} />
+            {run.state !== 'running' && <Button key="band-close" hotkey="4" plain label="cerrar" onPress={() => void closeRun($)} />}
+          </Box>
+        </Box>
+        <Box gap={2} height={RASTER_ROWS + 1} alignItems="flex-start">
+          {mascot}
+          <Box flexDirection="column" width={body} marginTop={1}>
+            <Text wrap="truncate-end">
+              {steps(run).map((st, i) => (
+                <Text
+                  color={st.mark === 'done' ? 'success' : st.mark === 'failed' ? 'error' : st.mark === 'current' ? 'warning' : undefined}
+                  dimColor={st.mark === 'pending'}
+                >
+                  {i > 0 ? ' ─ ' : ''}
+                  {st.mark === 'done' ? '✓' : st.mark === 'failed' ? '✗' : st.mark === 'current' ? '●' : '○'} {st.name}
+                </Text>
+              ))}
+            </Text>
+            {run.title !== '' && <Text dimColor wrap="truncate-end">{run.title}</Text>}
+            {run.state === 'failed' && run.lastError && <Text color="error" wrap="truncate-end">{run.lastError}</Text>}
+            {run.state === 'running' && recent.length === 0 && <Text dimColor>esperando eventos del agente…</Text>}
+            {run.state === 'running' &&
+              recent.map(line => (
+                <Text wrap="truncate-end" color={lineColor(line)} dimColor={line.kind === 'text'}>
+                  {`${line.ts} ${line.kind === 'text' ? '» ' : ''}${line.text}`}
+                </Text>
+              ))}
+          </Box>
+        </Box>
       </Box>
     )
   })
@@ -485,65 +559,47 @@ export const register: Register = on => {
     const end = run.finishedMs ?? (now || Date.now())
     const pr = prNumber(run.pr)
 
-    // La pose cambia con cada evento; mientras corre, el poll de cada segundo alterna el cuadro A/B.
-    const pose = mascotPose(run, lines[lines.length - 1])
-    const frame = run.state === 'running' ? (Math.floor((now || Date.now()) / 1000) % 2 === 0 ? 0 : 1) : 0
-    const grid = cropGrid(sprite(pose.role, pose.state, frame), MASCOT_COLS)
-    const elements = $.ui.resolve(e)
-    const mascot =
-      'Raster' in elements ? (
-        <elements.Raster key="mefisto-mascota" columns={MASCOT_WIDTH} rows={RASTER_ROWS} cells={mascotCells(grid)} />
-      ) : (
-        <Box width={MASCOT_WIDTH} />
-      )
-    const inner = Math.max(20, width - MASCOT_WIDTH - 2)
-
     return (
       <Box flexDirection="column" width={width}>
-        <Box gap={2}>
-          {mascot}
-          <Box flexDirection="column" width={inner}>
-            <Box justifyContent="space-between">
-              <Text bold color="claude">mefisto-tooling #{run.issue}</Text>
-              <Text dimColor>{elapsed(end - run.startedMs)}</Text>
-            </Box>
-            {run.title !== '' && <Text wrap="truncate-end">{run.title}</Text>}
-            <Box>
-              {steps(run).map((s, i) => (
-                <Text
-                  color={s.mark === 'done' ? 'success' : s.mark === 'failed' ? 'error' : s.mark === 'current' ? 'warning' : undefined}
-                  dimColor={s.mark === 'pending'}
-                >
-                  {i > 0 ? ' ─ ' : ''}
-                  {s.mark === 'done' ? '✓' : s.mark === 'failed' ? '✗' : s.mark === 'current' ? '●' : '○'} {s.name}
-                  {agentDuration(run, s.name)}
-                </Text>
-              ))}
-            </Box>
-            {run.state === 'completed' && (
-              <Box flexDirection="column">
-                <Box gap={3}>
-                  <Text color="success" bold>✓ {pr ? `PR #${pr} creado` : 'terminado'}</Text>
-                  {pr && <Button key="merge" hotkey="m" plain variant="primary" label={`Mergear #${pr}`} onPress={() => void merge($)} />}
-                  {pr && <Button key="web" hotkey="v" plain label="Ver en GitHub" onPress={() => void openPr($)} />}
-                  <Button key="close" hotkey="c" plain label="Cerrar monitor" role="dismiss" onPress={() => void closeRun($)} />
-                </Box>
-                <Text dimColor wrap="truncate-end">
-                  {pr ? `m: /mefisto-merge ${pr} (squash + borra rama) · ` : ''}c: oculta el monitor, no toca el PR · ctrl+x tab enfoca · esc vuelve al prompt
-                </Text>
-              </Box>
-            )}
-            {run.state === 'failed' && (
-              <Box flexDirection="column">
-                <Text color="error" wrap="wrap">✗ falló en {stageName(run.stage)}{run.lastError ? `: ${run.lastError}` : ''}</Text>
-                <Box gap={2}>
-                  <Button key="close" hotkey="c" plain label="Cerrar monitor" role="dismiss" onPress={() => void closeRun($)} />
-                </Box>
-              </Box>
-            )}
-            {run.state === 'running' && <Text dimColor>ctrl+x tab enfoca · esc vuelve al prompt · /mefisto-monitor reabre</Text>}
-          </Box>
+        <Box justifyContent="space-between">
+          <Text bold color="claude">mefisto-tooling #{run.issue}</Text>
+          <Text dimColor>{elapsed(end - run.startedMs)}</Text>
         </Box>
+        {run.title !== '' && <Text wrap="truncate-end">{run.title}</Text>}
+        <Box>
+          {steps(run).map((s, i) => (
+            <Text
+              color={s.mark === 'done' ? 'success' : s.mark === 'failed' ? 'error' : s.mark === 'current' ? 'warning' : undefined}
+              dimColor={s.mark === 'pending'}
+            >
+              {i > 0 ? ' ─ ' : ''}
+              {s.mark === 'done' ? '✓' : s.mark === 'failed' ? '✗' : s.mark === 'current' ? '●' : '○'} {s.name}
+              {agentDuration(run, s.name)}
+            </Text>
+          ))}
+        </Box>
+        {run.state === 'completed' && (
+          <Box flexDirection="column">
+            <Box gap={3}>
+              <Text color="success" bold>✓ {pr ? `PR #${pr} creado` : 'terminado'}</Text>
+              {pr && <Button key="merge" hotkey="m" plain variant="primary" label={`Mergear #${pr}`} onPress={() => void merge($)} />}
+              {pr && <Button key="web" hotkey="v" plain label="Ver en GitHub" onPress={() => void openPr($)} />}
+              <Button key="close" hotkey="c" plain label="Cerrar monitor" role="dismiss" onPress={() => void closeRun($)} />
+            </Box>
+            <Text dimColor wrap="truncate-end">
+              {pr ? `m: /mefisto-merge ${pr} (squash + borra rama) · ` : ''}c: oculta el monitor, no toca el PR · ctrl+x tab enfoca · esc vuelve al prompt
+            </Text>
+          </Box>
+        )}
+        {run.state === 'failed' && (
+          <Box flexDirection="column">
+            <Text color="error" wrap="wrap">✗ falló en {stageName(run.stage)}{run.lastError ? `: ${run.lastError}` : ''}</Text>
+            <Box gap={2}>
+              <Button key="close" hotkey="c" plain label="Cerrar monitor" role="dismiss" onPress={() => void closeRun($)} />
+            </Box>
+          </Box>
+        )}
+        {run.state === 'running' && <Text dimColor>ctrl+x tab enfoca · esc vuelve al prompt · /mefisto-monitor reabre</Text>}
         <Text dimColor>{'─'.repeat(Math.min(width, 80))}</Text>
         <Box flexDirection="column">
           {lines.length === 0 && <Text dimColor>esperando eventos del agente…</Text>}

@@ -12,6 +12,7 @@ import {
   createdIssueOf,
   createdText,
   cropGrid,
+  isIssueChange,
   isIssueCreate,
   usedColumns,
   mascotPose,
@@ -34,6 +35,9 @@ const PLANNER_AGENT = 'mefisto-planner'
 const POLL_MS = 60_000
 const SCRIPT_TIMEOUT_MS = 180_000
 const FLASH_MS = 8_000
+// GitHub tarda en reflejar un cambio en todas sus consultas: un refresco inmediato puede guardar la firma nueva
+// con listas viejas de next-order y el poll ya no vuelve a refrescar. Se repite forzado tras este margen.
+const SETTLE_MS = 15_000
 
 const activeAtom = atom({ plugin: 'mefisto-planner-board', key: 'isActive' } as const, false)
 const plannerAtom = atom({ plugin: 'mefisto-planner-board', key: 'isPlannerSession' } as const, false)
@@ -54,6 +58,7 @@ const knownAtom = atom({ plugin: 'mefisto-planner-board', key: 'known' } as cons
 
 let isInteractive = false
 let isRefreshing = false
+let settle: { cancel: () => void } | null = null
 let timer: { cancel: () => void } | null = null
 let animation: { cancel: () => void } | null = null
 const ANIMATION_MS = 600
@@ -211,7 +216,13 @@ async function onPrompt($: EngineInterface, text: string) {
   }
 }
 
+function refreshAfterSettle($: EngineInterface) {
+  settle?.cancel()
+  settle = $.clock.after(SETTLE_MS, () => void refresh($, true))
+}
+
 async function onBash($: EngineInterface, command: string, output: string) {
+  if (isIssueChange(command)) refreshAfterSettle($)
   const focus = await read($, focusAtom)
   if (!focus) return
   if (isIssueCreate(command)) {
