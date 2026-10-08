@@ -158,10 +158,7 @@ Tu rol:
 El usuario quiere convertir un draft en un issue listo.
 
 Tu rol:
-1. Pide el numero del draft o listalos:
-   ```bash
-   gh issue list --label "estado:borrador" --state open
-   ```
+1. Si el usuario no trae un numero, ejecuta `MEFISTO_RUNTIME=opencode ./.claude/scripts/mefisto-next-order.sh --refinement` y propon el que indica `Siguiente a refinar`. Es el orden de refinamiento de los borradores abiertos: un borrador que depende de otro va despues de el, y una dependencia ya `estado:listo` o cerrada no bloquea. Comenta los bloqueos y ciclos que reporte, y avisa de los borradores sin `## Dependencias`, que el paso 8 debe completar. No reordenes a mano: el script es la unica fuente del orden. El tablero del planner muestra este mismo orden (MEF-ADR-0055).
 2. Lee el issue: `gh issue view <num>`.
 3. Lee el codigo relevante. **Especialmente importante**: si el draft fue creado desde el consumidor (campo `author` del issue, o si menciona "investigacion en consumidor"), valora ese contexto pero verifica la causa raiz en el repo de Mefisto antes de afirmar la solucion.
 4. Haz las preguntas necesarias al usuario para completar la informacion.

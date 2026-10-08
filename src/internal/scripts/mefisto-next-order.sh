@@ -23,14 +23,26 @@
 # lectura (a diferencia del validador, nunca muta labels ni bodies).
 #
 # Uso:
-#   src/internal/scripts/mefisto-next-order.sh
-#   (sin argumentos: opera sobre TODO el universo 'estado:listo' abierto)
+#   src/internal/scripts/mefisto-next-order.sh [--refinement] [--json]
+#   (opera sobre TODO el universo abierto de su modo)
+#
+#   --refinement  Orden de REFINAMIENTO: el universo son los 'estado:borrador'
+#                 abiertos. Una dependencia ya 'estado:listo' (abierta) cuenta
+#                 como satisfecha: esta refinada y no impide refinar. Un
+#                 borrador que depende de otro va despues de el. Lo consume el
+#                 modo refinar de mefisto-planner y el tablero del planner
+#                 (MEF-ADR-0055). Sin el flag, orden de LANZAMIENTO de los
+#                 'estado:listo'.
+#   --json        Salida estructurada en vez de texto (un objeto JSON en
+#                 stdout, mismos exit codes): mode, items[] (number, title,
+#                 position, after[], hasDepsSection), blocked[] (number, by,
+#                 reason: external|indirect), cycles[][] y launch.
 #
 # Exit codes:
 #   0 -- hay al menos un issue lanzable (el orden no quedo vacio)
 #   1 -- no hay ningun issue lanzable (universo vacio, o todos los issues
 #        quedaron en ciclos y/o bloqueados)
-#   2 -- fallo 'gh issue list', o se invoco con argumentos (no acepta ninguno)
+#   2 -- fallo 'gh issue list', o se invoco con un argumento desconocido
 #
 # Universo de analisis (MEF-ADR-0011, Definition of Ready): exactamente los
 # issues 'estado:listo' Y abiertos -- ni borradores ni cerrados. El label
@@ -39,9 +51,8 @@
 # aqui simplemente entra al orden -- este script nunca muta ese label
 # (a diferencia de mefisto-validate-batch-deps.sh, que si lo hace).
 #
-# Extraccion de dependencias (segunda copia del mismo awk|grep de
-# mefisto-validate-batch-deps.sh -- MEF-ADR-0018, regla de tres: se extrae a
-# _mefisto-common.sh solo cuando aparezca un tercer consumidor): SOLO
+# Extraccion de dependencias (lib/mefisto-deps.sh, compartida con
+# mefisto-validate-batch-deps.sh -- MEF-ADR-0018, regla de tres): SOLO
 # dependencias forward de la seccion '## Dependencias' ('Depende de #N' /
 # 'Bloqueado por #N', case-insensitive); se ignoran 'Bloquea', 'Consumido
 # por' y la prosa libre. Una dependencia DENTRO del universo esta abierta por
@@ -71,6 +82,8 @@
 # La ultima linea de la salida es SIEMPRE la linea de lanzamiento
 # ('/mefisto-sequential <orden>', o '/mefisto-sequential (sin issues
 # lanzables)' si el orden quedo vacio) -- nunca una salida vacia con exit 0.
+# En --refinement es 'Siguiente a refinar: #N' (o '(sin borradores
+# refinables)'), y en --json 'launch' es null.
 #
 # No usa 'set -e' (mismo motivo que el validador: 'gh issue view' de una
 # dependencia puede ser un PR, y esa falla es esperada -- se cae a 'gh pr
@@ -78,18 +91,50 @@
 
 set -uo pipefail
 
-if [ "$#" -gt 0 ]; then
-    echo "ERROR: argumento desconocido: $*. Este script no acepta argumentos." >&2
-    echo "Uso: src/internal/scripts/mefisto-next-order.sh" >&2
-    exit 2
-fi
+# shellcheck source=/dev/null
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/mefisto-deps.sh"
+
+MODE="launch"
+AS_JSON=0
+for ARG in "$@"; do
+    case "$ARG" in
+        --refinement) MODE="refinement" ;;
+        --json) AS_JSON=1 ;;
+        *)
+            echo "ERROR: argumento desconocido: $ARG." >&2
+            echo "Uso: src/internal/scripts/mefisto-next-order.sh [--refinement] [--json]" >&2
+            exit 2
+            ;;
+    esac
+done
+
+LABEL="estado:listo"
+[ "$MODE" = "refinement" ] && LABEL="estado:borrador"
 
 ISSUE_LIMIT=200
 
-if ! ISSUES_JSON=$(gh issue list --label "estado:listo" --state open --limit "$ISSUE_LIMIT" --json number,title,body 2>/dev/null); then
-    echo "ERROR: fallo 'gh issue list --label estado:listo --state open'." >&2
+if ! ISSUES_JSON=$(gh issue list --label "$LABEL" --state open --limit "$ISSUE_LIMIT" --json number,title,body 2>/dev/null); then
+    echo "ERROR: fallo 'gh issue list --label $LABEL --state open'." >&2
     exit 2
 fi
+
+# En refinamiento, un 'estado:listo' abierto ya esta refinado: satisface la
+# dependencia de un borrador sin formar parte del universo.
+LISTO_NUMS=""
+if [ "$MODE" = "refinement" ]; then
+    if ! LISTO_NUMS=$(gh issue list --label "estado:listo" --state open --limit "$ISSUE_LIMIT" --json number -q '.[].number' 2>/dev/null); then
+        echo "ERROR: fallo 'gh issue list --label estado:listo --state open'." >&2
+        exit 2
+    fi
+fi
+
+is_listo() {
+    local target="$1" n
+    for n in $LISTO_NUMS; do
+        [ "$n" = "$target" ] && return 0
+    done
+    return 1
+}
 
 NUMS=$(echo "$ISSUES_JSON" | jq -r '.[].number' | sort -n)
 
@@ -149,13 +194,14 @@ NUM=()
 TITLE=()
 DEPS_IN=()      # dependencias abiertas intra-universo
 EXCLUDED=()     # 1 si ya se sabe que no puede entrar al orden
+HAS_SECTION=()  # 1 si el body declara '## Dependencias'
 BLOCKED_MSGS=""
+BLOCKED_TSV=""  # numero<TAB>dependencia<TAB>razon, para --json
 
 for ISSUE in $NUMS; do
-    DEPS=$(body_of "$ISSUE" \
-        | awk '/^##[[:space:]]*[Dd]ependencias/{f=1;next} /^##[[:space:]]/{f=0} f' \
-        | grep -ioE '(Depende de|Bloqueado por)[[:space:]]+#[0-9]+' \
-        | grep -oE '[0-9]+' | sort -u)
+    BODY=$(body_of "$ISSUE")
+    DEPS=$(printf '%s\n' "$BODY" | mefisto_forward_dependencies)
+    if printf '%s\n' "$BODY" | mefisto_has_dependencies_section; then SECTION=1; else SECTION=0; fi
 
     INSET=""
     IS_BLOCKED=0
@@ -165,15 +211,18 @@ for ISSUE in $NUMS; do
             INSET="$INSET $DEP"
             continue
         fi
+        is_listo "$DEP" && continue
         case "$(dep_state_of "$DEP")" in CLOSED|MERGED) continue ;; esac
         IS_BLOCKED=1
-        BLOCKED_MSGS="${BLOCKED_MSGS}#$ISSUE bloqueado por #$DEP: fuera de estado:listo, estado OPEN"$'\n'
+        BLOCKED_MSGS="${BLOCKED_MSGS}#$ISSUE bloqueado por #$DEP: fuera de $LABEL, estado OPEN"$'\n'
+        BLOCKED_TSV="${BLOCKED_TSV}$ISSUE"$'\t'"$DEP"$'\t'"external"$'\n'
     done
 
     NUM+=("$ISSUE")
     TITLE+=("$(title_of "$ISSUE")")
     DEPS_IN+=("$INSET")
     EXCLUDED+=("$IS_BLOCKED")
+    HAS_SECTION+=("$SECTION")
 done
 
 COUNT=${#NUM[@]}
@@ -240,6 +289,7 @@ done
 
 CYCLE_MSGS=""
 CYCLE_NUMS=""   # numeros de issue que son miembros de algun ciclo
+CYCLE_LINES=""  # un ciclo por linea, sus numeros separados por espacio
 COLOR=()
 STACK=()
 for ((i = 0; i < COUNT; i++)); do COLOR[i]="white"; done
@@ -256,13 +306,16 @@ emit_cycle() {
     local anchor="$1" pos path n k
     pos=$(stack_index_of "$anchor") || return 0
     path=""
+    members=""
     for ((k = pos; k < ${#STACK[@]}; k++)); do
         n=${NUM[${STACK[k]}]}
         case " $CYCLE_NUMS " in *" $n "*) ;; *) CYCLE_NUMS="$CYCLE_NUMS $n" ;; esac
         if [ -z "$path" ]; then path="#$n"; else path="$path -> #$n"; fi
+        members="$members $n"
     done
     path="$path -> #${NUM[anchor]}"
     CYCLE_MSGS="${CYCLE_MSGS}ciclo: $path"$'\n'
+    CYCLE_LINES="${CYCLE_LINES}${members# }"$'\n'
 }
 
 dfs_visit() {
@@ -300,10 +353,52 @@ for ((i = 0; i < COUNT; i++)); do
         DEP_IDX=$(index_of "$DEP") || continue
         [ "${RESOLVED[DEP_IDX]}" -eq 1 ] && continue
         INDIRECT_MSGS="${INDIRECT_MSGS}#${NUM[i]} bloqueado por #$DEP: excluido del orden"$'\n'
+        BLOCKED_TSV="${BLOCKED_TSV}${NUM[i]}"$'\t'"$DEP"$'\t'"indirect"$'\n'
     done
 done
 
 # --- Salida ------------------------------------------------------------------
+
+LAUNCH_NUMS=""
+for idx in ${ORDER[@]+"${ORDER[@]}"}; do
+    LAUNCH_NUMS="$LAUNCH_NUMS ${NUM[idx]}"
+done
+
+if [ "$AS_JSON" -eq 1 ]; then
+    ITEMS_TSV=""
+    pos=1
+    for idx in ${ORDER[@]+"${ORDER[@]}"}; do
+        ITEMS_TSV="${ITEMS_TSV}$pos"$'\t'"${NUM[idx]}"$'\t'"${HAS_SECTION[idx]}"$'\t'"${DEPS_IN[idx]# }"$'\t'"${TITLE[idx]}"$'\n'
+        pos=$((pos + 1))
+    done
+    LAUNCH_LINE=""
+    [ "$MODE" = "launch" ] && [ -n "$LAUNCH_NUMS" ] && LAUNCH_LINE="/mefisto-sequential$LAUNCH_NUMS"
+    jq -n \
+        --arg mode "$MODE" \
+        --arg items "$ITEMS_TSV" \
+        --arg blocked "$BLOCKED_TSV" \
+        --arg cycles "$CYCLE_LINES" \
+        --arg launch "$LAUNCH_LINE" '
+        def lines: split("\n") | map(select(length > 0));
+        def nums: split(" ") | map(select(length > 0) | tonumber);
+        {
+          mode: $mode,
+          items: ($items | lines | map(split("\t") | {
+            position: (.[0] | tonumber),
+            number: (.[1] | tonumber),
+            hasDepsSection: (.[2] == "1"),
+            after: (.[3] | nums | sort),
+            title: (.[4:] | join("\t"))
+          })),
+          blocked: ($blocked | lines | map(split("\t") | {
+            number: (.[0] | tonumber), by: (.[1] | tonumber), reason: .[2]
+          })),
+          cycles: ($cycles | lines | map(nums)),
+          launch: (if $launch == "" then null else $launch end)
+        }'
+    [ "${#ORDER[@]}" -gt 0 ] && exit 0
+    exit 1
+fi
 
 if [ -z "$CYCLE_MSGS" ] && [ -z "$BLOCKED_MSGS" ] && [ -z "$INDIRECT_MSGS" ]; then
     echo "Sin ciclos ni bloqueos externos."
@@ -314,7 +409,6 @@ echo
 
 if [ "${#ORDER[@]}" -gt 0 ]; then
     pos=1
-    LAUNCH_NUMS=""
     for idx in "${ORDER[@]}"; do
         if [ -z "${DEPS_IN[idx]}" ]; then
             JUST="sin dependencias abiertas"
@@ -324,12 +418,19 @@ if [ "${#ORDER[@]}" -gt 0 ]; then
             JUST="tras $(format_dep_list ${DEPS_IN[idx]})"
         fi
         echo "$pos. #${NUM[idx]} ${TITLE[idx]} -- $JUST"
-        LAUNCH_NUMS="$LAUNCH_NUMS ${NUM[idx]}"
         pos=$((pos + 1))
     done
-    echo "/mefisto-sequential$LAUNCH_NUMS"
+    if [ "$MODE" = "refinement" ]; then
+        echo "Siguiente a refinar: #${NUM[${ORDER[0]}]}"
+    else
+        echo "/mefisto-sequential$LAUNCH_NUMS"
+    fi
     exit 0
 fi
 
-echo "/mefisto-sequential (sin issues lanzables)"
+if [ "$MODE" = "refinement" ]; then
+    echo "Siguiente a refinar: (sin borradores refinables)"
+else
+    echo "/mefisto-sequential (sin issues lanzables)"
+fi
 exit 1
