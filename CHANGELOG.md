@@ -4,6 +4,35 @@ Todo cambio notable a este proyecto se documenta aquí. Sigue [Keep a Changelog]
 
 ## [Unreleased]
 
+## [0.42.1] - 2026-10-08
+
+### Changed
+
+- El `planner` incorpora la sección "Guardas de inventario de eventos": al agregar un evento, localiza los tests de inventario escritos a mano y los lista en "Impacto / Modifica" (lista exacta/conteo: eliminar o reemplazar por la guarda derivada por reflexión; tabla evento->topic: par `(typeof(Evento), "topic")` verificado contra Terraform), con item en el checklist pre-listo.
+- MEF-ADR-0036 se enmienda: las guardas de lista exacta o conteo de tipos persistidos no forman parte de los guardrails del marco (se eliminan o se reemplazan por el guardrail derivado; el borrado/renombre lo cubre el alias congelado).
+- `tdd-pipeline.sh`: el Gate 2 enruta de forma determinista al reviewer los rojos que son solo tests preexistentes no modificados (genera `blockage-report.md`); si el Gate 3 queda verde el PR ya no sale con label `bloqueado`, y si el reviewer modifico o elimino tests se crea un issue de revision en el repo consumidor al abrir el PR (#2062).
+- `reviewer`: la excepcion 2b caso 4 distingue lista exacta/conteo (se elimina si existe guarda derivada por reflexion, o se reemplaza por ella; ya no se agregan entradas ni se ajusta el conteo) de tabla evento->topic (se conserva agregar el par verificado) (#2067).
+
+### Fixed
+
+- Restaurada la doctrina del `implementer` que obliga a registrar `PublicarEventoServerless<T>` en `ComposicionServicios{Dominio}` por cada evento publicado (nuevo o reutilizado), revertida por la purga a v0.40.2 (#1803, #2028).
+- Restaurado en el `reviewer` el gate "Publicacion sin registro" (`PublishAsync` sin su `PublicarEventoServerless<T>` en `ComposicionServicios{Dominio}`) y su fila del checklist, revertido por la purga a v0.40.2 (#1805, #2029).
+- Restaurada en el `planner` la exigencia de la ruta de salida de cada evento publicado (campo **Ruta de salida** en "Modelo de eventos", caso "evento publicado" del DoR y bloqueo de `estado:listo` en `refinar` sin el campo), revertida por la purga a v0.40.2; restaura la pieza de #1806 (#2030).
+- Restaurados en el scaffold la lista `EnrutamientoEventos{Dominio}` y los guardrails de enrutamiento del test de composicion (`domain-scaffolder`), y el parrafo "Donde va el registro" del `implementer`, revertidos por la purga a v0.40.2 (#1804, #2031).
+- Se restauran los umbrales de rendimiento configurables de la nightly (`MEFISTO_ASSETS_PERF_LIMIT` y `MEFISTO_NEUTRALITY_PERF_LIMIT` fijados en `ci.yml`, #1977), que la purga a v0.40.2 habia revertido (#2036).
+- Se restauran las guardas de origen confiable (push + mismo repo, sin interpolar `github.event.workflow_run.*` en `run:`) en las plantillas de deploy encadenadas por `workflow_run` de `domain-scaffolder` y `mcp-scaffolder`, revertidas por la purga a v0.40.2 (restaura #1828).
+- Restaurados los permisos minimos a nivel de workflow (`contents: read`) en las plantillas de deploy de `domain-scaffolder`, `mcp-scaffolder` y `projections-scaffolder`, junto con `test-workflow-template-permissions.sh`; el trabajo de #1923 se habia revertido con la purga a v0.40.2.
+- Restaurada tras la purga a v0.40.2 la enmienda de MEF-ADR-0047 decision 2 (servidor MCP `<RootNamespace>.Mcp.General` por BC, separacion por necesidad demostrada, receta sin ruptura) y de MEF-ADR-0048 (la particion Consultas/Comandos deja de ser frontera de acceso); origen #1848 (issue #2042).
+- Se restaura en MEF-ADR-0047 (decisiones 3, 6 y 7) y MEF-ADR-0032 (seccion 9) la identidad derivada del token leida del transporte HTTP de `ToolInvocationContext`, revertida por la purga a v0.40.2 (#2021/#2022); restauracion de la enmienda de #1927 (PR #1949).
+- Restaurar en `/scaffold-mcp` el proposito opcional con `General` por defecto (`<RootNamespace>.Mcp.General`, ruta `/mcp-general`) y alinear el agente `mcp-scaffolder`, revertidos por la purga a v0.40.2 (#2021/#2022); refs #1924.
+- Restaurada la seccion "Composicion asistida via servidores MCP" del `planner` publicado alineada con el servidor `General` por defecto (sin particion Consultas/Comandos por defecto; separacion solo por necesidad demostrada), revertida por la purga a v0.40.2 (restaura #1925).
+- Restaura en la plantilla del `mcp-scaffolder` (con `tenancy.strategy = multi-tenant-header`) la identidad derivada del token del usuario (`SesionUsuario`, `sid`, `DerivadorIdentidadTenantMcp`, middleware) y la tool `obtener_sesion`, revertidas por la purga a v0.40.2; refs #1934.
+- Se generaliza en `test-generate-published-adapters.sh` la conservacion de expresiones GitHub Actions (`${{`): toda fuente publicada con expresiones debe tener el mismo conteo en `agents/`/`commands/`, `dist/claude` y `dist/opencode`, con caso negativo; se retira de `test-tdd-agents.sh` la asercion de conteo fijo (35) de `domain-scaffolder` (#2052).
+- `test-tmux-parallel.sh`: se reemplazan las aserciones sobre el fuente de `tmux-pipeline.sh` (flaky por SIGPIPE con `pipefail`) por aserciones de comportamiento del visor sobre el escenario `[C]`, y `assert_contains`/`assert_not_contains` usan here-string en vez de pipe (#2053).
+- El `reviewer` puede actualizar guardas de inventario desactualizadas (tipo nuevo de la rama en `TiposPersistidos` o inventarios evento->topic) verificando alias (MEF-ADR-0036) y topic (MEF-ADR-0001/0024), con prohibiciones explicitas y registro en la tabla de resolucion (#2057).
+- Se restaura en el `implementer` y el `reviewer` el camino corto de "test defectuoso" de #1802 (revertido por la purga a v0.40.2): el `implementer` escribe `blockage-report.md` de inmediato, sin senalarlo solo en el resumen, y el `reviewer` recupera el tercer caso de la excepcion 2b (assert `And<...>` sobre un stream que el `Given` nunca crea).
+- Restaurado en la compuerta roja (Gate 1b de `tdd-pipeline.sh`) el aviso de tests preexistentes en rojo sin modificar, revertido por la purga a v0.40.2; el `implementer` lo escala por el camino corto de `blockage-report.md`. Restaura #1937 (`Refs #1937`).
+
 ## [0.42.0] - 2026-10-07
 
 ### Changed
@@ -3152,7 +3181,8 @@ Y reemplazar referencias en `CLAUDE.md` del proyecto: `/eda-evsourcing-azure-har
 - Los agentes `reviewer` e `implementer` mantienen el placeholder literal `ADR-XXXX` en sus plantillas de reporte (no es un bug; el agente lo sustituye en tiempo de ejecución por el número real del ADR aplicable).
 - Los ejemplos de código en `test-writer.md`, `implementer.md` y `smoke-test-writer.md` conservan nombres concretos de un proyecto consumidor (`Programacion`, `ControlHoras`) anotados en el "Contrato con el consumidor" de cada agente como ejemplos pedagógicos.
 
-[Unreleased]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.42.0...HEAD
+[Unreleased]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.42.1...HEAD
+[0.42.1]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.42.0...v0.42.1
 [0.42.0]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.41.8...v0.42.0
 [0.41.8]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.41.7...v0.41.8
 [0.41.7]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.41.6...v0.41.7

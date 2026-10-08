@@ -141,3 +141,6 @@ no necesita estar residente en cada sesión, solo cuando se busca en qué ADR vi
 | Fila `## ADRs aplicables` (Critico en feature/refactor/projection) en el Definition of Ready y su validacion programatica en `/implement` | MEF-ADR-0011 |
 | Resiliencia del pipeline ante limite de uso y caida del proveedor: postcondiciones objetivas del caller (sin resumen de stage) como evidencia alternativa para aceptar una sesion reanudada, caso `pr-sync.sh` | MEF-ADR-0051 |
 | Arquitectura neutral de runtime y proveedor de Mefisto | MEF-ADR-0049 |
+| Servidor MCP General por BC y separacion por necesidad demostrada | MEF-ADR-0047 |
+| Identidad derivada del token en servidores MCP (enmienda de la doctrina de servidores MCP) | MEF-ADR-0047 |
+| Sin guardas de lista exacta o conteo de tipos persistidos (enmienda de la identidad del evento persistido) | MEF-ADR-0036 |
