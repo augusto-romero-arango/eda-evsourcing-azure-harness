@@ -496,7 +496,7 @@ export const register: Register = on => {
         ) : (
           <Box width={MASCOT_WIDTH} />
         )
-      const recent = lines.filter(l => l.ts !== '').slice(-2)
+      const recent = lines.filter(l => l.ts !== '').slice(-3)
       const markText = (m: ReturnType<typeof issueMark>) =>
         m === 'done' ? '✓' : m === 'failed' ? '✗' : m === 'deferred' ? '⏸' : m === 'current' ? '●' : '○'
       const markColor = (m: ReturnType<typeof issueMark>) =>
@@ -547,6 +547,7 @@ export const register: Register = on => {
                 })}
               </Text>
               {isRunning && run && run.title !== '' && <Text dimColor wrap="truncate-end">#{run.issue} {run.title}</Text>}
+              {isRunning && run && <Text> </Text>}
               {isRunning && !run && <Text dimColor>preparando el primer issue…</Text>}
               {isRunning &&
                 recent.map(line => (
