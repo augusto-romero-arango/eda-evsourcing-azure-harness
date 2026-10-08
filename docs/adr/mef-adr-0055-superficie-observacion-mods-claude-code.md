@@ -74,7 +74,7 @@ Un mod es un artefacto **exclusivo del adaptador Claude**, igual que `mefisto-sc
 - `types/index.d.ts`
 - `hooks/*.test.ts`
 
-No se edita el `hooks/hooks.json` publicado. La ruta queda registrada en `is_path_in_mefisto_scope` y en la politica OpenCode generada, antes de poblarla (MEF-ADR-0019 seccion E). Los tipos que el engine regenera en `.claude-plugin/types/` no se versionan. La sesion de ejecucion carga el mod con `claude --plugin-dir .claude/mods/<mod>`, porque `CLAUDE_CODE_PLUGIN_DIRS` no se acepta en los settings del proyecto.
+No se edita el `hooks/hooks.json` publicado. La ruta queda registrada en `is_path_in_mefisto_scope` y en la politica OpenCode generada, antes de poblarla (MEF-ADR-0019 seccion E). Los tipos que el engine regenera en `.claude-plugin/types/` no se versionan. Se cargan desde el marketplace de carpeta `.claude/mods/.claude-plugin/marketplace.json` (`mefisto-mods`), instalado una vez por checkout en alcance `local` (`claude plugin marketplace add ./.claude/mods --scope local` y `claude plugin install <mod>@mefisto-mods --scope local`). Esa configuracion vive en `.claude/settings.local.json`, que no se versiona y no existe en los worktrees de los pipelines, por lo que las sesiones `-p` de los agentes nunca cargan los mods. Un marketplace de carpeta se lee desde la propia carpeta: un cambio se aplica con `/reload-plugins`. `--plugin-dir` queda para probar una copia suelta.
 
 ### 5. Encaje con la neutralidad
 
