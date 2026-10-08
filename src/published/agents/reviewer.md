@@ -89,7 +89,7 @@ Si hay tests fallando al inicio, verifica si existe reporte de bloqueo (paso 2b)
 Si hay tests fallando al inicio, verifica si existe `{{mefisto:state-path blockage-report.md}}`.
 
 Si el reporte existe:
-1. **Lee el reporte** — entiende que se intento y por que fallo
+1. **Lee el reporte** — entiende que se intento y por que fallo. Si su "Hipotesis" declara **test defectuoso** (camino corto del implementer, seccion 4b de su agente), verifica primero si el test cae en uno de los casos de la "Excepcion" de abajo antes de gastar intentos sobre la implementacion; si no cae en ninguno, sigue con el paso 2
 2. **Intenta resolver los tests rojos** cambiando SOLO codigo de implementacion (nunca tests)
 3. Tienes **5 intentos enfocados** por cada test bloqueado (misma definicion de "intento" que el implementer: un enfoque distinto deliberado, no un test run incidental)
 4. Si despues de 5 intentos no lo resuelves:
@@ -117,7 +117,7 @@ Si en cambio resolviste el bloqueo (no agotaste 5 intentos), **omite el bloque a
 ```markdown
 ### Resolucion de bloqueo heredado
 
-(Solo cuando aplicaste la excepcion "bugs de framework o contradicciones estructurales del plan", no cuando agotaste 5 intentos sin resolverlo.)
+(Solo cuando aplicaste la excepcion "bugs de framework, contradicciones estructurales del plan o assert de estado sin stream", no cuando agotaste 5 intentos sin resolverlo.)
 
 | Test afectado | Naturaleza del problema | Accion tomada | Donde queda cubierto el CA |
 |---|---|---|---|
@@ -130,7 +130,7 @@ Esta tabla deja trazabilidad de cuando el reviewer actua como resolvedor de bloq
 
 **Importante**: NO modifiques tests para hacerlos pasar. Solo cambia implementaciones.
 
-**Excepcion: bugs de framework o contradicciones estructurales del plan.** Puedes modificar o eliminar tests en estos casos:
+**Excepcion: bugs de framework, contradicciones estructurales del plan o assert de estado sin stream.** Puedes modificar o eliminar tests en estos casos:
 
 1. **Bugs de framework** (caso original): un test usa un overload incorrecto del harness (`Then(evento)` en lugar de `Then(streamId, null, evento)`, o `And<T,P>(selector, valor)` en lugar de `And<T,P>(streamId, selector, valor)`) y el aggregate tiene stream ID compuesto (no GUID). Esto es un **bug en el test**, no una modificacion para hacerlo pasar. Corregir el overload es equivalente a corregir un typo — el intent del test no cambia. En este caso:
    1. Identifica el stream ID correcto (busca `ComputarStreamId` en el aggregate)
@@ -142,7 +142,9 @@ Esta tabla deja trazabilidad de cuando el reviewer actua como resolvedor de bloq
 
 2. **Contradicciones estructurales no resueltas por el test-writer** (caso PR #148): un test en proyecto A que el issue pide modificar para usar API de proyecto B, pero A no puede depender de B; o un test que quedo obsoleto porque el refactor del issue volvio imposible su precondicion (ej. sin `[JsonConstructor]`, STJ vanilla ya no puede deserializar la clase contra MEF-ADR-0012). En estos casos: **elimina el test o reubicalo al proyecto correcto, siempre que los CAs del issue queden cubiertos por otro test** (nuevo o existente). Idealmente esta resolucion la hace el test-writer (regla #19 de su agente) en la fase roja; si no la hizo, te toca a ti como parte del refactor.
 
-Ambos casos: el intent del test no cambia (o el CA se cubre de otra forma equivalente). Documenta la accion en el reporte bajo "Resolucion de bloqueo heredado" con el formato indicado debajo del bloque "Reporte de bloqueo - Reviewer".
+3. **Assert de estado sobre un stream que el escenario nunca crea** (caso Bitakora.ControlAsistencia #744): un test con `And<TAggregate,P>(...)` (assert de estado) cuyo `Given` nunca crea ese stream, de modo que el harness falla (ej. `ArgumentNullException('entidad')`) sin importar la implementacion; tipicamente un escenario que espera una excepcion. Corrige el test preservando su intent: retira el assert de estado cuando el escenario espera una excepcion (o agrega al `Given` el evento que crea el stream si el intent era verificar estado). Solo aplica a este defecto del propio test: si el stream si se crea y el assert falla, el defecto es del codigo de produccion y sigue prohibido tocar el test. Confirma con `dotnet test`.
+
+Los tres casos: el intent del test no cambia (o el CA se cubre de otra forma equivalente). Documenta la accion en el reporte bajo "Resolucion de bloqueo heredado" con el formato indicado debajo del bloque "Reporte de bloqueo - Reviewer".
 
 **Lo que sigue prohibido**: eliminar tests para forzar que pase la suite cuando el codigo de produccion tiene un defecto real, o cuando los CAs no quedan cubiertos por ningun otro test. La excepcion no es licencia para "limpiar" tests legitimos.
 
