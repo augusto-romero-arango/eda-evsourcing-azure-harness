@@ -1,8 +1,12 @@
-import type { BlockedItem, LogLine, MonitorAgent, MonitorRun, ReadyItem, ReadyList } from '../types'
+import type { BatchIssue, BatchRun, BlockedItem, LogLine, MonitorAgent, MonitorRun, ReadyItem, ReadyList } from '../types'
 
 export const STATE_DIR = '.mefisto/pipeline'
 export const LOG_DIR = `${STATE_DIR}/logs`
 export const HISTORY = `${STATE_DIR}/pipeline-history.jsonl`
+
+export const BATCH_STATUS = `${STATE_DIR}/pipeline-status-mefisto-batch.json`
+/** Senal de parada suave del batch (la misma que escribe /mefisto-batch-stop). */
+export const BATCH_STOP = `${STATE_DIR}/batch-stop`
 
 export const statusPath = (issue: string) =>
   `${STATE_DIR}/pipeline-status-mefisto-tooling-${issue}.json`
@@ -11,6 +15,14 @@ const LAUNCH = /mefisto-tmux-pipeline\.sh\s+--tooling\s+#?(\d+)/
 
 export function toolingIssueOf(command: string): string | null {
   return LAUNCH.exec(command)?.[1] ?? null
+}
+
+const BATCH_LAUNCH = /mefisto-tmux-pipeline\.sh\s+--batch((?:\s+#?\d+)+)/
+
+/** Los issues de un `mefisto-tmux-pipeline.sh --batch N M ...` (lo que corre /mefisto-sequential), en orden. */
+export function batchIssuesOf(command: string): string[] | null {
+  const m = BATCH_LAUNCH.exec(command)
+  return m?.[1] ? (m[1].match(/\d+/g) ?? []) : null
 }
 
 /** Antepone MEFISTO_UI=mod: el wrapper corre el pipeline sin pane y este mod es el visor (MEF-ADR-0055). */
@@ -342,4 +354,79 @@ export function waitingFace(base: Grid, tick: number | null): Grid {
     if (g) out = [...out].map((c, x) => (x < g.length && g[x] !== '.' ? g[x] : c)).join('')
     return out
   })
+}
+
+type BatchStatusFile = {
+  started?: string
+  state?: string
+  current?: string | null
+  stop_requested?: boolean
+  hold_seconds?: number
+  issues?: { issue: string; status: string; pr: string | null }[]
+}
+
+/** El estado publicado del batch; un archivo de un batch anterior (arrancado antes de `sinceMs`) se ignora. */
+export function batchFromStatus(raw: string, prev: BatchRun, sinceMs: number): BatchRun {
+  let s: BatchStatusFile
+  try {
+    s = JSON.parse(raw)
+  } catch {
+    return prev
+  }
+  const startedMs = s.started ? stampToMs(s.started) : 0
+  if (startedMs + 1000 < sinceMs) return prev
+  const state = s.state === 'completed' || s.state === 'failed' || s.state === 'stopped' ? s.state : 'running'
+  return {
+    issues: (s.issues ?? []).map(i => ({ issue: String(i.issue), status: i.status ?? '', pr: i.pr ?? null })),
+    state,
+    current: s.current ? String(s.current) : null,
+    stopRequested: s.stop_requested === true || prev.stopRequested,
+    holdSeconds: s.hold_seconds ?? 0,
+    startedMs: startedMs || prev.startedMs,
+    finishedMs: state === 'running' ? null : (prev.finishedMs ?? Date.now()),
+  }
+}
+
+export type IssueMark = 'done' | 'current' | 'failed' | 'deferred' | 'pending'
+
+export function issueMark(status: string): IssueMark {
+  if (status.startsWith('completado')) return 'done'
+  if (status.startsWith('ERROR')) return 'failed'
+  if (status.startsWith('aplazado')) return 'deferred'
+  if (status.startsWith('en curso')) return 'current'
+  return 'pending'
+}
+
+export function batchCounts(issues: BatchIssue[]) {
+  const marks = issues.map(i => issueMark(i.status))
+  return {
+    total: issues.length,
+    done: marks.filter(m => m === 'done').length,
+    failed: marks.filter(m => m === 'failed').length,
+    deferred: marks.filter(m => m === 'deferred').length,
+  }
+}
+
+/** Los issues que pasaron a mergeados entre dos lecturas: un toast por cada uno. */
+export function newlyMerged(prev: BatchIssue[], next: BatchIssue[]): BatchIssue[] {
+  return next.filter(i => issueMark(i.status) === 'done' && issueMark(prev.find(p => p.issue === i.issue)?.status ?? '') !== 'done')
+}
+
+/** El PR para abrir: el del issue en curso si ya lo tiene, o el del ultimo mergeado. */
+export function batchPr(batch: BatchRun): string | null {
+  const current = batch.issues.find(i => i.issue === batch.current)
+  if (current?.pr) return current.pr
+  return [...batch.issues].reverse().find(i => i.pr)?.pr ?? null
+}
+
+/** Resumen del cierre: mergeados, fallidos, aplazados y la espera por rate limit si la hubo. */
+export function batchSummary(batch: BatchRun): string {
+  const c = batchCounts(batch.issues)
+  const hold = batch.holdSeconds > 0 ? `espera ${Math.round(batch.holdSeconds / 60)}m` : ''
+  return [
+    `✓ ${c.done} mergeados`,
+    c.failed > 0 ? `✗ ${c.failed} fallidos` : '',
+    c.deferred > 0 ? `⏸ ${c.deferred} aplazados` : '',
+    hold,
+  ].filter(Boolean).join(' · ')
 }

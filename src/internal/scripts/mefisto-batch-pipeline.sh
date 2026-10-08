@@ -114,6 +114,7 @@ success() { local m="${GREEN}${BOLD}v${NC} $1"; echo -e "$m"; _log_file "$m"; }
 warn()    { local m="${YELLOW}!${NC} $1"; echo -e "$m"; _log_file "$m"; }
 header()  { local m="\n${CYAN}${BOLD}-- $1 --${NC}"; echo -e "$m"; _log_file "$m"; }
 abort() {
+    write_batch_status failed
     echo -e "\n${RED}${BOLD}x ERROR FATAL: $1${NC}" | tee -a "$LOG_FILE_ABS"
     echo -e "${YELLOW}Revisa el log: $LOG_FILE_ABS${NC}"
     exit 1
@@ -124,18 +125,47 @@ ISSUE_STATUS_NUMS=()
 ISSUE_STATUS_VALUES=()
 ISSUE_STATUS_PRS=()
 
+# Estado del batch publicado para el mod mefisto-monitor (MEF-ADR-0055): la cola,
+# el estado y el PR de cada issue, el eslabon en curso y si se pidio la parada.
+# Se reescribe entero en cada cambio (archivo temporal + mv); sin jq todavia
+# (antes de verificar dependencias) no se publica nada.
+BATCH_STATUS_FILE="$PIPELINE_DIR/pipeline-status-mefisto-batch.json"
+BATCH_STATE="running"
+BATCH_CURRENT=""
+
+write_batch_status() {
+    [ -n "${1:-}" ] && BATCH_STATE="$1"
+    command -v jq >/dev/null 2>&1 || return 0
+    local rows="" i
+    for i in "${!ISSUE_STATUS_NUMS[@]}"; do
+        rows="${rows}${ISSUE_STATUS_NUMS[$i]}"$'\t'"${ISSUE_STATUS_VALUES[$i]}"$'\t'"${ISSUE_STATUS_PRS[$i]}"$'\n'
+    done
+    printf '%s' "$rows" | jq -R -s \
+        --arg started "$TIMESTAMP" --arg state "$BATCH_STATE" --arg current "$BATCH_CURRENT" \
+        --arg log "${LOG_FILE_ABS:-$LOG_FILE}" --argjson hold "${BATCH_TOTAL_HOLD_SECONDS:-0}" \
+        --argjson stop "$([ -f "${BATCH_STOP_SIGNAL:-/nonexistent}" ] && echo true || echo false)" '
+        { pipeline: "mefisto-batch", started: $started, state: $state,
+          current: (if $current == "" then null else $current end),
+          stop_requested: $stop, hold_seconds: $hold, log: $log,
+          issues: [split("\n")[] | select(. != "") | split("\t")
+                   | { issue: .[0], status: .[1], pr: (if (.[2] // "") == "" then null else .[2] end) }] }' \
+        > "$BATCH_STATUS_FILE.tmp" 2>/dev/null && mv "$BATCH_STATUS_FILE.tmp" "$BATCH_STATUS_FILE" || true
+}
+
 set_status() {
     local issue="$1" val="$2"
     local i
     for i in "${!ISSUE_STATUS_NUMS[@]}"; do
         if [ "${ISSUE_STATUS_NUMS[$i]}" = "$issue" ]; then
             ISSUE_STATUS_VALUES[$i]="$val"
+            write_batch_status
             return
         fi
     done
     ISSUE_STATUS_NUMS+=("$issue")
     ISSUE_STATUS_VALUES+=("$val")
     ISSUE_STATUS_PRS+=("")
+    write_batch_status
 }
 
 get_status() {
@@ -155,12 +185,14 @@ set_pr() {
     for i in "${!ISSUE_STATUS_NUMS[@]}"; do
         if [ "${ISSUE_STATUS_NUMS[$i]}" = "$issue" ]; then
             ISSUE_STATUS_PRS[$i]="$pr"
+            write_batch_status
             return
         fi
     done
     ISSUE_STATUS_NUMS+=("$issue")
     ISSUE_STATUS_VALUES+=("pendiente")
     ISSUE_STATUS_PRS+=("$pr")
+    write_batch_status
 }
 
 get_pr() {
@@ -603,6 +635,8 @@ fi
 for ISSUE_NUM in ${BATCH_QUEUE[@]+"${BATCH_QUEUE[@]}"}; do
     CURRENT=$((COMPLETED + FAILED + 1))
     header "Issue #$ISSUE_NUM ($CURRENT/$TOTAL)"
+    BATCH_CURRENT="$ISSUE_NUM"
+    set_status "$ISSUE_NUM" "en curso"
 
     # Se crea ANTES de cualquier tooling del issue. El snapshot queda vivo hasta
     # que termine todo el eslabon (writer, reviewer, PR, merge y sync); la
@@ -817,6 +851,15 @@ for ISSUE_NUM in "${ISSUE_NUMS[@]}"; do
     esac
 done
 DEFERRED=${#DEFERRED_NUMS[@]}
+
+BATCH_CURRENT=""
+if [ "$HAVE_ERRORS" = true ]; then
+    write_batch_status failed
+elif [ "$DEFERRED" -gt 0 ]; then
+    write_batch_status stopped
+else
+    write_batch_status completed
+fi
 
 echo ""
 echo -e "  Total: $TOTAL  |  ${GREEN}Completados: $COMPLETED${NC}  |  ${RED}Fallidos: $FAILED${NC}  |  ${YELLOW}Aplazados: $DEFERRED${NC}"

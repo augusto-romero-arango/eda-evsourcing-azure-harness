@@ -1,14 +1,16 @@
 #!/usr/bin/env bash
 # test-mefisto-ui-mod.sh -- Modo MEFISTO_UI=mod de mefisto-tmux-pipeline.sh
-# (MEF-ADR-0055): --tooling corre el pipeline desacoplado, sin sesion tmux ni
-# pane herdr, para que lo siga el mod mefisto-monitor de la sesion que lo lanzo.
+# (MEF-ADR-0055): --tooling y --batch corren desacoplados, sin sesion tmux ni
+# pane herdr, para que los siga el mod mefisto-monitor de la sesion que los lanzo.
 #
 # Cubre:
 #   [1] --tooling con MEFISTO_UI=mod no toca tmux ni herdr, aun dentro de herdr.
 #   [2] el pipeline recibe el issue y los flags en orden, y escribe su reporte
 #       en .mefisto/pipeline/logs/mefisto-tooling-run-*-issue-<n>.report.log.
 #   [3] el pipeline corre sin HERDR_* ni MEFISTO_UI y con MEFISTO_RUNTIME.
-#   [4] --batch con MEFISTO_UI=mod sigue el camino de siempre (fuera de alcance).
+#   [4] --batch con MEFISTO_UI=mod corre el batch desacoplado, sin tmux ni herdr,
+#       con los issues en orden y su reporte mefisto-batch-run-*.report.log.
+#   [5] --batch con MEFISTO_UI=mod rechaza un issue no numerico.
 #
 # Uso: .claude/scripts/tests/test-mefisto-ui-mod.sh
 # Exit code: 0 si todos los chequeos pasan, 1 si alguno falla.
@@ -53,6 +55,17 @@ cat > "$FAKE_MEFISTO/src/internal/scripts/mefisto-tooling-pipeline.sh" <<'STUB'
 echo "salida del pipeline"
 STUB
 chmod +x "$FAKE_MEFISTO/src/internal/scripts/mefisto-tooling-pipeline.sh"
+export BATCH_STUB_LOG="$TMP_DIR/batch.log"
+cat > "$FAKE_MEFISTO/src/internal/scripts/mefisto-batch-pipeline.sh" <<'STUB'
+#!/usr/bin/env bash
+{
+    echo "args: $*"
+    echo "herdr: ${HERDR_ENV:-}${HERDR_PANE_ID:-}"
+    echo "ui: ${MEFISTO_UI:-}"
+} > "$BATCH_STUB_LOG"
+echo "salida del batch"
+STUB
+chmod +x "$FAKE_MEFISTO/src/internal/scripts/mefisto-batch-pipeline.sh"
 (cd "$FAKE_MEFISTO" && git init -q && git add . && git -c user.email="t@e.com" -c user.name="T" commit -q -m init && git branch -M main)
 
 export UI_STUB_LOG="$TMP_DIR/ui.log"
@@ -76,7 +89,7 @@ wait_for_file() {
 
 run_wrapper() {
     : > "$UI_STUB_LOG"
-    rm -f "$PIPELINE_STUB_LOG"
+    rm -f "$PIPELINE_STUB_LOG" "$BATCH_STUB_LOG"
     (
         cd "$FAKE_MEFISTO" || exit 99
         PATH="$FAKE_BIN:$PATH" MEFISTO_UI=mod MEFISTO_RUNTIME=claude HERDR_ENV=1 HERDR_PANE_ID=w1:p1 \
@@ -105,10 +118,22 @@ if grep -qx "ui: " "$PIPELINE_STUB_LOG"; then pass "sin MEFISTO_UI (los gates hi
 if grep -qx "runtime: claude" "$PIPELINE_STUB_LOG"; then pass "conserva MEFISTO_RUNTIME"; else fail "$(grep runtime "$PIPELINE_STUB_LOG")"; fi
 
 echo ""
-echo "[4] --batch con MEFISTO_UI=mod no usa el modo desacoplado"
+echo "[4] --batch con MEFISTO_UI=mod corre el batch desacoplado"
 run_wrapper --batch 42 43
+if [ "$LAST_RC" -eq 0 ]; then pass "el wrapper termina sin error"; else fail "rc=$LAST_RC stderr: $(cat "$TMP_DIR/stderr")"; fi
+if wait_for_file "$BATCH_STUB_LOG"; then pass "el batch corrio desacoplado"; else fail "el batch no corrio"; fi
+if [ ! -s "$UI_STUB_LOG" ]; then pass "ni tmux ni herdr fueron invocados"; else fail "se invoco UI: $(cat "$UI_STUB_LOG")"; fi
+if grep -qF "args: 42 43" "$BATCH_STUB_LOG"; then pass "issues en orden"; else fail "args: $(cat "$BATCH_STUB_LOG")"; fi
+if grep -qx "herdr: " "$BATCH_STUB_LOG" && grep -qx "ui: " "$BATCH_STUB_LOG"; then pass "sin HERDR_* ni MEFISTO_UI"; else fail "$(cat "$BATCH_STUB_LOG")"; fi
+REPORT=$(ls "$FAKE_MEFISTO"/.mefisto/pipeline/logs/mefisto-batch-run-*.report.log 2>/dev/null | head -1)
+if [ -n "$REPORT" ] && wait_for_file "$REPORT" && grep -q "salida del batch" "$REPORT"; then pass "reporte en logs/mefisto-batch-run-*.report.log"; else fail "reporte ausente o vacio: '$REPORT'"; fi
+
+echo ""
+echo "[5] --batch con MEFISTO_UI=mod rechaza un issue no numerico"
+run_wrapper --batch 42 '43;touch x'
 sleep 0.5
-if [ ! -e "$PIPELINE_STUB_LOG" ]; then pass "--batch no lanza el pipeline de tooling desacoplado"; else fail "se lanzo tooling: $(cat "$PIPELINE_STUB_LOG")"; fi
+if [ "$LAST_RC" -ne 0 ]; then pass "el wrapper falla"; else fail "rc=0 con un issue invalido"; fi
+if [ ! -e "$BATCH_STUB_LOG" ]; then pass "el batch no se lanza"; else fail "se lanzo el batch: $(cat "$BATCH_STUB_LOG")"; fi
 
 echo ""
 echo "RESULTADO: $PASS pasaron, $FAIL fallaron"

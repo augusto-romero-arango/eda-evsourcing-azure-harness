@@ -20,6 +20,19 @@ export type BlockedItem = { number: number; title: string; by: number[] }
 
 export type ReadyList = { items: ReadyItem[]; blocked: BlockedItem[]; cycleCount: number; launch: string | null; error: string | null }
 
+export type BatchIssue = { issue: string; status: string; pr: string | null }
+
+/** Un /mefisto-sequential en curso o terminado, leido de pipeline-status-mefisto-batch.json. */
+export type BatchRun = {
+  issues: BatchIssue[]
+  state: 'running' | 'completed' | 'failed' | 'stopped'
+  current: string | null
+  stopRequested: boolean
+  holdSeconds: number
+  startedMs: number
+  finishedMs: number | null
+}
+
 export type LogKind = 'start' | 'tool' | 'text' | 'fail' | 'done'
 
 export type LogLine = { ts: string; kind: LogKind; text: string }
@@ -34,6 +47,8 @@ declare module 'claude-code' {
       ready: ReadyList | null
       readyPage: number
       pendingLaunch: number | null
+      batch: BatchRun | null
+      isConfirmingStop: boolean
     }
   }
 }

@@ -1,8 +1,10 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { LogLine, MonitorRun, ReadyList } from '../types'
+import type { BatchRun, LogLine, MonitorRun, ReadyList } from '../types'
 import {
+  BATCH_STATUS,
+  BATCH_STOP,
   HISTORY,
   LOG_DIR,
   NEXT_ORDER,
@@ -10,11 +12,18 @@ import {
   READY_ROWS,
   agentFlagOf,
   agentOfEventsFile,
+  batchCounts,
+  batchFromStatus,
+  batchIssuesOf,
+  batchPr,
+  batchSummary,
   clip,
   elapsed,
   cropGrid,
   finishedFromHistory,
+  issueMark,
   mascotPose,
+  newlyMerged,
   padEnd,
   pageOf,
   parseNextOrder,
@@ -86,11 +95,14 @@ const executionAtom = atom({ plugin: 'mefisto-monitor', key: 'isExecutionSession
 const readyAtom = atom({ plugin: 'mefisto-monitor', key: 'ready' } as const, null)
 const readyPageAtom = atom({ plugin: 'mefisto-monitor', key: 'readyPage' } as const, 0)
 const pendingAtom = atom({ plugin: 'mefisto-monitor', key: 'pendingLaunch' } as const, null)
+const batchAtom = atom({ plugin: 'mefisto-monitor', key: 'batch' } as const, null)
+const confirmStopAtom = atom({ plugin: 'mefisto-monitor', key: 'isConfirmingStop' } as const, false)
 
 type Tail = { path: string; stream: AsyncGenerator<unknown, unknown> }
 
 let tail: Tail | null = null
 let watchSinceMs = 0
+let batchSinceMs = 0
 let isPolling = false
 // Una sesion no interactiva (los agentes de los pipelines) no tiene a nadie mirando: el mod no reescribe ni sigue nada.
 let isInteractive = false
@@ -136,7 +148,8 @@ async function startTail($: EngineInterface, name: string) {
   void followTail($, stream, path)
 }
 
-async function watch($: EngineInterface, issue: string, sinceMs: number) {
+// En un batch cada eslabon se sigue igual que un /mefisto-tooling suelto, pero el log acumula todos los issues.
+async function watch($: EngineInterface, issue: string, sinceMs: number, keepLines = false) {
   await stopTail()
   watchSinceMs = sinceMs
   const run: MonitorRun = {
@@ -152,8 +165,57 @@ async function watch($: EngineInterface, issue: string, sinceMs: number) {
     eventsFile: null,
   }
   await update($, runAtom, () => run)
-  await update($, linesAtom, () => [])
+  if (keepLines) await pushLines($, [{ ts: '', kind: 'start', text: `══ #${issue} ══` }])
+  else await update($, linesAtom, () => [])
   await poll($)
+}
+
+async function watchBatch($: EngineInterface, issues: string[], sinceMs: number) {
+  await stopTail()
+  batchSinceMs = sinceMs
+  const batch: BatchRun = {
+    issues: issues.map(issue => ({ issue, status: 'pendiente', pr: null })),
+    state: 'running',
+    current: null,
+    stopRequested: false,
+    holdSeconds: 0,
+    startedMs: Date.now(),
+    finishedMs: null,
+  }
+  await update($, runAtom, () => null)
+  await update($, linesAtom, () => [])
+  await update($, confirmStopAtom, () => false)
+  await update($, batchAtom, () => batch)
+}
+
+async function pollBatch($: EngineInterface) {
+  const batch = await read($, batchAtom)
+  if (!batch || batch.state !== 'running') return
+  let next = batch
+  if (await $.fs.exists(BATCH_STATUS)) next = batchFromStatus(await $.fs.read(BATCH_STATUS).catch(() => ''), batch, batchSinceMs)
+  next = { ...next, stopRequested: next.stopRequested || (await $.fs.exists(BATCH_STOP)) }
+  for (const i of newlyMerged(batch.issues, next.issues)) $.ui.toast(`#${i.issue} mergeado${i.pr ? ` · PR #${i.pr}` : ''}`)
+  const settled = next
+  await update($, batchAtom, () => settled)
+  const run = await read($, runAtom)
+  if (settled.current && settled.current !== run?.issue) await watch($, settled.current, settled.startedMs, true)
+  const c = batchCounts(settled.issues)
+  if (settled.state === 'running') {
+    $.ui.status(`mefisto · sequential ${c.done + c.failed}/${c.total}${settled.current ? ` · #${settled.current}` : ''}`)
+    return
+  }
+  await stopTail()
+  await update($, confirmStopAtom, () => false)
+  $.ui.toast(`sequential terminado: ${batchSummary(settled)}`)
+  $.ui.status(settled.state === 'failed' ? `mefisto · sequential con fallos` : undefined)
+}
+
+// Parada suave: la misma senal que /mefisto-batch-stop. Termina el eslabon en curso (con su merge) y no sigue.
+async function requestStop($: EngineInterface) {
+  await update($, confirmStopAtom, () => false)
+  await $.fs.write(BATCH_STOP, '')
+  await update($, batchAtom, b => (b ? { ...b, stopRequested: true } : b))
+  $.ui.toast('parada pedida: termina el issue en curso y no arranca los siguientes')
 }
 
 async function finish($: EngineInterface, run: MonitorRun) {
@@ -189,8 +251,10 @@ async function poll($: EngineInterface) {
   isPolling = true
   try {
     await update($, nowAtom, () => Date.now())
+    await pollBatch($)
+    const inBatch = (await read($, batchAtom)) !== null
     const prev = await read($, runAtom)
-    if (prev?.state === 'completed') await closeIfMerged($, prev)
+    if (prev?.state === 'completed' && !inBatch) await closeIfMerged($, prev)
     if (!prev || prev.state !== 'running') return
 
     let next: MonitorRun = prev
@@ -210,12 +274,15 @@ async function poll($: EngineInterface) {
         next = { ...next, eventsFile: name }
         await startTail($, name)
       }
-      $.ui.status(`mefisto · #${next.issue} ${stageName(next.stage)} ${elapsed(Date.now() - next.startedMs)}`)
+      if (!inBatch) $.ui.status(`mefisto · #${next.issue} ${stageName(next.stage)} ${elapsed(Date.now() - next.startedMs)}`)
     }
 
     const settled = next
     await update($, runAtom, () => settled)
-    if (settled.state !== 'running') await finish($, settled)
+    if (settled.state !== 'running') {
+      if (inBatch) await stopTail()
+      else await finish($, settled)
+    }
   } finally {
     isPolling = false
   }
@@ -252,6 +319,8 @@ async function toggleLog($: EngineInterface) {
 
 async function closeRun($: EngineInterface) {
   await stopTail()
+  await update($, batchAtom, () => null)
+  await update($, confirmStopAtom, () => false)
   await update($, runAtom, () => null)
   await update($, linesAtom, () => [])
   $.ui.status(undefined)
@@ -261,7 +330,8 @@ async function closeRun($: EngineInterface) {
 
 async function openPr($: EngineInterface) {
   const run = await read($, runAtom)
-  const pr = prNumber(run?.pr ?? null)
+  const batch = await read($, batchAtom)
+  const pr = batch ? batchPr(batch) : prNumber(run?.pr ?? null)
   if (pr) await $.process.run(['gh', 'pr', 'view', pr, '--web']).catch(() => undefined)
 }
 
@@ -332,8 +402,8 @@ export const register: Register = on => {
     isInteractive = e.isInteractive
     await $.command.register({
       name: 'mefisto-monitor',
-      description: 'Abre el monitor de /mefisto-tooling (con <issue> sigue esa corrida; merge | close | refresh)',
-      argumentHint: '[issue|merge|close|refresh]',
+      description: 'Abre el monitor de /mefisto-tooling (con <issue> sigue esa corrida; batch <issues> sigue un sequential; merge | close | refresh)',
+      argumentHint: '[issue|batch <issues>|merge|close|refresh]',
       immediate: true,
     })
     // Tras un hot-reload el tail del modulo anterior murio: se fuerza a reabrirlo.
@@ -344,6 +414,12 @@ export const register: Register = on => {
   })
 
   on('tool.call', { tool: 'Bash' }, async ($, e, next) => {
+    const batchIssues = isInteractive ? batchIssuesOf(e.command) : null
+    if (batchIssues && batchIssues.length > 0) {
+      const ran = await next({ ...e, command: withModUi(e.command) })
+      if (ran.deny === undefined && ran.isError !== true) await watchBatch($, batchIssues, Date.now() - 5_000)
+      return ran
+    }
     const issue = isInteractive ? toolingIssueOf(e.command) : null
     if (!issue) return next(e)
     const ran = await next({ ...e, command: withModUi(e.command) })
@@ -367,6 +443,13 @@ export const register: Register = on => {
       await merge($)
       return { text: 'Merge solicitado.' }
     }
+    // Reengancha un sequential ya lanzado (tras reiniciar la sesion): `/mefisto-monitor batch 12 13`.
+    const batchArgs = /^batch((?:\s+#?\d+)+)$/.exec(arg)
+    if (batchArgs?.[1]) {
+      const issues = batchArgs[1].match(/\d+/g) ?? []
+      await watchBatch($, issues, 0)
+      return { text: `Siguiendo el sequential ${issues.map(n => `#${n}`).join(' ')} en la banda.` }
+    }
     // La banda sigue la corrida; el pane es solo el log completo y se abre a pedido.
     if (/^#?\d+$/.test(arg)) {
       await watch($, arg.replace('#', ''), 0)
@@ -384,10 +467,107 @@ export const register: Register = on => {
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     const run = await read($, runAtom)
+    const batch = await read($, batchAtom)
     if (e.props.hasSurvey) return next(e)
-    if (!run && !(await read($, executionAtom))) return next(e)
+    if (!run && !batch && !(await read($, executionAtom))) return next(e)
     const now = await read($, nowAtom)
     const { Box, Text, Button } = $.ui.resolve(e)
+    if (batch) {
+      // El sequential: avance y cola arriba, el eslabon en curso abajo con su mascota, pasos y ultimas lineas.
+      const lines = await read($, linesAtom)
+      const isConfirmingStop = await read($, confirmStopAtom)
+      const inner = Math.max(40, (e.props.bodyColumns ?? 80) - 4)
+      const body = Math.max(30, inner - MASCOT_WIDTH - 2)
+      const c = batchCounts(batch.issues)
+      const end = batch.finishedMs ?? (now || Date.now())
+      const isRunning = batch.state === 'running'
+      const pr = batchPr(batch)
+      const pose =
+        isRunning && run ? mascotPose(run, lines[lines.length - 1])
+        : batch.state === 'failed' ? { role: 'desarrollador' as const, state: 'error' }
+        : isRunning ? { role: 'desarrollador' as const, state: 'pensando' }
+        : { role: 'revisor' as const, state: 'aprobado' }
+      const frame = isRunning ? (Math.floor((now || Date.now()) / 1000) % 2 === 0 ? 0 : 1) : 0
+      const grid = cropGrid(sprite(pose.role, pose.state, frame), MASCOT_COLS)
+      const elements = $.ui.resolve(e)
+      const mascot =
+        'Raster' in elements ? (
+          <elements.Raster key="mefisto-mascota" columns={MASCOT_WIDTH} rows={RASTER_ROWS} cells={mascotCells(grid)} />
+        ) : (
+          <Box width={MASCOT_WIDTH} />
+        )
+      const recent = lines.filter(l => l.ts !== '').slice(-2)
+      const markText = (m: ReturnType<typeof issueMark>) =>
+        m === 'done' ? '✓' : m === 'failed' ? '✗' : m === 'deferred' ? '⏸' : m === 'current' ? '●' : '○'
+      const markColor = (m: ReturnType<typeof issueMark>) =>
+        m === 'done' ? ('success' as const) : m === 'failed' ? ('error' as const) : m === 'current' ? ('warning' as const) : undefined
+      const failedIssue = batch.issues.find(i => issueMark(i.status) === 'failed')
+      return (
+        <Box flexDirection="column" borderStyle="round" borderColor="claude" borderDimColor paddingX={1}>
+          <Box justifyContent="space-between">
+            <Text wrap="truncate-end">
+              <Text color="claude">mefisto</Text>
+              <Text> · sequential {c.done + c.failed}/{c.total}</Text>
+              {isRunning && batch.stopRequested && <Text color="warning"> · se detiene tras #{batch.current ?? '…'}</Text>}
+              {batch.state === 'completed' && <Text color="success"> · terminado</Text>}
+              {batch.state === 'stopped' && <Text color="warning"> · detenido</Text>}
+              {batch.state === 'failed' && <Text color="error"> · con fallos</Text>}
+              <Text dimColor> {elapsed(end - batch.startedMs)}</Text>
+            </Text>
+            {isConfirmingStop ? (
+              <Box gap={2}>
+                <Text color="warning">¿detener tras #{batch.current ?? '…'}?</Text>
+                <Button key="stop-yes" hotkey="1" plain variant="primary" label="sí" onPress={() => void requestStop($)} />
+                <Button key="stop-no" hotkey="2" plain label="no" onPress={() => void update($, confirmStopAtom, () => false)} />
+              </Box>
+            ) : (
+              <Box gap={2}>
+                {isRunning && !batch.stopRequested && (
+                  <Button key="batch-stop" hotkey="1" plain label="detener" onPress={() => void update($, confirmStopAtom, () => true)} />
+                )}
+                {pr && <Button key="batch-pr" hotkey="2" plain label={`ver PR #${pr}`} onPress={() => void openPr($)} />}
+                <Button key="batch-log" hotkey="3" plain dimColor={isRunning} label="log" onPress={() => void toggleLog($)} />
+                {!isRunning && <Button key="batch-close" hotkey="4" plain label="cerrar" onPress={() => void closeRun($)} />}
+              </Box>
+            )}
+          </Box>
+          <Box gap={2} height={RASTER_ROWS + 1} alignItems="flex-start">
+            {mascot}
+            <Box flexDirection="column" width={body} marginTop={1}>
+              <Text wrap="truncate-end">
+                {batch.issues.map((i, k) => {
+                  const m = issueMark(i.status)
+                  return (
+                    <Text color={markColor(m)} dimColor={m === 'pending' || m === 'deferred'}>
+                      {k > 0 ? ' ─ ' : ''}
+                      {markText(m)} #{i.issue}
+                      {m === 'current' && run && run.issue === i.issue ? ` ${stageName(run.stage)}` : ''}
+                    </Text>
+                  )
+                })}
+              </Text>
+              {isRunning && run && run.title !== '' && <Text dimColor wrap="truncate-end">#{run.issue} {run.title}</Text>}
+              {isRunning && !run && <Text dimColor>preparando el primer issue…</Text>}
+              {isRunning &&
+                recent.map(line => (
+                  <Text wrap="truncate-end" color={lineColor(line)} dimColor={line.kind === 'text'}>
+                    {`${line.ts} ${line.kind === 'text' ? '» ' : ''}${line.text}`}
+                  </Text>
+                ))}
+              {!isRunning && <Text wrap="truncate-end">{batchSummary(batch)}</Text>}
+              {!isRunning && failedIssue && (
+                <Text color="error" wrap="truncate-end">#{failedIssue.issue} {failedIssue.status.replace(/^ERROR:\s*/, '')}</Text>
+              )}
+              {!isRunning && (
+                <Text dimColor wrap="truncate-end">
+                  PRs: {batch.issues.filter(i => i.pr).map(i => `#${i.issue}→#${i.pr}`).join(' · ') || 'ninguno'}
+                </Text>
+              )}
+            </Box>
+          </Box>
+        </Box>
+      )
+    }
     if (!run) {
       const ready = await read($, readyAtom)
       const pending = await read($, pendingAtom)
