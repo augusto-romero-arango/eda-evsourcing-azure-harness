@@ -259,6 +259,8 @@ assert_eq "deny" "$(eval_perm mefisto-fx-perm-writer edit 'src/Foo.cs')" "edicio
 assert_eq "allow" "$(eval_perm mefisto-fx-perm-writer edit 'commands/x.md')" "edicion de commands/x.md permite"
 assert_eq "allow" "$(eval_perm mefisto-fx-perm-writer edit '.mefisto/pipeline/summaries/stage-1-writer.md')" "edicion del resumen de stage (.mefisto/) permite"
 assert_eq "allow" "$(eval_perm mefisto-fx-perm-writer edit '.claude/pipeline/summaries/stage-1-writer.md')" "edicion del resumen de stage (.claude/) permite"
+assert_eq "allow" "$(eval_perm mefisto-fx-perm-writer edit '.mefisto/pipeline/sandbox/x/poc.sh')" "edicion bajo el sandbox del planner permite"
+assert_eq "deny" "$(eval_perm mefisto-fx-perm-planner bash 'bash .mefisto/pipeline/sandbox/x/poc.sh')" "ejecutar un script del sandbox sigue denegado en shell"
 assert_eq "allow" "$(eval_perm mefisto-fx-perm-writer edit 'src/runtime/lib/mefisto-models.sh')" "edicion de src/runtime/** permite"
 assert_eq "allow" "$(eval_perm mefisto-fx-perm-writer edit 'src/published/contract/README.md')" "edicion de src/published/** permite"
 assert_eq "deny" "$(eval_perm mefisto-fx-perm-writer edit 'mefisto-manifest.json')" "edicion manual de mefisto-manifest.json generado deniega"
