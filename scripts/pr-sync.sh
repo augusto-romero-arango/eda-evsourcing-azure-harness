@@ -246,7 +246,7 @@ LOG_DIR_ABS="$(dirname "$(mefisto_state_path 'logs/.state')")"
 LOG_FILE_ABS="$LOG_DIR_ABS/pr-sync-$TIMESTAMP.log"
 touch "$LOG_FILE_ABS"
 
-# events.log es el mismo archivo canonico que /work-status lee para dibujar
+# events.log es el mismo archivo canonico que work-status-collect.sh lee para reportar
 # "EN ESPERA": run_agent() deja ahi la linea "[hold] ..." de MEF-ADR-0051
 # seccion 3 (agent_hold_wait), compartido con tdd-pipeline.sh/tooling-pipeline.sh
 # si corren en el mismo repo. Atribuir esas horas a un issue en el reporte de
@@ -256,7 +256,7 @@ EVENTS_LOG_ABS="$(mefisto_state_path 'events.log')"
 
 # ─── Trap de cierre: marca failed si el PR en curso queda running/hold ──────
 # Cubre interrupciones (Ctrl-C, kill, timeout externo) que nunca pasan por
-# fail_pr(): sin este trap, /work-status seguiria mostrando ese PR "en
+# fail_pr(): sin este trap, work-status-collect.sh seguiria mostrando ese PR "en
 # progreso" o "en espera" para siempre (issue #1601, CA-4). Solo toca el PR
 # EN CURSO (CURRENT_PR_STATUS) -- los PRs ya cerrados (completed/failed) o
 # nunca alcanzados no se tocan.

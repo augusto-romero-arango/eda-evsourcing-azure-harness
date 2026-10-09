@@ -19,7 +19,7 @@ Plugin de [Claude Code](https://code.claude.com/docs/en/plugins) que provee un h
 
 ## Qué incluye
 
-- **Skills** (slash commands): `/onboard`, `/upgrade`, `/runtimes`, `/implement`, `/tooling`, `/infra`, `/infra-base`, `/scaffold`, `/scaffold-projections`, `/scaffold-mcp`, `/seed-secret`, `/install-workos`, `/install-apim`, `/install-auth`, `/parallel`, `/batch-stop`, `/next-order`, `/sequential`, `/bug`, `/draft`, `/fix-review`, `/health-check`, `/work-status`, `/eraser-diagram`, `/merge`, `/bitacora`, `/purge-store`.
+- **Skills** (slash commands): `/onboard`, `/upgrade`, `/runtimes`, `/implement`, `/tooling`, `/infra`, `/infra-base`, `/scaffold`, `/scaffold-projections`, `/scaffold-mcp`, `/seed-secret`, `/install-workos`, `/install-apim`, `/install-auth`, `/parallel`, `/batch-stop`, `/next-order`, `/sequential`, `/bug`, `/draft`, `/fix-review`, `/health-check`, `/eraser-diagram`, `/merge`, `/bitacora`, `/purge-store`.
 - **Agentes** especializados: `planner`, `test-writer`, `implementer`, `projection-test-writer`, `projection-implementer`, `projections-scaffolder`, `reviewer`, `smoke-test-writer`, `domain-scaffolder`, `infra-base-scaffolder`, `apim-gateway-scaffolder`, `workos-identity-scaffolder`, `historiador`, `infra-writer`, `infra-reviewer`, `infra-bootstrap`, `pr-sync`, `bug-investigator`, `tooling-investigator`.
 - **Pipelines bash** que orquestan el ciclo TDD, IaC y tooling sobre `tmux` y `git worktree`.
 - **ADRs** del marco arquitectónico (prefijo `MEF-ADR-`, ver [índice temático](docs/adr/INDICE-TEMATICO.md)).
@@ -320,7 +320,7 @@ El objetivo es confirmar que el plugin quedó **instalado y habilitado**, no que
 
 El criterio de éxito es **"los comandos `/mefisto:*` aparecen disponibles"**, no "responden sin datos".
 
-> **En un proyecto greenfield es esperable que los skills de runtime no muestren nada — y eso NO indica un fallo de instalación.** `/mefisto:work-status` lee `.claude/pipeline/pipeline-status-*.json` (aún sin pipelines corridos) y muestra un dashboard vacío. Esa salida vacía solo significa que todavía no has corrido pipelines: la instalación se verifica con los dos checks de arriba, no con que ese skill devuelva datos.
+> **En un proyecto greenfield es esperable que los skills de runtime no muestren nada — y eso NO indica un fallo de instalación.** Los skills de runtime leen el estado de los pipelines (aún sin pipelines corridos). Que no haya nada que mostrar solo significa que todavía no has corrido pipelines: la instalación se verifica con los dos checks de arriba, no con que haya datos de pipelines.
 
 Para un diagnóstico del onboarding (¿está bien formado el `harness.config.json`?, ¿existen los labels?, ¿está configurado el CI?), corre el doctor de onboarding (por defecto solo diagnostica):
 
@@ -360,7 +360,7 @@ Comprueba que el plugin cargó (mismo criterio que "Verificar instalación", pas
 /plugin list
 ```
 
-`mefisto@augusto-romero-arango-harness` debe aparecer instalado, y `/help` debe listar los skills `/mefisto:*`. En este punto greenfield aún no hay pipelines, así que `/mefisto:work-status` mostrará un dashboard vacío: eso es esperable y no indica un fallo de instalación.
+`mefisto@augusto-romero-arango-harness` debe aparecer instalado, y `/help` debe listar los skills `/mefisto:*`. En este punto greenfield aún no hay pipelines, así que no hay estado de pipelines que mostrar: eso es esperable y no indica un fallo de instalación.
 
 > **Por qué scope `user` y no `project` (requisito para los pipelines).** Los pipelines (`/infra`, `/implement`, `/scaffold`) **no** corren sus agentes dentro de tu repo: crean un **git worktree** en `${REPO_ROOT}/../<rama>` —un directorio **hermano del repo consumidor, fuera de él**— e invocan cada agente ahí con `claude -p ... --agent <nombre> ...` (ver `scripts/iac-pipeline.sh`, `scripts/tdd-pipeline.sh` y `scripts/scaffold-pipeline.sh`, que comparten el patrón `WORKTREE_PATH="${REPO_ROOT}/../${BRANCH_NAME}"`). Con el plugin a **scope `project`**, Claude Code solo lo carga para el path del repo consumidor; ese worktree hermano queda fuera de alcance, el agente no se encuentra y el pipeline aborta con `agent '<nombre>' not found`. El **scope `user`** carga el plugin para todos los paths de tu usuario —incluido el worktree—, por eso es **requisito antes del paso 5 (Bootstrap de infraestructura / `/infra`)**, el primer paso de esta guía que dispara un pipeline. En Claude Code 2.1.x `--scope user` es además el default de `claude plugin install`; declararlo explícito evita que un flujo interactivo previo lo haya dejado a scope `project` (la causa raíz del fallo en el primer greenfield real del harness).
 

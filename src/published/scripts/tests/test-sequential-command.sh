@@ -33,7 +33,7 @@ contains "$body" 'pipeline resuelto' 'resumen numerado con el pipeline resuelto'
 contains "$body" 'pasando `--pipeline` si el usuario lo proporciono' 'pasa --pipeline al wrapper'
 contains "$body" 'Herdr' 'documenta despacho Herdr'
 contains "$body" 'sesion tmux' 'documenta despacho tmux'
-contains "$body" '{{mefisto:command work-status}}' 'referencia work-status via directiva command'
+absent "$body" "work-status" "no remite a work-status"
 contains "$body" '{{mefisto:command batch-stop}}' 'referencia batch-stop via directiva command'
 contains "$body" 'No esperes a que termine' 'regla: no esperar'
 contains "$body" 'No implementes nada tu mismo' 'regla: no implementar'
@@ -51,8 +51,8 @@ contains "$opencode_body" 'MEFISTO_RUNTIME=opencode "${MEFISTO_PACKAGE_ROOT}/scr
 absent "$opencode_body" 'MEFISTO_RUNTIME=claude' 'OpenCode no fija el runtime Claude'
 contains "$claude_body" 'model: "haiku"' 'Claude materializa el perfil fast'
 absent "$opencode_body" 'model:' 'OpenCode no emite model'
-contains "$claude_body" '/mefisto:work-status' 'Claude resuelve la directiva command a /mefisto:work-status'
-contains "$opencode_body" '/mefisto:work-status' 'OpenCode resuelve la directiva command a /mefisto:work-status'
+absent "$claude_body" "work-status" "no remite a work-status"
+absent "$opencode_body" "work-status" "no remite a work-status"
 contains "$claude_body" '/mefisto:batch-stop' 'Claude resuelve la directiva command a /mefisto:batch-stop'
 contains "$opencode_body" '/mefisto:batch-stop' 'OpenCode resuelve la directiva command a /mefisto:batch-stop'
 # La invocacion propia del comando (la linea que lanza tmux-pipeline.sh) no

@@ -233,7 +233,7 @@ touch "$LOG_FILE_ABS"
 # Reparto del reporte de espera (mismo que el homologo interno, issue #969):
 #   - EN VIVO, mientras el eslabon espera: la linea la emite el propio
 #     eslabon ("... en espera (hold), ...", issue #971) y llega a este pane
-#     por el `tee` de mas abajo; en paralelo /work-status la lee de este mismo
+#     por el `tee` de mas abajo; en paralelo work-status-collect.sh la lee de este mismo
 #     events.log y renderiza "EN ESPERA" con causa y hora de sonda (CA-2/CA-4).
 #     El batch no la duplica: mientras el eslabon corre esta bloqueado en el `tee`.
 #   - AL CERRAR el eslabon: este script anota cuanto se espero, como nota

@@ -33,7 +33,7 @@ contains "$body" '{{mefisto:run pr-sync.sh <num>}}' 'reintento de un PR puntual 
 contains "$body" '{{mefisto:state-path logs}}' 'apunta al log via state-path'
 contains "$body" 'pr-sync-<ts>.log' 'nombre de log con timestamp fuera de la directiva'
 contains "$body" '{{mefisto:command merge}}' 'recomienda /mefisto:merge para el flujo con validaciones'
-contains "$body" '{{mefisto:command work-status}}' 'remite el progreso a work-status'
+absent "$body" "work-status" "no remite a work-status"
 contains "$body" 'NUNCA instales software' 'regla: nunca instalar software'
 contains "$body" 'NUNCA ejecutes comandos git/gh por tu cuenta' 'regla: nunca compensar con git/gh manuales'
 contains "$body" 'NUNCA diagnostiques ni arregles problemas del script' 'regla: nunca diagnosticar el script'

@@ -2,11 +2,10 @@
 # work-status-collect.sh -- Consolida en un unico JSON el estado de los
 # pipelines del consumidor (TDD, Tooling, Infra, pr-sync), leyendo el root
 # canonico (.mefisto/pipeline/) y el legacy (.claude/pipeline/) sin migrar ni
-# escribir nada (MEF-ADR-0053 seccion 4). Reemplaza los Pasos 1, 1b y 3 de
-# commands/work-status.md (issue #1597): el script entrega DATOS
+# escribir nada (MEF-ADR-0053 seccion 4). Lo consume el agente
+# tooling-investigator (issue #1597): el script entrega DATOS
 # deterministicos (dedup, hold/actividad, porcentaje de avance, ruta de log
-# resuelta); el comando /work-status sigue siendo quien RENDERIZA (ancho de
-# 78 columnas, truncado, ASCII) -- migracion del comando: issue #1598.
+# resuelta) y quien lo consume los presenta.
 #
 # Uso: scripts/work-status-collect.sh --json
 #

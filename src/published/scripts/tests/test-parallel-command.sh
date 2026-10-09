@@ -35,7 +35,8 @@ contains "$body" 'tmux -CC attach -t parallel-<timestamp>' 'documenta conexion t
 contains "$body" '{{mefisto:state-path logs}}' 'documenta logs por issue'
 contains "$body" '{{mefisto:state-path events.log}}' 'documenta events.log'
 absent "$body" 'propio tab' 'describe correctamente panes, no tabs'
-for command in work-status merge batch-stop sequential; do contains "$body" "{{mefisto:command $command}}" "referencia $command via directiva command"; done
+for command in merge batch-stop sequential; do contains "$body" "{{mefisto:command $command}}" "referencia $command via directiva command"; done
+absent "$body" "work-status" "no remite a work-status"
 contains "$body" '{{mefisto:package-root}}/scripts/parallel-pipeline.sh' 'scheduler directo usa package-root'
 contains "$body" '--max-parallel' 'documenta limite de concurrencia'
 contains "$body" 'tipo:projection' 'conserva serializacion de projections'
@@ -54,7 +55,7 @@ contains "$opencode_body" 'MEFISTO_RUNTIME=opencode "${MEFISTO_PACKAGE_ROOT}/scr
 absent "$opencode_body" 'MEFISTO_RUNTIME=claude' 'OpenCode no fija el runtime Claude'
 contains "$claude_body" 'model: "haiku"' 'Claude materializa el perfil fast'
 absent "$opencode_body" 'model:' 'OpenCode no emite model'
-for command in work-status merge batch-stop; do
+for command in merge batch-stop; do
     contains "$claude_body" "/mefisto:$command" "Claude resuelve $command"
     contains "$opencode_body" "/mefisto:$command" "OpenCode resuelve $command"
 done

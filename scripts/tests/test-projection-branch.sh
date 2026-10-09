@@ -198,7 +198,7 @@ assert_script_contains "E4b: carve-out excluye carpetas con sufijo Function (com
     '[ "${query_dir%Function}" = "$query_dir" ]' "$COMMON_SCRIPT"
 assert_script_contains "E5: SMOKE_FILES suma el patron read-side bajo IS_PROJECTION" '/(Obtener|Listar)[A-Za-z0-9]*/FunctionEndpoint\.cs$'
 assert_script_contains "E6: reviewer y smoke-test-writer se mantienen (sin STAGE variable en run_agent)" 'run_agent "3" "reviewer"'
-# El campo "stage" de status.json es lo que /work-status parsea para saber que
+# El campo "stage" de status.json es lo que work-status-collect.sh parsea para saber que
 # agente corrio: si el estado "passed" lo escribiera hardcodeado como
 # 1-test-writer, un run read-side reportaria el agente equivocado.
 assert_script_contains "E7: update_status de Stage 1 usa el agente resuelto" 'update_status "1-${STAGE1_AGENT}"'

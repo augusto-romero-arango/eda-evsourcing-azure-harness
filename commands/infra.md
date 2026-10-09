@@ -169,7 +169,6 @@ Dentro de Herdr (`HERDR_ENV=1` en el entorno), el script delega en la interfaz H
 
 ```
 Pipeline infra corriendo en un pane de este workspace (visor en vivo del agente).
-Usa /mefisto:work-status para ver el progreso sin salir de aqui.
 ```
 
 Fuera de Herdr responde con:
@@ -177,8 +176,6 @@ Fuera de Herdr responde con:
 ```
 Pipeline infra lanzado en tmux. Para monitorear:
   tmux -CC attach -t infra-<numero>
-
-Usa /mefisto:work-status para ver el progreso sin salir de aqui.
 ```
 
 ## Flujo: cero permisos de Azure en local (MEF-ADR-0021, MEF-ADR-0022)

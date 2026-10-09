@@ -37,7 +37,7 @@ contains "$body" 'gh pr view' 'consulta PR antes que issue'
 contains "$body" 'Nunca supongas que un fallo significa cierre' 'falla cerrado ante consulta no resoluble'
 contains "$body" 'HERDR_ENV=1' 'documenta deteccion de Herdr'
 contains "$body" 'tmux -CC attach -t infra-<numero>' 'documenta el attach tmux fuera de Herdr'
-contains "$body" '{{mefisto:command work-status}}' 'referencia work-status via directiva command'
+absent "$body" "work-status" "no remite a work-status"
 contains "$body" '{{mefisto:command implement}}' 'referencia implement via directiva command'
 contains "$body" '{{mefisto:command tooling}}' 'referencia tooling via directiva command'
 contains "$body" 'MEF-ADR-0021' 'documenta el ADR de cero permisos de Azure'
@@ -58,8 +58,8 @@ contains "$opencode_body" 'MEFISTO_RUNTIME=opencode "${MEFISTO_PACKAGE_ROOT}/scr
 absent "$opencode_body" 'MEFISTO_RUNTIME=claude' 'OpenCode no fija el runtime Claude'
 contains "$claude_body" 'model: "haiku"' 'Claude materializa el perfil fast'
 absent "$opencode_body" 'model:' 'OpenCode no emite model'
-contains "$claude_body" '/mefisto:work-status' 'Claude resuelve la directiva command a /mefisto:work-status'
-contains "$opencode_body" '/mefisto:work-status' 'OpenCode resuelve la directiva command a /mefisto:work-status'
+absent "$claude_body" "work-status" "no remite a work-status"
+absent "$opencode_body" "work-status" "no remite a work-status"
 contains "$claude_body" '/mefisto:implement' 'Claude resuelve la directiva command a /mefisto:implement'
 contains "$opencode_body" '/mefisto:implement' 'OpenCode resuelve la directiva command a /mefisto:implement'
 contains "$claude_body" '/mefisto:tooling' 'Claude resuelve la directiva command a /mefisto:tooling'

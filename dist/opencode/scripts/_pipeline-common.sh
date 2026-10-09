@@ -1909,7 +1909,7 @@ RESUME_PROMPT_EOF
 #     format_hold_status.
 #   - La CONTABILIDAD de lo esperado al cerrar un eslabon: batch-pipeline.sh
 #     esta bloqueado en el `tee` del eslabon mientras este espera (la senal en
-#     vivo la emite el propio eslabon, issue #971, y /work-status la lee de
+#     vivo la emite el propio eslabon, issue #971, y work-status-collect.sh la lee de
 #     events.log, CA-4), asi que solo puede anotar cuanto se espero al cerrar
 #     -- hold_seconds_in_range/hold_note_suffix, nota ANEXA al desenlace real,
 #     nunca un fallo nuevo (CA-1).
@@ -2031,7 +2031,7 @@ hold_recently_active() {
 # Si hay una espera activa, imprime la ultima linea de anuncio sin su
 # timestamp ni corchetes -- p. ej. "RATE_LIMIT: esperando, proxima sonda
 # 14:37:07 (techo 20:32)" -- lista para el dashboard de parallel-pipeline.sh
-# (CA-2) y para /work-status (CA-4). Sin espera activa no imprime nada y
+# (CA-2) y para work-status-collect.sh (CA-4). Sin espera activa no imprime nada y
 # retorna 1.
 format_hold_status() {
     local events_log="$1" from_line="${2:-0}"
