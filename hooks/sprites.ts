@@ -1,6 +1,7 @@
 /**
  * mefisto-sprites.ts
- * Mascota Mefisto para mods de Claude Code.
+ * Mascota Mefisto para mods de Claude Code. El planner no es un Mefisto: es Fausto, el que decide
+ * (birrete de doctor, barba y tunica del mismo color que el Mefisto de su lado).
  *
  * Cada sprite es una cuadrícula de 18×12 píxeles escrita como texto:
  * cada carácter es un píxel y apunta a un color de PALETTE.
@@ -57,12 +58,16 @@ export const PALETTE: Record<string, number> = {
   "P": 0x7F77DD, // marco de la lupa
   "e": 0xEEEDFE, // brillo de la lupa
   "n": 0x854F0B, // mango de la lupa
-  "m": 0xE8C98E, // mapa claro
-  "j": 0xC9A866, // mapa oscuro
-  "Z": 0x444441, // ruta del mapa
-  "O": 0xD85A30, // destino del mapa
   "c": 0xB5D4F4, // nube
   "C": 0x888780, // nube caída
+  "k": 0xF1C9A5, // piel de Fausto
+  "f": 0xD9A07F, // nariz de Fausto
+  "i": 0x8A6F5A, // bigote de Fausto
+  "K": 0x2C2C2A, // birrete de Fausto (negro)
+  "z": 0xC4504D, // borla del birrete
+  "a": 0x9C978C, // barba y pelo de Fausto
+  "T": 0xA32D2D, // tunica de Fausto (roja)
+  "d": 0x501313, // ribete de la tunica
 }
 
 export type Emotion =
@@ -238,6 +243,8 @@ export interface RoleState {
   emotion: Emotion
   /** Capas del rol para el cuadro A y el B. ' ' deja ver la cara. */
   layers: readonly [Grid, Grid]
+  /** Cara propia del rol en lugar de la de Mefisto (Fausto, el planner). */
+  face?: readonly [Grid, Grid]
 }
 
 /** Objetos y detalles de cada rol, por estado de trabajo. */
@@ -483,63 +490,33 @@ export const ROLES: Record<Role, Record<string, RoleState>> = (() => {
     'QVQ n             ',
     'QQQn              ',
   ]
-  // Planner · mapa, coral
-  const planner_planeando_A: Grid = [
-    '                  ',
-    '                  ',
-    '                  ',
-    '                  ',
-    '                  ',
-    '                  ',
-    'mjmjO             ',
-    'mjmjm             ',
-    'mjmjm             ',
-    'mZmjm             ',
-    'Zjmjm             ',
-    '                  ',
+  // Planner · Fausto: mira a un lado y a otro mientras planea
+  const fausto_planeando_A: Grid = [
+    '..................',
+    '.....KKKKKKKKKK...',
+    '......KKKKKKKK.z..',
+    '.......KKKKKK..z..',
+    '......akkkkkka....',
+    '......akEkkEka....',
+    '......akkkkkka....',
+    '......akkffkka....',
+    '......aaiiiiaa....',
+    '.....TdaaaaaadT...',
+    '....TTTdaaaadTTT..',
+    '....TTTTdaadTTTT..',
   ]
-  const planner_planeando_B: Grid = [
-    '                  ',
-    '                  ',
-    '                  ',
-    '                  ',
-    '                  ',
-    '                  ',
-    'mjmjO             ',
-    'mjmjm             ',
-    'mjZjm             ',
-    'mZmjm             ',
-    'Zjmjm             ',
-    '                  ',
+  const fausto_planeando_B: Grid = fausto_planeando_A.map((row, y) => (y === 5 ? '......aEkkEkka....' : row))
+  const fausto_pensando_A: Grid = [
+    '.yYy..............',
+    '.YwY.KKKKKKKKKK...',
+    '..G...KKKKKKKK.z..',
+    ...fausto_planeando_B.slice(3),
   ]
-  const planner_pensando_A: Grid = [
-    '                  ',
-    '                  ',
-    '                  ',
-    '                  ',
-    '                  ',
-    '                  ',
-    'mjmjO             ',
-    'mjmjm             ',
-    'mjZjm             ',
-    'mZmjm             ',
-    'Zjmjm             ',
-    '                  ',
-  ]
-  const planner_listo_A: Grid = [
-    '                  ',
-    '                  ',
-    '                  ',
-    '                  ',
-    '                  ',
-    '                  ',
-    'mjmjV             ',
-    'mjmZm             ',
-    'mjZjm             ',
-    'mZmjm             ',
-    'Zjmjm             ',
-    '                  ',
-  ]
+  const fausto_pensando_B: Grid = ['.ooo..............', '.ooo.KKKKKKKKKK...', ...fausto_pensando_A.slice(2)]
+  const fausto_listo_A: Grid = fausto_planeando_A.map((row, y) =>
+    y === 8 ? '......aaiaaiaa....' : y === 9 ? '.....TdaaiiaadT...' : row,
+  )
+  const sin_capa: Grid = Array(HEIGHT).fill(' '.repeat(WIDTH))
   // Infraestructura · nube y casco, amarillo
   const infraestructura_desplegando_A: Grid = [
     '                  ',
@@ -616,9 +593,9 @@ export const ROLES: Record<Role, Record<string, RoleState>> = (() => {
       aprobado: { emotion: 'sonriente', layers: [revisor_aprobado_A, revisor_aprobado_A] },
     },
     planner: {
-      planeando: { emotion: 'normal', layers: [planner_planeando_A, planner_planeando_B] },
-      pensando: { emotion: 'pensando', layers: [planner_pensando_A, planner_pensando_A] },
-      listo: { emotion: 'sonriente', layers: [planner_listo_A, planner_listo_A] },
+      planeando: { emotion: 'normal', layers: [sin_capa, sin_capa], face: [fausto_planeando_A, fausto_planeando_B] },
+      pensando: { emotion: 'pensando', layers: [sin_capa, sin_capa], face: [fausto_pensando_A, fausto_pensando_B] },
+      listo: { emotion: 'sonriente', layers: [sin_capa, sin_capa], face: [fausto_listo_A, fausto_listo_A] },
     },
     infraestructura: {
       desplegando: { emotion: 'normal', layers: [infraestructura_desplegando_A, infraestructura_desplegando_B] },
@@ -658,7 +635,7 @@ export function overlay(base: Grid, layer: Grid): Grid {
 export function sprite(role: Role, state: string, frame: Frame = 0): Grid {
   const def = ROLES[role]?.[state]
   if (!def) throw new Error(`Estado desconocido: ${role}.${state}`)
-  return overlay(EMOTIONS[def.emotion][frame], def.layers[frame])
+  return overlay((def.face ?? EMOTIONS[def.emotion])[frame], def.layers[frame])
 }
 
 /** Sprite solo con la cara, sin objeto de rol. */
