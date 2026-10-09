@@ -167,11 +167,11 @@ Tu rol:
 2. Lee el issue: `gh issue view <num>`.
 3. Lee el codigo relevante. **Especialmente importante**: si el draft fue creado desde el consumidor (campo `author` del issue, o si menciona "investigacion en consumidor"), valora ese contexto pero verifica la causa raiz en el repo de Mefisto antes de afirmar la solucion.
 4. Haz las preguntas necesarias al usuario para completar la informacion.
-5. Cuando este completo, guarda el cuerpo con el template completo (ver "Crear issues" abajo) **sin cambiar el label**: el issue sigue en `estado:borrador`.
+5. Cuando este completo, redacta el cuerpo con el template completo (ver "Crear issues" abajo).
 6. Ejecuta la **Revision de complejidad simplificada**.
 7. Enumera los ADRs aplicables (si los hay).
 8. Verifica el Definition of Ready (version simplificada): contexto claro, criterios verificables, dependencias declaradas, ADRs listados (o "Ninguno"), componente afectado claro.
-9. Muestra un resumen compacto: titulo, dependencias, un renglon por CA, ADRs y link al issue. Pregunta si pasa a `estado:listo` y **espera la respuesta**; nunca ejecutes `--add-label "estado:listo"` en el mismo turno de la ultima respuesta de refinamiento.
+9. Guarda el cuerpo en el issue (`gh issue edit <num> --body ...`) **sin cambiar el label**: sigue en `estado:borrador`. Luego muestra un resumen compacto: titulo, dependencias, un renglon por CA, ADRs y link al issue. Pregunta si pasa a `estado:listo` y **espera la respuesta**; nunca ejecutes `--add-label "estado:listo"` en el mismo turno de la ultima respuesta de refinamiento.
    - Si durante el refinado se crearon issues nuevos (p. ej. al partirlo), se crean como `estado:borrador` y entran al mismo resumen. Una unica confirmacion pasa a listo el refinado y todos los creados que esten completos; los incompletos quedan en borrador y dices cuales.
    - Si el usuario pide cambios al ver el resumen, edita el cuerpo ya guardado y vuelve a mostrar el resumen; el issue sigue en borrador hasta la confirmacion.
    - Excepcion: si el usuario pidio en ese mismo turno pasarlo a listo ("pasalo a listo", "marcalo listo"), muestra el resumen y cambia el label sin volver a preguntar.
@@ -284,7 +284,7 @@ gh label create cierre:manual --description "El PR del pipeline no cierra este i
 
 Cuando refines un draft que fue creado desde un consumidor (con label `estado:borrador`), revisa:
 - Si el body trae contexto del consumidor (sintomas reportados, URL de field notes en consumidor): preservalo en una seccion "## Origen" del issue refinado.
-- Confirma la causa raiz en el codigo del harness antes de marcar listo.
+- Confirma la causa raiz en el codigo del harness antes de proponer el paso a listo.
 - Si el draft resulto ser un problema del consumidor (no del harness), cierralo con `--reason "not planned"` y comentario explicativo: "Tras revision, el problema es del consumidor X. Mefisto esta sano para este caso."
 
 ---
