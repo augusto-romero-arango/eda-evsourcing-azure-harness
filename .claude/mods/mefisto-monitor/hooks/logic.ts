@@ -1,8 +1,9 @@
-import type { BatchIssue, BatchRun, IssueStats, BlockedItem, LogLine, MonitorAgent, MonitorRun, ReadyItem, ReadyList } from '../types'
+import type { BatchIssue, BatchRun, ChangelogSummary, Hold, IssueStats, OpenPr, BlockedItem, LogLine, MonitorAgent, MonitorRun, ReadyItem, ReadyList } from '../types'
 
 export const STATE_DIR = '.mefisto/pipeline'
 export const LOG_DIR = `${STATE_DIR}/logs`
 export const HISTORY = `${STATE_DIR}/pipeline-history.jsonl`
+export const EVENTS_LOG = `${STATE_DIR}/events.log`
 
 export const BATCH_STATUS = `${STATE_DIR}/pipeline-status-mefisto-batch.json`
 /** Senal de parada suave del batch (la misma que escribe /mefisto-batch-stop). */
@@ -11,17 +12,26 @@ export const BATCH_STOP = `${STATE_DIR}/batch-stop`
 export const statusPath = (issue: string) =>
   `${STATE_DIR}/pipeline-status-mefisto-tooling-${issue}.json`
 
-const LAUNCH = /mefisto-tmux-pipeline\.sh\s+--tooling\s+#?(\d+)/
+// El wrapper cuenta solo donde se ejecuta: al inicio de un comando (tras ; && || | ( then do o un salto de
+// linea), con asignaciones de entorno delante. Un texto que lo nombra (un heredoc, un grep, un echo) no lanza nada.
+const AT_COMMAND = String.raw`(?:^|[;&|(\n]|\bthen\b|\bdo\b)\s*(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*`
+const WRAPPER = String.raw`\S*mefisto-tmux-pipeline\.sh`
+const LAUNCH = new RegExp(`${AT_COMMAND}${WRAPPER}\\s+--tooling\\s+#?(\\d+)`)
 
-export function toolingIssueOf(command: string): string | null {
-  return LAUNCH.exec(command)?.[1] ?? null
+/** El comando sin el cuerpo de sus heredocs, que es texto y no se ejecuta. */
+export function withoutHeredocs(command: string): string {
+  return command.replace(/<<-?\s*(['"]?)(\w+)\1[^\n]*\n[\s\S]*?\n\s*\2[ \t]*(?=\n|$)/g, '<<heredoc')
 }
 
-const BATCH_LAUNCH = /mefisto-tmux-pipeline\.sh\s+--batch((?:\s+#?\d+)+)/
+export function toolingIssueOf(command: string): string | null {
+  return LAUNCH.exec(withoutHeredocs(command))?.[1] ?? null
+}
+
+const BATCH_LAUNCH = new RegExp(`${AT_COMMAND}${WRAPPER}\\s+--batch((?:\\s+#?\\d+)+)`)
 
 /** Los issues de un `mefisto-tmux-pipeline.sh --batch N M ...` (lo que corre /mefisto-sequential), en orden. */
 export function batchIssuesOf(command: string): string[] | null {
-  const m = BATCH_LAUNCH.exec(command)
+  const m = BATCH_LAUNCH.exec(withoutHeredocs(command))
   return m?.[1] ? (m[1].match(/\d+/g) ?? []) : null
 }
 
@@ -33,7 +43,7 @@ export function batchIssuesOf(command: string): string[] | null {
  */
 export function withModUi(command: string): string {
   if (/(^|\s)MEFISTO_UI=/.test(command)) return command
-  return command.replace(/(\S*mefisto-tmux-pipeline\.sh)\b/g, 'MEFISTO_UI=mod $1')
+  return command.replace(new RegExp(`(${AT_COMMAND})(${WRAPPER})`, 'g'), '$1MEFISTO_UI=mod $2')
 }
 
 export function stampToMs(stamp: string): number {
@@ -482,3 +492,106 @@ export function statsTotal(stats: IssueStats[]): IssueStats {
     costUsd: costs.length > 0 ? costs.reduce((a, b) => a + b, 0) : null,
   }
 }
+
+/**
+ * PRs abiertos (`gh pr list --json number,title,isDraft,headRefName`) sin los borradores, el mas reciente primero.
+ * Los de field notes (rama `docs/<agente>-field-note-<sesion>` de mefisto-field-note.sh) se marcan aparte.
+ */
+export function parseOpenPrs(stdout: string): OpenPr[] | null {
+  try {
+    const rows = JSON.parse(stdout) as { number: number; title: string; isDraft?: boolean; headRefName?: string }[]
+    return rows
+      .filter(r => !r.isDraft)
+      .map(r => ({ number: r.number, title: r.title, isFieldNote: /-field-note-/.test(r.headRefName ?? '') }))
+      .sort((a, b) => b.number - a.number)
+  } catch {
+    return null
+  }
+}
+
+export const MERGE_ALL = 'Todos (--all)'
+
+/** Opciones del dialogo de merge (2-4): todos y los PRs mas recientes; con uno solo, ese y cancelar. */
+export function mergeOptions(prs: OpenPr[]): string[] {
+  const label = (p: OpenPr) => clip(`#${p.number} ${p.title}`, 60)
+  if (prs.length === 1 && prs[0]) return [label(prs[0]), 'Cancelar']
+  return [MERGE_ALL, ...prs.slice(0, 3).map(label)]
+}
+
+/**
+ * Los argumentos de /mefisto-merge que salen de la respuesta (las opciones marcadas, unidas por ", "): --all si
+ * se eligio todos; de cada opcion solo su #N (el titulo puede traer fechas); del texto libre, sus numeros.
+ * Null si no queda ningun PR.
+ */
+export function mergeArgsOf(answer: string, options: string[]): string | null {
+  if (answer.includes(MERGE_ALL)) return '--all'
+  let rest = answer
+  const numbers: string[] = []
+  for (const option of options) {
+    if (!rest.includes(option)) continue
+    rest = rest.replace(option, '')
+    const n = /^#(\d+)/.exec(option)?.[1]
+    if (n) numbers.push(n)
+  }
+  numbers.push(...(rest.match(/\d+/g) ?? []))
+  const unique = [...new Set(numbers)]
+  return unique.length > 0 ? unique.join(' ') : null
+}
+
+/** Field notes en `docs/bitacora/field-notes/` sin procesar (las de `procesadas/` quedan fuera del listado). */
+export function fieldNotesIn(names: string[]): number {
+  return names.filter(n => n.endsWith('.md')).length
+}
+
+/** Resumen de `changelog.d/`: issues con fragmentos (sin README) y entradas por categoria de Keep a Changelog. */
+export function changelogOf(names: string[]): ChangelogSummary {
+  const fragments = names.filter(n => n !== 'README.md' && n.endsWith('.md'))
+  const by = (cat: string) => fragments.filter(n => n.endsWith(`.${cat}.md`)).length
+  return {
+    issues: new Set(fragments.map(n => n.split('.')[0])).size,
+    added: by('added'),
+    changed: by('changed'),
+    fixed: by('fixed'),
+    removed: by('removed'),
+  }
+}
+
+/** SemVer: algo agregado pide minor; solo cambios, arreglos o retiros, patch. El recomendado va primero. */
+export function releaseOptions(summary: ChangelogSummary): string[] {
+  const bump = summary.added > 0 ? 'minor' : 'patch'
+  const other = bump === 'minor' ? 'patch' : 'minor'
+  return [`${bump} (recomendado)`, other, `Solo preparar el PR (${bump} --prepare-only)`]
+}
+
+/** Los argumentos de /mefisto-release de la opcion elegida, o null. */
+export function releaseArgsOf(answer: string): string | null {
+  const bump = /\b(major|minor|patch)\b/.exec(answer)?.[1]
+  if (!bump) return null
+  return answer.includes('--prepare-only') ? `${bump} --prepare-only` : bump
+}
+
+/**
+ * La instruccion para integrar la bitacora. El historiador lee las field notes del checkout local, asi que antes
+ * hay que mergear los PRs de field notes que esperan y traer main al dia (las de PRs ya mergeados viven en
+ * origin/main hasta el pull).
+ */
+export function bitacoraPrompt(fieldNotePrs: number[]): string {
+  const merge = fieldNotePrs.length > 0
+    ? `mergea los PRs de field notes ${fieldNotePrs.map(n => `#${n}`).join(' ')} con /mefisto-merge, `
+    : ''
+  return `Integra la bitacora: ${merge}pon el checkout en main al dia (git switch main && git pull --ff-only) y luego corre /mefisto-bitacora.`
+}
+
+const HOLD = /^\[\d{2}:\d{2}:\d{2}\]\[hold\] (\S+): esperando, proxima sonda (\d{2}:\d{2})(?::\d{2})? \(techo (\d{2}:\d{2})\)/
+
+/**
+ * La espera en curso: la ultima linea de events.log es un `[hold]` (mefisto-tooling-pipeline.sh la escribe en
+ * cada sonda; cualquier actividad posterior, incluido `[hold][resume]`, la da por terminada).
+ */
+export function holdOf(tail: string): Hold | null {
+  const last = tail.split('\n').filter(l => l.trim() !== '').pop() ?? ''
+  const m = HOLD.exec(last)
+  return m ? { family: m[1] ?? '', nextProbe: m[2] ?? '', deadline: m[3] ?? '' } : null
+}
+
+export const holdText = (hold: Hold) => `en espera por ${hold.family} · próxima sonda ${hold.nextProbe} · techo ${hold.deadline}`

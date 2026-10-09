@@ -37,6 +37,15 @@ export type BatchRun = {
   stats: Record<string, IssueStats>
 }
 
+/** PR abierto sin borradores; los de field notes de la bitacora se cuentan aparte. */
+export type OpenPr = { number: number; title: string; isFieldNote: boolean }
+
+/** Fragmentos de changelog.d/ por consolidar en el proximo release. */
+export type ChangelogSummary = { issues: number; added: number; changed: number; fixed: number; removed: number }
+
+/** Espera por rate limit en curso, de la ultima linea de events.log. */
+export type Hold = { family: string; nextProbe: string; deadline: string }
+
 export type LogKind = 'start' | 'tool' | 'text' | 'fail' | 'done'
 
 export type LogLine = { ts: string; kind: LogKind; text: string }
@@ -51,6 +60,10 @@ declare module 'claude-code' {
       ready: ReadyList | null
       readyPage: number
       batch: BatchRun | null
+      openPrs: OpenPr[] | null
+      fieldNotes: number | null
+      changelog: ChangelogSummary | null
+      hold: Hold | null
     }
   }
 }

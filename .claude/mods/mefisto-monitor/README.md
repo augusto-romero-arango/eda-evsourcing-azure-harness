@@ -25,6 +25,12 @@ sesiones `-p` no los cargan. Para probar una copia suelta: `claude --plugin-dir 
   `1` escribe la linea de `/mefisto-sequential` con todos y `5`-`9` toma un solo issue: el dialogo nativo,
   junto al prompt, pregunta si va con merge (`/mefisto-sequential`) o solo PR (`/mefisto-tooling`). El comando
   queda en el prompt sin Enter para ajustarlo antes de lanzar; `0` pagina. Los bloqueados se ven al final, sin tecla.
+  `2` (`PRs N`, los abiertos sin borradores) abre el dialogo nativo para mergear: todos (`--all`) o varios de los
+  mas recientes, y otros numeros en la opcion de texto; al aceptar ejecuta `/mefisto-merge` de una vez.
+  `3` (`bitácora N`: field notes en `docs/bitacora/field-notes/` mas las de PRs sin mergear) pide integrarlas y le
+  encarga a Claude mergear esos PRs, poner `main` al dia y correr `/mefisto-bitacora`. `4` (`release N`: issues con
+  fragmentos en `changelog.d/`) ofrece `/mefisto-release` con el bump que sugiere SemVer (`minor` si hay `added`)
+  o solo preparar el PR, y lo ejecuta al aceptar. Los PRs de field notes no cuentan en `PRs`.
   `/mefisto-monitor refresh` la actualiza a mano.
 - `/mefisto-sequential` (`--batch`) corre desacoplado y la banda lo sigue desde
   `pipeline-status-mefisto-batch.json`: avance `N/M`, la cola (`✓` mergeado, `●` en curso, `✗` fallido, `⏸`
@@ -33,6 +39,8 @@ sesiones `-p` no los cargan. Para probar una copia suelta: `claude --plugin-dir 
   ultimo mergeado, `3` el log (acumula todos los issues). Al terminar: resumen (mergeados, fallidos, aplazados,
   espera por rate limit), los PRs de cada issue y `4` cierra. Un toast avisa cada merge.
   `/mefisto-monitor batch <issues>` reengancha un sequential ya lanzado.
+- Si un agente espera por rate limit (la ultima linea de `events.log` es un `[hold]`), la banda de la corrida y la
+  del sequential lo dicen: `en espera por RATE_LIMIT · próxima sonda HH:MM · techo HH:MM`.
 - Durante la corrida la misma banda muestra la mascota del agente activo (animada), issue, stage, tiempo, los
   pasos y las ultimas lineas del agente; `3` abre el monitor con el log completo. Al terminar, con el prompt
   vacio: `1` mergea el PR (confirma y encola `/mefisto-merge`), `2` lo abre en GitHub, `3` abre el monitor y
