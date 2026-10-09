@@ -116,24 +116,34 @@ export function topicOf(prompt: string): string {
   return clip(line.replace(/^quiero explorar:\s*/i, ''), 70)
 }
 
+// Un comando cuenta solo donde se ejecuta: al inicio (tras ; && || | ( then do o un salto de linea), con
+// asignaciones de entorno delante, y fuera de heredocs. Un texto que lo nombra (git show, grep, echo) no cuenta.
+const AT_COMMAND = String.raw`(?:^|[;&|(\n]|\bthen\b|\bdo\b)\s*(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*`
+
+function withoutHeredocs(command: string): string {
+  return command.replace(/<<-?\s*(['"]?)(\w+)\1[^\n]*\n[\s\S]*?\n\s*\2[ \t]*(?=\n|$)/g, '<<heredoc')
+}
+
+const runs = (command: string, pattern: string) => new RegExp(`${AT_COMMAND}${pattern}`).exec(withoutHeredocs(command))
+
 /** Un cambio de issues hecho por el planner (crear, editar, cerrar, reabrir): sus listas pueden haber cambiado. */
 export function isIssueChange(command: string): boolean {
-  return /\bgh\s+issue\s+(create|edit|close|reopen)\b/.test(command)
+  return runs(command, String.raw`gh\s+issue\s+(create|edit|close|reopen)\b`) !== null
 }
 
 export function isIssueCreate(command: string): boolean {
-  return /\bgh\s+issue\s+create\b/.test(command)
+  return runs(command, String.raw`gh\s+issue\s+create\b`) !== null
 }
 
 /** `gh issue edit 801 ... --add-label estado:listo`: el issue que pasa a listo, o null. */
 export function issueMarkedListo(command: string): number | null {
-  const m = /\bgh\s+issue\s+edit\s+#?(\d+)\b/.exec(command)
-  if (!m || !/--add-label[=\s]+["']?[^"'\s]*estado:listo/.test(command)) return null
-  return Number(m[1])
+  const m = runs(command, String.raw`gh\s+issue\s+edit\s+#?(\d+)\b[^\n;&|]*--add-label[=\s]+["']?[^"'\s]*estado:listo`)
+  return m ? Number(m[1]) : null
 }
 
+/** El cierre del planner: ejecuta mefisto-field-note.sh (leerlo con git show o grep no cierra nada). */
 export function isPlannerClosing(command: string): boolean {
-  return /mefisto-field-note\.sh/.test(command)
+  return runs(command, String.raw`\S*mefisto-field-note\.sh\b`) !== null
 }
 
 /** Numero del issue que `gh issue create` imprime como URL. */
