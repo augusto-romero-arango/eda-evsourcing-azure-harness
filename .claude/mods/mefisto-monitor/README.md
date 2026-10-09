@@ -39,6 +39,8 @@ sesiones `-p` no los cargan. Para probar una copia suelta: `claude --plugin-dir 
   ultimo mergeado, `3` el log (acumula todos los issues). Al terminar: resumen (mergeados, fallidos, aplazados,
   espera por rate limit), los PRs de cada issue y `4` cierra. Un toast avisa cada merge.
   `/mefisto-monitor batch <issues>` reengancha un sequential ya lanzado.
+- Mientras `/mefisto-bitacora` corre al subagente `mefisto-historiador`, la banda de espera muestra al historiador
+  escribiendo en su libro (`historiador escribiendo la bitácora MM:SS`) y, al terminar, `bitácora escrita`.
 - Si un agente espera por rate limit (la ultima linea de `events.log` es un `[hold]`), la banda de la corrida y la
   del sequential lo dicen: `en espera por RATE_LIMIT · próxima sonda HH:MM · techo HH:MM`.
 - Durante la corrida la misma banda muestra la mascota del agente activo (animada), issue, stage, tiempo, los

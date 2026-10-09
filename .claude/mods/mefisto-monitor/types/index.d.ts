@@ -46,6 +46,9 @@ export type ChangelogSummary = { issues: number; added: number; changed: number;
 /** Espera por rate limit en curso, de la ultima linea de events.log. */
 export type Hold = { family: string; nextProbe: string; deadline: string }
 
+/** El subagente mefisto-historiador escribiendo la bitacora en esta sesion (lo lanza /mefisto-bitacora). */
+export type Historian = { startedMs: number; finishedMs: number | null }
+
 export type LogKind = 'start' | 'tool' | 'text' | 'fail' | 'done'
 
 export type LogLine = { ts: string; kind: LogKind; text: string }
@@ -64,6 +67,7 @@ declare module 'claude-code' {
       fieldNotes: number | null
       changelog: ChangelogSummary | null
       hold: Hold | null
+      historian: Historian | null
     }
   }
 }
