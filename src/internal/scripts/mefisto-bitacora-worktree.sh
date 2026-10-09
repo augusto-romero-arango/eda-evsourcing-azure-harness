@@ -113,14 +113,38 @@ do_prepare() {
     fi
 
     mkdir -p "$SUMMARIES_DIR"
-    if git -C "$MEFISTO_REPO_ROOT" show-ref --verify --quiet "refs/heads/$branch"; then
+
+    # Rama ya entregada: si existe (local o remota) y su PR mas reciente esta
+    # MERGED, el worktree nace desde origin/main (rama recreada) para no heredar
+    # los commits ya integrados por squash.
+    local has_local=0 has_remote=0 pr_list latest_merged
+    git -C "$MEFISTO_REPO_ROOT" show-ref --verify --quiet "refs/heads/$branch" && has_local=1
+    if git -C "$MEFISTO_REPO_ROOT" fetch origin "refs/heads/$branch:refs/remotes/origin/$branch" >/dev/null 2>&1; then
+        has_remote=1
+    else
+        git -C "$MEFISTO_REPO_ROOT" update-ref -d "refs/remotes/origin/$branch" >/dev/null 2>&1 || true
+    fi
+    if [ "$has_local" -eq 1 ] || [ "$has_remote" -eq 1 ]; then
+        pr_list="$(gh pr list --head "$branch" --base "$BASE_BRANCH" --repo "$MEFISTO_REPO_SLUG" \
+            --state all --json number,state,mergedAt,createdAt)" \
+            || { echo "ERROR: 'gh pr list' fallo al consultar el PR de '$branch'; revisa 'gh auth status' y reintenta 'prepare --fecha $FECHA'." >&2; return 1; }
+        latest_merged="$(printf '%s' "$pr_list" | jq -r 'if length > 0 then (sort_by(.createdAt // "", .number) | last | if (.state == "MERGED" or ((.mergedAt // "") != "")) then "yes" else "no" end) else "no" end' 2>/dev/null)"
+        if [ "$latest_merged" = "yes" ]; then
+            echo "El PR mas reciente de '$branch' ya se mergeo; se recrea la rama desde origin/$BASE_BRANCH." >&2
+            git -C "$MEFISTO_REPO_ROOT" worktree add -B "$branch" "$wt_dir" "origin/$BASE_BRANCH" >&2 \
+                || { echo "ERROR: 'git worktree add -B' fallo desde origin/$BASE_BRANCH; reintenta 'prepare --fecha $FECHA'." >&2; return 1; }
+            (cd "$wt_dir" && pwd -P)
+            return 0
+        fi
+    fi
+
+    if [ "$has_local" -eq 1 ]; then
         git -C "$MEFISTO_REPO_ROOT" worktree add "$wt_dir" "$branch" >&2 \
             || { echo "ERROR: 'git worktree add' fallo sobre la rama local '$branch'; revisa 'git worktree list', corre 'git worktree prune' y reintenta." >&2; return 1; }
-    elif git -C "$MEFISTO_REPO_ROOT" fetch origin "refs/heads/$branch:refs/remotes/origin/$branch" >/dev/null 2>&1; then
+    elif [ "$has_remote" -eq 1 ]; then
         git -C "$MEFISTO_REPO_ROOT" worktree add -b "$branch" "$wt_dir" "origin/$branch" >&2 \
             || { echo "ERROR: 'git worktree add' fallo desde origin/$branch; reintenta." >&2; return 1; }
     else
-        git -C "$MEFISTO_REPO_ROOT" update-ref -d "refs/remotes/origin/$branch" >/dev/null 2>&1 || true
         git -C "$MEFISTO_REPO_ROOT" worktree add -b "$branch" "$wt_dir" "origin/$BASE_BRANCH" >&2 \
             || { echo "ERROR: 'git worktree add' fallo desde origin/$BASE_BRANCH; reintenta 'prepare --fecha $FECHA'." >&2; return 1; }
     fi
@@ -208,8 +232,17 @@ do_deliver() {
         || recovery_abort "consulta-pr" "'gh pr list' fallo; revisa 'gh auth status' y reintenta."
     pr_info="$(printf '%s' "$pr_json" | jq -c 'if length > 0 then sort_by(.createdAt // "", .number) | last else empty end' 2>/dev/null)"
 
+    local pr_merged_at=""
     if [ -n "$pr_info" ]; then
         pr_state="$(printf '%s' "$pr_info" | jq -r '.state')"
+        pr_merged_at="$(printf '%s' "$pr_info" | jq -r '.mergedAt // ""')"
+        if [ "$pr_state" = "MERGED" ] || [ -n "$pr_merged_at" ]; then
+            # Un PR mergeado nunca se reutiliza: esta entrega va en un PR nuevo.
+            pr_info=""
+        fi
+    fi
+
+    if [ -n "$pr_info" ]; then
         pr_url="$(printf '%s' "$pr_info" | jq -r '.url')"
         pr_num="$(printf '%s' "$pr_info" | jq -r '.number')"
         if [ "$pr_state" = "CLOSED" ]; then
@@ -219,7 +252,7 @@ do_deliver() {
         echo "PR existente reutilizado: $pr_url" >&2
     else
         pr_url="$(gh pr create --repo "$MEFISTO_REPO_SLUG" --base "$BASE_BRANCH" --head "$branch" \
-            --title "docs(bitacora): entradas hasta el ${fecha}" \
+            --title "docs(bitacora): $([ -n "$pr_state" ] && echo "reentrega de entradas" || echo "entradas") hasta el ${fecha}" \
             --body "Pone al dia la bitacora del harness (entrega aislada en worktree, hasta el ${fecha}).")" \
             || recovery_abort "creacion-pr" "'gh pr create' fallo; la rama '$branch' ya esta empujada. Reintenta 'deliver --worktree $wt'."
         pr_num="${pr_url##*/}"
