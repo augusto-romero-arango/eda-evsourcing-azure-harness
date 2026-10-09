@@ -28,6 +28,8 @@
 #       responde) se tolera igual que en el bloque original.
 #   [E] 'Bloquea #NNN' (referencia inversa, sin marcador forward) se ignora:
 #       no cuenta como dependencia de este issue.
+#   [E2] Negacion ('No depende de #N' / 'Ya no depende de #N') no bloquea el
+#       batch (issue #2126).
 #   [F] Hueco 2 (issue #466): el label 'bloqueado' ya no es condicion de entrada
 #       al analisis. Un issue SIN ese label que declara una dependencia forward
 #       abierta y fuera del batch aborta igual que uno etiquetado (CA-4) --
