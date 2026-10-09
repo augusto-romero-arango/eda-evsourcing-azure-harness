@@ -70,6 +70,9 @@ const READY_POLL_MS = 60_000
 const BAND_LOG_ROWS = 3
 const STATS_EVERY_MS = 5_000
 const HOLD_EVERY_MS = 5_000
+const HISTORIAN = 'mefisto-historiador'
+// Tras terminar, el historiador queda en pose de listo este tiempo antes de volver a la espera.
+const HISTORIAN_DONE_MS = 8_000
 const FIELD_NOTES_DIR = 'docs/bitacora/field-notes'
 const CHANGELOG_DIR = 'changelog.d'
 const SCRIPT_TIMEOUT_MS = 180_000
@@ -83,6 +86,8 @@ const MASCOT_POSES = [
   ['revisor', 'pensando'],
   ['revisor', 'corrigiendo'],
   ['revisor', 'aprobado'],
+  ['historiador', 'escribiendo'],
+  ['historiador', 'listo'],
 ] as const
 const MASCOT_COLS = usedColumns([
   ...MASCOT_POSES.flatMap(([role, state]) => [sprite(role, state, 0), sprite(role, state, 1)]),
@@ -119,6 +124,7 @@ const openPrsAtom = atom({ plugin: 'mefisto-monitor', key: 'openPrs' } as const,
 const fieldNotesAtom = atom({ plugin: 'mefisto-monitor', key: 'fieldNotes' } as const, null)
 const changelogAtom = atom({ plugin: 'mefisto-monitor', key: 'changelog' } as const, null)
 const holdAtom = atom({ plugin: 'mefisto-monitor', key: 'hold' } as const, null)
+const historianAtom = atom({ plugin: 'mefisto-monitor', key: 'historian' } as const, null)
 
 type Tail = { path: string; stream: AsyncGenerator<unknown, unknown> }
 
@@ -545,6 +551,19 @@ export const register: Register = on => {
     return next(e)
   })
 
+  // /mefisto-bitacora corre al historiador en primer plano: mientras dura la llamada, la banda de espera lo muestra.
+  on('tool.call', { tool: 'Agent' }, async ($, e, next) => {
+    if (!isInteractive || e.subagent_type !== HISTORIAN) return next(e)
+    await update($, historianAtom, () => ({ startedMs: Date.now(), finishedMs: null }))
+    try {
+      return await next(e)
+    } finally {
+      await update($, historianAtom, h => (h ? { ...h, finishedMs: Date.now() } : h))
+      $.clock.after(HISTORIAN_DONE_MS, () => void update($, historianAtom, h => (h?.finishedMs ? null : h)))
+      void refreshReady($)
+    }
+  })
+
   on('tool.call', { tool: 'Bash' }, async ($, e, next) => {
     const batchIssues = isInteractive ? batchIssuesOf(e.command) : null
     if (batchIssues && batchIssues.length > 0) {
@@ -732,8 +751,12 @@ export const register: Register = on => {
           ].filter(Boolean).join(' · ')
         : ''
       // En espera de que se lance algo; mientras Claude trabaja en la sesion, mira de lado a lado y corre la arena.
+      // Si el historiador escribe la bitacora, es el quien aparece, con la pluma en movimiento.
+      const historian = await read($, historianAtom)
       const tick = e.props.isWorking ? Math.floor((now || Date.now()) / 1000) : null
-      const grid = cropGrid(waitingFace(face('normal'), tick), MASCOT_COLS)
+      const grid = historian
+        ? cropGrid(sprite('historiador', historian.finishedMs ? 'listo' : 'escribiendo', (tick ?? 0) % 2 === 0 ? 0 : 1), MASCOT_COLS)
+        : cropGrid(waitingFace(face('normal'), tick), MASCOT_COLS)
       const elements = $.ui.resolve(e)
       const mascot =
         'Raster' in elements ? (
@@ -747,6 +770,10 @@ export const register: Register = on => {
             <Text>
               <Text color="claude">mefisto</Text>
               <Text dimColor> · listos {ready ? readyRows(ready).length : '…'}</Text>
+              {historian && !historian.finishedMs && (
+                <Text color="warning"> · historiador escribiendo la bitácora {elapsed((now || Date.now()) - historian.startedMs)}</Text>
+              )}
+              {historian?.finishedMs && <Text color="success"> · bitácora escrita</Text>}
             </Text>
             <Box gap={2}>
               {workPrs > 0 && (
