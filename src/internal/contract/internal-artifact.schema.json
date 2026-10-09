@@ -19,7 +19,7 @@
           "type": "array",
           "items": {
             "type": "string",
-            "enum": ["read", "edit", "shell", "web", "skill", "task", "mcp"]
+            "enum": ["read", "edit", "shell", "web", "skill", "task", "mcp", "ask"]
           }
         },
         "skills": {
@@ -46,7 +46,7 @@
           "type": "array",
           "items": {
             "type": "string",
-            "enum": ["read", "edit", "shell", "web", "skill", "task", "mcp"]
+            "enum": ["read", "edit", "shell", "web", "skill", "task", "mcp", "ask"]
           }
         },
         "skills": {

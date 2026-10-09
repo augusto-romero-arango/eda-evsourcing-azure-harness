@@ -11,6 +11,12 @@
     "all": "deny"
   },
 
+  "question_capability": {
+    "$comment": "Capacidad neutral `ask` (#2142): sube `question` a allow en los modos listados; en `subagent` no hay interlocutor y sigue rigiendo `question`.",
+    "capability": "ask",
+    "allow_modes": ["primary", "all"]
+  },
+
   "capability_scalar": {
     "web": ["webfetch", "websearch"],
     "skill": ["skill"],

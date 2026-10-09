@@ -192,6 +192,26 @@ if grep -q '^tools: "Read, Glob, Grep, Edit, Write, Bash"$' "$OUT_VALID/.claude/
 else
     fail "tools no coincide en el agente Claude"
 fi
+mkdir -p "$WORKDIR/ask-src"
+cat > "$WORKDIR/ask-src/mefisto-fx-ask.md" <<'EOF'
+---
+{
+  "kind": "agent",
+  "id": "mefisto-fx-ask",
+  "description": "Agente read+ask (issue #2142).",
+  "mode": "primary",
+  "capabilities": ["read", "ask"]
+}
+---
+
+Cuerpo.
+EOF
+"$GENERATOR" --out "$WORKDIR/out-ask" "$WORKDIR/ask-src/mefisto-fx-ask.md" >/dev/null 2>&1
+if grep -q '^tools: "Read, Glob, Grep, AskUserQuestion"$' "$WORKDIR/out-ask/.claude/agents/mefisto-fx-ask.md" 2>/dev/null; then
+    pass "capacidad ask -> AskUserQuestion en el agente Claude (#2142)"
+else
+    fail "ask no se mapeo a AskUserQuestion en el agente Claude"
+fi
 if grep -q '^agent: "mefisto-example-agent"$' "$OUT_VALID/.opencode/commands/mefisto-example-command.md" 2>/dev/null; then
     pass "agent propagado al comando OpenCode desde el campo neutral 'agent'"
 else
