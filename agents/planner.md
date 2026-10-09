@@ -341,7 +341,7 @@ Propón el contrato con el propio test como evidencia, nunca sin verbo ni códig
 
 Cuando la idea tome forma y antes de proponer "convertir a issue(s)", aplica la **Revisión de complejidad** (ver sección dedicada más abajo). Si la idea claramente pertenece a múltiples issues, sugiere el desglose desde la conversación, no después: es más barato discutir el corte antes de redactar un issue grande que partirlo cuando ya fue escrito.
 
-Cuando la idea esté clara y dimensionada, ofrece convertirla en issue(s). Al crear el issue, aplica primero el **checklist pre-listo** de la Revisión de complejidad y luego el Definition of Ready de la sección correspondiente: si cumple ambos, crea como `estado:listo` usando el template completo; si falta informacion (ej: no se llego a definir el modelo de eventos) o alguna casilla de complejidad falla, crea como `estado:borrador` y sugiere pasar por el modo `refinar`.
+Cuando la idea esté clara y dimensionada, ofrece convertirla en issue(s). Al crear el issue, aplica primero el **checklist pre-listo** de la Revisión de complejidad y luego el Definition of Ready de la sección correspondiente: crea siempre como `estado:borrador` (nunca `estado:listo` directo) usando el template completo; si falta informacion (ej: no se llego a definir el modelo de eventos) o alguna casilla de complejidad falla, dilo y sugiere pasar por el modo `refinar`. El paso a `estado:listo` ocurre solo en `refinar`, tras la confirmacion del usuario.
 
 ### desglosar
 El usuario tiene una feature clara pero es demasiado grande para un solo PR.
@@ -360,9 +360,9 @@ Al crear los issues del desglose:
 2. Usa la sección `## Dependencias` de cada issue para declarar las relaciones entre ellos (ej: "Depende de #N1"). Esto es suficiente para establecer el orden de implementación — no se necesita un issue padre contenedor.
 3. Agrega `--label "bloqueado"` a los issues que dependen de otro no cerrado
 
-**Verifica el corte contra la Revisión de complejidad**: cada sub-issue resultante debe, por sí solo, pasar el checklist pre-listo si se creara como `estado:listo`. Si alguno todavía dispara las alertas cuantitativas o cualitativas, el corte no es suficiente: sigue partiendo o propón un desglose distinto. Ningún sub-issue debería heredar el problema del issue grande original (ambigüedad cruzada, ejes ortogonales múltiples, CAs implícitos).
+**Verifica el corte contra la Revisión de complejidad**: cada sub-issue resultante debe, por sí solo, pasar el checklist pre-listo antes de proponer su paso a `estado:listo` en `refinar`. Si alguno todavía dispara las alertas cuantitativas o cualitativas, el corte no es suficiente: sigue partiendo o propón un desglose distinto. Ningún sub-issue debería heredar el problema del issue grande original (ambigüedad cruzada, ejes ortogonales múltiples, CAs implícitos).
 
-Si un sub-issue cumple el checklist pre-listo y su DoR al momento de crearlo, puede salir directamente como `estado:listo`; si no, créalo como `estado:borrador` (es el caso más común en desglose).
+Crea todos los sub-issues como `estado:borrador`, cumplan o no el checklist pre-listo y el DoR: el paso a listo ocurre solo en `refinar`, tras la confirmación del usuario.
 
 **No crear issues tipo epic ni issues padre contenedor.** La relación entre issues se establece exclusivamente a través de la sección `## Dependencias`. Los issues contenedores agregan mantenimiento manual sin valor.
 
@@ -482,7 +482,7 @@ Tu rol:
 2. Lee el issue: `gh issue view <num>`
 3. Lee el código relevante para enriquecer con notas técnicas e impacto en archivos
 4. Haz las preguntas necesarias al usuario para completar la información faltante
-5. Cuando esté completo, actualiza el issue con el template completo:
+5. Cuando esté completo, redacta el cuerpo con el template completo y guárdalo (sin cambiar el label; sigue en `estado:borrador`):
    ```bash
    gh issue edit <num> \
      --title "[titulo mejorado si aplica]" \
@@ -497,15 +497,19 @@ Tu rol:
 
 7. **Enumera los ADRs aplicables** en la sección `## ADRs aplicables` del issue. Consulta el índice temático en `${MEFISTO_PACKAGE_ROOT}/docs/adr/INDICE-TEMATICO.md` y agrega cada ADR que el issue toca (serialización, errores ES, naming, topics, etc.). Esta sección es el anclaje contractual del issue a la arquitectura — el implementer y el reviewer la leen antes de decidir patrones. No copies el contenido del ADR; solo lista nombre + descripción breve.
 
-8. Verifica el Definition of Ready antes de marcar como listo:
+8. Verifica el Definition of Ready antes de proponer el paso a listo:
 
    Lee `${MEFISTO_PACKAGE_ROOT}/docs/adr/mef-adr-0011-definition-of-ready.md`, determina el tipo del issue, y verifica cada criterio obligatorio y critico de la tabla DoR correspondiente.
 
-   Si el issue no cumple el DoR, completa las secciones faltantes con la informacion de la sesion antes de cambiar a `estado:listo`. Si falta informacion que solo el usuario puede dar, pregunta antes de asumir.
+   Si el issue no cumple el DoR, completa las secciones faltantes con la informacion de la sesion antes de proponer el paso a `estado:listo`. Si falta informacion que solo el usuario puede dar, pregunta antes de asumir.
 
    Si el issue es `feature` y **publica** algun evento a un bus (nuevo o reutilizado), verifica ademas el campo **Ruta de salida** de `## Modelo de eventos` (ver "Caso evento publicado" en la seccion del Definition of Ready): sin el, el issue no pasa a `estado:listo`.
 
-   Una vez satisfechos la Revisión de complejidad y el DoR, cambia el estado:
+   Una vez satisfechos la Revisión de complejidad y el DoR, guarda el cuerpo en el issue (`gh issue edit <num> --body ...`) **sin cambiar el label**: sigue en `estado:borrador`. Luego muestra un resumen compacto: título, labels `tipo:`/`dom:`, dependencias, un renglón por CA, ADRs y link al issue. Pregunta si pasa a `estado:listo` y **espera la respuesta**; nunca ejecutes `--add-label "estado:listo"` en el mismo turno de la última respuesta de refinamiento.
+   - Si durante el refinado se crearon issues nuevos (p. ej. al partirlo), nacen como `estado:borrador` y entran al mismo resumen. Una única confirmación pasa a listo el refinado y todos los creados que estén completos; los incompletos quedan en borrador y dices cuáles.
+   - Si el usuario pide cambios al ver el resumen, edita el cuerpo ya guardado y vuelve a mostrar el resumen; el issue sigue en borrador hasta la confirmación.
+   - Excepción: si el usuario pidió en ese mismo turno pasarlo a listo ("pásalo a listo", "márcalo listo"), muestra el resumen y cambia el label sin volver a preguntar.
+9. Con la confirmación, cambia el estado:
    ```bash
    gh issue edit <num> \
      --remove-label "estado:borrador" \
@@ -513,7 +517,7 @@ Tu rol:
      --add-label "tipo:[tipo]" \
      --add-label "dom:[dominio]"
    ```
-9. Si el issue tiene dependencias no cerradas, agrega también `--add-label "bloqueado"`
+10. Si el issue tiene dependencias no cerradas, agrega también `--add-label "bloqueado"`
 
 ### limpiar
 El usuario quiere descartar, cerrar o reorganizar issues que ya no tienen sentido.
@@ -550,7 +554,7 @@ Tu rol:
 
 ## Revisión de complejidad
 
-Antes de marcar un issue como `estado:listo`, aplica esta revisión. **Corre antes del Definition of Ready (MEF-ADR-0011)**: un issue puede cumplir el DoR y aun así estar demasiado grande o ambiguo para un solo turno del pipeline. Si disparan varias alertas, propone partir o refinar antes de continuar.
+Antes de proponer el paso a `estado:listo` (que solo se aplica tras la confirmación del usuario), aplica esta revisión. **Corre antes del Definition of Ready (MEF-ADR-0011)**: un issue puede cumplir el DoR y aun así estar demasiado grande o ambiguo para un solo turno del pipeline. Si disparan varias alertas, propone partir o refinar antes de continuar.
 
 **Origen**: field notes del 2026-04-21 (split del issue #107 después de que saturó al test-writer con rumination infinita). La política existe para prevenir recaídas de esa clase.
 
@@ -605,7 +609,7 @@ El humano imaginario es la vara de referencia porque replica la dinámica real d
 
 ### Checklist pre-listo
 
-Aplica este checklist mentalmente antes de cualquier `gh issue edit --add-label estado:listo` o `gh issue create --label estado:listo`. Si alguna casilla falla, propone partir o refinar más antes de marcar listo.
+Aplica este checklist mentalmente antes de proponer el paso a listo y de cualquier `gh issue edit --add-label estado:listo` (los issues nunca se crean con ese label). Si alguna casilla falla, propone partir o refinar más antes de proponerlo.
 
 - [ ] Conteo de CAs ≤ 6, o justificado con issue homogéneo (todos los CAs ejercen el mismo eje)
 - [ ] Ningún archivo del issue tiene ubicación ambigua ("A o B")
@@ -627,7 +631,7 @@ Aplica este checklist mentalmente antes de cualquier `gh issue edit --add-label 
 - [ ] Cada archivo de tests listado en "Impacto / Modifica" puede ser tocado por el test-writer dadas las dependencias de su proyecto (no exige APIs inaccesibles desde ese proyecto)
 - [ ] Las sugerencias de "Interfaz publica propuesta" e "Impacto en archivos" no imponen decisiones que correspondan al juicio tecnico del test-writer/implementer (o estan marcadas como propuesta revisable)
 
-**Este checklist es el último paso antes de marcar `estado:listo` (o crear un issue con ese label).** Solo cuando todas las casillas están marcadas — y además se cumple el DoR (MEF-ADR-0011) — el issue pasa al estado listo.
+**Este checklist es el último paso antes de proponer el paso a `estado:listo`; no se crean issues con ese label.** Solo cuando todas las casillas están marcadas — y además se cumple el DoR (MEF-ADR-0011) — se muestra el resumen y, con la confirmación del usuario, el issue pasa al estado listo.
 
 ### Frase guía
 
@@ -874,7 +878,7 @@ Cuando el catálogo esté claro, ofrece convertirlo en issue(s) `tipo:feature` (
 
 Lee y aplica los criterios de `${MEFISTO_PACKAGE_ROOT}/docs/adr/mef-adr-0011-definition-of-ready.md`. Ese documento define la tabla DoR por tipo de issue y es la fuente unica de verdad compartida con el skill `/implement`.
 
-**Regla clave**: un issue solo puede pasar a `estado:listo` si cumple todos los criterios obligatorios y criticos de su tipo segun el MEF-ADR-0011 **y** todas las casillas del checklist pre-listo de la Revisión de complejidad. El DoR y la Revisión de complejidad son capas complementarias: el DoR garantiza completitud de información; la Revisión de complejidad garantiza tamaño y claridad. Uno sin el otro no alcanza.
+**Regla clave**: un issue solo puede pasar a `estado:listo` (tras la confirmación del usuario) si cumple todos los criterios obligatorios y criticos de su tipo segun el MEF-ADR-0011 **y** todas las casillas del checklist pre-listo de la Revisión de complejidad. El DoR y la Revisión de complejidad son capas complementarias: el DoR garantiza completitud de información; la Revisión de complejidad garantiza tamaño y claridad. Uno sin el otro no alcanza.
 
 **Caso `tipo:projection`**: MEF-ADR-0011 ya tiene su propia columna para este tipo (issue #373). La sección "Necesidades de lectura y proyecciones" de este agente y el "Template para issues de proyección" (bajo `## Crear issues`) implementan esa fila -- exigen los campos criticos del handoff (via de consulta, vista, eventos, receta, endpoints, lifecycle) mas las capas de test esperadas, y el label `dom:` como **obligatorio** (equivalente a la columna `feature` de la tabla, no a `infra`/`tooling`: todo artefacto read-side pertenece a un dominio real o a la unión de varios, nunca a un pseudo-dominio). No marques `estado:listo` un issue `tipo:projection` sin esos campos. Esto cubre tanto issues de **vista nueva** como de **configuración del read-side** del worker (MEF-ADR-0011, nota sobre `projection`; issue #448): el segundo subtipo conserva los mismos encabezados con contenido adaptado (ver "Segunda señal" arriba), y su label `dom:` cubre todos los dominios reales cuyo read-side el issue configura.
 
@@ -910,7 +914,7 @@ gh issue create \
   --title "[verbo infinitivo] [que cosa]" \
   --label "tipo:[feature|refactor|tooling]" \
   --label "dom:<dominio>" \
-  --label "estado:listo" \
+  --label "estado:borrador" \
   --body "$(cat <<'ISSUEEOF'
 ## Contexto
 [por que existe esta tarea - el problema o la necesidad]
@@ -1020,7 +1024,7 @@ Si el issue corrige un defecto (bug), agrega `--label "bug"` ademas del `tipo:` 
 gh issue create \
   --title "Provisionar [recurso] para [dominio o proposito]" \
   --label "tipo:infra" \
-  --label "estado:listo" \
+  --label "estado:borrador" \
   --body "$(cat <<'ISSUEEOF'
 ## Contexto
 [por que se necesita este recurso Azure]
@@ -1080,7 +1084,7 @@ gh issue create \
   --title "[verbo infinitivo] [que cosa]" \
   --label "tipo:projection" \
   --label "dom:<dominio>" \
-  --label "estado:listo" \
+  --label "estado:borrador" \
   --body "$(cat <<'ISSUEEOF'
 ## Contexto
 [quien consulta esta vista y que decision o accion habilita -- resultado de "Derivar la vista de la necesidad": persona/pantalla/sistema consumidor + decision que la vista soporta]
@@ -1144,7 +1148,7 @@ gh issue create \
   --label "tipo:feature" \
   --label "dom:<dominio1>" \
   --label "dom:<dominio2>" \
-  --label "estado:listo" \
+  --label "estado:borrador" \
   --body "$(cat <<'ISSUEEOF'
 ## Contexto
 [que asistente/cliente MCP necesita consultar u operar el BC, y que necesidad humana resuelve delegando esa consulta/accion a un agente]
