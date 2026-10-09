@@ -49,6 +49,9 @@ export type Hold = { family: string; nextProbe: string; deadline: string }
 /** El subagente mefisto-historiador escribiendo la bitacora en esta sesion (lo lanza /mefisto-bitacora). */
 export type Historian = { startedMs: number; finishedMs: number | null }
 
+/** Un /mefisto-release en esta sesion: en reposo mientras se prepara, despegando mientras corre su script. */
+export type Release = { phase: 'reposo' | 'despegando'; startedMs: number; finishedMs: number | null }
+
 export type LogKind = 'start' | 'tool' | 'text' | 'fail' | 'done'
 
 export type LogLine = { ts: string; kind: LogKind; text: string }
@@ -68,6 +71,7 @@ declare module 'claude-code' {
       changelog: ChangelogSummary | null
       hold: Hold | null
       historian: Historian | null
+      release: Release | null
     }
   }
 }

@@ -235,7 +235,7 @@ export const EMOTIONS: Record<Emotion, readonly [Grid, Grid]> = (() => {
   }
 })()
 
-export type Role = 'desarrollador' | 'tester' | 'revisor' | 'planner' | 'infraestructura' | 'historiador'
+export type Role = 'desarrollador' | 'tester' | 'revisor' | 'planner' | 'infraestructura' | 'historiador' | 'release'
 
 export interface RoleState {
   /** Cara que usa este estado. */
@@ -645,6 +645,50 @@ export const ROLES: Record<Role, Record<string, RoleState>> = (() => {
     'DDDDD             ',
   ]
 
+  // Release · cohete en su plataforma: en reposo mientras se prepara, despegando con llama mientras publica
+  const release_reposo_A: Grid = [
+    '                  ',
+    '                  ',
+    '                  ',
+    '                  ',
+    '  R               ',
+    ' QQQ              ',
+    ' QUQ              ',
+    ' QQQ              ',
+    ' QQQ              ',
+    'RQQQR             ',
+    'R   R             ',
+    'GGGGG             ',
+  ]
+  const release_despegando_A: Grid = [
+    '  R               ',
+    ' QQQ              ',
+    ' QUQ              ',
+    ' QQQ              ',
+    ' QQQ              ',
+    'RQQQR             ',
+    'R   R             ',
+    ' YyY              ',
+    '  Y               ',
+    '                  ',
+    's s s             ',
+    'GGGGG             ',
+  ]
+  const release_despegando_B: Grid = [
+    '  R               ',
+    ' QQQ              ',
+    ' QUQ              ',
+    ' QQQ              ',
+    ' QQQ              ',
+    'RQQQR             ',
+    'R   R             ',
+    ' yYy              ',
+    ' yYy              ',
+    '  y               ',
+    ' s s              ',
+    'GGGGG             ',
+  ]
+
   return {
     desarrollador: {
       trabajando: { emotion: 'normal', layers: [desarrollador_trabajando_A, desarrollador_trabajando_B] },
@@ -676,6 +720,11 @@ export const ROLES: Record<Role, Record<string, RoleState>> = (() => {
     historiador: {
       escribiendo: { emotion: 'normal', layers: [historiador_escribiendo_A, historiador_escribiendo_B] },
       listo: { emotion: 'sonriente', layers: [historiador_listo_A, historiador_listo_A] },
+    },
+    release: {
+      reposo: { emotion: 'normal', layers: [release_reposo_A, release_reposo_A] },
+      despegando: { emotion: 'sonriente', layers: [release_despegando_A, release_despegando_B] },
+      listo: { emotion: 'feliz', layers: [release_reposo_A, release_reposo_A] },
     },
   }
 })()

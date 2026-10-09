@@ -18,6 +18,16 @@ const AT_COMMAND = String.raw`(?:^|[;&|(\n]|\bthen\b|\bdo\b)\s*(?:[A-Za-z_][A-Za
 const WRAPPER = String.raw`\S*mefisto-tmux-pipeline\.sh`
 const LAUNCH = new RegExp(`${AT_COMMAND}${WRAPPER}\\s+--tooling\\s+#?(\\d+)`)
 
+const RELEASE_RUN = new RegExp(`${AT_COMMAND}\\S*mefisto-release\\.sh\\b`)
+
+/** El comando ejecuta el script de /mefisto-release (no basta con nombrarlo en un texto). */
+export function isReleaseRun(command: string): boolean {
+  return RELEASE_RUN.test(withoutHeredocs(command))
+}
+
+/** El mensaje que lanza /mefisto-release (con o sin argumentos). */
+export const isReleasePrompt = (text: string) => /^\/mefisto-release(\s|$)/.test(text.trim())
+
 /** El comando sin el cuerpo de sus heredocs, que es texto y no se ejecuta. */
 export function withoutHeredocs(command: string): string {
   return command.replace(/<<-?\s*(['"]?)(\w+)\1[^\n]*\n[\s\S]*?\n\s*\2[ \t]*(?=\n|$)/g, '<<heredoc')

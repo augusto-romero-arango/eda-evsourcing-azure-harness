@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { agentFlagOf, holdOf, holdText, bitacoraPrompt, changelogOf, fieldNotesIn, releaseArgsOf, releaseOptions, mergeArgsOf, mergeOptions, parseOpenPrs, withoutHeredocs, fmtCost, issueStatsFromHistory, statsTotal, batchFromStatus, batchIssuesOf, batchPr, batchSummary, issueMark, newlyMerged, readyRows, titlesOf, toolingOf, waitingFace, cropGrid, pageOf, parseNextOrder, sequentialOf, finishedFromHistory, mascotPose, parseEvent, usedColumns, relative, pickEventsFile, steps, stampToMs, toolingIssueOf, withModUi } from './logic'
+import { agentFlagOf, isReleasePrompt, isReleaseRun, holdOf, holdText, bitacoraPrompt, changelogOf, fieldNotesIn, releaseArgsOf, releaseOptions, mergeArgsOf, mergeOptions, parseOpenPrs, withoutHeredocs, fmtCost, issueStatsFromHistory, statsTotal, batchFromStatus, batchIssuesOf, batchPr, batchSummary, issueMark, newlyMerged, readyRows, titlesOf, toolingOf, waitingFace, cropGrid, pageOf, parseNextOrder, sequentialOf, finishedFromHistory, mascotPose, parseEvent, usedColumns, relative, pickEventsFile, steps, stampToMs, toolingIssueOf, withModUi } from './logic'
 
 test('detecta el lanzamiento de /mefisto-tooling', async () => {
   expect(toolingIssueOf('MEFISTO_RUNTIME=claude ./.claude/scripts/mefisto-tmux-pipeline.sh --tooling 2059')).toBe('2059')
@@ -233,4 +233,12 @@ test('la espera por rate limit se lee de la ultima linea de events.log', async (
   expect(holdOf(`${hold}\n[18:51:24][hold][resume] writer: reanudando sesion x`)).toBe(null)
   expect(holdOf(`${hold}\n[20:52:00][tool] mefisto-writer Bash ok`)).toBe(null)
   expect(holdText({ family: 'RATE_LIMIT', nextProbe: '20:51', deadline: '00:51' })).toBe('en espera por RATE_LIMIT · próxima sonda 20:51 · techo 00:51')
+})
+
+test('reconoce el release que se lanza y su script en ejecucion', async () => {
+  expect(isReleasePrompt('/mefisto-release minor')).toBe(true)
+  expect(isReleasePrompt('/mefisto-release')).toBe(true)
+  expect(isReleasePrompt('/mefisto-releases')).toBe(false)
+  expect(isReleaseRun('MEFISTO_RUNTIME=claude ./.claude/scripts/mefisto-release.sh minor')).toBe(true)
+  expect(isReleaseRun('grep -n release src/internal/scripts/mefisto-release.sh')).toBe(false)
 })
