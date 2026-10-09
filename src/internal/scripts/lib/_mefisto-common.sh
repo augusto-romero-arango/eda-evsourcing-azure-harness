@@ -105,6 +105,40 @@ ensure_githooks_installed() {
     return 0
 }
 
+# remediate_main_after_rescue <repo_root> <rama_local> <ref_remota>
+#
+# Remediacion diferida del hook pre-push (issue #2112). Si TODOS los commits de
+# <rama_local> ausentes de <ref_remota> figuran en .mefisto/pipeline/rescued-main.txt
+# (SHAs completos que anota el hook) y el arbol esta limpio, hace
+# `git reset --keep <ref_remota>` sobre <rama_local> (la rama activa de
+# <repo_root>), retira esos SHAs de la lista y retorna 0. Cualquier otro caso
+# retorna 1 sin tocar nada. --keep se niega a pisar cambios locales. Los commits
+# viven en la rama remota rescate/..., resetear no pierde nada.
+remediate_main_after_rescue() {
+    local repo_root="$1" branch="$2" remote_ref="$3"
+    local rescued_file="$repo_root/.mefisto/pipeline/rescued-main.txt"
+    [ -f "$rescued_file" ] || return 1
+    [ "$(git -C "$repo_root" rev-parse --abbrev-ref HEAD 2>/dev/null)" = "$branch" ] || return 1
+    [ -z "$(git -C "$repo_root" status --porcelain 2>/dev/null)" ] || return 1
+
+    local local_shas sha
+    local_shas=$(git -C "$repo_root" rev-list "$remote_ref..$branch" 2>/dev/null) || return 1
+    [ -n "$local_shas" ] || return 1
+    for sha in $local_shas; do
+        grep -qx "$sha" "$rescued_file" || return 1
+    done
+
+    git -C "$repo_root" reset --keep "$remote_ref" >/dev/null 2>&1 || return 1
+
+    local tmp
+    tmp=$(mktemp) || return 0
+    { grep -vxF "$local_shas" "$rescued_file" || true; } > "$tmp"
+    cat "$tmp" > "$rescued_file"
+    rm -f "$tmp"
+    warn "'$branch' local tenia commits ya rescatados por el hook pre-push; se hizo 'git reset --keep $remote_ref' y se retiraron de rescued-main.txt (issue #2112)."
+    return 0
+}
+
 # ensure_repo_on_base_branch
 #
 # Gate canonico de arranque para batches internos. Cada worktree del tooling
@@ -115,7 +149,9 @@ ensure_githooks_installed() {
 # Si ya esta en main/master es un no-op. Fuera de esas ramas, solo un arbol
 # limpio se recupera: prefiere main, cae a master, hace switch y pull --ff-only.
 # Un arbol sucio, una base ausente o un pull fallido abortan sin stash, reset ni
-# switch forzado. Opera siempre contra MEFISTO_REPO_ROOT, no contra el cwd.
+# switch forzado; la unica excepcion es un pull fallido cuyos commits locales de
+# mas fueron todos rescatados por el hook pre-push (remediate_main_after_rescue,
+# issue #2112). Opera siempre contra MEFISTO_REPO_ROOT, no contra el cwd.
 ensure_repo_on_base_branch() {
     local repo_root="${MEFISTO_REPO_ROOT:-}"
     if [ -z "$repo_root" ]; then
@@ -151,7 +187,8 @@ ensure_repo_on_base_branch() {
         || { abort "El repo principal esta en la rama '$current_branch' (arbol limpio), pero 'git switch $base_branch' fallo. Resuelve a mano antes de lanzar el batch."; return 1; }
 
     local pull_output
-    if ! pull_output=$(git -C "$repo_root" pull --ff-only 2>&1); then
+    if ! pull_output=$(git -C "$repo_root" pull --ff-only 2>&1) \
+        && ! remediate_main_after_rescue "$repo_root" "$base_branch" "origin/$base_branch"; then
         abort "El repo principal estaba en la rama '$current_branch' (arbol limpio); el gate lo auto-recupero a '$base_branch', pero 'git pull --ff-only' fallo ahi -- tipicamente porque '$base_branch' local divergio de origin/$base_branch (tambien cae aqui una base sin upstream configurado). La premisa de higiene no se puede cumplir asi: resuelve la divergencia a mano (el repo quedo en '$base_branch') antes de relanzar el batch. Salida de git: $(printf '%s' "$pull_output" | tr '\n' ' ')"
         return 1
     fi
