@@ -238,19 +238,20 @@ async function onBash($: EngineInterface, command: string, output: string) {
   if (isIssueChange(command)) refreshAfterSettle($)
   const focus = await read($, focusAtom)
   if (!focus) return
+  // Un mismo comando puede crear un borrador y pasar el foco a listo: se revisan las dos cosas.
   if (isIssueCreate(command)) {
     const created = createdIssueOf(output)
     if (created !== null && !focus.created.includes(created)) {
       await update($, focusAtom, f => (f ? { ...f, created: [...f.created, created] } : f))
     }
-    return
   }
   const listo = issueMarkedListo(command)
+  const updated = (await read($, focusAtom)) ?? focus
   if (focus.kind === 'refinar' && listo !== null && listo === focus.issue) {
-    await closeFocus($, summaryOf(focus, true))
+    await closeFocus($, summaryOf(updated, true))
     return
   }
-  if (isPlannerClosing(command)) await closeFocus($, summaryOf(focus, false))
+  if (isPlannerClosing(command)) await closeFocus($, summaryOf(updated, false))
 }
 
 // Cierre de la exploracion en dos teclas dentro de la banda: el planner corre sin AskUserQuestion, asi
