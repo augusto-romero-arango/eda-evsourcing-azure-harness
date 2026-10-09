@@ -8,10 +8,18 @@ import {
   agentSettingOf,
   transcriptPathOf,
   arrivals,
+  blockedBy,
+  blocksText,
+  briefsOf,
   clip,
+  createdCardText,
   createdIssueOf,
   createdText,
   cropGrid,
+  depsText,
+  labelsText,
+  minutesSince,
+  parseIssueCard,
   isIssueChange,
   isIssueCreate,
   usedColumns,
@@ -54,6 +62,8 @@ const frameAtom = atom({ plugin: 'mefisto-planner-board', key: 'frame' } as cons
 const stepsAtom = atom({ plugin: 'mefisto-planner-board', key: 'stepsInTurn' } as const, 0)
 const workingAtom = atom({ plugin: 'mefisto-planner-board', key: 'isWorking' } as const, false)
 const knownAtom = atom({ plugin: 'mefisto-planner-board', key: 'known' } as const, [])
+const cardAtom = atom({ plugin: 'mefisto-planner-board', key: 'card' } as const, null)
+const openAtom = atom({ plugin: 'mefisto-planner-board', key: 'open' } as const, [])
 
 let isInteractive = false
 let isRefreshing = false
@@ -83,6 +93,8 @@ async function refresh($: EngineInterface, isForced: boolean) {
     if (!isForced && signature === (await read($, signatureAtom))) return
 
     const focus = await read($, focusAtom)
+    await update($, openAtom, () => briefsOf(issues))
+    if (focus?.kind === 'refinar' && focus.issue !== null) await loadCard($, focus.issue)
     for (const a of arrivals(issues, await read($, knownAtom))) {
       if (!focus?.created.includes(a.number)) $.ui.toast(`Nuevo ${a.kind} #${a.number}: ${clip(a.title, 60)}`)
     }
@@ -95,6 +107,14 @@ async function refresh($: EngineInterface, isForced: boolean) {
   } finally {
     isRefreshing = false
   }
+}
+
+async function loadCard($: EngineInterface, issue: number) {
+  const { exitCode, stdout } = await $.process
+    .run(['gh', 'issue', 'view', String(issue), '--json', 'number,title,labels,body'])
+    .catch(() => ({ exitCode: 1, stdout: '' }))
+  const card = exitCode === 0 ? parseIssueCard(stdout) : null
+  if (card) await update($, cardAtom, () => card)
 }
 
 async function activate($: EngineInterface) {
@@ -182,10 +202,13 @@ async function setWorking($: EngineInterface, isWorking: boolean) {
 async function startFocus($: EngineInterface, focus: BoardFocus) {
   await update($, flashAtom, () => null)
   await update($, focusAtom, () => focus)
+  await update($, cardAtom, () => null)
+  if (focus.kind === 'refinar' && focus.issue !== null) void loadCard($, focus.issue)
 }
 
 async function closeFocus($: EngineInterface, summary: string) {
   await update($, focusAtom, () => null)
+  await update($, cardAtom, () => null)
   await update($, flashAtom, () => ({ text: summary, untilMs: Date.now() + FLASH_MS }))
   $.clock.after(FLASH_MS, () => void update($, flashAtom, () => null))
   void refresh($, true)
@@ -360,16 +383,15 @@ export const register: Register = on => {
 
     let head
     if (focus) {
-      const label =
-        focus.kind === 'refinar'
-          ? `refinar #${focus.issue}${focus.topic ? ` · ${focus.topic}` : ''}`
-          : `explorar · ${focus.topic}`
+      // La cabecera dice que se hace y desde cuando; el titulo o el tema va una sola vez, en el cuerpo.
+      const minutes = minutesSince(focus.startedMs ?? Date.now(), Date.now())
+      const label = `${focus.kind === 'refinar' ? `refinar #${focus.issue}` : 'explorar'} · ${minutes} min`
       const created = createdText(focus.created)
       head = (
         <Box justifyContent="space-between">
           <Box gap={2}>
             <Text color="claude">●</Text>
-            <Text bold wrap="truncate-end">{clip(label, Math.max(20, inner - created.length - 46))}</Text>
+            <Text bold>{label}</Text>
             {created !== '' && <Text color="success">{created}</Text>}
           </Box>
           {focus.kind === 'explorar' && (
@@ -414,22 +436,33 @@ export const register: Register = on => {
 
     const updatedMs = await read($, updatedAtom)
     let content
-    if (focus) {
-      const minutes = Math.max(0, Math.floor((Date.now() - (focus.startedMs ?? Date.now())) / 60_000))
-      const what = focus.kind === 'refinar' ? `Refinando #${focus.issue}` : 'Explorando'
-      const ends =
-        focus.kind === 'refinar'
-          ? `termina al pasar #${focus.issue} a estado:listo o con el cierre`
-          : 'termina con el cierre del planner'
+    if (focus?.kind === 'refinar' && focus.issue !== null) {
+      const card = await read($, cardAtom)
+      const open = await read($, openAtom)
+      const title = card?.title || focus.topic
       content = (
         <Box flexDirection="column" width={body}>
-          <Text bold color="claude">{what}{minutes > 0 ? ` · ${minutes} min` : ''}</Text>
-          <Text wrap="wrap">{clip(focus.topic || ' ', body * 2 - 2)}</Text>
-          <Text color={focus.created.length > 0 ? 'success' : undefined} dimColor={focus.created.length === 0}>
-            {focus.created.length > 0 ? createdText(focus.created) : 'sin borradores nuevos'}
-          </Text>
-          <Text dimColor wrap="truncate-end">{ends}</Text>
-          <Text dimColor>{focus.kind === 'explorar' ? '1 cierra la sesión' : '/mefisto-planner-board cerrar lo cierra a mano'}</Text>
+          <Text bold color="claude" wrap="wrap">{clip(title || ' ', body * 2 - 2)}</Text>
+          {title.length <= body && <Text> </Text>}
+          {!card && <Text dimColor>cargando ficha…</Text>}
+          {card && <Text dimColor wrap="truncate-end">{labelsText(card.labels)}</Text>}
+          {card && (
+            <Text color={card.hasDepsSection ? undefined : 'warning'} wrap="truncate-end">{depsText(card, open)}</Text>
+          )}
+          {card && <Text dimColor wrap="truncate-end">{blocksText(blockedBy(focus.issue, [refine, develop]))}</Text>}
+        </Box>
+      )
+    } else if (focus) {
+      const open = await read($, openAtom)
+      const shown = focus.created.slice(-3)
+      content = (
+        <Box flexDirection="column" width={body}>
+          <Text bold color="claude" wrap="wrap">{clip(focus.topic || ' ', body * 2 - 2)}</Text>
+          {focus.topic.length <= body && <Text> </Text>}
+          {shown.length === 0 && <Text dimColor>sin borradores aún</Text>}
+          {shown.map(n => (
+            <Text key={`created-${n}`} color="success" wrap="truncate-end">{createdCardText(n, open, body)}</Text>
+          ))}
         </Box>
       )
     } else if (!isExpanded) {
