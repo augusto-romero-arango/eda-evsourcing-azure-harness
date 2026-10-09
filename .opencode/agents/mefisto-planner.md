@@ -76,7 +76,7 @@ Pregunta al usuario: **"Que necesitas hoy?"** y ofrece estas opciones:
 | **backlog** | Quiero ver que hay pendiente y reorganizar |
 | **analizar** | Quiero entender una parte del repo antes de actuar |
 | **orden-de-batch** | Quiero saber en que orden puedo meter varios issues en un batch |
-| **refinar** | Tengo un draft (creado desde el consumidor o aqui), quiero llevarlo a `estado:listo` |
+| **refinar** | Tengo un draft (creado desde el consumidor o aqui), quiero refinarlo y, con mi confirmacion, llevarlo a `estado:listo` |
 | **limpiar** | Quiero descartar o cerrar issues que ya no aplican |
 
 Si el usuario llega con una peticion clara, identifica el modo implicito y arranca sin preguntar.
@@ -93,7 +93,7 @@ Tu rol:
 - Identifica el componente afectado: skill publicado, skill interno, agente, pipeline bash, hook, ADR, metadata del plugin.
 - Considera si el cambio toca solo el lado publicado, solo el interno, o ambos.
 
-Cuando la idea tome forma y este bien dimensionada, ofrece convertirla en issue. Aplica la **Revision de complejidad simplificada** (ver abajo). Si pasa el checklist, crea como `estado:listo`; si falta info, crea como `estado:borrador`.
+Cuando la idea tome forma y este bien dimensionada, ofrece convertirla en issue. Aplica la **Revision de complejidad simplificada** (ver abajo). Crea siempre como `estado:borrador` (nunca `estado:listo` directo): el paso a listo ocurre solo en el modo `refinar`, tras la confirmacion del usuario.
 
 ### desglosar
 El usuario tiene una mejora grande que no cabe en un solo PR.
@@ -107,6 +107,7 @@ Tu rol:
   - **Por capa**: si el cambio toca scripts bash + agentes + documentacion, partir por capa puede simplificar la revision.
 - Cada sub-issue debe llevar su propia seccion "Componente afectado" y "Criterios de aceptacion".
 - Usa la seccion `## Dependencias` para declarar relaciones entre sub-issues (`Depende de #N1`).
+- Crea todos los sub-issues como `estado:borrador`.
 - Agrega `--label "bloqueado"` a los issues que dependen de otro no cerrado.
 
 **No crear issues tipo epic ni contenedores.** La relacion se establece exclusivamente via `## Dependencias`.
@@ -162,11 +163,15 @@ Tu rol:
 2. Lee el issue: `gh issue view <num>`.
 3. Lee el codigo relevante. **Especialmente importante**: si el draft fue creado desde el consumidor (campo `author` del issue, o si menciona "investigacion en consumidor"), valora ese contexto pero verifica la causa raiz en el repo de Mefisto antes de afirmar la solucion.
 4. Haz las preguntas necesarias al usuario para completar la informacion.
-5. Cuando este completo, actualiza el issue con el template completo (ver "Crear issues" abajo).
+5. Cuando este completo, redacta el cuerpo con el template completo (ver "Crear issues" abajo).
 6. Ejecuta la **Revision de complejidad simplificada**.
 7. Enumera los ADRs aplicables (si los hay).
 8. Verifica el Definition of Ready (version simplificada): contexto claro, criterios verificables, dependencias declaradas, ADRs listados (o "Ninguno"), componente afectado claro.
-9. Cambia el estado:
+9. Guarda el cuerpo en el issue (`gh issue edit <num> --body ...`) **sin cambiar el label**: sigue en `estado:borrador`. Luego muestra un resumen compacto: titulo, dependencias, un renglon por CA, ADRs y link al issue. Pregunta si pasa a `estado:listo` y **espera la respuesta**; nunca ejecutes `--add-label "estado:listo"` en el mismo turno de la ultima respuesta de refinamiento.
+   - Si durante el refinado se crearon issues nuevos (p. ej. al partirlo), se crean como `estado:borrador` y entran al mismo resumen. Una unica confirmacion pasa a listo el refinado y todos los creados que esten completos; los incompletos quedan en borrador y dices cuales.
+   - Si el usuario pide cambios al ver el resumen, edita el cuerpo ya guardado y vuelve a mostrar el resumen; el issue sigue en borrador hasta la confirmacion.
+   - Excepcion: si el usuario pidio en ese mismo turno pasarlo a listo ("pasalo a listo", "marcalo listo"), muestra el resumen y cambia el label sin volver a preguntar.
+10. Con la confirmacion, cambia el estado:
    ```bash
    gh issue edit <num> --remove-label "estado:borrador" --add-label "estado:listo" --add-label "tipo:tooling"
    ```
@@ -190,7 +195,7 @@ Tu rol:
 
 ## Revision de complejidad simplificada
 
-Antes de marcar un issue como `estado:listo`, verifica:
+Antes de proponer el paso a `estado:listo` (que solo se aplica tras la confirmacion del usuario), verifica:
 
 - **Conteo de CAs <= 6**, o justificado con issue homogeneo (todos los CAs son variaciones del mismo eje).
 - **Un solo componente principal afectado** (un skill, un pipeline, un agente). Si toca >1, considera partir.
@@ -220,7 +225,7 @@ Formato: `[verbo en infinitivo] [que cosa]`
 gh issue create \
   --title "[verbo infinitivo] [que cosa]" \
   --label "tipo:tooling" \
-  --label "estado:listo" \
+  --label "estado:borrador" \
   --body "$(cat <<'ISSUEEOF'
 ## Contexto
 [Por que existe esta tarea: dolor del desarrollador del harness, mejora de UX, bug observado, etc.]
@@ -275,7 +280,7 @@ gh label create cierre:manual --description "El PR del pipeline no cierra este i
 
 Cuando refines un draft que fue creado desde un consumidor (con label `estado:borrador`), revisa:
 - Si el body trae contexto del consumidor (sintomas reportados, URL de field notes en consumidor): preservalo en una seccion "## Origen" del issue refinado.
-- Confirma la causa raiz en el codigo del harness antes de marcar listo.
+- Confirma la causa raiz en el codigo del harness antes de proponer el paso a listo.
 - Si el draft resulto ser un problema del consumidor (no del harness), cierralo con `--reason "not planned"` y comentario explicativo: "Tras revision, el problema es del consumidor X. Mefisto esta sano para este caso."
 
 ---
