@@ -11,17 +11,26 @@ export const BATCH_STOP = `${STATE_DIR}/batch-stop`
 export const statusPath = (issue: string) =>
   `${STATE_DIR}/pipeline-status-mefisto-tooling-${issue}.json`
 
-const LAUNCH = /mefisto-tmux-pipeline\.sh\s+--tooling\s+#?(\d+)/
+// El wrapper cuenta solo donde se ejecuta: al inicio de un comando (tras ; && || | ( then do o un salto de
+// linea), con asignaciones de entorno delante. Un texto que lo nombra (un heredoc, un grep, un echo) no lanza nada.
+const AT_COMMAND = String.raw`(?:^|[;&|(\n]|\bthen\b|\bdo\b)\s*(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*`
+const WRAPPER = String.raw`\S*mefisto-tmux-pipeline\.sh`
+const LAUNCH = new RegExp(`${AT_COMMAND}${WRAPPER}\\s+--tooling\\s+#?(\\d+)`)
 
-export function toolingIssueOf(command: string): string | null {
-  return LAUNCH.exec(command)?.[1] ?? null
+/** El comando sin el cuerpo de sus heredocs, que es texto y no se ejecuta. */
+export function withoutHeredocs(command: string): string {
+  return command.replace(/<<-?\s*(['"]?)(\w+)\1[^\n]*\n[\s\S]*?\n\s*\2[ \t]*(?=\n|$)/g, '<<heredoc')
 }
 
-const BATCH_LAUNCH = /mefisto-tmux-pipeline\.sh\s+--batch((?:\s+#?\d+)+)/
+export function toolingIssueOf(command: string): string | null {
+  return LAUNCH.exec(withoutHeredocs(command))?.[1] ?? null
+}
+
+const BATCH_LAUNCH = new RegExp(`${AT_COMMAND}${WRAPPER}\\s+--batch((?:\\s+#?\\d+)+)`)
 
 /** Los issues de un `mefisto-tmux-pipeline.sh --batch N M ...` (lo que corre /mefisto-sequential), en orden. */
 export function batchIssuesOf(command: string): string[] | null {
-  const m = BATCH_LAUNCH.exec(command)
+  const m = BATCH_LAUNCH.exec(withoutHeredocs(command))
   return m?.[1] ? (m[1].match(/\d+/g) ?? []) : null
 }
 
@@ -33,7 +42,7 @@ export function batchIssuesOf(command: string): string[] | null {
  */
 export function withModUi(command: string): string {
   if (/(^|\s)MEFISTO_UI=/.test(command)) return command
-  return command.replace(/(\S*mefisto-tmux-pipeline\.sh)\b/g, 'MEFISTO_UI=mod $1')
+  return command.replace(new RegExp(`(${AT_COMMAND})(${WRAPPER})`, 'g'), '$1MEFISTO_UI=mod $2')
 }
 
 export function stampToMs(stamp: string): number {

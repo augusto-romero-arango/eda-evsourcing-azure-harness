@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { agentFlagOf, fmtCost, issueStatsFromHistory, statsTotal, batchFromStatus, batchIssuesOf, batchPr, batchSummary, issueMark, newlyMerged, readyRows, titlesOf, toolingOf, waitingFace, cropGrid, pageOf, parseNextOrder, sequentialOf, finishedFromHistory, mascotPose, parseEvent, usedColumns, relative, pickEventsFile, steps, stampToMs, toolingIssueOf, withModUi } from './logic'
+import { agentFlagOf, withoutHeredocs, fmtCost, issueStatsFromHistory, statsTotal, batchFromStatus, batchIssuesOf, batchPr, batchSummary, issueMark, newlyMerged, readyRows, titlesOf, toolingOf, waitingFace, cropGrid, pageOf, parseNextOrder, sequentialOf, finishedFromHistory, mascotPose, parseEvent, usedColumns, relative, pickEventsFile, steps, stampToMs, toolingIssueOf, withModUi } from './logic'
 
 test('detecta el lanzamiento de /mefisto-tooling', async () => {
   expect(toolingIssueOf('MEFISTO_RUNTIME=claude ./.claude/scripts/mefisto-tmux-pipeline.sh --tooling 2059')).toBe('2059')
@@ -177,4 +177,17 @@ test('duracion y costo de cada issue terminado desde el historial', async () => 
   expect(fmtCost(0.35)).toBe('$0.35')
   expect(fmtCost(null)).toBe('$?')
   expect(statsTotal(Object.values(stats))).toEqual({ durationMs: 450_000, costUsd: 0.35 })
+})
+
+test('solo cuenta el wrapper que se ejecuta, no el que aparece como texto', async () => {
+  const heredoc = "python3 - <<'EOF'\nx = './.claude/scripts/mefisto-tmux-pipeline.sh --tooling 7'\n./.claude/scripts/mefisto-tmux-pipeline.sh --batch 8 9\nEOF\necho listo"
+  expect(withoutHeredocs(heredoc)).toBe("python3 - <<heredoc\necho listo")
+  expect(toolingIssueOf(heredoc)).toBe(null)
+  expect(batchIssuesOf(heredoc)).toBe(null)
+  expect(toolingIssueOf('grep -n "mefisto-tmux-pipeline.sh --tooling 7" a.md')).toBe(null)
+  expect(toolingIssueOf("echo 'mefisto-tmux-pipeline.sh --tooling 7'")).toBe(null)
+  expect(toolingIssueOf('cd /repo && MEFISTO_RUNTIME=claude ./.claude/scripts/mefisto-tmux-pipeline.sh --tooling 7')).toBe('7')
+  expect(batchIssuesOf('a; rc=$?; [ "$rc" -eq 0 ] && X=1 ./.claude/scripts/mefisto-tmux-pipeline.sh --batch 8 9')).toEqual(['8', '9'])
+  expect(withModUi('echo "mefisto-tmux-pipeline.sh"; ./s/mefisto-tmux-pipeline.sh --tooling 7'))
+    .toBe('echo "mefisto-tmux-pipeline.sh"; MEFISTO_UI=mod ./s/mefisto-tmux-pipeline.sh --tooling 7')
 })

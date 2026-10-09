@@ -50,6 +50,8 @@ import { DEFAULT_COLOR, HEIGHT, PALETTE, RASTER_ROWS, face, sprite } from './spr
 const PANE = 'mefisto-monitor'
 const MAX_LINES = 200
 const STATUS_GRACE_MS = 30_000
+// Un seguimiento que tras este tiempo sigue en setup sin status ni historial no corresponde a ninguna corrida.
+const ORPHAN_MS = 120_000
 const PANE_ROWS = 16
 const FIXED_ROWS = 7
 const PR_CHECK_MS = 15_000
@@ -283,6 +285,11 @@ async function poll($: EngineInterface) {
       if (parsed && !(parsed.state !== 'running' && parsed.startedMs + 1000 < watchSinceMs)) next = parsed
     } else if (watchSinceMs === 0 || Date.now() - watchSinceMs > STATUS_GRACE_MS || prev.stage !== 'setup') {
       next = await fromHistory($, prev)
+      if (!inBatch && next === prev && prev.stage === 'setup' && Date.now() - prev.startedMs > ORPHAN_MS) {
+        $.ui.log(`mefisto-monitor: #${prev.issue} sin status ni historial tras ${ORPHAN_MS / 60_000} min; se deja de seguir`, { to: 'debug' })
+        await closeRun($)
+        return
+      }
     }
 
     if (next.state === 'running') {
