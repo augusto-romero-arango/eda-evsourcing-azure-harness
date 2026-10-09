@@ -139,7 +139,24 @@ recovery_abort() {
 do_deliver() {
     local wt="$WORKTREE_ARG" branch fecha commit_sha others pr_json pr_info pr_state pr_url pr_num
 
-    [ -d "$wt" ] || { echo "ERROR: el worktree '$wt' no existe; corre 'prepare' de nuevo." >&2; return 1; }
+    if [ ! -d "$wt" ]; then
+        # Reintento tras una entrega exitosa: el worktree ya se elimino, pero
+        # la ruta canonica identifica la rama; si su PR existe, se reporta.
+        fecha="$(basename "$wt")"; fecha="${fecha#bitacora-}"
+        if [[ "$fecha" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+            branch="docs/bitacora-hasta-${fecha}"
+            pr_num="$(gh pr list --head "$branch" --base "$BASE_BRANCH" --repo "$MEFISTO_REPO_SLUG" \
+                --state all --json number,state,createdAt 2>/dev/null \
+                | jq -r '[.[] | select(.state != "CLOSED")] | sort_by(.createdAt // "", .number) | last | .number // empty' 2>/dev/null)"
+            if [ -n "$pr_num" ]; then
+                echo "El worktree '$wt' ya no existe; la rama '$branch' ya fue entregada." >&2
+                echo "PR #${pr_num}"
+                return 0
+            fi
+        fi
+        echo "ERROR: el worktree '$wt' no existe; corre 'prepare' de nuevo." >&2
+        return 1
+    fi
     wt="$(cd "$wt" && pwd -P)"
     if [ "$wt" = "$(cd "$MEFISTO_REPO_ROOT" && pwd -P)" ]; then
         echo "ERROR: --worktree apunta al checkout principal; la entrega solo opera en un worktree aislado." >&2

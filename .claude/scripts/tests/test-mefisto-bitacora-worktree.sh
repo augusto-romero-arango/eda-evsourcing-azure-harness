@@ -4,7 +4,7 @@
 # Cubre sobre un repo temporal con remoto bare local y un 'gh' controlado:
 #   [A] prepare + edicion + deliver: el checkout principal conserva rama, HEAD y status.
 #   [B] deliver imprime 'PR #<n>' y elimina el worktree limpio.
-#   [C] un segundo deliver (mismos argumentos, tras re-preparar) no duplica commit ni PR.
+#   [C] un segundo deliver (tras re-preparar, o con la misma ruta ya eliminada) no duplica commit ni PR.
 #   [D] deliver rechaza cambios fuera de docs/bitacora/.
 #   [E] el shim reenvia al script canonico.
 #
@@ -109,12 +109,9 @@ COMMITS1="$(git -C "$BARE" rev-list --count "main..$BRANCH")"
 echo "[C] segunda entrega idempotente"
 WT2="$(run prepare --fecha "$FECHA" 2>/dev/null)"
 OUT2="$(run deliver --worktree "$WT2" 2>"$TMP/d2.err")"; RC2=$?
-if [ "$RC2" -ne 0 ]; then
-    # Sin cambios nuevos, deliver informa que no hay nada; el PR y el commit no se duplican igual.
-    pass "sin cambios nuevos: no re-entrega ($(head -1 "$TMP/d2.err"))"
-else
-    [ "$OUT2" = "PR #77" ] && pass "reutiliza PR #77" || fail "salida 2: '$OUT2'"
-fi
+[ "$RC2" -eq 0 ] && [ "$OUT2" = "PR #77" ] && pass "reutiliza PR #77" || fail "rc2=$RC2 salida 2: '$OUT2' ($(cat "$TMP/d2.err"))"
+OUT2B="$(run deliver --worktree "$WT" 2>"$TMP/d2b.err")"; RC2B=$?
+[ "$RC2B" -eq 0 ] && [ "$OUT2B" = "PR #77" ] && pass "deliver con la ruta ya eliminada reporta el PR" || fail "rc=$RC2B salida: '$OUT2B' ($(cat "$TMP/d2b.err"))"
 [ "$(grep -c '^pr create' "$CALLS")" -eq 1 ] && pass "gh pr create una sola vez" || fail "gh pr create repetido"
 [ "$(git -C "$BARE" rev-list --count "main..$BRANCH")" = "$COMMITS1" ] && pass "sin commits duplicados" || fail "commits duplicados"
 [ "$(snap)" = "$BEFORE" ] && pass "checkout principal intacto tras el reintento" || fail "checkout cambio en reintento"

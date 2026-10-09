@@ -176,7 +176,7 @@ FIELD_NOTES_INTEGRADAS=(
 git -C "$WT" mv "${FIELD_NOTES_INTEGRADAS[@]}" docs/bitacora/field-notes/procesadas/
 ```
 
-Si el worktree no trae alguna de las notas (por ejemplo, una nota aun sin mergear a `main`), copiala primero al mismo path dentro del worktree antes de moverla.
+Si el worktree no trae alguna de las notas (por ejemplo, una nota aun sin mergear a `main`), `git mv` falla porque no esta versionada alli: sacala de la lista y copiala directamente a `"$WT/docs/bitacora/field-notes/procesadas/"` (`deliver` la incorpora al commit).
 
 ### 4. Entregar: commit, push y PR
 
