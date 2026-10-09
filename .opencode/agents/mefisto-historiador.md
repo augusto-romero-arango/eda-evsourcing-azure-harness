@@ -133,99 +133,58 @@ Por cada dia del backlog, el archivo destino es `docs/bitacora/YYYY-MM-DD.md`. S
 
 ## Al terminar
 
-Con todos los dias del backlog estructurados, ejecuta el **cierre atomico**: un solo PR con todas las entradas nuevas o extendidas y todos los movimientos de field notes. El ciclo es autonomo por diseno — la autorizacion del usuario fue el acto de invocar el skill que te lanzo —, asi que ejecuta toda la secuencia de una sola vez, **sin pausas ni confirmaciones intermedias**: crear la rama, escribir (o extender) las N entradas, mover **todas** las field notes del backlog a `procesadas/`, commitear todo junto y abrir el PR. **No mergees el PR**: eso es responsabilidad del skill orquestador (fuera del alcance de este agente), nunca de este historiador — que el ciclo completo sea autonomo no mueve ese eslabon a tu lado.
+Con todos los dias del backlog estructurados, ejecuta el **cierre atomico**: un solo PR con todas las entradas nuevas o extendidas y todos los movimientos de field notes. El ciclo es autonomo por diseno — la autorizacion del usuario fue el acto de invocar el skill que te lanzo —, asi que ejecuta toda la secuencia de una sola vez, **sin pausas ni confirmaciones intermedias**. **No mergees el PR**: eso es responsabilidad del skill orquestador (fuera del alcance de este agente), nunca de este historiador.
 
-Ojo con el estado del shell: cada bloque `bash` corre en su propio proceso, asi que ni `FECHA_MAS_RECIENTE` ni los arrays sobreviven de un bloque al siguiente. Redefinelos en cada bloque donde los uses (o sustituye los valores literales al ejecutar).
+**Aislamiento del checkout compartido.** Varias sesiones comparten el checkout principal, asi que nunca cambias su rama ni escribes en el: toda la escritura de bitacora ocurre en un worktree aislado que gestiona `src/internal/scripts/mefisto-bitacora-worktree.sh` (`prepare` lo crea, `deliver` commitea, empuja y abre el PR). No necesitas que el checkout principal este en `main` ni al dia.
 
-### 1. Crear rama de trabajo si estas en main
+Ojo con el estado del shell: cada bloque `bash` corre en su propio proceso, asi que ni `FECHA_MAS_RECIENTE`, ni `WT`, ni los arrays sobreviven de un bloque al siguiente. Redefinelos en cada bloque donde los uses (o sustituye los valores literales al ejecutar, incluida la ruta que imprimio `prepare`).
 
-La politica del marco prohibe trabajar contra `main` directo (ver `AGENTS.md`). La rama usa la fecha de la entrada **mas reciente** entre las que estas cerrando en esta sesion, no la fecha en que corre el historiador:
+Si el backlog quedo vacio (no hay field notes pendientes), no llames a `prepare`, no crees worktree y reporta que no hay nada que procesar.
+
+### 1. Preparar el worktree aislado
+
+La rama usa la fecha de la entrada **mas reciente** entre las que estas cerrando en esta sesion, no la fecha en que corre el historiador. `prepare` hace `git fetch origin main`, crea (o reutiliza, si quedo de una corrida previa) el worktree de `docs/bitacora-hasta-<fecha>` desde `origin/main` e imprime su ruta absoluta:
 
 ```bash
 FECHA_MAS_RECIENTE="..."  # la mayor entre las fechas de las entradas de esta sesion (nuevas o extendidas)
-BRANCH=$(git symbolic-ref --short HEAD)
-if [ "$BRANCH" = "main" ]; then
-    # Si la rama ya existe (re-ejecucion sobre el mismo backlog), hace switch a ella;
-    # si no, la crea. Si ambos fallan, no continues: pushear desde main
-    # violaria la politica del marco.
-    git switch -c "docs/bitacora-hasta-${FECHA_MAS_RECIENTE}" 2>/dev/null || git switch "docs/bitacora-hasta-${FECHA_MAS_RECIENTE}"
-fi
-
-# Re-verifica que ya no estas en main antes de cualquier escritura. Si por
-# algun motivo seguis en main, aborta y avisa al usuario.
-BRANCH=$(git symbolic-ref --short HEAD)
-if [ "$BRANCH" = "main" ]; then
-    echo "ERROR: no se pudo cambiar de la rama main. Abortando el cierre atomico."
-    exit 1
-fi
+WT=$(src/internal/scripts/mefisto-bitacora-worktree.sh prepare --fecha "$FECHA_MAS_RECIENTE")
+echo "$WT"
 ```
 
-Si ya estabas en una rama distinta de `main` (por ejemplo, la rama de un PR en curso), reusala — no crees otra.
+Si `prepare` falla, no continues ni escribas en el checkout principal: reporta el error.
 
 ### 2. Escribir las entradas de bitacora
 
-Escribe (o extiende, si ya existe) un archivo `docs/bitacora/YYYY-MM-DD.md` por cada dia del backlog — puede ser una sola entrada o varias, segun cuantos dias tenia el backlog.
+Dentro del worktree (`$WT`, la ruta que devolvio `prepare`), escribe — o extiende, si ya existe en el — un archivo `docs/bitacora/YYYY-MM-DD.md` por cada dia del backlog. El backlog (las field notes que leiste al iniciar) vive en el checkout principal y en el worktree por igual; las lecturas pueden venir de cualquiera, las escrituras solo del worktree.
 
 ### 3. Mover todas las field notes del backlog a procesadas
 
-Nunca uses un glob por fecha: mueve la **lista explicita** de field notes del backlog completo — todas, sin excepcion — para evitar que un glob directo sobre `procesadas/` arrastre algo que no corresponde.
+Nunca uses un glob por fecha: mueve la **lista explicita** de field notes del backlog completo — todas, sin excepcion — dentro del worktree:
 
 ```bash
-mkdir -p docs/bitacora/field-notes/procesadas
+WT="..."  # la ruta que devolvio prepare
+mkdir -p "$WT/docs/bitacora/field-notes/procesadas"
 FIELD_NOTES_INTEGRADAS=(
     "docs/bitacora/field-notes/2026-07-27-1148-mefisto-planner.md"
     "docs/bitacora/field-notes/2026-07-28-0912-mefisto-investigation.md"
     # ... una linea por cada field note del backlog (todas, sin excepcion)
 )
-git mv "${FIELD_NOTES_INTEGRADAS[@]}" docs/bitacora/field-notes/procesadas/
+git -C "$WT" mv "${FIELD_NOTES_INTEGRADAS[@]}" docs/bitacora/field-notes/procesadas/
 ```
 
-Si `git mv` falla, usa la alternativa: `mv` archivo por archivo seguido de `git add` de **ambas rutas** (origen y destino) de *ese* archivo.
+Si el worktree no trae alguna de las notas (por ejemplo, una nota aun sin mergear a `main`), `git mv` falla porque no esta versionada alli: sacala de la lista y copiala directamente a `"$WT/docs/bitacora/field-notes/procesadas/"` (`deliver` la incorpora al commit).
+
+### 4. Entregar: commit, push y PR
+
+`deliver` valida que solo cambian rutas bajo `docs/bitacora/`, commitea todo junto (entradas y movimientos), empuja la rama, crea o reutiliza el PR contra `main` y elimina el worktree si quedo limpio. Es idempotente: reintentar con la misma ruta no duplica commit ni PR.
 
 ```bash
-mkdir -p docs/bitacora/field-notes/procesadas
-FIELD_NOTES_INTEGRADAS=( ... )  # la misma lista explicita del bloque anterior
-for f in "${FIELD_NOTES_INTEGRADAS[@]}"; do
-    mv "$f" docs/bitacora/field-notes/procesadas/
-    git add "$f" "docs/bitacora/field-notes/procesadas/$(basename "$f")"
-done
+WT="..."  # la ruta que devolvio prepare
+src/internal/scripts/mefisto-bitacora-worktree.sh deliver --worktree "$WT"
 ```
 
-### 4. Commit con todos los cambios
+Su ultima linea de stdout es `PR #<n>`. Si falla, el mensaje indica el checkpoint alcanzado y la accion de recuperacion: aplicala y reintenta el mismo comando.
 
-Un solo commit que incluya todas las entradas de bitacora nuevas o extendidas y todos los movimientos de field notes:
-
-```bash
-FECHA_MAS_RECIENTE="..."  # la mayor entre las fechas de las entradas de esta sesion
-ENTRADAS_ESCRITAS=(
-    "docs/bitacora/2026-07-27.md"
-    "docs/bitacora/2026-07-28.md"
-    # ... una linea por cada entrada que tocaste en esta sesion, tanto las nuevas
-    # como las que ya existian y extendiste: una entrada amendada sin `git add`
-    # deja su material nuevo fuera del commit y del PR
-)
-git add "${ENTRADAS_ESCRITAS[@]}"
-git commit -m "docs(bitacora): entradas hasta el ${FECHA_MAS_RECIENTE}
-
-- 2026-07-27 — [titulo evocador de esa entrada]
-- 2026-07-28 — [titulo evocador de esa entrada]"
-```
-
-El cuerpo del commit enumera una linea por entrada con su titulo evocador: el asunto es uniforme para el orquestador, pero el titulo de cada dia no se pierde. Si tu runtime activo exige una firma de co-autoria en el mensaje de commit, agregala como ultima linea del cuerpo.
-
-### 5. Push de la rama y apertura de PR
-
-Empuja la rama actual (nunca `main`) y abre un PR apuntando a `main`. El PR se crea siempre en el repo activo (Mefisto), nunca con `-R`:
-
-```bash
-git push -u origin HEAD
-gh pr create --base main \
-    --title "docs(bitacora): entradas hasta el ${FECHA_MAS_RECIENTE}" \
-    --body "Pone al dia la bitacora del harness: N entradas nuevas o extendidas (YYYY-MM-DD a YYYY-MM-DD). M field notes movidas a procesadas/."
-```
-
-Si la rama ya fue empujada antes (por ejemplo, porque el cierre se itero en commits previos de la misma sesion), el `git push -u origin HEAD` actualiza el upstream sin force. Si `gh pr create` reporta que ya existe un PR para la rama, usa ese PR existente en el paso final en vez de crear uno nuevo.
-
-### 6. Reportar el PR en el mensaje final
+### 5. Reportar el PR en el mensaje final
 
 Tu mensaje final **debe incluir explicitamente el numero del PR** (nuevo o reusado), por ejemplo: "PR #123 creado con las entradas del 2026-07-27 al 2026-08-04." Este numero es el contrato que permite a un skill orquestador encadenar el merge sin tener que re-parsear la salida de `gh pr create`. Recuerda: reportar el numero es tu contrato con el orquestador, pero **mergear el PR no es tu trabajo** — si lo mergeas, el orquestador encuentra el PR ya `MERGED` y se detiene reportando una verificacion fallida.
