@@ -78,6 +78,7 @@ TOOLING_CLOSURE_ASSETS=(
     'scripts/purge-store.sh|0755'
     'scripts/onboard-diagnose.sh|0755'
     'scripts/onboard-migrate-directives.sh|0755'
+    'scripts/_plugin-scopes.sh|0644'
     'scripts/update-plugin.sh|0755'
     'scripts/upgrade.sh|0755'
     'src/runtime/mefisto-run-agent.sh|0755'

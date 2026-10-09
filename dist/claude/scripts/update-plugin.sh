@@ -21,7 +21,10 @@
 #          que aplica al proyecto activo, issue #2130 --
 #          el nombre calificado con su marketplace: el CLI rechaza el nombre a secas
 #          aunque 'claude plugin list' si lo muestre instalado, issue #601).
-#       3. Reescribe .claude/pipeline/.plugin-root a la version mas reciente del cache,
+#       3. Reescribe .claude/pipeline/.plugin-root al installPath de la instalacion
+#          efectiva del proyecto (local > project > user; si no hay datos de 'claude
+#          plugin list --json', a la version mas reciente del cache) y falla con ERROR
+#          si esa version no es la destino (issue #2130),
 #          para que un pipeline headless que arranque antes del /reload-plugins ya
 #          resuelva la version nueva (mismo archivo que escribe el hook SessionStart;
 #          reescribirlo aqui es idempotente -- el hook lo reconfirma al proximo arranque).
