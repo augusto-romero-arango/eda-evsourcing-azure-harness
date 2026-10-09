@@ -41,6 +41,9 @@ sesiones `-p` no los cargan. Para probar una copia suelta: `claude --plugin-dir 
   `/mefisto-monitor batch <issues>` reengancha un sequential ya lanzado.
 - Mientras `/mefisto-bitacora` corre al subagente `mefisto-historiador`, la banda de espera muestra al historiador
   escribiendo en su libro (`historiador escribiendo la bitácora MM:SS`) y, al terminar, `bitácora escrita`.
+- Mientras corre `/mefisto-release` (lanzado con `4` o escrito a mano), la banda muestra un cohete: en reposo sobre
+  su plataforma mientras se prepara, despegando con llama mientras corre `mefisto-release.sh`, y `release terminado`
+  al cerrar el turno.
 - Si un agente espera por rate limit (la ultima linea de `events.log` es un `[hold]`), la banda de la corrida y la
   del sequential lo dicen: `en espera por RATE_LIMIT · próxima sonda HH:MM · techo HH:MM`.
 - Durante la corrida la misma banda muestra la mascota del agente activo (animada), issue, stage, tiempo, los

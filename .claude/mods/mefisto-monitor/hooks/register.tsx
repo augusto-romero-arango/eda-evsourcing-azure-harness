@@ -27,6 +27,8 @@ import {
   statsTotal,
   issueMark,
   mascotPose,
+  isReleasePrompt,
+  isReleaseRun,
   holdOf,
   holdText,
   bitacoraPrompt,
@@ -88,6 +90,9 @@ const MASCOT_POSES = [
   ['revisor', 'aprobado'],
   ['historiador', 'escribiendo'],
   ['historiador', 'listo'],
+  ['release', 'reposo'],
+  ['release', 'despegando'],
+  ['release', 'listo'],
 ] as const
 const MASCOT_COLS = usedColumns([
   ...MASCOT_POSES.flatMap(([role, state]) => [sprite(role, state, 0), sprite(role, state, 1)]),
@@ -125,6 +130,7 @@ const fieldNotesAtom = atom({ plugin: 'mefisto-monitor', key: 'fieldNotes' } as 
 const changelogAtom = atom({ plugin: 'mefisto-monitor', key: 'changelog' } as const, null)
 const holdAtom = atom({ plugin: 'mefisto-monitor', key: 'hold' } as const, null)
 const historianAtom = atom({ plugin: 'mefisto-monitor', key: 'historian' } as const, null)
+const releaseAtom = atom({ plugin: 'mefisto-monitor', key: 'release' } as const, null)
 
 type Tail = { path: string; stream: AsyncGenerator<unknown, unknown> }
 
@@ -515,7 +521,12 @@ async function chooseRelease($: EngineInterface) {
   const args = answer === null ? null : releaseArgsOf(answer)
   if (!args) return
   $.ui.toast(`/mefisto-release ${args} en cola`)
+  await startRelease($)
   await $.command.run({ command: 'mefisto-release', args })
+}
+
+async function startRelease($: EngineInterface) {
+  await update($, releaseAtom, r => (r && !r.finishedMs ? r : { phase: 'reposo', startedMs: Date.now(), finishedMs: null }))
 }
 
 async function confirmStop($: EngineInterface) {
@@ -564,7 +575,33 @@ export const register: Register = on => {
     }
   })
 
+  // El cohete del release: en reposo desde que se pide /mefisto-release, despegando mientras corre su script y
+  // listo cuando termina el turno que lo ejecuto.
+  on('prompt.submit', async ($, e, next) => {
+    if (isInteractive && isReleasePrompt(e.text)) await startRelease($)
+    return next(e)
+  })
+
+  on('turn.complete', async ($, e, next) => {
+    const release = await read($, releaseAtom)
+    if (release && !release.finishedMs) {
+      await update($, releaseAtom, r => (r ? { ...r, phase: 'reposo', finishedMs: Date.now() } : r))
+      $.clock.after(HISTORIAN_DONE_MS, () => void update($, releaseAtom, r => (r?.finishedMs ? null : r)))
+      void refreshReady($)
+    }
+    return next(e)
+  })
+
   on('tool.call', { tool: 'Bash' }, async ($, e, next) => {
+    if (isInteractive && isReleaseRun(e.command)) {
+      await startRelease($)
+      await update($, releaseAtom, r => (r ? { ...r, phase: 'despegando' } : r))
+      try {
+        return await next(e)
+      } finally {
+        await update($, releaseAtom, r => (r ? { ...r, phase: 'reposo' } : r))
+      }
+    }
     const batchIssues = isInteractive ? batchIssuesOf(e.command) : null
     if (batchIssues && batchIssues.length > 0) {
       const ran = await next({ ...e, command: withModUi(e.command) })
@@ -754,9 +791,13 @@ export const register: Register = on => {
       // Si el historiador escribe la bitacora, es el quien aparece, con la pluma en movimiento.
       const historian = await read($, historianAtom)
       const tick = e.props.isWorking ? Math.floor((now || Date.now()) / 1000) : null
-      const grid = historian
-        ? cropGrid(sprite('historiador', historian.finishedMs ? 'listo' : 'escribiendo', (tick ?? 0) % 2 === 0 ? 0 : 1), MASCOT_COLS)
-        : cropGrid(waitingFace(face('normal'), tick), MASCOT_COLS)
+      const release = await read($, releaseAtom)
+      const frame = (tick ?? 0) % 2 === 0 ? 0 : 1
+      const grid = release
+        ? cropGrid(sprite('release', release.finishedMs ? 'listo' : release.phase, frame), MASCOT_COLS)
+        : historian
+          ? cropGrid(sprite('historiador', historian.finishedMs ? 'listo' : 'escribiendo', frame), MASCOT_COLS)
+          : cropGrid(waitingFace(face('normal'), tick), MASCOT_COLS)
       const elements = $.ui.resolve(e)
       const mascot =
         'Raster' in elements ? (
@@ -774,6 +815,12 @@ export const register: Register = on => {
                 <Text color="warning"> · historiador escribiendo la bitácora {elapsed((now || Date.now()) - historian.startedMs)}</Text>
               )}
               {historian?.finishedMs && <Text color="success"> · bitácora escrita</Text>}
+              {release && !release.finishedMs && (
+                <Text color="warning">
+                  {release.phase === 'despegando' ? ' · release despegando' : ' · release en preparación'} {elapsed((now || Date.now()) - release.startedMs)}
+                </Text>
+              )}
+              {release?.finishedMs && <Text color="success"> · release terminado</Text>}
             </Text>
             <Box gap={2}>
               {workPrs > 0 && (
