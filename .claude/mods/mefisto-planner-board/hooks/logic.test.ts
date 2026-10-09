@@ -115,3 +115,17 @@ test('reconoce los cambios de issues que obligan a refrescar las listas', async 
   expect(isIssueChange('gh issue close 12')).toBe(true)
   expect(isIssueChange('gh issue view 12')).toBe(false)
 })
+
+test('solo cuenta los comandos que se ejecutan, no los que se nombran', async () => {
+  expect(isPlannerClosing('MEFISTO_RUNTIME=claude ./.claude/scripts/mefisto-field-note.sh --agent mefisto-planner')).toBe(true)
+  expect(isPlannerClosing('cd /repo; git show origin/main:src/internal/scripts/mefisto-field-note.sh | grep -n worktree')).toBe(false)
+  expect(isPlannerClosing("grep -rn 'mefisto-field-note.sh' docs")).toBe(false)
+  expect(issueMarkedListo('gh issue edit 2105 --remove-label "estado:borrador" --add-label "estado:listo"')).toBe(2105)
+  expect(issueMarkedListo('cd /r && S=x; gh issue edit 2105 --body-file $S/b.md && gh issue edit 2105 --add-label estado:listo')).toBe(2105)
+  expect(issueMarkedListo("grep -n 'gh issue edit 7 --add-label estado:listo' a.md")).toBe(null)
+  expect(isIssueCreate("cat > b.md <<'EOF'\ngh issue create --title x\nEOF\necho ok")).toBe(false)
+  expect(isIssueChange('cd /r; gh issue close 12 --reason completed')).toBe(true)
+  const both = 'gh issue edit 2108 --body-file b.md && gh issue edit 2108 --remove-label "estado:borrador" --add-label "estado:listo"\nN=$(gh issue create --title x --body "$(cat <<\'EOF\'\nhola\nEOF\n)")'
+  expect(issueMarkedListo(both)).toBe(2108)
+  expect(isIssueCreate(both)).toBe(true)
+})
