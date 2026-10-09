@@ -50,6 +50,7 @@ gh pr view <num> --json number,title,state,headRefName,mergeable,statusCheckRoll
 ```
 
 - Si el PR no existe o esta `CLOSED`/`MERGED`: descartalo.
+- Conserva el `headRefName` de cada PR valido: el paso 3 lo usa para borrar sus ramas sin volver a consultar `gh`.
 - Si todos los PRs fueron descartados: muestra el motivo y detente.
 
 ### 2. Mostrar resumen
@@ -69,7 +70,7 @@ En Mefisto no usamos `scripts/pr-sync.sh` (es del lado publicado y depende de co
 ```bash
 for pr in <prs>; do
     echo "Mergeando #$pr..."
-    head=$(gh pr view "$pr" --json headRefName -q .headRefName)
+    head="<headRefName de #$pr, tomado del paso 1>"
     gh pr merge "$pr" --squash || {
         echo "Fallo al mergear #$pr"
         continue
