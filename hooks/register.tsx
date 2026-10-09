@@ -246,12 +246,12 @@ async function onBash($: EngineInterface, command: string, output: string) {
     }
   }
   const listo = issueMarkedListo(command)
+  const updated = (await read($, focusAtom)) ?? focus
   if (focus.kind === 'refinar' && listo !== null && listo === focus.issue) {
-    const updated = (await read($, focusAtom)) ?? focus
     await closeFocus($, summaryOf(updated, true))
     return
   }
-  if (isPlannerClosing(command)) await closeFocus($, summaryOf(focus, false))
+  if (isPlannerClosing(command)) await closeFocus($, summaryOf(updated, false))
 }
 
 // Cierre de la exploracion en dos teclas dentro de la banda: el planner corre sin AskUserQuestion, asi
