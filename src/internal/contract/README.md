@@ -39,7 +39,7 @@ todos los adaptadores.
 | `agent`, `arguments` | comando | opcionales |
 
 Todos los objetos usan `additionalProperties: false`. Las capacidades forman
-el vocabulario `read`, `edit`, `shell`, `web`, `skill`, `task`, `mcp` y
+el vocabulario `read`, `edit`, `shell`, `web`, `skill`, `task`, `mcp`, `ask` y
 expresan intenciones, nunca nombres de tools o claves de permisos.
 
 ## Generacion de adaptadores

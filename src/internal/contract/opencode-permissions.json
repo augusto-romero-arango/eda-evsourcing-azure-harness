@@ -11,10 +11,11 @@
     "all": "deny"
   },
 
-  "question_capability": {
-    "$comment": "Capacidad neutral `ask` (#2142): sube `question` a allow en los modos listados; en `subagent` no hay interlocutor y sigue rigiendo `question`.",
+  "capability_question": {
+    "$comment": "Capacidad neutral `ask` (#2142, misma semantica que el contrato publicado de #2139): en los `modes` listados, declararla fija `question` en `value`; sin ella, o en `subagent` (sin interlocutor), rige `question` por modo.",
     "capability": "ask",
-    "allow_modes": ["primary", "all"]
+    "value": "allow",
+    "modes": ["primary", "all"]
   },
 
   "capability_scalar": {
