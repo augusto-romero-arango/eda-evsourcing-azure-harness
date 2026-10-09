@@ -27,6 +27,9 @@
 #   D-3 (control positivo): redaccion canonica ("Depende de #N") sigue
 #       desbloqueando el issue como antes -- el guard de CA-1 no rompio el
 #       camino feliz.
+#   D-5 (#2127): '- Depende de #A' + '- No depende de #B' con #B abierto -- la
+#       negacion no cuenta como dependencia y el issue se desbloquea al
+#       cerrarse #A (OPEN_DEPS mantiene #B abierto en el mock).
 #   D-4 (CA-2): las dos invocaciones post-merge en pr-sync.sh aislan el exit
 #       code de desbloquear_issues_dependientes con `|| warn`, para que un
 #       fallo del post-merge no contamine el resultado del merge. Incluye el
@@ -73,8 +76,9 @@ fi
 pass "se extrajo desbloquear_issues_dependientes() de pr-sync.sh"
 
 # Arnes comun: stubs de log/warn/success y un mock de gh parametrizado por
-# variables de entorno (PR_BODY, BLOQUEADOS_JSON, DEP_STATE) que cada caso
-# exporta antes de correr /bin/bash sobre el script generado.
+# variables de entorno (PR_BODY, BLOQUEADOS_JSON, DEP_STATE, OPEN_DEPS) que cada
+# caso exporta antes de correr /bin/bash sobre el script generado. OPEN_DEPS lista
+# los numeros (separados por espacio) que responden OPEN; el resto, DEP_STATE.
 HARNESS_TEMPLATE='
 LOG_FILE_ABS="$TMP_DIR/log.txt"
 : > "$LOG_FILE_ABS"
@@ -85,20 +89,27 @@ log()     { :; }
 success() { :; }
 warn()    { printf "%s\n" "$1" >> "$TMP_DIR/warn.txt"; }
 
+dep_state_of() {
+    case " ${OPEN_DEPS:-} " in
+        *" $1 "*) printf "%s" "OPEN" ;;
+        *) printf "%s" "${DEP_STATE:-}" ;;
+    esac
+}
+
 gh() {
     case "$1 $2" in
         "pr view")
             if [ "$5" = "body" ]; then
                 printf "%s" "$PR_BODY"
             else
-                printf "%s" "${DEP_STATE:-}"
+                dep_state_of "$3"
             fi
             ;;
         "issue list")
             printf "%s" "$BLOQUEADOS_JSON"
             ;;
         "issue view")
-            printf "%s" "${DEP_STATE:-}"
+            dep_state_of "$3"
             ;;
         "issue edit")
             printf "%s\n" "$3" >> "$TMP_DIR/desbloqueados.txt"
@@ -226,6 +237,7 @@ export PR_NUM=999
 export PR_BODY="Closes #700"
 export BLOQUEADOS_JSON='[{"number":703,"title":"Issue con negacion","body":"## Dependencias\n\n- Depende de #700\n- No depende de #701\n"}]'
 export DEP_STATE="CLOSED"
+export OPEN_DEPS="701"
 
 OUTPUT=$(/bin/bash "$CASE6" 2>&1)
 RC=$?
@@ -236,7 +248,7 @@ else
     fail "D-5: se esperaba rc=0 y #703 desbloqueado, rc=$RC. Salida: $OUTPUT"
 fi
 
-unset PR_NUM PR_BODY BLOQUEADOS_JSON DEP_STATE
+unset PR_NUM PR_BODY BLOQUEADOS_JSON DEP_STATE OPEN_DEPS
 
 # ─── D-4: el post-merge aisla el exit code del desbloqueo (CA-2) ────────────
 echo ""
