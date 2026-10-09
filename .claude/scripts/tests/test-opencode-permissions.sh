@@ -154,6 +154,48 @@ cat > "$SRC_DIR/mefisto-fx-perm-writer.md" <<'EOF'
 Cuerpo.
 EOF
 
+cat > "$SRC_DIR/mefisto-fx-perm-ask-primary.md" <<'EOF'
+---
+{
+  "kind": "agent",
+  "id": "mefisto-fx-perm-ask-primary",
+  "description": "Agente read+ask en mode primary (issue #2142).",
+  "mode": "primary",
+  "capabilities": ["read", "ask"]
+}
+---
+
+Cuerpo.
+EOF
+
+cat > "$SRC_DIR/mefisto-fx-perm-ask-all.md" <<'EOF'
+---
+{
+  "kind": "agent",
+  "id": "mefisto-fx-perm-ask-all",
+  "description": "Agente read+ask en mode all (issue #2142).",
+  "mode": "all",
+  "capabilities": ["read", "ask"]
+}
+---
+
+Cuerpo.
+EOF
+
+cat > "$SRC_DIR/mefisto-fx-perm-ask-subagent.md" <<'EOF'
+---
+{
+  "kind": "agent",
+  "id": "mefisto-fx-perm-ask-subagent",
+  "description": "Agente read+ask en mode subagent (issue #2142).",
+  "mode": "subagent",
+  "capabilities": ["read", "ask"]
+}
+---
+
+Cuerpo.
+EOF
+
 cat > "$SRC_DIR/mefisto-fx-perm-web.md" <<'EOF'
 ---
 {
@@ -174,7 +216,10 @@ OUT=$("$GENERATOR" --out "$OUT_DIR" \
     "$SRC_DIR/mefisto-fx-perm-read.md" \
     "$SRC_DIR/mefisto-fx-perm-planner.md" \
     "$SRC_DIR/mefisto-fx-perm-writer.md" \
-    "$SRC_DIR/mefisto-fx-perm-web.md" 2>&1)
+    "$SRC_DIR/mefisto-fx-perm-web.md" \
+    "$SRC_DIR/mefisto-fx-perm-ask-primary.md" \
+    "$SRC_DIR/mefisto-fx-perm-ask-all.md" \
+    "$SRC_DIR/mefisto-fx-perm-ask-subagent.md" 2>&1)
 RC=$?
 if [ "$RC" -eq 0 ]; then
     pass "exit 0. Salida: $OUT"
@@ -305,6 +350,12 @@ echo "[question] CA-4: allow solo en mode primary"
 assert_eq '"allow"' "$(permission_of mefisto-fx-perm-planner question)" "question allow en mode primary"
 assert_eq '"deny"' "$(permission_of mefisto-fx-perm-read question)" "question deny en mode subagent"
 assert_eq '"deny"' "$(permission_of mefisto-fx-perm-writer question)" "question deny en mode all"
+
+echo ""
+echo "[question-ask] #2142: ask sube question a allow en primary/all; subagent sigue deny"
+assert_eq '"allow"' "$(permission_of mefisto-fx-perm-ask-primary question)" "question allow en primary con ask"
+assert_eq '"allow"' "$(permission_of mefisto-fx-perm-ask-all question)" "question allow en all con ask"
+assert_eq '"deny"' "$(permission_of mefisto-fx-perm-ask-subagent question)" "question deny en subagent con ask"
 
 echo ""
 echo "[web-skill-task] CA-4: sin la capacidad correspondiente, deny"

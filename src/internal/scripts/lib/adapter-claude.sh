@@ -21,7 +21,8 @@ adapter_claude_default_model() {
 # claude_map_capability_tools <capacidad> -- imprime la lista de tools de
 # Claude Code que corresponde a una capacidad neutral (CA-2):
 #   read->Read, Glob, Grep | edit->Edit, Write | shell->Bash |
-#   web->WebFetch, WebSearch | skill->Skill | task->Task
+#   web->WebFetch, WebSearch | skill->Skill | task->Task |
+#   ask->AskUserQuestion
 # `mcp` (y cualquier valor no listado) no tiene mapeo Claude definido todavia
 # (issue #862): retorna 1 sin imprimir nada: el llamador decide el mensaje.
 claude_map_capability_tools() {
@@ -32,6 +33,7 @@ claude_map_capability_tools() {
         web) printf '%s' "WebFetch, WebSearch" ;;
         skill) printf '%s' "Skill" ;;
         task) printf '%s' "Task" ;;
+        ask) printf '%s' "AskUserQuestion" ;;
         *) return 1 ;;
     esac
 }

@@ -38,7 +38,7 @@ OPENCODE_PERMISSIONS_MAPPING="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../.
 # siguiera abortando en silencio por este lado.
 opencode_capability_known() {
     jq -e --arg cap "$1" '
-        ((.capability_scalar | keys_unsorted) + (.capability_map | keys_unsorted))
+        ((.capability_scalar | keys_unsorted) + (.capability_map | keys_unsorted) + [.capability_question.capability])
         | index($cap) != null
     ' "$OPENCODE_PERMISSIONS_MAPPING" >/dev/null 2>&1
 }
@@ -83,7 +83,8 @@ opencode_permission_json() {
         --arg mode "$mode" '
         ($mapping_arr[0]) as $m
         | (reduce ($m.always_deny[]) as $k ({}; . + {($k): "deny"}))
-        + {"question": ($m.question[$mode] // "deny")}
+        + {"question": (if ($capabilities | index($m.capability_question.capability)) and ($m.capability_question.modes | index($mode))
+                        then $m.capability_question.value else ($m.question[$mode] // "deny") end)}
         + (reduce ($m.capability_scalar | to_entries[]) as $e (
              {};
              . + (reduce ($e.value[]) as $k (
