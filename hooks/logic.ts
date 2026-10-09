@@ -248,3 +248,16 @@ export function usedColumns(grids: readonly Grid[]): { from: number; to: number 
 export function cropGrid(grid: Grid, cols: { from: number; to: number }): Grid {
   return grid.map(row => row.slice(cols.from, cols.to + 1).padEnd(cols.to - cols.from + 1, '.'))
 }
+
+/**
+ * El manifiesto `.claude-plugin/plugin.json` en la raiz del repo es el del propio plugin Mefisto: ahi el tablero
+ * es el mod interno (`.claude/mods/mefisto-planner-board`) y el publicado no aplica (su next-order.sh es solo del
+ * consumidor).
+ */
+export function isMefistoManifest(raw: string): boolean {
+  try {
+    return (JSON.parse(raw) as { name?: unknown }).name === 'mefisto'
+  } catch {
+    return false
+  }
+}

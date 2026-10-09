@@ -6,6 +6,7 @@ import {
   nextOrderPath,
   typeBadge,
   agentFlagOf,
+  isMefistoManifest,
   agentSettingOf,
   transcriptPathOf,
   arrivals,
@@ -287,9 +288,22 @@ async function fill($: EngineInterface, text: string) {
   await $.prompt.fill({ text, mode: 'replace' })
 }
 
+// En el repo del propio Mefisto el tablero es el mod interno, que registra el mismo /mefisto-board: el publicado
+// no se registra ni se activa, para no ganarle el comando y fallar con un next-order.sh que alli se niega a correr.
+async function isMefistoRepo($: EngineInterface): Promise<boolean> {
+  const top = await $.process.run(['git', 'rev-parse', '--show-toplevel']).catch(() => ({ exitCode: 1, stdout: '' }))
+  if (top.exitCode !== 0) return false
+  const raw = await $.fs.read(`${top.stdout.trim()}/.claude-plugin/plugin.json`).catch(() => '')
+  return typeof raw === 'string' && isMefistoManifest(raw)
+}
+
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     isInteractive = e.isInteractive
+    if (await isMefistoRepo($)) {
+      await deactivate($)
+      return next(e)
+    }
     await $.command.register({
       name: 'mefisto-board',
       description: 'Tablero del planner: refresh | borradores | listos | cerrar | on | off',
