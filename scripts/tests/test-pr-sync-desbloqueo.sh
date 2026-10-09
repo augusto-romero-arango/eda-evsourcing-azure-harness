@@ -215,6 +215,29 @@ fi
 
 unset PR_NUM PR_BODY BLOQUEADOS_JSON DEP_STATE
 
+# ─── D-5: la negacion no cuenta como dependencia (#2127) ────────────────────
+echo ""
+echo "[D-5] '- Depende de #A' + '- No depende de #B': se desbloquea al cerrarse #A aunque #B siga abierto"
+
+CASE6="$TMP_DIR/case6.sh"
+build_case "$CASE6"
+
+export PR_NUM=999
+export PR_BODY="Closes #700"
+export BLOQUEADOS_JSON='[{"number":703,"title":"Issue con negacion","body":"## Dependencias\n\n- Depende de #700\n- No depende de #701\n"}]'
+export DEP_STATE="CLOSED"
+
+OUTPUT=$(/bin/bash "$CASE6" 2>&1)
+RC=$?
+
+if [ "$RC" -eq 0 ] && grep -q "703" "$TMP_DIR/desbloqueados.txt" 2>/dev/null; then
+    pass "D-5: #703 se desbloqueo; la negacion de #701 no cuenta como dependencia"
+else
+    fail "D-5: se esperaba rc=0 y #703 desbloqueado, rc=$RC. Salida: $OUTPUT"
+fi
+
+unset PR_NUM PR_BODY BLOQUEADOS_JSON DEP_STATE
+
 # ─── D-4: el post-merge aisla el exit code del desbloqueo (CA-2) ────────────
 echo ""
 echo "[D-4] las invocaciones post-merge aislan desbloquear_issues_dependientes con '|| warn'"

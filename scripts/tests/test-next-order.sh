@@ -253,6 +253,27 @@ else
     fail "B: linea de lanzamiento inesperada: $OUTPUT"
 fi
 
+# -------- Bloque B2: negacion 'No depende de' no genera ciclo (#2127) --------
+
+echo ""
+echo "[B2] 'No depende de #431' en 430 y 431 depende de 430: sin ciclo"
+
+reset_fixtures
+set_issue_list <<'EOF'
+[
+  {"number":430,"title":"Base","body":"## Dependencias\n\n- No depende de #431\n- Ya no depende de #431","labels":[{"name":"tipo:feature"}]},
+  {"number":431,"title":"Tope","body":"## Dependencias\n\n- Depende de #430 (igual que en #999)","labels":[{"name":"tipo:feature"}]}
+]
+EOF
+
+OUTPUT=$(run_script)
+RC=$?
+if [ "$RC" -eq 0 ] && ! echo "$OUTPUT" | grep -q "^ciclo:" && echo "$OUTPUT" | grep -q "^/mefisto:sequential 430 431$"; then
+    pass "B2: sin ciclo falso, ambos lanzables y 431 solo tras 430"
+else
+    fail "B2: se esperaba exit 0 sin ciclo y lanzamiento '430 431', exit $RC: $OUTPUT"
+fi
+
 # -------- Bloque C: ciclo de dos --------
 
 echo ""
