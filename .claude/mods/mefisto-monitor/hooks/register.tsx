@@ -4,6 +4,7 @@ import type { EngineInterface, Register } from 'claude-code'
 import type { BatchRun, LogLine, MonitorRun, ReadyList } from '../types'
 import {
   BATCH_STATUS,
+  EVENTS_LOG,
   BATCH_STOP,
   HISTORY,
   LOG_DIR,
@@ -26,6 +27,13 @@ import {
   statsTotal,
   issueMark,
   mascotPose,
+  holdOf,
+  holdText,
+  bitacoraPrompt,
+  changelogOf,
+  fieldNotesIn,
+  releaseArgsOf,
+  releaseOptions,
   mergeArgsOf,
   mergeOptions,
   newlyMerged,
@@ -61,6 +69,9 @@ const PR_CHECK_MS = 15_000
 const READY_POLL_MS = 60_000
 const BAND_LOG_ROWS = 3
 const STATS_EVERY_MS = 5_000
+const HOLD_EVERY_MS = 5_000
+const FIELD_NOTES_DIR = 'docs/bitacora/field-notes'
+const CHANGELOG_DIR = 'changelog.d'
 const SCRIPT_TIMEOUT_MS = 180_000
 
 // Recorte comun a todos los cuadros que usa el monitor, calculado una vez: sin margen y sin saltos al alternar.
@@ -105,6 +116,9 @@ const readyAtom = atom({ plugin: 'mefisto-monitor', key: 'ready' } as const, nul
 const readyPageAtom = atom({ plugin: 'mefisto-monitor', key: 'readyPage' } as const, 0)
 const batchAtom = atom({ plugin: 'mefisto-monitor', key: 'batch' } as const, null)
 const openPrsAtom = atom({ plugin: 'mefisto-monitor', key: 'openPrs' } as const, null)
+const fieldNotesAtom = atom({ plugin: 'mefisto-monitor', key: 'fieldNotes' } as const, null)
+const changelogAtom = atom({ plugin: 'mefisto-monitor', key: 'changelog' } as const, null)
+const holdAtom = atom({ plugin: 'mefisto-monitor', key: 'hold' } as const, null)
 
 type Tail = { path: string; stream: AsyncGenerator<unknown, unknown> }
 
@@ -112,6 +126,7 @@ let tail: Tail | null = null
 let watchSinceMs = 0
 let batchSinceMs = 0
 let lastStatsReadMs = 0
+let lastHoldReadMs = 0
 let isPolling = false
 // Una sesion no interactiva (los agentes de los pipelines) no tiene a nadie mirando: el mod no reescribe ni sigue nada.
 let isInteractive = false
@@ -296,6 +311,15 @@ async function poll($: EngineInterface) {
       }
     }
 
+    if (next.state === 'running' && Date.now() - lastHoldReadMs >= HOLD_EVERY_MS) {
+      lastHoldReadMs = Date.now()
+      const { stdout } = await $.process.run(['tail', '-n', '3', EVENTS_LOG]).catch(() => ({ stdout: '' }))
+      const hold = holdOf(stdout)
+      await update($, holdAtom, () => hold)
+    } else if (next.state !== 'running') {
+      await update($, holdAtom, () => null)
+    }
+
     if (next.state === 'running') {
       const entries = await $.fs.list(LOG_DIR).catch(() => [])
       const name = pickEventsFile(entries, next.issue, Math.min(next.startedMs, watchSinceMs))
@@ -401,11 +425,15 @@ async function refreshReady($: EngineInterface) {
         .run(['gh', 'issue', 'list', '--state', 'open', '--label', 'estado:listo', '--limit', '200', '--json', 'number,title'])
         .catch(() => ({ exitCode: 1, stdout: '' })),
       $.process
-        .run(['gh', 'pr', 'list', '--state', 'open', '--limit', '100', '--json', 'number,title,isDraft'])
+        .run(['gh', 'pr', 'list', '--state', 'open', '--limit', '100', '--json', 'number,title,isDraft,headRefName'])
         .catch(() => ({ exitCode: 1, stdout: '' })),
     ])
     const openPrs = prs.exitCode === 0 ? parseOpenPrs(prs.stdout) : null
     await update($, openPrsAtom, () => openPrs)
+    const notes = await $.fs.list(FIELD_NOTES_DIR).catch(() => null)
+    await update($, fieldNotesAtom, () => (notes ? fieldNotesIn(notes.filter(n => n.kind === 'file').map(n => n.name)) : null))
+    const fragments = await $.fs.list(CHANGELOG_DIR).catch(() => null)
+    await update($, changelogAtom, () => (fragments ? changelogOf(fragments.filter(n => n.kind === 'file').map(n => n.name)) : null))
     const ready: ReadyList = parseNextOrder(order.exitCode, order.stdout, order.stderr, titlesOf(listos.stdout))
     await update($, readyAtom, () => ready)
   } finally {
@@ -433,7 +461,7 @@ async function choose($: EngineInterface, issue: number) {
 // Mergear desde la espera: todos o los PRs elegidos; en la opcion de texto se escriben otros numeros. Elegir en el
 // dialogo ya es la aprobacion, asi que /mefisto-merge se ejecuta de una vez.
 async function chooseMerge($: EngineInterface) {
-  const prs = (await read($, openPrsAtom)) ?? []
+  const prs = ((await read($, openPrsAtom)) ?? []).filter(p => !p.isFieldNote)
   if (prs.length === 0) return
   const options = mergeOptions(prs)
   const answer = await $.ui
@@ -447,6 +475,41 @@ async function chooseMerge($: EngineInterface) {
   if (!args) return
   $.ui.toast(`/mefisto-merge ${args} en cola`)
   await $.command.run({ command: 'mefisto-merge', args })
+}
+
+// Integrar la bitacora: las field notes de main y las que esperan en sus PRs. Elegir en el dialogo es la aprobacion.
+async function chooseBitacora($: EngineInterface) {
+  const local = (await read($, fieldNotesAtom)) ?? 0
+  const prs = ((await read($, openPrsAtom)) ?? []).filter(p => p.isFieldNote).map(p => p.number)
+  if (local + prs.length === 0) return
+  const integrate = prs.length > 0 ? `Mergear sus ${prs.length} PRs e integrar` : 'Integrar'
+  const answer = await $.ui
+    .ask(`¿Integrar la bitácora? ${local} field notes en main${prs.length > 0 ? ` y ${prs.length} en PRs sin mergear` : ''}`, {
+      header: 'Bitácora',
+      options: [integrate, 'Cancelar'],
+    })
+    .catch(() => null)
+  if (answer !== integrate) return
+  await $.prompt.submit({ text: bitacoraPrompt(prs), asUser: true })
+}
+
+// Publicar un release con los fragmentos de changelog.d/: SemVer sugiere el bump; tambien se puede solo preparar.
+async function chooseRelease($: EngineInterface) {
+  const summary = await read($, changelogAtom)
+  if (!summary || summary.issues === 0) return
+  const counts = [
+    summary.added > 0 ? `${summary.added} added` : '',
+    summary.changed > 0 ? `${summary.changed} changed` : '',
+    summary.fixed > 0 ? `${summary.fixed} fixed` : '',
+    summary.removed > 0 ? `${summary.removed} removed` : '',
+  ].filter(Boolean).join(', ')
+  const answer = await $.ui
+    .ask(`¿Publicar un release? ${summary.issues} issues con cambios (${counts})`, { header: 'Release', options: releaseOptions(summary) })
+    .catch(() => null)
+  const args = answer === null ? null : releaseArgsOf(answer)
+  if (!args) return
+  $.ui.toast(`/mefisto-release ${args} en cola`)
+  await $.command.run({ command: 'mefisto-release', args })
 }
 
 async function confirmStop($: EngineInterface) {
@@ -564,6 +627,7 @@ export const register: Register = on => {
         ) : (
           <Box width={MASCOT_WIDTH} />
         )
+      const hold = await read($, holdAtom)
       const recent = lines.filter(l => l.ts !== '').slice(-3)
       const markText = (m: ReturnType<typeof issueMark>) =>
         m === 'done' ? '✓' : m === 'failed' ? '✗' : m === 'deferred' ? '⏸' : m === 'current' ? '●' : '○'
@@ -610,7 +674,8 @@ export const register: Register = on => {
                 })}
               </Text>
               {isRunning && run && run.title !== '' && <Text dimColor wrap="truncate-end">#{run.issue} {run.title}</Text>}
-              {isRunning && run && <Text> </Text>}
+              {isRunning && hold && <Text color="warning" wrap="truncate-end">{holdText(hold)}</Text>}
+              {isRunning && run && !hold && <Text> </Text>}
               {isRunning && !run && <Text dimColor>preparando el primer issue…</Text>}
               {isRunning &&
                 recent.map(line => (
@@ -648,7 +713,10 @@ export const register: Register = on => {
     }
     if (!run) {
       const ready = await read($, readyAtom)
-      const openPrs = await read($, openPrsAtom)
+      const openPrs = (await read($, openPrsAtom)) ?? []
+      const workPrs = openPrs.filter(p => !p.isFieldNote).length
+      const pendingNotes = ((await read($, fieldNotesAtom)) ?? 0) + openPrs.filter(p => p.isFieldNote).length
+      const changelog = await read($, changelogAtom)
       const inner = Math.max(40, (e.props.bodyColumns ?? 80) - 4)
       const body = Math.max(30, inner - MASCOT_WIDTH - 2)
       const { page, pages } = pageOf(await read($, readyPageAtom), ready ? readyRows(ready).length : 0, READY_ROWS)
@@ -681,8 +749,14 @@ export const register: Register = on => {
               <Text dimColor> · listos {ready ? readyRows(ready).length : '…'}</Text>
             </Text>
             <Box gap={2}>
-              {openPrs && openPrs.length > 0 && (
-                <Button key="merge-prs" hotkey="2" plain label={`PRs ${openPrs.length}`} onPress={() => void chooseMerge($)} />
+              {workPrs > 0 && (
+                <Button key="merge-prs" hotkey="2" plain label={`PRs ${workPrs}`} onPress={() => void chooseMerge($)} />
+              )}
+              {pendingNotes > 0 && (
+                <Button key="bitacora" hotkey="3" plain label={`bitácora ${pendingNotes}`} onPress={() => void chooseBitacora($)} />
+              )}
+              {changelog && changelog.issues > 0 && (
+                <Button key="release" hotkey="4" plain label={`release ${changelog.issues}`} onPress={() => void chooseRelease($)} />
               )}
               {ready?.launch ? (
                 <Button key="ready-all" hotkey="1" plain label={clip(ready.launch, inner - 24)} onPress={() => void fill($, ready.launch ?? '')} />
@@ -737,6 +811,7 @@ export const register: Register = on => {
     }
     // La corrida ocupa la misma banda que la espera: la mascota del agente activo, los pasos y lo ultimo que hizo.
     const lines = await read($, linesAtom)
+    const hold = await read($, holdAtom)
     const inner = Math.max(40, (e.props.bodyColumns ?? 80) - 4)
     const body = Math.max(30, inner - MASCOT_WIDTH - 2)
     const end = run.finishedMs ?? (now || Date.now())
@@ -786,6 +861,7 @@ export const register: Register = on => {
               ))}
             </Text>
             {run.title !== '' && <Text dimColor wrap="truncate-end">{run.title}</Text>}
+            {run.state === 'running' && hold && <Text color="warning" wrap="truncate-end">{holdText(hold)}</Text>}
             {run.state === 'failed' && run.lastError && <Text color="error" wrap="truncate-end">{run.lastError}</Text>}
             {run.state === 'running' && recent.length === 0 && <Text dimColor>esperando eventos del agente…</Text>}
             {run.state === 'running' &&

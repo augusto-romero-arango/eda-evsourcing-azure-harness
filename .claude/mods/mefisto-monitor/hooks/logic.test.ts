@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { agentFlagOf, mergeArgsOf, mergeOptions, parseOpenPrs, withoutHeredocs, fmtCost, issueStatsFromHistory, statsTotal, batchFromStatus, batchIssuesOf, batchPr, batchSummary, issueMark, newlyMerged, readyRows, titlesOf, toolingOf, waitingFace, cropGrid, pageOf, parseNextOrder, sequentialOf, finishedFromHistory, mascotPose, parseEvent, usedColumns, relative, pickEventsFile, steps, stampToMs, toolingIssueOf, withModUi } from './logic'
+import { agentFlagOf, holdOf, holdText, bitacoraPrompt, changelogOf, fieldNotesIn, releaseArgsOf, releaseOptions, mergeArgsOf, mergeOptions, parseOpenPrs, withoutHeredocs, fmtCost, issueStatsFromHistory, statsTotal, batchFromStatus, batchIssuesOf, batchPr, batchSummary, issueMark, newlyMerged, readyRows, titlesOf, toolingOf, waitingFace, cropGrid, pageOf, parseNextOrder, sequentialOf, finishedFromHistory, mascotPose, parseEvent, usedColumns, relative, pickEventsFile, steps, stampToMs, toolingIssueOf, withModUi } from './logic'
 
 test('detecta el lanzamiento de /mefisto-tooling', async () => {
   expect(toolingIssueOf('MEFISTO_RUNTIME=claude ./.claude/scripts/mefisto-tmux-pipeline.sh --tooling 2059')).toBe('2059')
@@ -196,14 +196,41 @@ test('el merge desde la banda ofrece todos o los PRs mas recientes y arma los ar
   const prs = parseOpenPrs(JSON.stringify([
     { number: 2089, title: 'B', isDraft: false }, { number: 2097, title: 'A', isDraft: false },
     { number: 2090, title: 'Borrador', isDraft: true }, { number: 2085, title: 'C' }, { number: 1994, title: 'D' },
+    { number: 2084, title: 'docs(bitacora): field note', headRefName: 'docs/mefisto-planner-field-note-abc' },
   ]))
-  expect(prs?.map(p => p.number)).toEqual([2097, 2089, 2085, 1994])
-  expect(mergeOptions(prs ?? [])).toEqual(['Todos (--all)', '#2097 A', '#2089 B', '#2085 C'])
-  expect(mergeOptions([{ number: 7, title: 'X' }])).toEqual(['#7 X', 'Cancelar'])
+  expect(prs?.map(p => p.number)).toEqual([2097, 2089, 2085, 2084, 1994])
+  expect(prs?.filter(p => p.isFieldNote).map(p => p.number)).toEqual([2084])
+  expect(mergeOptions((prs ?? []).filter(p => !p.isFieldNote))).toEqual(['Todos (--all)', '#2097 A', '#2089 B', '#2085 C'])
+  expect(mergeOptions([{ number: 7, title: 'X', isFieldNote: false }])).toEqual(['#7 X', 'Cancelar'])
   const options = ['Todos (--all)', '#2097 field note 2026-10-08-1848', '#2089 B']
   expect(mergeArgsOf('Todos (--all), #2097 field note 2026-10-08-1848', options)).toBe('--all')
   expect(mergeArgsOf('#2097 field note 2026-10-08-1848, #2089 B', options)).toBe('2097 2089')
   expect(mergeArgsOf('#2089 B, 1994 2063', options)).toBe('2089 1994 2063')
   expect(mergeArgsOf('Cancelar', ['#7 X', 'Cancelar'])).toBe(null)
   expect(parseOpenPrs('no json')).toBe(null)
+})
+
+test('bitacora y release: contadores, opciones e instruccion', async () => {
+  expect(fieldNotesIn(['2026-10-01-1548-mefisto-planner.md', 'procesadas', 'x.txt'])).toBe(1)
+  const summary = changelogOf(['README.md', '2090.changed.md', '2090.fixed.md', '2093.added.md', '2094.fixed.md'])
+  expect(summary).toEqual({ issues: 3, added: 1, changed: 1, fixed: 2, removed: 0 })
+  expect(releaseOptions(summary)).toEqual(['minor (recomendado)', 'patch', 'Solo preparar el PR (minor --prepare-only)'])
+  expect(releaseOptions({ ...summary, added: 0 })[0]).toBe('patch (recomendado)')
+  expect(releaseArgsOf('minor (recomendado)')).toBe('minor')
+  expect(releaseArgsOf('Solo preparar el PR (minor --prepare-only)')).toBe('minor --prepare-only')
+  expect(releaseArgsOf('otra cosa')).toBe(null)
+  expect(bitacoraPrompt([])).toBe(
+    'Integra la bitacora: pon el checkout en main al dia (git switch main && git pull --ff-only) y luego corre /mefisto-bitacora.',
+  )
+  expect(bitacoraPrompt([2097, 2089])).toBe(
+    'Integra la bitacora: mergea los PRs de field notes #2097 #2089 con /mefisto-merge, pon el checkout en main al dia (git switch main && git pull --ff-only) y luego corre /mefisto-bitacora.',
+  )
+})
+
+test('la espera por rate limit se lee de la ultima linea de events.log', async () => {
+  const hold = '[18:51:24][hold] RATE_LIMIT: esperando, proxima sonda 20:51:00 (techo 00:51)'
+  expect(holdOf(`[18:50:00][tool] mefisto-writer Bash ok\n${hold}\n`)).toEqual({ family: 'RATE_LIMIT', nextProbe: '20:51', deadline: '00:51' })
+  expect(holdOf(`${hold}\n[18:51:24][hold][resume] writer: reanudando sesion x`)).toBe(null)
+  expect(holdOf(`${hold}\n[20:52:00][tool] mefisto-writer Bash ok`)).toBe(null)
+  expect(holdText({ family: 'RATE_LIMIT', nextProbe: '20:51', deadline: '00:51' })).toBe('en espera por RATE_LIMIT · próxima sonda 20:51 · techo 00:51')
 })
