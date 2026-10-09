@@ -19,6 +19,8 @@
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+# shellcheck disable=SC1091
+source "$SCRIPT_DIR/_plugin-scopes.sh"
 DEFAULT_REPO_SLUG="augusto-romero-arango/eda-evsourcing-azure-harness"
 LEGACY_USAGE='ERROR: uso: mefisto-opencode install <semver> | activate <semver> | prune [--keep <n>] [--yes] | project | deactivate | status | diagnose | package-root'
 
@@ -242,7 +244,7 @@ _update_opencode() {
 }
 
 _align_claude() {
-    local target="$1" mkt root ver diag opencode_root launcher
+    local target="$1" mkt root ver diag opencode_root launcher top efectiva ef_path _s
     _peer_claude
     echo ""
     echo "Par Claude: $PEER_STATE${PEER_VERSION:+ (version $PEER_VERSION)}"
@@ -266,15 +268,20 @@ _align_claude() {
             ;;
         enabled)
             mkt="$PEER_MKT"
-            echo "Actualizando mefisto@$mkt en Claude (scope user)..."
+            echo "Actualizando mefisto@$mkt en Claude (scopes aplicables al proyecto)..."
             claude plugin marketplace update "$mkt" || { echo "ERROR: 'claude plugin marketplace update $mkt' fallo." >&2; return 1; }
-            claude plugin update "mefisto@$mkt" --scope user || { echo "ERROR: 'claude plugin update mefisto@$mkt --scope user' fallo." >&2; return 1; }
+            top=$(git rev-parse --show-toplevel 2>/dev/null) || top=""
+            _actualizar_scopes "$mkt" "$(_plugin_list_json)" "$top" || return 1
             ;;
     esac
 
     _peer_claude
     ver="$PEER_VERSION"
+    top=$(git rev-parse --show-toplevel 2>/dev/null) || top=""
+    efectiva=$(_instalacion_efectiva "${PEER_MKT:-$mkt}" "$(_plugin_list_json)" "$top")
+    [ -n "$efectiva" ] && IFS=$'\t' read -r _s ver ef_path <<< "$efectiva"
     root="${MEFISTO_CACHE_ROOT:-$HOME/.claude/plugins/cache}/${PEER_MKT:-$mkt}/mefisto/$ver"
+    [ -n "${ef_path:-}" ] && [ -d "$ef_path" ] && root="${ef_path%/}"
     launcher=$(_launcher_path)
     # Misma raiz fisica que usa update-plugin.sh; el fallback cubre launchers sin package-root.
     opencode_root=$("$launcher" package-root 2>/dev/null) || opencode_root=""

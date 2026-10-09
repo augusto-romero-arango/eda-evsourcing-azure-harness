@@ -14,7 +14,7 @@ TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
 CONSUMER="$TMP/consumer"; STUBS="$TMP/scripts"; BIN="$TMP/bin"
 mkdir -p "$CONSUMER/.claude/pipeline" "$STUBS" "$BIN"
 git -C "$CONSUMER" init -q
-cp "$REPO_ROOT/scripts/upgrade.sh" "$STUBS/upgrade.sh"
+cp "$REPO_ROOT/scripts/upgrade.sh" "$REPO_ROOT/scripts/_plugin-scopes.sh" "$STUBS/"
 printf '/x/cache/mkt/mefisto/1.0.0' > "$CONSUMER/.claude/pipeline/.plugin-root"
 
 cat > "$STUBS/update-plugin.sh" <<'S'
