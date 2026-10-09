@@ -66,7 +66,9 @@
 # calculado aqui simplemente entra al orden -- este script nunca muta labels.
 #
 # Extraccion de dependencias: SOLO dependencias forward de la seccion
-# '## Dependencias' ('Depende de #N' / 'Bloqueado por #N', case-insensitive);
+# '## Dependencias' ('Depende de #N' / 'Bloqueado por #N', case-insensitive) y SOLO si el
+# marcador va al inicio del item (vineta '-'/'*' opcional): 'No depende de #N' o
+# el marcador a mitad de linea no cuentan;
 # se ignoran 'Bloquea', 'Consumido por' y la prosa libre. Una dependencia
 # DENTRO del universo esta abierta por construccion (el listado es --state
 # open); para las de FUERA se consulta su estado, y CLOSED/MERGED = satisfecha
@@ -247,7 +249,7 @@ for ISSUE in $NUMS; do
     BODY=$(body_of "$ISSUE")
     DEPS=$(printf '%s\n' "$BODY" \
         | awk '/^##[[:space:]]*[Dd]ependencias/{f=1;next} /^##[[:space:]]/{f=0} f' \
-        | grep -ioE '(Depende de|Bloqueado por)[[:space:]]+#[0-9]+' \
+        | grep -ioE '^[[:space:]]*([-*][[:space:]]+)?(Depende de|Bloqueado por)[[:space:]]+#[0-9]+' \
         | grep -oE '[0-9]+' | sort -u)
     if printf '%s\n' "$BODY" | grep -qE '^##[[:space:]]*[Dd]ependencias'; then SECTION=1; else SECTION=0; fi
 
