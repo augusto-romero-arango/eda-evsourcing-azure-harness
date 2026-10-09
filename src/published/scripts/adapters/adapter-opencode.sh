@@ -56,7 +56,7 @@ permission_json() {
        ($m.supported_permissions | unique | length) == 17 and
        ($m.supported_permissions | all(. as $key | $mapped | index($key) != null)) and
        ($mapped | all(. as $key | $m.supported_permissions | index($key) != null))) as $mapping_ok |
-      (($m.capability_scalar | keys) + ($m.capability_map | keys)) as $known |
+      (($m.capability_scalar | keys) + ($m.capability_map | keys) + [$m.capability_question.capability]) as $known |
       ($capabilities | map(select(. as $cap | ($known | index($cap)) == null)) | .[0]) as $unknown |
       if ($mapping_ok | not) then "mapping\u001f"
       elif ($unknown != null) then "capability\u001f\($unknown)"
@@ -76,7 +76,7 @@ permission_json() {
                             then ({"*": $ext.catch_all} + reduce ($ext.allow[]) as $path ({}; . + {($path): "allow"}))
                             else "deny" end)} +
       (reduce ($m.always_deny[]) as $key ({}; . + {($key): "deny"})) +
-      {question: ($m.question[$mode] // "deny")} +
+      {question: (if ($capabilities | index($m.capability_question.capability)) and ($m.capability_question.modes | index($mode)) then $m.capability_question.value else ($m.question[$mode] // "deny") end)} +
       (reduce ($m.capability_scalar | to_entries[]) as $entry ({};
         . + (reduce ($entry.value[]) as $key ({};
           . + {($key): (if $capabilities | index($entry.key) then "allow" else "deny" end)})))) +

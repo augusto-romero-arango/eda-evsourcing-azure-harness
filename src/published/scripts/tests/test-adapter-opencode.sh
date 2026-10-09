@@ -459,5 +459,14 @@ printf '%s\n' '---' '{"kind":"command","id":"consulta-mcp","description":"x","ag
 out="$("$MCP_ARTIFACT_VALIDATOR" "$MCP_ROOT/src/published/commands/consulta-mcp.md" 2>&1)"; rc=$?
 [ "$rc" -ne 0 ] && assert_contains "$out" 'un comando con agent no puede usar launch-agent' 'rechaza launch-agent junto a agent' || fail 'launch-agent junto a agent debio fallar'
 
+printf '%s\n' '[ask] capacidad neutral ask'
+make_mode_agent() {
+    printf '%s\n' '---' "{\"kind\":\"agent\",\"id\":\"$1\",\"description\":\"Prueba.\",\"mode\":\"$2\",\"capabilities\":$3}" '---' '{{mefisto:assert-consumer-repo}}' > "$WORK/$1.md"
+}
+make_mode_agent ask-all all '["read","ask"]'; assert_contains "$(permission_of "$WORK/ask-all.md")" '"question":"allow"' 'mode all con ask permite question'
+make_mode_agent ask-primary primary '["read","ask"]'; assert_contains "$(permission_of "$WORK/ask-primary.md")" '"question":"allow"' 'mode primary con ask permite question'
+make_mode_agent noask-all all '["read"]'; assert_contains "$(permission_of "$WORK/noask-all.md")" '"question":"deny"' 'mode all sin ask conserva question deny'
+make_mode_agent ask-sub subagent '["read","ask"]'; assert_contains "$(permission_of "$WORK/ask-sub.md")" '"question":"deny"' 'subagent con ask sigue en question deny'
+
 printf 'RESULTADO: %s pasaron, %s fallaron\n' "$PASS" "$FAIL"
 exit "$FAIL"
