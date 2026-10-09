@@ -21,6 +21,9 @@
 #   [A]       Cadena lineal (1 -> 2 -> 3): orden exacto con justificacion y
 #             label 'tipo:' en cada linea.
 #   [B]       Diamante (1 -> {2,3} -> 4): orden valido, 4 lista ambas deps.
+#   [B2]      Negacion ('No depende de #N') al inicio del item no es dependencia
+#             ni genera ciclo falso (#2127).
+#   [B3]      Vineta '*' reconocida; marcador a mitad de linea ignorado (#2127).
 #   [C]       Ciclo de dos: se reporta 'ciclo: #A -> #B -> #A', excluido del
 #             orden, exit 1.
 #   [D]       Ciclo de tres: se reporta con sus tres miembros, excluido.
@@ -251,6 +254,49 @@ if echo "$OUTPUT" | grep -q "^/mefisto:sequential 410 411 412 413$"; then
     pass "B: linea de lanzamiento con las 4 issues en orden"
 else
     fail "B: linea de lanzamiento inesperada: $OUTPUT"
+fi
+
+# -------- Bloque B2: negacion 'No depende de' no genera ciclo (#2127) --------
+
+echo ""
+echo "[B2] 'No depende de #431' en 430 y 431 depende de 430: sin ciclo"
+
+reset_fixtures
+set_issue_list <<'EOF'
+[
+  {"number":430,"title":"Base","body":"## Dependencias\n\n- No depende de #431\n- Ya no depende de #431","labels":[{"name":"tipo:feature"}]},
+  {"number":431,"title":"Tope","body":"## Dependencias\n\n- Depende de #430 (igual que en #999)","labels":[{"name":"tipo:feature"}]}
+]
+EOF
+
+OUTPUT=$(run_script)
+RC=$?
+if [ "$RC" -eq 0 ] && ! echo "$OUTPUT" | grep -q "^ciclo:" && echo "$OUTPUT" | grep -q "^/mefisto:sequential 430 431$"; then
+    pass "B2: sin ciclo falso, ambos lanzables y 431 solo tras 430"
+else
+    fail "B2: se esperaba exit 0 sin ciclo y lanzamiento '430 431', exit $RC: $OUTPUT"
+fi
+
+# -------- Bloque B3: vineta '*' y prosa a mitad de linea (#2127) --------
+
+echo ""
+echo "[B3] '* Bloqueado por #440' cuenta; 'Esto no depende de #442' en prosa no cuenta"
+
+reset_fixtures
+set_issue_list <<'EOF'
+[
+  {"number":440,"title":"Base","body":"## Dependencias\n\nNinguna.","labels":[{"name":"tipo:feature"}]},
+  {"number":441,"title":"Medio","body":"## Dependencias\n\n* Bloqueado por #440\nEsto no depende de #442 en absoluto.","labels":[{"name":"tipo:feature"}]},
+  {"number":442,"title":"Tope","body":"## Dependencias\n\n- Depende de #441","labels":[{"name":"tipo:feature"}]}
+]
+EOF
+
+OUTPUT=$(run_script)
+RC=$?
+if [ "$RC" -eq 0 ] && ! echo "$OUTPUT" | grep -q "^ciclo:" && echo "$OUTPUT" | grep -q "^/mefisto:sequential 440 441 442$"; then
+    pass "B3: '*' reconocida y la prosa con el marcador a mitad de linea ignorada"
+else
+    fail "B3: se esperaba exit 0 sin ciclo y lanzamiento '440 441 442', exit $RC: $OUTPUT"
 fi
 
 # -------- Bloque C: ciclo de dos --------

@@ -655,7 +655,9 @@ desbloquear_issues_dependientes() {
         done
 
         if [ "$referencia_cerrado" = true ]; then
-            # Extraer SOLO las dependencias forward canonicas ('Depende de' / 'Bloqueado por'),
+            # Extraer SOLO las dependencias forward canonicas ('Depende de' / 'Bloqueado por')
+            # y SOLO si el marcador va al inicio del item (vineta opcional): 'No depende de #N'
+            # o el marcador a mitad de linea no cuentan,
             # ignorando refs inversas/notas ('Consumido por', 'Bloquea'/'Bloquea a',
             # 'se traslada a', 'Relacionado con', prosa libre).
             local all_deps=()
@@ -663,7 +665,7 @@ desbloquear_issues_dependientes() {
             while IFS= read -r dep_num; do
                 [ -n "$dep_num" ] && all_deps+=("$dep_num")
             done < <(echo "$deps_section" \
-                | grep -ioE '(Depende de|Bloqueado por)[[:space:]]+#[0-9]+' \
+                | grep -ioE '^[[:space:]]*([-*][[:space:]]+)?(Depende de|Bloqueado por)[[:space:]]+#[0-9]+' \
                 | grep -oE '[0-9]+' | sort -u)
 
             # Guardia de longitud (CA-1): bajo bash 3.2 + set -u, expandir
