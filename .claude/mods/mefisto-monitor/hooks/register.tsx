@@ -832,9 +832,6 @@ export const register: Register = on => {
               {changelog && changelog.issues > 0 && (
                 <Button key="release" hotkey="4" plain label={`release ${changelog.issues}`} onPress={() => void chooseRelease($)} />
               )}
-              {ready?.launch && (
-                <Button key="ready-all" hotkey="1" plain label={clip(ready.launch, inner - 24)} onPress={() => void fill($, ready.launch ?? '')} />
-              )}
             </Box>
           </Box>
           <Box gap={2} height={RASTER_ROWS + 1} alignItems="flex-start">
@@ -878,6 +875,10 @@ export const register: Register = on => {
               </Box>
             </Box>
           </Box>
+          {/* La linea de todos los listos crece con la cola: va abajo, a lo ancho, y no empuja los menus fijos. */}
+          {ready?.launch && (
+            <Button key="ready-all" hotkey="1" plain label={clip(ready.launch, inner - 3)} onPress={() => void fill($, ready.launch ?? '')} />
+          )}
         </Box>
       )
     }
