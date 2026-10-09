@@ -38,6 +38,12 @@
 #             satisfecha; una abierta sin estado bloquea.
 #   [Q]       --json: objeto valido con items (after, hasDepsSection),
 #             blocked, cycles y launch; mismos exit codes.
+#   [R]       Negacion ('No depende de #M', con #M dependiendo de el) no
+#             genera ciclo falso; ambos lanzables (issue #2126, CA-4).
+#   [S]       mefisto_forward_dependencies ancla el marcador al inicio del
+#             item: vinetas '-'/'*' y sin vineta se reconocen, solo el primer
+#             numero por linea, negaciones y prosa a mitad de linea se
+#             ignoran (issue #2126, CA-1..CA-3).
 #
 # Uso: .claude/scripts/tests/test-next-order.sh
 # Exit code: 0 si todos los chequeos pasan, 1 si alguno falla.
@@ -669,6 +675,62 @@ if [ "$RC" -eq 1 ] && [ "$GOT" = '["refinement",[],null]' ]; then
     pass "Q: universo vacio -> exit 1 con items vacios y launch null"
 else
     fail "Q: universo vacio inesperado (exit $RC): $OUTPUT"
+fi
+
+# -------- Bloque R: una negacion no genera ciclo (issue #2126) --------
+
+echo ""
+echo "[R] 'No depende de #M' no es dependencia: sin ciclo falso, ambos lanzables"
+
+reset_fixtures
+set_issue_list <<'EOF'
+[
+  {"number":501,"title":"Neg","body":"## Dependencias\n\n- No depende de #502"},
+  {"number":502,"title":"Dep","body":"## Dependencias\n\n- Depende de #501"}
+]
+EOF
+
+OUTPUT=$(run_script)
+RC=$?
+if [ "$RC" -eq 0 ]; then
+    pass "R: exit 0 (sin ciclos)"
+else
+    fail "R: se esperaba exit 0, se obtuvo $RC: $OUTPUT"
+fi
+if echo "$OUTPUT" | grep -q "^/mefisto-sequential 501 502$"; then
+    pass "R: ambos lanzables, 501 antes que 502"
+else
+    fail "R: linea de lanzamiento inesperada: $OUTPUT"
+fi
+if echo "$OUTPUT" | grep -qi "ciclo: "; then
+    fail "R: reporto un ciclo falso: $OUTPUT"
+else
+    pass "R: sin ciclo falso"
+fi
+
+# -------- Bloque S: anclaje del marcador al inicio del item (issue #2126) --------
+
+echo ""
+echo "[S] mefisto_forward_dependencies: solo el marcador al inicio del item"
+
+DEPS_OUT=$(
+    # shellcheck source=/dev/null
+    source "$REPO_ROOT/src/internal/scripts/lib/mefisto-deps.sh"
+    printf '%s\n' \
+        '## Dependencias' \
+        '' \
+        '- Depende de #10 (igual que en #11)' \
+        '* Bloqueado por #12' \
+        'Depende de #13' \
+        '- No depende de #20' \
+        '- Ya no depende de #21' \
+        'Esta prosa Depende de #22 a mitad de linea' \
+        | mefisto_forward_dependencies | tr '\n' ' '
+)
+if [ "$DEPS_OUT" = "10 12 13 " ]; then
+    pass "S: '-', '*' y sin vineta reconocidos; '#11', negaciones y prosa ignorados"
+else
+    fail "S: se esperaba '10 12 13 ', se obtuvo '$DEPS_OUT'"
 fi
 
 # -------- Resumen --------

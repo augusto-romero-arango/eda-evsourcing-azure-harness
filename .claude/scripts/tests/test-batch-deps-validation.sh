@@ -28,6 +28,8 @@
 #       responde) se tolera igual que en el bloque original.
 #   [E] 'Bloquea #NNN' (referencia inversa, sin marcador forward) se ignora:
 #       no cuenta como dependencia de este issue.
+#   [E2] Negacion ('No depende de #N' / 'Ya no depende de #N') no bloquea el
+#       batch (issue #2126).
 #   [F] Hueco 2 (issue #466): el label 'bloqueado' ya no es condicion de entrada
 #       al analisis. Un issue SIN ese label que declara una dependencia forward
 #       abierta y fuera del batch aborta igual que uno etiquetado (CA-4) --
@@ -527,6 +529,29 @@ else
     fail "E: se esperaba exit 0 (sin dependencias forward), se obtuvo exit $RC: $OUTPUT"
 fi
 assert_issue_edit_called "E" 60
+
+# -------- Bloque E2: una negacion no es dependencia (issue #2126) --------
+
+echo ""
+echo "[E2] 'No depende de #N' / 'Ya no depende de #N' no bloquea el batch (issue #2126)"
+
+reset_fixtures
+set_labels 64 "bloqueado"
+set_state 65 "OPEN"
+set_body 64 <<'EOF'
+## Dependencias
+
+- No depende de #65
+- Ya no depende de #65
+EOF
+
+OUTPUT=$(run_script 64 2>&1)
+RC=$?
+if [ "$RC" -eq 0 ]; then
+    pass "E2: las negaciones se ignoran, el batch no se bloquea (exit 0)"
+else
+    fail "E2: se esperaba exit 0 (negacion no es dependencia), se obtuvo exit $RC: $OUTPUT"
+fi
 
 # -------- Bloque F: hueco 2 (issue #466) -- label 'bloqueado' ya no filtra la entrada --------
 
