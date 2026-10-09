@@ -110,6 +110,14 @@ for inventory in "$REPO_ROOT/dist/claude/.mefisto-generated-assets.json" "$REPO_
     fi
 done
 
+echo '[fuente] confirmacion antes de estado:listo (#2111)'
+absent "$body" '--label "estado:listo"' 'ningun gh issue create usa --label "estado:listo"'
+absent "$body" 'puede salir directamente como `estado:listo`' 'desglosar no ofrece salir directo como listo'
+contains "$body" '**espera la respuesta**' 'refinar espera la respuesta antes del label listo'
+contains "$body" 'sin cambiar el label' 'refinar guarda el cuerpo sin cambiar el label'
+contains "$body" 'Una única confirmación pasa a listo' 'una unica confirmacion cubre refinado y creados'
+contains "$body" 'sin volver a preguntar' 'excepcion de pedido explicito en el mismo turno'
+
 echo '[mirror] agents/planner.md pasa a generado'
 if cmp -s "$MIRROR" "$CLAUDE"; then pass 'mirror Claude coincide byte a byte'; else fail 'mirror Claude diverge'; fi
 contains "$(< "$MIRROR")" '<!-- GENERADO por src/published/scripts/generate-published-adapters.sh desde src/published/agents/planner.md. No editar a mano. -->' 'mirror conserva marcador generado'
