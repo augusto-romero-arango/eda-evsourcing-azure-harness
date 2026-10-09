@@ -43,7 +43,7 @@ Los skills publicados:
 
 Vive en `.claude/` del repo del propio plugin:
 
-- `.claude/commands/` -- skills internos con prefijo `mefisto-` (`/mefisto-tooling`, `/mefisto-plan`, `/mefisto-bug`, `/mefisto-fix-review`, `/mefisto-merge`, `/mefisto-work-status`).
+- `.claude/commands/` -- skills internos con prefijo `mefisto-` (`/mefisto-tooling`, `/mefisto-plan`, `/mefisto-bug`, `/mefisto-fix-review`, `/mefisto-merge`).
 - `.claude/skills/` -- Agent Skills internos (MEF-ADR-0033).
 - `.claude/agents/` -- agentes internos (`mefisto-investigator`, `mefisto-planner`).
 - `.claude/scripts/` -- pipelines internos (`_mefisto-common.sh`, `mefisto-tooling-pipeline.sh`, `mefisto-tmux-pipeline.sh`).

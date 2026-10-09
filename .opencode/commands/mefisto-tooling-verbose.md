@@ -73,7 +73,6 @@ Dentro de herdr (`HERDR_ENV=1` en el entorno), el wrapper delega en la interfaz 
 
 ```
 Pipeline mefisto-tooling corriendo en un pane de este workspace (visor en vivo del agente).
-Usa /mefisto-work-status para ver el progreso sin salir de aqui.
 ```
 
 Fuera de herdr, `--verbose` suma un tercer pane a la sesion tmux de siempre: **events.log arriba-izquierda** (`tail -f` del log de eventos del pipeline), **pipeline arriba-derecha** (el stage corriendo), y **visor en vivo abajo, a lo ancho completo** (`mefisto-stream-watch.sh`).
@@ -92,7 +91,6 @@ de la corrida ANTERIOR (su encabezado dice a que issue y stage pertenece) y salt
 sola a la nueva en cuanto esta empieza a crecer (tras crear el worktree y validar
 el DoR). No hace falta reconectar.
 
-Usa /mefisto-work-status para ver el progreso sin salir de aqui.
 ```
 
 Si vino `--variant <label>`, la sesion tmux lleva el sufijo `-<label>` (p. ej. `mefisto-tooling-<numero>-<label>`): ajusta el nombre de sesion del hint de conexion en consecuencia.

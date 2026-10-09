@@ -119,7 +119,6 @@ Dentro de herdr (`HERDR_ENV=1` en el entorno), el script delega en la interfaz h
 
 ```
 Pipeline mefisto-tooling corriendo en un pane de este workspace (visor en vivo del agente).
-Usa /mefisto-work-status para ver el progreso sin salir de aqui.
 ```
 
 Si la salida del script dice `sin pane: lo sigue el mod mefisto-divine-wager` (modo `MEFISTO_UI=mod`, MEF-ADR-0055: el mod de esta sesion antepuso ese modo al comando), no hay pane ni sesion que adjuntar. Responde con:
@@ -135,7 +134,6 @@ Fuera de herdr responde con:
 Pipeline mefisto-tooling lanzado en tmux. Para monitorear:
   tmux -CC attach -t mefisto-tooling-<numero>
 
-Usa /mefisto-work-status para ver el progreso sin salir de aqui.
 ```
 
 Si vino `--variant <label>`, la sesion tmux (o el titulo del pane en herdr) lleva el sufijo `-<label>` (p. ej. `mefisto-tooling-<numero>-<label>`): ajusta el nombre de sesion del hint de conexion en consecuencia.

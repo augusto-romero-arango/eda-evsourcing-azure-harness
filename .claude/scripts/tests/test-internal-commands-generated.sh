@@ -30,8 +30,6 @@
 #   [command-path] mefisto-bitacora encadena mefisto-merge via
 #         `{{mefisto:command-path}}`: cada salida apunta a su propio
 #         directorio de comandos (CA-4).
-#   [work-status-paths] mefisto-work-status describe las rutas de estado
-#         como `.mefisto/pipeline/...` con nota de fallback legacy (CA-4).
 #   [opencode-cli] Si el CLI `opencode` esta instalado, `opencode debug
 #         config` corrido en la raiz del repo lista los cinco ids bajo
 #         `.command`; si no esta instalado, se omite con aviso (CA-6).
@@ -67,7 +65,7 @@ COMMANDS_DIR="$REPO_ROOT/src/internal/commands"
 VALIDATOR="$REPO_ROOT/src/internal/scripts/validate-internal-artifacts.sh"
 GENERATOR="$REPO_ROOT/src/internal/scripts/generate-internal-adapters.sh"
 
-COMMAND_IDS="mefisto-plan mefisto-bug mefisto-bitacora mefisto-work-status mefisto-fix-review"
+COMMAND_IDS="mefisto-plan mefisto-bug mefisto-bitacora mefisto-fix-review"
 EXEC_COMMAND_IDS="mefisto-tooling mefisto-tooling-verbose mefisto-sequential mefisto-merge mefisto-release"
 
 PASS=0
@@ -231,7 +229,7 @@ done
 
 echo ""
 echo "[claude-output] model: \"haiku\" en los cuatro fast; fix-review con model: \"opus\" (perfil deep)"
-for id in mefisto-plan mefisto-bug mefisto-bitacora mefisto-work-status; do
+for id in mefisto-plan mefisto-bug mefisto-bitacora; do
     out_file="$REPO_ROOT/.claude/commands/$id.md"
     if grep -q '^model: "haiku"$' "$out_file" 2>/dev/null; then
         pass "$id: .claude/commands lleva model: \"haiku\""
@@ -268,15 +266,6 @@ if grep -qF '.opencode/commands/mefisto-merge.md' "$opencode_bitacora" 2>/dev/nu
     pass "mefisto-bitacora: salida OpenCode apunta a .opencode/commands/mefisto-merge.md"
 else
     fail "mefisto-bitacora: salida OpenCode NO apunta a .opencode/commands/mefisto-merge.md"
-fi
-
-echo ""
-echo "[work-status-paths] mefisto-work-status describe .mefisto/pipeline/... con fallback legacy (CA-4)"
-src_work_status="$COMMANDS_DIR/mefisto-work-status.md"
-if grep -qF '.mefisto/pipeline/' "$src_work_status" 2>/dev/null && grep -qiF 'legacy' "$src_work_status" 2>/dev/null; then
-    pass "mefisto-work-status: fuente describe .mefisto/pipeline/ con nota de fallback legacy"
-else
-    fail "mefisto-work-status: fuente NO describe .mefisto/pipeline/ con nota de fallback legacy"
 fi
 
 echo ""

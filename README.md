@@ -542,7 +542,6 @@ Skills internos disponibles (todos con prefijo `mefisto-`):
 - `/mefisto-bug <síntoma>` — diagnosticar problemas del propio plugin.
 - `/mefisto-fix-review <pr>` — resolver comentarios de un PR del repo.
 - `/mefisto-merge <pr>` — squash + delete-branch sobre PRs del repo.
-- `/mefisto-work-status` — dashboard de pipelines internos en tmux.
 
 Cada skill interno verifica al inicio que estás en el repo de Mefisto (presencia de `.claude-plugin/plugin.json`) y aborta si no.
 

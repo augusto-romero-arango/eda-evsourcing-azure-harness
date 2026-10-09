@@ -164,7 +164,6 @@ Dentro de herdr (`HERDR_ENV=1` en el entorno), el script delega en la interfaz h
 ```
 Batch secuencial mefisto corriendo en un pane de este workspace (visor en vivo del agente).
 Los issues se procesaran en orden: pipeline -> PR -> merge -> sync verificado -> siguiente.
-Usa /mefisto-work-status para ver el progreso sin salir de aqui.
 Para frenarlo sin violencia: /mefisto-batch-stop (termina el eslabon en curso y aplaza el resto).
 ```
 
@@ -175,7 +174,6 @@ Batch secuencial mefisto lanzado en tmux. Para monitorear:
   tmux -CC attach -t mefisto-batch-<timestamp>
 
 Los issues se procesaran en orden: pipeline -> PR -> merge -> sync verificado -> siguiente.
-Usa /mefisto-work-status para ver el progreso sin salir de aqui.
 Para frenarlo sin violencia: /mefisto-batch-stop (termina el eslabon en curso y aplaza el resto).
 ```
 
