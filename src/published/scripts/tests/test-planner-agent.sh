@@ -53,6 +53,11 @@ contains "$body" '(typeof(Evento), "topic")' 'exige el par exacto tipo-topic'
 contains "$body" 'tests de dominio Given/When/Then' 'excluye los tests de dominio'
 contains "$body" '- [ ] **Guardas de inventario de eventos**' 'checklist pre-listo incluye el item'
 
+echo '[fuente] decisiones cerradas (#2147)'
+if printf '%s' "$metadata" | jq -e '.capabilities | index("web") != null' >/dev/null; then pass 'metadata declara la capacidad web'; else fail 'metadata sin capacidad web'; fi
+contains "$body" '- [ ] **Decisiones cerradas**' 'checklist pre-listo incluye Decisiones cerradas'
+contains "$body" '{{mefisto:state-path sandbox}}' 'pruebas de concepto bajo state-path sandbox'
+
 echo '[fuente] preguntas nativas (#2137)'
 if printf '%s' "$metadata" | jq -e '.capabilities | index("ask") != null' >/dev/null; then pass 'metadata declara la capacidad ask'; else fail 'metadata sin capacidad ask'; fi
 contains "$body" '## Preguntas al usuario' 'seccion de preguntas al usuario presente'
