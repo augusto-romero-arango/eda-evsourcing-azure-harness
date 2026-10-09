@@ -45,7 +45,6 @@ const expandedAtom = atom({ plugin: 'mefisto-planner-board', key: 'isExpanded' }
 const pageAtom = atom({ plugin: 'mefisto-planner-board', key: 'page' } as const, 0)
 const tabAtom = atom({ plugin: 'mefisto-planner-board', key: 'tab' } as const, 'borrador')
 const focusAtom = atom({ plugin: 'mefisto-planner-board', key: 'focus' } as const, null)
-const confirmAtom = atom({ plugin: 'mefisto-planner-board', key: 'isConfirmingClose' } as const, false)
 const flashAtom = atom({ plugin: 'mefisto-planner-board', key: 'flash' } as const, null)
 const refineAtom = atom({ plugin: 'mefisto-planner-board', key: 'refine' } as const, null)
 const developAtom = atom({ plugin: 'mefisto-planner-board', key: 'develop' } as const, null)
@@ -181,13 +180,11 @@ async function setWorking($: EngineInterface, isWorking: boolean) {
 }
 
 async function startFocus($: EngineInterface, focus: BoardFocus) {
-  await update($, confirmAtom, () => false)
   await update($, flashAtom, () => null)
   await update($, focusAtom, () => focus)
 }
 
 async function closeFocus($: EngineInterface, summary: string) {
-  await update($, confirmAtom, () => false)
   await update($, focusAtom, () => null)
   await update($, flashAtom, () => ({ text: summary, untilMs: Date.now() + FLASH_MS }))
   $.clock.after(FLASH_MS, () => void update($, flashAtom, () => null))
@@ -241,16 +238,11 @@ async function onBash($: EngineInterface, command: string, output: string) {
   if (isPlannerClosing(command)) await closeFocus($, summaryOf(focus, false))
 }
 
-// Cierre de la exploracion en dos teclas dentro de la banda: el planner corre sin AskUserQuestion, asi
-// que $.ui.ask se rechaza. Al confirmar le pide su rutina de cierre (resumen + field note); el foco se
-// cierra solo cuando el planner corre mefisto-field-note.sh.
-async function closeSession($: EngineInterface, isConfirmed: boolean) {
-  if (!isConfirmed) {
-    await update($, confirmAtom, () => true)
-    return
-  }
-  await update($, confirmAtom, () => false)
-  await $.prompt.submit({ text: 'Cerremos la sesión.', asUser: true })
+// Cierre de la exploracion con una tecla: pulsarla ya es la autorizacion, asi que le pide al planner su rutina
+// de cierre (resumen + field note) sin confirmar. El foco se cierra solo cuando el planner corre
+// mefisto-field-note.sh.
+async function closeSession($: EngineInterface) {
+  await $.prompt.submit({ text: 'Cierra la sesión ahora, sin pedir confirmación: resumen, field note y entrega.', asUser: true })
 }
 
 // La misma tecla abre su lista o, si ya estaba abierta, la cierra.
@@ -347,7 +339,6 @@ export const register: Register = on => {
     if (!(await read($, activeAtom)) || e.props.hasSurvey) return next(e)
     const { Box, Text, Button } = $.ui.resolve(e)
     const focus = await read($, focusAtom)
-    const isConfirmingClose = await read($, confirmAtom)
     const flash = await read($, flashAtom)
     const isExpanded = await read($, expandedAtom)
     const refine = await read($, refineAtom)
@@ -381,16 +372,8 @@ export const register: Register = on => {
             <Text bold wrap="truncate-end">{clip(label, Math.max(20, inner - created.length - 46))}</Text>
             {created !== '' && <Text color="success">{created}</Text>}
           </Box>
-          {focus.kind === 'explorar' && !isConfirmingClose && (
-            <Button key="close-session" hotkey="1" plain label="cerrar sesión" onPress={() => void closeSession($, false)} />
-          )}
-          {focus.kind === 'explorar' && isConfirmingClose && (
-            <Box gap={2}>
-              <Text color="warning">¿cerrar? hará el resumen y la field note</Text>
-              <Button key="close-confirm" hotkey="1" plain label="sí, cerrar" onPress={() => void closeSession($, true)} />
-              <Button key="close-cancel" hotkey="2" plain label="seguir"
-                onPress={() => void update($, confirmAtom, () => false)} />
-            </Box>
+          {focus.kind === 'explorar' && (
+            <Button key="close-session" hotkey="1" plain label="cerrar sesión" onPress={() => void closeSession($)} />
           )}
         </Box>
       )
@@ -446,7 +429,7 @@ export const register: Register = on => {
             {focus.created.length > 0 ? createdText(focus.created) : 'sin borradores nuevos'}
           </Text>
           <Text dimColor wrap="truncate-end">{ends}</Text>
-          <Text dimColor>{focus.kind === 'explorar' ? '1 cierra la sesión (pide confirmar)' : '/mefisto-board cerrar lo cierra a mano'}</Text>
+          <Text dimColor>{focus.kind === 'explorar' ? '1 cierra la sesión' : '/mefisto-board cerrar lo cierra a mano'}</Text>
         </Box>
       )
     } else if (!isExpanded) {
