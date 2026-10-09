@@ -180,7 +180,7 @@ Si el worktree no trae alguna de las notas (por ejemplo, una nota aun sin mergea
 
 ### 4. Entregar: commit, push y PR
 
-`deliver` valida que solo cambian rutas bajo `docs/bitacora/`, commitea todo junto (entradas y movimientos), empuja la rama, crea o reutiliza el PR contra `main` y elimina el worktree si quedo limpio. Es idempotente: reintentar con la misma ruta no duplica commit ni PR.
+`deliver` valida que solo cambian rutas bajo `docs/bitacora/`, commitea todo junto (entradas y movimientos), empuja la rama, crea o reutiliza el PR contra `main` (si el PR anterior de la rama ya se mergeo, crea uno nuevo; `prepare` recrea esa rama desde `origin/main`) y elimina el worktree si quedo limpio. Es idempotente: reintentar con la misma ruta no duplica commit ni PR.
 
 ```bash
 WT="..."  # la ruta que devolvio prepare

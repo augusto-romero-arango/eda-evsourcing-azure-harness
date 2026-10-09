@@ -6,6 +6,9 @@
 #   [B] deliver imprime 'PR #<n>' y elimina el worktree limpio.
 #   [C] un segundo deliver (tras re-preparar, o con la misma ruta ya eliminada) no duplica commit ni PR.
 #   [D] deliver rechaza cambios fuera de docs/bitacora/.
+#   [F] PR mergeado: prepare desde origin/main y deliver crea PR nuevo (#2171).
+#   [G] segundo deliver tras la reentrega reutiliza el PR abierto.
+#   [H] PR cerrado se reabre.
 #   [E] el shim reenvia al script canonico.
 #
 # Exit code: 0 si todo pasa, 1 si alguno falla.
@@ -62,19 +65,22 @@ git -C "$MAIN" remote add origin "$BARE"
 git -C "$MAIN" push -q origin main
 echo "sucio" > "$MAIN/untracked.txt"
 
-: > "$STORE"
-cat > "$FAKEBIN/gh" <<EOF
+echo '[]' > "$STORE"
+export GH_STORE="$STORE" GH_CALLS="$CALLS"
+cat > "$FAKEBIN/gh" <<'EOF'
 #!/usr/bin/env bash
-echo "\$@" >> "$CALLS"
-if [ "\$1" = "repo" ] && [ "\$2" = "view" ]; then echo "acme/mefisto-fake"; exit 0; fi
-if [ "\$1" = "pr" ] && [ "\$2" = "list" ]; then
-    if [ -s "$STORE" ]; then echo '[{"number":77,"url":"https://github.com/acme/mefisto-fake/pull/77","state":"OPEN","mergedAt":null,"createdAt":"2026-10-08T00:00:00Z"}]'; else echo '[]'; fi
+echo "$@" >> "$GH_CALLS"
+if [ "$1" = "repo" ] && [ "$2" = "view" ]; then echo "acme/mefisto-fake"; exit 0; fi
+if [ "$1" = "pr" ] && [ "$2" = "list" ]; then cat "$GH_STORE"; exit 0; fi
+if [ "$1" = "pr" ] && [ "$2" = "create" ]; then
+    echo "creating..." >&2
+    n=$(jq 'length + 77' "$GH_STORE")
+    jq --argjson n "$n" '. + [{number:$n,url:("https://github.com/acme/mefisto-fake/pull/"+($n|tostring)),state:"OPEN",mergedAt:null,createdAt:("2026-10-08T00:00:"+(($n|tostring)|.[0:2])+"Z")}]' "$GH_STORE" > "$GH_STORE.tmp" && mv "$GH_STORE.tmp" "$GH_STORE"
+    echo "https://github.com/acme/mefisto-fake/pull/$n"
     exit 0
 fi
-if [ "\$1" = "pr" ] && [ "\$2" = "create" ]; then
-    echo "creating..." >&2
-    echo x > "$STORE"
-    echo "https://github.com/acme/mefisto-fake/pull/77"
+if [ "$1" = "pr" ] && [ "$2" = "reopen" ]; then
+    jq 'map(if .state == "CLOSED" then .state = "OPEN" else . end)' "$GH_STORE" > "$GH_STORE.tmp" && mv "$GH_STORE.tmp" "$GH_STORE"
     exit 0
 fi
 exit 1
@@ -122,6 +128,38 @@ echo "# mas" >> "$WT2/docs/bitacora/$FECHA.md"
 OUT3="$(run deliver --worktree "$WT2" 2>/dev/null)"
 [ "$OUT3" = "PR #77" ] && pass "reutiliza PR existente" || fail "salida 3: '$OUT3'"
 [ "$(grep -c '^pr create' "$CALLS")" -eq 1 ] && pass "sigue un solo pr create" || fail "pr create duplicado"
+
+set_state() { # <numero> <estado> <mergedAt|null>
+    jq --argjson n "$1" --arg s "$2" --arg m "$3" 'map(if .number == $n then .state = $s | .mergedAt = (if $m == "null" then null else $m end) else . end)' "$STORE" > "$STORE.tmp" && mv "$STORE.tmp" "$STORE"
+}
+
+echo "[F] PR mergeado: reentrega con PR nuevo y prepare desde origin/main"
+set_state 77 MERGED "2026-10-08T01:00:00Z"
+git -C "$MAIN" fetch -q origin main
+WT4="$(run prepare --fecha "$FECHA" 2>"$TMP/p4.err")"
+[ -d "$WT4" ] && [ -z "$(git -C "$WT4" log origin/main..HEAD --oneline)" ] && pass "prepare recrea la rama desde origin/main (CA-4)" || fail "prepare no recreo desde origin/main ($(cat "$TMP/p4.err"))"
+echo "# reentrega" > "$WT4/docs/bitacora/$FECHA-bis.md"
+OUT4="$(run deliver --worktree "$WT4" 2>"$TMP/d4.err")"; RC4=$?
+[ "$RC4" -eq 0 ] && [ "$OUT4" = "PR #78" ] && pass "deliver crea PR #78 nuevo (CA-1)" || fail "rc=$RC4 salida: '$OUT4' ($(cat "$TMP/d4.err"))"
+grep -q "reutilizado" "$TMP/d4.err" && fail "reutilizo el PR mergeado" || pass "no reutiliza el PR mergeado"
+[ "$(grep -c '^pr create' "$CALLS")" -eq 2 ] && pass "segundo pr create" || fail "pr create != 2"
+grep -q "reentrega" "$CALLS" && pass "titulo de reentrega" || fail "sin titulo de reentrega"
+
+echo "[G] segundo deliver tras la reentrega reutiliza el PR abierto"
+WT5="$(run prepare --fecha "$FECHA" 2>/dev/null)"
+OUT5="$(run deliver --worktree "$WT5" 2>"$TMP/d5.err")"; RC5=$?
+[ "$RC5" -eq 0 ] && [ "$OUT5" = "PR #78" ] && pass "reutiliza PR #78" || fail "rc=$RC5 salida: '$OUT5' ($(cat "$TMP/d5.err"))"
+OUT5B="$(run deliver --worktree "$WT4" 2>/dev/null)"
+[ "$OUT5B" = "PR #78" ] && pass "ruta eliminada reporta PR #78" || fail "salida: '$OUT5B'"
+[ "$(grep -c '^pr create' "$CALLS")" -eq 2 ] && pass "sin pr create adicional" || fail "pr create adicional"
+
+echo "[H] PR CLOSED se reabre"
+set_state 78 CLOSED null
+WT6="$(run prepare --fecha "$FECHA" 2>/dev/null)"
+echo "# cerrado" >> "$WT6/docs/bitacora/$FECHA-bis.md"
+OUT6="$(run deliver --worktree "$WT6" 2>/dev/null)"
+[ "$OUT6" = "PR #78" ] && grep -q '^pr reopen' "$CALLS" && pass "reabre PR cerrado" || fail "salida: '$OUT6'"
+[ "$(grep -c '^pr create' "$CALLS")" -eq 2 ] && pass "CLOSED no crea PR nuevo" || fail "pr create inesperado"
 
 echo "[D] scope"
 WT3="$(run prepare --fecha "$FECHA" 2>/dev/null)"
