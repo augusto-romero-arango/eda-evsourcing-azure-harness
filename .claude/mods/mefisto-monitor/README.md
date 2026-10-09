@@ -26,7 +26,7 @@ sesiones `-p` no los cargan. Para probar una copia suelta: `claude --plugin-dir 
   junto al prompt, pregunta si va con merge (`/mefisto-sequential`) o solo PR (`/mefisto-tooling`). El comando
   queda en el prompt sin Enter para ajustarlo antes de lanzar; `0` pagina. Los bloqueados se ven al final, sin tecla.
   `2` (`PRs N`, los abiertos sin borradores) abre el dialogo nativo para mergear: todos (`--all`) o varios de los
-  mas recientes, y otros numeros en la opcion de texto; deja `/mefisto-merge ...` en el prompt sin Enter.
+  mas recientes, y otros numeros en la opcion de texto; al aceptar ejecuta `/mefisto-merge` de una vez.
   `/mefisto-monitor refresh` la actualiza a mano.
 - `/mefisto-sequential` (`--batch`) corre desacoplado y la banda lo sigue desde
   `pipeline-status-mefisto-batch.json`: avance `N/M`, la cola (`✓` mergeado, `●` en curso, `✗` fallido, `⏸`

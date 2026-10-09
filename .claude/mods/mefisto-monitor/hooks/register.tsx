@@ -26,7 +26,7 @@ import {
   statsTotal,
   issueMark,
   mascotPose,
-  mergeCommandOf,
+  mergeArgsOf,
   mergeOptions,
   newlyMerged,
   padEnd,
@@ -430,7 +430,8 @@ async function choose($: EngineInterface, issue: number) {
   else if (answer === ONLY_PR) await fill($, toolingOf(issue))
 }
 
-// Mergear desde la espera: todos o los PRs elegidos; en la opcion de texto se escriben otros numeros. Queda en el prompt.
+// Mergear desde la espera: todos o los PRs elegidos; en la opcion de texto se escriben otros numeros. Elegir en el
+// dialogo ya es la aprobacion, asi que /mefisto-merge se ejecuta de una vez.
 async function chooseMerge($: EngineInterface) {
   const prs = (await read($, openPrsAtom)) ?? []
   if (prs.length === 0) return
@@ -442,8 +443,10 @@ async function chooseMerge($: EngineInterface) {
       ...(prs.length > 1 ? { multiSelect: true as const } : {}),
     })
     .catch(() => null)
-  const command = answer === null ? null : mergeCommandOf(answer, options)
-  if (command) await fill($, command)
+  const args = answer === null ? null : mergeArgsOf(answer, options)
+  if (!args) return
+  $.ui.toast(`/mefisto-merge ${args} en cola`)
+  await $.command.run({ command: 'mefisto-merge', args })
 }
 
 async function confirmStop($: EngineInterface) {

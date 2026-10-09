@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { agentFlagOf, mergeCommandOf, mergeOptions, parseOpenPrs, withoutHeredocs, fmtCost, issueStatsFromHistory, statsTotal, batchFromStatus, batchIssuesOf, batchPr, batchSummary, issueMark, newlyMerged, readyRows, titlesOf, toolingOf, waitingFace, cropGrid, pageOf, parseNextOrder, sequentialOf, finishedFromHistory, mascotPose, parseEvent, usedColumns, relative, pickEventsFile, steps, stampToMs, toolingIssueOf, withModUi } from './logic'
+import { agentFlagOf, mergeArgsOf, mergeOptions, parseOpenPrs, withoutHeredocs, fmtCost, issueStatsFromHistory, statsTotal, batchFromStatus, batchIssuesOf, batchPr, batchSummary, issueMark, newlyMerged, readyRows, titlesOf, toolingOf, waitingFace, cropGrid, pageOf, parseNextOrder, sequentialOf, finishedFromHistory, mascotPose, parseEvent, usedColumns, relative, pickEventsFile, steps, stampToMs, toolingIssueOf, withModUi } from './logic'
 
 test('detecta el lanzamiento de /mefisto-tooling', async () => {
   expect(toolingIssueOf('MEFISTO_RUNTIME=claude ./.claude/scripts/mefisto-tmux-pipeline.sh --tooling 2059')).toBe('2059')
@@ -192,7 +192,7 @@ test('solo cuenta el wrapper que se ejecuta, no el que aparece como texto', asyn
     .toBe('echo "mefisto-tmux-pipeline.sh"; MEFISTO_UI=mod ./s/mefisto-tmux-pipeline.sh --tooling 7')
 })
 
-test('el merge desde la banda ofrece todos o los PRs mas recientes y arma /mefisto-merge', async () => {
+test('el merge desde la banda ofrece todos o los PRs mas recientes y arma los argumentos de /mefisto-merge', async () => {
   const prs = parseOpenPrs(JSON.stringify([
     { number: 2089, title: 'B', isDraft: false }, { number: 2097, title: 'A', isDraft: false },
     { number: 2090, title: 'Borrador', isDraft: true }, { number: 2085, title: 'C' }, { number: 1994, title: 'D' },
@@ -201,9 +201,9 @@ test('el merge desde la banda ofrece todos o los PRs mas recientes y arma /mefis
   expect(mergeOptions(prs ?? [])).toEqual(['Todos (--all)', '#2097 A', '#2089 B', '#2085 C'])
   expect(mergeOptions([{ number: 7, title: 'X' }])).toEqual(['#7 X', 'Cancelar'])
   const options = ['Todos (--all)', '#2097 field note 2026-10-08-1848', '#2089 B']
-  expect(mergeCommandOf('Todos (--all), #2097 field note 2026-10-08-1848', options)).toBe('/mefisto-merge --all')
-  expect(mergeCommandOf('#2097 field note 2026-10-08-1848, #2089 B', options)).toBe('/mefisto-merge 2097 2089')
-  expect(mergeCommandOf('#2089 B, 1994 2063', options)).toBe('/mefisto-merge 2089 1994 2063')
-  expect(mergeCommandOf('Cancelar', ['#7 X', 'Cancelar'])).toBe(null)
+  expect(mergeArgsOf('Todos (--all), #2097 field note 2026-10-08-1848', options)).toBe('--all')
+  expect(mergeArgsOf('#2097 field note 2026-10-08-1848, #2089 B', options)).toBe('2097 2089')
+  expect(mergeArgsOf('#2089 B, 1994 2063', options)).toBe('2089 1994 2063')
+  expect(mergeArgsOf('Cancelar', ['#7 X', 'Cancelar'])).toBe(null)
   expect(parseOpenPrs('no json')).toBe(null)
 })

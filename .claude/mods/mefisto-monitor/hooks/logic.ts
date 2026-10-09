@@ -512,12 +512,12 @@ export function mergeOptions(prs: OpenPr[]): string[] {
 }
 
 /**
- * La linea de /mefisto-merge que sale de la respuesta (las opciones marcadas, unidas por ", "): --all si se
- * eligio todos; de cada opcion solo su #N (el titulo puede traer fechas); del texto libre de "Other", sus numeros.
+ * Los argumentos de /mefisto-merge que salen de la respuesta (las opciones marcadas, unidas por ", "): --all si
+ * se eligio todos; de cada opcion solo su #N (el titulo puede traer fechas); del texto libre, sus numeros.
  * Null si no queda ningun PR.
  */
-export function mergeCommandOf(answer: string, options: string[]): string | null {
-  if (answer.includes(MERGE_ALL)) return '/mefisto-merge --all'
+export function mergeArgsOf(answer: string, options: string[]): string | null {
+  if (answer.includes(MERGE_ALL)) return '--all'
   let rest = answer
   const numbers: string[] = []
   for (const option of options) {
@@ -528,5 +528,5 @@ export function mergeCommandOf(answer: string, options: string[]): string | null
   }
   numbers.push(...(rest.match(/\d+/g) ?? []))
   const unique = [...new Set(numbers)]
-  return unique.length > 0 ? `/mefisto-merge ${unique.join(' ')}` : null
+  return unique.length > 0 ? unique.join(' ') : null
 }
