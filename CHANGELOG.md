@@ -4,6 +4,61 @@ Todo cambio notable a este proyecto se documenta aquí. Sigue [Keep a Changelog]
 
 ## [Unreleased]
 
+## [0.43.0] - 2026-10-09
+
+### Added
+
+- Se agrega el mod de Claude Code `mefisto-monitor` (`.claude/mods/`, MEF-ADR-0055): sigue `/mefisto-tooling` dentro de la sesion de ejecucion con stages, live log y PR, y ofrece mergear, ver el PR y cerrar desde la banda sobre el prompt (`1`-`4`) o `/mefisto-monitor`.
+- Se agrega el modo `MEFISTO_UI=mod` a `mefisto-tmux-pipeline.sh --tooling`: corre el pipeline desacoplado, sin sesion tmux ni pane herdr; lo activa el mod.
+- Se agrega el mod `mefisto-planner-board` (`.claude/mods/`, MEF-ADR-0055 decision 8): banda sobre el prompt del planner (`claude --agent mefisto-planner`) con el foco en curso (refinar #N / explorar), los borradores en orden de refinamiento y los listos en orden de lanzamiento; los comandos de listos se escriben sin Enter en el pane de ejecucion de herdr.
+- Se agrega `--refinement` y `--json` a `mefisto-next-order.sh`: orden de refinamiento de los borradores por dependencias y salida estructurada.
+- Se agrega el marketplace local `mefisto-mods` (`.claude/mods/.claude-plugin/marketplace.json`) para instalar los mods en alcance `local` y cargarlos sin `--plugin-dir`.
+- `scripts/next-order.sh` (publicado) gana `--refinement` (orden de refinamiento de los `estado:borrador`) y `--json` (objeto con `mode`, `items[]` con `tipo`, `blocked[]`, `cycles[][]` y `launch`); el modo `refinar` del planner publicado usa `next-order.sh --refinement` para proponer el siguiente borrador (#2079).
+- `generate-claude-hooks.sh` emite `modules: ["./register.tsx"]` en `hooks/hooks.json` y su chequeo de topologia acepta exactamente `["hooks", "modules"]`; nuevo stub `hooks/register.tsx` sin efecto (MEF-ADR-0055); excepcion R2 para `hooks/*.ts` y `hooks/*.tsx` en la allowlist de neutralidad.
+- Tablero del planner publicado como mod del plugin (`hooks/register.tsx`, `logic.ts`, `sprites.ts`, `types/`, `tsconfig.json`; `.claude-plugin/plugin.json` declara su contrato de estado en `"types"`): banda sobre el prompt de `claude --agent mefisto:planner` con foco (refinar #N / explorar), borradores en orden de refinamiento y listos en solo lectura, con letra de tipo en color por item (MEF-ADR-0055 decision 9); independiente del mod interno y sin ninguna accion que lance pipelines.
+- `/onboard` verifica que Claude Code sea >= 2.1.287 (mods de `hooks/hooks.json`, MEF-ADR-0055): fila OK/FALTA/NO VERIFICADO, informativa bajo otros runtimes; README documenta el requisito (#2083).
+- `mefisto-planner-board` permite cerrar la sesión del planner desde la banda durante una exploración (`1`, con confirmación en la misma banda), que le pide al planner su rutina de cierre.
+- `mefisto-monitor` muestra la mascota durante la corrida y, en reposo fuera de la sesión del planner, una banda con los listos en el orden de `mefisto-next-order.sh` que escribe en el prompt la línea de `/mefisto-sequential` (todos o uno), con una mascota en espera junto a un reloj de arena.
+- `/mefisto-sequential` se sigue desde la banda de `mefisto-monitor`: el batch corre desacoplado con `MEFISTO_UI=mod`, publica `pipeline-status-mefisto-batch.json` y la banda muestra avance, cola, el issue en curso, parada tras el actual, PRs y resumen final.
+- La banda de espera de `mefisto-monitor` mergea PRs abiertos (`2`), integra la bitácora con sus field notes pendientes (`3`) y publica un release con el bump sugerido por SemVer (`4`), desde el diálogo nativo; las bandas de corrida y sequential muestran las esperas por rate limit.
+- La banda de espera de `mefisto-monitor` muestra al historiador (pluma y tintero) mientras `/mefisto-bitacora` corre al subagente `mefisto-historiador`.
+- La banda de espera de `mefisto-monitor` muestra un cohete mientras corre `/mefisto-release`: en reposo al preparar, despegando mientras corre `mefisto-release.sh` y listo al terminar.
+- `mefisto-worktree.sh` (`new <slug>` / `clean`): helper para que las sesiones de trabajo directo usen un worktree propio bajo `.mefisto/worktrees/` en vez del checkout principal; AGENTS.md "Flujo de entrega" reemplaza `git switch -c` por esa regla y `.gitignore` ignora `.claude/worktrees/` (#2108).
+- Hook de git `pre-push` (`src/internal/githooks/`) que desvia a un PR de rescate los push directos a `main`/`master`; `ensure_githooks_installed` lo activa via `core.hooksPath` desde los pipelines internos, la nota de campo y `mefisto-worktree.sh new` (#2110).
+- Remediacion automatica del `main` local tras un rescate del hook `pre-push`: `ensure_repo_on_base_branch` y `sync_main_after_merge` hacen `git reset --keep origin/main` cuando todos los commits locales de mas figuran en `.mefisto/pipeline/rescued-main.txt` y el arbol esta limpio, y retiran esos SHAs de la lista (#2112).
+
+### Changed
+
+- Se enmienda MEF-ADR-0042: toda lista pagina por keyset con `Take` opcional (maximo 200), responde el sobre `{ elementos, siguienteCursor }` con cursor opaco y sin total; ventanas temporales agregan `desde`/`hasta`/`rangoRecortado`; aplica solo a endpoints nuevos (#1982).
+- Se enmienda MEF-ADR-0047 (decision 4): una tool de consulta le responde al usuario y no a otra tool; modalidades detalle, desambiguacion, catalogo y ventana temporal; tope fijo del servidor (default 50, sin `limit`/`pageSize`); sobre `mostrando`/`siguienteCursor`/`nota` sin total; aplica solo a tools nuevas (#2074).
+- El parseo de `## Dependencias` pasa a `src/internal/scripts/lib/mefisto-deps.sh`, compartido por `mefisto-next-order.sh` y `mefisto-validate-batch-deps.sh`.
+- El modo refinar de `mefisto-planner` propone el borrador que indica `mefisto-next-order.sh --refinement`.
+- `mefisto-planner-board` muestra la mascota del planner (se anima mientras Claude trabaja), oculta las listas durante un foco y deja los listos en solo lectura: el planner ya no envia comandos al pane de ejecucion.
+- MEF-ADR-0055 se generaliza al tablero del planner publicado: la decision 4 define una ubicacion por lado, la decision 8 describe un unico tablero con tabla de diferencias y declara los dos tableros totalmente independientes, y la version minima 2.1.287 aplica al plugin publicado.
+- `mefisto-monitor` sigue la corrida de `/mefisto-tooling` en la misma banda que la espera (mascota del agente activo, pasos y últimas líneas), deja el pane como log a pedido, pregunta si un solo listo va con merge (`/mefisto-sequential`) o solo PR (`/mefisto-tooling`) y muestra los listos bloqueados sin tecla.
+- La banda del sequential de `mefisto-monitor` muestra tres líneas del agente separadas del issue y, a medida que se cierran, cada issue terminado con su PR, duración y costo estimado, más el total.
+- `mefisto-monitor` pregunta en el diálogo nativo junto al prompt si un listo va con merge (`/mefisto-sequential`) o solo PR (`/mefisto-tooling`) y si detener el sequential; la banda ya no cambia para confirmar.
+- La mascota de los mods internos (`mefisto-monitor`, `mefisto-planner-board`) pasa a blanco perla con cuernos dorados; los mods del consumidor conservan el rojo.
+- La banda de espera de `mefisto-monitor` ya no repite "sin batch lanzable" junto a `listos 0`.
+- El flujo de bitacora interna deja de cambiar la rama del checkout compartido: el nuevo `mefisto-bitacora-worktree.sh` (`prepare`/`deliver`) aisla la escritura, el commit, el push y el PR en un worktree bajo `.mefisto/pipeline/summaries/`, y `mefisto-historiador` lo usa en lugar de `git switch`/`git commit`/`git push` sobre el checkout principal (#2105).
+- El planner interno ya no pasa issues a `estado:listo` sin confirmar: `explorar`/`desglosar` crean siempre `estado:borrador`, y `refinar` guarda el cuerpo, muestra un resumen compacto y espera confirmacion antes del label (excepcion si el usuario lo pide en el mismo turno) (#2109).
+- El `planner` publicado ya no pasa issues a `estado:listo` sin confirmación: `explorar` y `desglosar` crean siempre `estado:borrador`, y `refinar` guarda el cuerpo sin cambiar el label, muestra un resumen compacto y pasa a listo (junto con los issues creados en la sesión) solo tras una única confirmación del usuario (#2111).
+- La banda de espera de `mefisto-monitor` lleva el menú `1: sequential …` al pie, bajo la mascota, para que la cola larga no empuje los menús fijos del título.
+- `mefisto-planner-board` cierra la sesión del planner con una sola tecla (`1` en una exploración), sin el paso de confirmación en la banda.
+
+### Fixed
+
+- `mefisto-planner-board` repite el refresco forzado 15 s después de un cambio de issues, porque un refresco inmediato podía dejar las listas viejas de next-order (un issue en `estado:listo` seguía como borrador).
+- `mefisto-monitor` cierra el log con `3` (alterna) o con `c` dentro del pane, y cerrarlo ya no borra la corrida de la banda.
+- `mefisto-monitor` lleva `MEFISTO_UI=mod` al wrapper también dentro del comando compuesto de `/mefisto-sequential`, que abría además el pane de herdr del batch.
+- `mefisto-monitor` ya no toma como lanzamiento un texto que nombra `mefisto-tmux-pipeline.sh` (heredoc, `grep`, `echo`) y descarta un seguimiento sin status ni historial tras 2 minutos.
+- `mefisto-planner-board` ya no cierra el foco de refinar cuando un comando solo nombra `mefisto-field-note.sh` o `gh issue …` (git show, grep, heredoc), y lo cierra aunque el mismo comando pase el issue a listo y cree un borrador.
+- El tablero del planner publicado cuenta `field-note.sh` y `gh issue create|edit|close|reopen` solo en posicion de ejecucion (fuera de heredocs; acepta la ruta entre comillas con espacios), y `onBash` cierra el foco aunque el mismo comando cree un borrador (#2115).
+
+### Removed
+
+- Se elimina la excepcion de paginacion por offset (`ToPagedListAsync`/`Stats`) de MEF-ADR-0042; sin total no hay "pagina N de M" (#1982).
+
 ## [0.42.1] - 2026-10-08
 
 ### Changed
@@ -3181,7 +3236,8 @@ Y reemplazar referencias en `CLAUDE.md` del proyecto: `/eda-evsourcing-azure-har
 - Los agentes `reviewer` e `implementer` mantienen el placeholder literal `ADR-XXXX` en sus plantillas de reporte (no es un bug; el agente lo sustituye en tiempo de ejecución por el número real del ADR aplicable).
 - Los ejemplos de código en `test-writer.md`, `implementer.md` y `smoke-test-writer.md` conservan nombres concretos de un proyecto consumidor (`Programacion`, `ControlHoras`) anotados en el "Contrato con el consumidor" de cada agente como ejemplos pedagógicos.
 
-[Unreleased]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.42.1...HEAD
+[Unreleased]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.43.0...HEAD
+[0.43.0]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.42.1...v0.43.0
 [0.42.1]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.42.0...v0.42.1
 [0.42.0]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.41.8...v0.42.0
 [0.41.8]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.41.7...v0.41.8
