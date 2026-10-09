@@ -144,3 +144,8 @@ no necesita estar residente en cada sesión, solo cuando se busca en qué ADR vi
 | Servidor MCP General por BC y separacion por necesidad demostrada | MEF-ADR-0047 |
 | Identidad derivada del token en servidores MCP (enmienda de la doctrina de servidores MCP) | MEF-ADR-0047 |
 | Sin guardas de lista exacta o conteo de tipos persistidos (enmienda de la identidad del evento persistido) | MEF-ADR-0036 |
+| Paginacion keyset, sobre de lista con cursor opaco, `Take` opcional y sin total | MEF-ADR-0042 |
+| Modalidades de consulta, tope fijo y sobre sin total en tools MCP | MEF-ADR-0047 |
+| Superficie de observacion de pipelines como mod de Claude Code: lector puro del estado, acciones via skills, banda con digitos y modo `MEFISTO_UI=mod` | MEF-ADR-0055 |
+| Tablero del planner como mod: foco refinar/explorar, orden de refinamiento y carga por marketplace local (enmienda de la superficie de observacion por mods) | MEF-ADR-0055 |
+| Tablero del planner en ambos lados: ubicacion de mods por lado, tableros independientes sin regla de tres y version minima 2.1.287 (enmienda de la superficie de observacion por mods) | MEF-ADR-0055 |
