@@ -57,6 +57,8 @@ import {
   toolingIssueOf,
   usedColumns,
   withModUi,
+  historianFrom,
+  isAgentActive,
 } from './logic'
 import { DEFAULT_COLOR, HEIGHT, PALETTE, RASTER_ROWS, face, sprite } from './sprites'
 
@@ -297,12 +299,27 @@ async function fromHistory($: EngineInterface, prev: PipelineRun): Promise<Pipel
   }
 }
 
+// Mientras /mefisto-bitacora corre al historiador, la banda de espera lo muestra escribiendo.
+async function pollHistorian($: EngineInterface) {
+  if (!isInteractive) return
+  const agents = await $.agent.list().catch(() => [])
+  const active = agents.some(a => a.type === HISTORIAN && isAgentActive(a.status))
+  const prev = await read($, historianAtom)
+  const next = historianFrom(prev, active, Date.now())
+  if (next === prev) return
+  await update($, historianAtom, () => next)
+  if (!next?.finishedMs) return
+  $.clock.after(HISTORIAN_DONE_MS, () => void update($, historianAtom, h => (h?.finishedMs ? null : h)))
+  void refreshReady($)
+}
+
 async function poll($: EngineInterface) {
   if (isPolling) return
   isPolling = true
   try {
     await update($, nowAtom, () => Date.now())
     await pollBatch($)
+    await pollHistorian($)
     const inBatch = (await read($, batchAtom)) !== null
     const prev = await read($, runAtom)
     if (prev?.state === 'completed' && !inBatch) await closeIfMerged($, prev)
@@ -560,19 +577,6 @@ export const register: Register = on => {
     $.clock.every(1000, () => void poll($))
     if (isInteractive) void detectExecution($)
     return next(e)
-  })
-
-  // /mefisto-bitacora corre al historiador en primer plano: mientras dura la llamada, la banda de espera lo muestra.
-  on('tool.call', { tool: 'Agent' }, async ($, e, next) => {
-    if (!isInteractive || e.subagent_type !== HISTORIAN) return next(e)
-    await update($, historianAtom, () => ({ startedMs: Date.now(), finishedMs: null }))
-    try {
-      return await next(e)
-    } finally {
-      await update($, historianAtom, h => (h ? { ...h, finishedMs: Date.now() } : h))
-      $.clock.after(HISTORIAN_DONE_MS, () => void update($, historianAtom, h => (h?.finishedMs ? null : h)))
-      void refreshReady($)
-    }
   })
 
   // El cohete del release: en reposo desde que se pide /mefisto-release, despegando mientras corre su script y

@@ -1,4 +1,4 @@
-import type { BatchIssue, BatchRun, ChangelogSummary, Hold, IssueStats, OpenPr, BlockedItem, LogLine, RunAgent, PipelineRun, ReadyItem, ReadyList } from '../types'
+import type { BatchIssue, BatchRun, ChangelogSummary, Historian, Hold, IssueStats, OpenPr, BlockedItem, LogLine, RunAgent, PipelineRun, ReadyItem, ReadyList } from '../types'
 
 export const STATE_DIR = '.mefisto/pipeline'
 export const LOG_DIR = `${STATE_DIR}/logs`
@@ -605,3 +605,17 @@ export function holdOf(tail: string): Hold | null {
 }
 
 export const holdText = (hold: Hold) => `en espera por ${hold.family} · próxima sonda ${hold.nextProbe} · techo ${hold.deadline}`
+
+const AGENT_ACTIVE = new Set(['pending', 'running', 'waiting'])
+
+/** Un agente de `$.agent.list()` que aun no termina (AgentStatus). */
+export const isAgentActive = (status: string) => AGENT_ACTIVE.has(status)
+
+/**
+ * El historiador corre en primer o en segundo plano: se sigue su estado en `$.agent.list()`, no la llamada Agent,
+ * que en segundo plano vuelve en cuanto arranca. Devuelve `prev` tal cual si nada cambio.
+ */
+export function historianFrom(prev: Historian | null, active: boolean, now: number): Historian | null {
+  if (active) return prev && !prev.finishedMs ? prev : { startedMs: now, finishedMs: null }
+  return prev && !prev.finishedMs ? { ...prev, finishedMs: now } : prev
+}

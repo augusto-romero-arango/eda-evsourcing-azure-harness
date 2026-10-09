@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { agentFlagOf, isReleasePrompt, isReleaseRun, holdOf, holdText, bitacoraPrompt, changelogOf, fieldNotesIn, releaseArgsOf, releaseOptions, mergeArgsOf, mergeOptions, parseOpenPrs, withoutHeredocs, fmtCost, issueStatsFromHistory, statsTotal, batchFromStatus, batchIssuesOf, batchPr, batchSummary, issueMark, newlyMerged, readyRows, titlesOf, toolingOf, waitingFace, cropGrid, pageOf, parseNextOrder, sequentialOf, finishedFromHistory, mascotPose, parseEvent, usedColumns, relative, pickEventsFile, steps, stampToMs, toolingIssueOf, withModUi } from './logic'
+import { agentFlagOf, historianFrom, isAgentActive, isReleasePrompt, isReleaseRun, holdOf, holdText, bitacoraPrompt, changelogOf, fieldNotesIn, releaseArgsOf, releaseOptions, mergeArgsOf, mergeOptions, parseOpenPrs, withoutHeredocs, fmtCost, issueStatsFromHistory, statsTotal, batchFromStatus, batchIssuesOf, batchPr, batchSummary, issueMark, newlyMerged, readyRows, titlesOf, toolingOf, waitingFace, cropGrid, pageOf, parseNextOrder, sequentialOf, finishedFromHistory, mascotPose, parseEvent, usedColumns, relative, pickEventsFile, steps, stampToMs, toolingIssueOf, withModUi } from './logic'
 
 test('detecta el lanzamiento de /mefisto-tooling', async () => {
   expect(toolingIssueOf('MEFISTO_RUNTIME=claude ./.claude/scripts/mefisto-tmux-pipeline.sh --tooling 2059')).toBe('2059')
@@ -241,4 +241,18 @@ test('reconoce el release que se lanza y su script en ejecucion', async () => {
   expect(isReleasePrompt('/mefisto-releases')).toBe(false)
   expect(isReleaseRun('MEFISTO_RUNTIME=claude ./.claude/scripts/mefisto-release.sh minor')).toBe(true)
   expect(isReleaseRun('grep -n release src/internal/scripts/mefisto-release.sh')).toBe(false)
+})
+
+test('sigue al historiador por su estado, aunque corra en segundo plano', async () => {
+  expect(isAgentActive('running')).toBe(true)
+  expect(isAgentActive('waiting')).toBe(true)
+  expect(isAgentActive('completed')).toBe(false)
+  expect(historianFrom(null, false, 5)).toBe(null)
+  const writing = historianFrom(null, true, 10)
+  expect(writing).toEqual({ startedMs: 10, finishedMs: null })
+  expect(historianFrom(writing, true, 20)).toBe(writing)
+  const done = historianFrom(writing, false, 30)
+  expect(done).toEqual({ startedMs: 10, finishedMs: 30 })
+  expect(historianFrom(done, false, 40)).toBe(done)
+  expect(historianFrom(done, true, 50)).toEqual({ startedMs: 50, finishedMs: null })
 })
