@@ -125,4 +125,7 @@ test('solo cuenta los comandos que se ejecutan, no los que se nombran', async ()
   expect(issueMarkedListo("grep -n 'gh issue edit 7 --add-label estado:listo' a.md")).toBe(null)
   expect(isIssueCreate("cat > b.md <<'EOF'\ngh issue create --title x\nEOF\necho ok")).toBe(false)
   expect(isIssueChange('cd /r; gh issue close 12 --reason completed')).toBe(true)
+  const both = 'gh issue edit 2108 --body-file b.md && gh issue edit 2108 --remove-label "estado:borrador" --add-label "estado:listo"\nN=$(gh issue create --title x --body "$(cat <<\'EOF\'\nhola\nEOF\n)")'
+  expect(issueMarkedListo(both)).toBe(2108)
+  expect(isIssueCreate(both)).toBe(true)
 })
