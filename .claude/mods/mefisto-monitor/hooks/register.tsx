@@ -758,10 +758,8 @@ export const register: Register = on => {
               {changelog && changelog.issues > 0 && (
                 <Button key="release" hotkey="4" plain label={`release ${changelog.issues}`} onPress={() => void chooseRelease($)} />
               )}
-              {ready?.launch ? (
+              {ready?.launch && (
                 <Button key="ready-all" hotkey="1" plain label={clip(ready.launch, inner - 24)} onPress={() => void fill($, ready.launch ?? '')} />
-              ) : (
-                <Text dimColor>sin batch lanzable</Text>
               )}
             </Box>
           </Box>
