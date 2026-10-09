@@ -24,6 +24,18 @@ export type BoardFocus = {
   startedMs: number
 }
 
+/** Ficha de un issue: lo que la conversacion no muestra (labels, de que depende y a quien bloquea). */
+export type IssueCard = {
+  number: number
+  title: string
+  labels: string[]
+  deps: number[]
+  hasDepsSection: boolean
+}
+
+/** Issue abierto, para saber si una dependencia sigue abierta y en que estado. */
+export type OpenIssueBrief = { number: number; title: string; labels: string[] }
+
 /** Resumen breve que la banda muestra al cerrar un foco. */
 export type BoardFlash = { text: string; untilMs: number }
 
@@ -39,6 +51,8 @@ declare module 'claude-code' {
       stepsInTurn: number
       isWorking: boolean
       focus: BoardFocus | null
+      card: IssueCard | null
+      open: OpenIssueBrief[]
       flash: BoardFlash | null
       refine: BoardList | null
       develop: BoardList | null

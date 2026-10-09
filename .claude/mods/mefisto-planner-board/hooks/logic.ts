@@ -1,4 +1,4 @@
-import type { BoardItem, BoardList } from '../types'
+import type { BoardItem, BoardList, IssueCard, OpenIssueBrief } from '../types'
 
 export const NEXT_ORDER = './.claude/scripts/mefisto-next-order.sh'
 /** Filas fijas de la lista: la banda no cambia de alto con la cantidad de issues. */
@@ -113,7 +113,7 @@ export function refineTargetOf(prompt: string): number | null {
 /** El tema de una exploracion: la primera linea con contenido del mensaje, recortada. */
 export function topicOf(prompt: string): string {
   const line = prompt.split('\n').map(l => l.trim()).find(l => l !== '') ?? ''
-  return clip(line.replace(/^quiero explorar:\s*/i, ''), 70)
+  return clip(line.replace(/^quiero explorar:\s*/i, ''), 160)
 }
 
 // Un comando cuenta solo donde se ejecuta: al inicio (tras ; && || | ( then do o un salto de linea), con
@@ -228,4 +228,91 @@ export function usedColumns(grids: readonly Grid[]): { from: number; to: number 
 
 export function cropGrid(grid: Grid, cols: { from: number; to: number }): Grid {
   return grid.map(row => row.slice(cols.from, cols.to + 1).padEnd(cols.to - cols.from + 1, '.'))
+}
+
+// Misma regla que src/internal/scripts/lib/mefisto-deps.sh: solo 'Depende de #N' / 'Bloqueado por #N' al inicio
+// del item de '## Dependencias', y solo el primer numero de la linea.
+const DEPS_HEADER = /^##\s*dependencias/i
+const FORWARD_DEP = /^\s*(?:[-*]\s+)?(?:depende de|bloqueado por)\s+#(\d+)/i
+
+export function dependenciesOf(body: string): { deps: number[]; hasSection: boolean } {
+  const deps = new Set<number>()
+  let inSection = false
+  let hasSection = false
+  for (const line of body.split('\n')) {
+    if (DEPS_HEADER.test(line)) {
+      inSection = hasSection = true
+      continue
+    }
+    if (/^##\s/.test(line)) inSection = false
+    const m = inSection ? FORWARD_DEP.exec(line) : null
+    if (m) deps.add(Number(m[1]))
+  }
+  return { deps: [...deps].sort((a, b) => a - b), hasSection }
+}
+
+/** La salida de `gh issue view N --json number,title,labels,body`, o null si no es JSON. */
+export function parseIssueCard(stdout: string): IssueCard | null {
+  try {
+    const i = JSON.parse(stdout)
+    if (typeof i?.number !== 'number') return null
+    const { deps, hasSection } = dependenciesOf(i.body ?? '')
+    const labels = (i.labels ?? []).map((l: { name: string }) => l.name)
+    return { number: i.number, title: i.title ?? '', labels, deps, hasDepsSection: hasSection }
+  } catch {
+    return null
+  }
+}
+
+export function briefsOf(issues: OpenIssue[]): OpenIssueBrief[] {
+  return issues.map(i => ({ number: i.number, title: i.title ?? '', labels: (i.labels ?? []).map(l => l.name) }))
+}
+
+const LABEL_ORDER = ['tipo:', 'dom:', 'estado:']
+
+/** tipo, dom y estado primero; el resto despues, en orden alfabetico. */
+export function labelsText(labels: string[]): string {
+  const rank = (l: string) => {
+    const i = LABEL_ORDER.findIndex(p => l.startsWith(p))
+    return i === -1 ? LABEL_ORDER.length : i
+  }
+  return [...labels].sort((a, b) => rank(a) - rank(b) || a.localeCompare(b)).join(' · ')
+}
+
+/** Una dependencia cerrada esta cumplida; una abierta dice en que estado va. */
+export function depsText(card: IssueCard, open: OpenIssueBrief[]): string {
+  if (!card.hasDepsSection) return 'sin sección ## Dependencias'
+  if (card.deps.length === 0) return 'no depende de nada'
+  const byNumber = new Map(open.map(i => [i.number, i]))
+  const parts = card.deps.map(n => {
+    const dep = byNumber.get(n)
+    if (!dep) return `#${n} ✓`
+    const estado = dep.labels.find(l => l.startsWith('estado:'))
+    return `#${n} ${estado ? estado.slice('estado:'.length) : 'abierto'}`
+  })
+  return `depende de ${parts.join(' · ')}`
+}
+
+/** Los issues de las listas de next-order que van tras #N. */
+export function blockedBy(issue: number, lists: (BoardList | null)[]): number[] {
+  const out = new Set<number>()
+  for (const l of lists) for (const i of l?.items ?? []) if (i.after.includes(issue)) out.add(i.number)
+  return [...out].sort((a, b) => a - b)
+}
+
+export function blocksText(blocked: number[]): string {
+  return blocked.length > 0 ? `bloquea ${blocked.map(n => `#${n}`).join(' ')}` : 'no bloquea a nadie'
+}
+
+/** Ficha corta de un borrador creado en la sesion: `#N titulo · tipo:x`. */
+export function createdCardText(n: number, open: OpenIssueBrief[], max: number): string {
+  const issue = open.find(i => i.number === n)
+  if (!issue) return `#${n}`
+  const tipo = issue.labels.find(l => l.startsWith('tipo:'))
+  const tail = tipo ? ` · ${tipo}` : ''
+  return `#${n} ${clip(issue.title, Math.max(10, max - String(n).length - 2 - tail.length))}${tail}`
+}
+
+export function minutesSince(startedMs: number, nowMs: number): number {
+  return Math.max(0, Math.floor((nowMs - startedMs) / 60_000))
 }

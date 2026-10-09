@@ -30,6 +30,13 @@ En otra sesion, `/mefisto-planner-board on` lo enciende a mano.
 - **explorar**: cualquier otro mensaje desde reposo; el tema es su primera linea. Termina con el cierre.
 - Los `gh issue create` de ambos se anotan como `creó #…`.
 
+Con foco, la cabecera dice que se hace y desde cuando (`● refinar #N · 4 min`) y el cuerpo junto a la mascota
+lo que la conversacion no muestra:
+
+- **refinar**: el titulo completo y la ficha del issue: labels, de que depende (`#N ✓` si ya cerro, o su
+  estado) y a quien bloquea (los de next-order que van tras el). Se relee con cada cambio de issues.
+- **explorar**: el tema completo y una linea por borrador creado (`#N titulo · tipo:x`).
+
 ## Teclas (prompt vacio)
 
 | Tecla | Accion |

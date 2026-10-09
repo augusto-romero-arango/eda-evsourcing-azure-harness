@@ -2,6 +2,12 @@ import { expect, test } from 'claude-code/testing'
 
 import {
   arrivals,
+  blockedBy,
+  createdCardText,
+  dependenciesOf,
+  depsText,
+  labelsText,
+  parseIssueCard,
   isIssueChange,
   createdIssueOf,
   isIssueCreate,
@@ -128,4 +134,55 @@ test('solo cuenta los comandos que se ejecutan, no los que se nombran', async ()
   const both = 'gh issue edit 2108 --body-file b.md && gh issue edit 2108 --remove-label "estado:borrador" --add-label "estado:listo"\nN=$(gh issue create --title x --body "$(cat <<\'EOF\'\nhola\nEOF\n)")'
   expect(issueMarkedListo(both)).toBe(2108)
   expect(isIssueCreate(both)).toBe(true)
+})
+
+test('lee las dependencias forward de la seccion, con la regla de mefisto-deps.sh', async () => {
+  const body = [
+    '## Contexto',
+    'Depende de #1 fuera de la seccion',
+    '## Dependencias',
+    '- Depende de #2139 (capacidad ask)',
+    '* Bloqueado por #20 y #21',
+    '- No depende de #30',
+    'Prosa que menciona depende de #40',
+    '## Componente',
+    '- Depende de #50',
+  ].join('\n')
+  expect(dependenciesOf(body)).toEqual({ deps: [20, 2139], hasSection: true })
+  expect(dependenciesOf('## Contexto\nnada')).toEqual({ deps: [], hasSection: false })
+})
+
+test('arma la ficha del issue en foco', async () => {
+  const card = parseIssueCard(
+    JSON.stringify({
+      number: 2137,
+      title: 'Hacer que el planner pregunte',
+      labels: [{ name: 'estado:borrador' }, { name: 'dom:planner' }, { name: 'tipo:tooling' }],
+      body: '## Dependencias\n- Depende de #2139\n- Depende de #2000',
+    }),
+  )
+  expect(card?.deps).toEqual([2000, 2139])
+  expect(labelsText(card?.labels ?? [])).toBe('tipo:tooling · dom:planner · estado:borrador')
+  const open = [{ number: 2139, title: 'ask', labels: ['estado:listo'] }]
+  expect(depsText(card!, open)).toBe('depende de #2000 ✓ · #2139 listo')
+  expect(depsText({ ...card!, deps: [] }, open)).toBe('no depende de nada')
+  expect(depsText({ ...card!, deps: [], hasDepsSection: false }, open)).toBe('sin sección ## Dependencias')
+  expect(parseIssueCard('no json')).toBe(null)
+})
+
+test('bloquea a quien va tras el issue en cualquiera de las listas', async () => {
+  const list = (items: { number: number; after: number[] }[]) => ({
+    items: items.map(i => ({ ...i, title: 't', hasDepsSection: true })),
+    blockedCount: 0,
+    cycleCount: 0,
+    launch: null,
+    error: null,
+  })
+  expect(blockedBy(5, [list([{ number: 7, after: [5] }, { number: 6, after: [] }]), null, list([{ number: 3, after: [1, 5] }])])).toEqual([3, 7])
+})
+
+test('la ficha de un borrador creado lleva su tipo', async () => {
+  const open = [{ number: 2140, title: 'Mostrar la ficha', labels: ['estado:borrador', 'tipo:tooling'] }]
+  expect(createdCardText(2140, open, 60)).toBe('#2140 Mostrar la ficha · tipo:tooling')
+  expect(createdCardText(9, open, 60)).toBe('#9')
 })
