@@ -49,11 +49,19 @@ git -C "$PC" pull -q --rebase origin main 2>/dev/null
 echo c > "$PC/c.txt" && git -C "$PC" add c.txt && git -C "$PC" commit -q -m c
 git -C "$PC" push -q origin feat-c:main
 echo dirty > "$PC/dirty.txt"
+# feat-d: mergeada por squash y rama remota borrada (upstream [gone]) -> se elimina
+PD="$("$HELPER" new feat-d 2>/dev/null)"
+git -C "$PD" pull -q --rebase origin main 2>/dev/null
+echo d > "$PD/d.txt" && git -C "$PD" add d.txt && git -C "$PD" commit -q -m d
+git -C "$PD" push -q -u origin feat-d 2>/dev/null
+git -C "$PD" fetch -q origin main && git -C "$PD" merge-base --is-ancestor HEAD origin/main && ko "feat-d no debia ser ancestro (squash)"
+git -C "$TMP/origin.git" branch -q -D feat-d
 
 "$HELPER" clean >/dev/null 2>&1
 [ -d "$P1" ] && ko "feat-a mergeada y limpia debia eliminarse" || ok "feat-a eliminada"
 git show-ref --verify --quiet refs/heads/feat-a && ko "rama feat-a debia borrarse" || ok "rama feat-a borrada"
 [ -d "$PB" ] && ok "feat-b sin commits conservada" || ko "feat-b debia conservarse"
+[ -d "$PD" ] && ko "feat-d mergeada por squash (upstream gone) debia eliminarse" || ok "feat-d (squash, upstream gone) eliminada"
 [ -d "$PC" ] && ok "feat-c con cambios sin commitear conservada" || ko "feat-c debia conservarse"
 check "checkout principal intacto tras clean" "$BR0" "$(git symbolic-ref --short HEAD)"
 

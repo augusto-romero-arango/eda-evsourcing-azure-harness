@@ -85,8 +85,10 @@ branch_is_merged() {
 cmd_clean() {
     [ -d "$WT_BASE" ] || { echo "Sin worktrees en '$WT_BASE'"; return 0; }
 
-    git -C "$MAIN_ROOT" fetch --prune origin "$BASE_BRANCH" >&2 \
-        || { echo "ERROR: 'git fetch origin $BASE_BRANCH' fallo; verifica la red y las credenciales" >&2; return 1; }
+    # Sin refspec: con 'origin main', --prune solo poda origin/main y una rama
+    # mergeada por squash nunca quedaria con upstream [gone].
+    git -C "$MAIN_ROOT" fetch --prune origin >&2 \
+        || { echo "ERROR: 'git fetch --prune origin' fallo; verifica la red y las credenciales" >&2; return 1; }
     git -C "$MAIN_ROOT" worktree prune >/dev/null 2>&1 || true
 
     local dir branch status removed=0 kept=0
