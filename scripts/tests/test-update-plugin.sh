@@ -136,7 +136,7 @@ printf '## [0.21.0]\n- nada relevante\n\n## [0.20.0]\n- nada relevante\n' \
 # ningun cache real ni invocar el CLI de verdad.
 cat > "$STUB_DIR/claude" <<'EOF'
 #!/usr/bin/env bash
-echo "$@" >> "$CLAUDE_LOG"
+[ "$1 $2" = "plugin list" ] || echo "$@" >> "$CLAUDE_LOG"
 exit 0
 EOF
 chmod +x "$STUB_DIR/claude"
@@ -406,6 +406,52 @@ assert_igual "releases-previas" "$(cat "$LEGACY_RELEASES")" "no responder conser
 assert_igual "ledger-previo" "$(cat "$LEGACY_LEDGER")" "no responder conserva el ledger OpenCode"
 assert_igual "enlaces-previos" "$(cat "$LEGACY_LINKS")" "no responder conserva enlaces OpenCode"
 assert_igual "config-ajena" "$(cat "$LEGACY_CONFIG")" "no responder conserva configuracion OpenCode"
+
+echo ""
+echo "[S-6] scopes aplicables y version efectiva (issue #2130)"
+
+S6_STUB="$(mktemp -d)"; S6_CONSUMER="$(mktemp -d)"; S6_CACHE="$(mktemp -d)"; S6_LOG="$(mktemp)"
+S6_MKT="mkt-s6"
+mkdir -p "$S6_CACHE/$S6_MKT/mefisto/0.20.0" "$S6_CACHE/$S6_MKT/mefisto/0.21.0" "$S6_CONSUMER/.claude/pipeline"
+printf '## [0.21.0]\n- x\n\n## [0.20.0]\n- x\n' > "$S6_CACHE/$S6_MKT/mefisto/0.21.0/CHANGELOG.md"
+printf '%s' "$S6_CACHE/$S6_MKT/mefisto/0.20.0" > "$S6_CONSUMER/.claude/pipeline/.plugin-root"
+( cd "$S6_CONSUMER" && git init -q . )
+S6_TOP="$(cd "$S6_CONSUMER" && pwd -P | xargs -I{} git -C {} rev-parse --show-toplevel)"
+cat > "$S6_STUB/claude" <<'EOF2'
+#!/usr/bin/env bash
+echo "$@" >> "$S6_LOG"
+if [ "$1 $2 $3" = "plugin list --json" ]; then
+    jq -n --arg top "$S6_TOP" --arg c "$S6_CACHE" --arg mkt "$S6_MKT" --arg pv "${S6_PROJECT_VERSION:-0.21.0}" '[
+      {id:("mefisto@"+$mkt),version:"0.21.0",scope:"user",installPath:($c+"/"+$mkt+"/mefisto/0.21.0")},
+      {id:("mefisto@"+$mkt),version:$pv,scope:"project",projectPath:$top,installPath:($c+"/"+$mkt+"/mefisto/"+$pv)},
+      {id:("mefisto@"+$mkt),version:"0.21.0",scope:"local",projectPath:"/otro/proyecto",installPath:($c+"/"+$mkt+"/mefisto/0.21.0")}]'
+fi
+exit 0
+EOF2
+chmod +x "$S6_STUB/claude"
+s6_run() {
+    : > "$S6_LOG"
+    ( cd "$S6_CONSUMER" && export PATH="$S6_STUB:$PATH" MEFISTO_CACHE_ROOT="$S6_CACHE" S6_LOG S6_TOP S6_CACHE S6_MKT S6_PROJECT_VERSION && main ) 2>&1
+}
+
+S6_OUT=$(S6_PROJECT_VERSION=0.21.0 s6_run); S6_RC=$?
+assert_igual "0" "$S6_RC" "S-6: user + project al dia: exit 0"
+assert_contiene "$(cat "$S6_LOG")" "plugin update mefisto@$S6_MKT --scope user" "S-6: actualiza scope user"
+assert_contiene "$(cat "$S6_LOG")" "plugin update mefisto@$S6_MKT --scope project" "S-6: actualiza scope project del proyecto"
+case "$(cat "$S6_LOG")" in
+    *"--scope local"*) FAIL=$((FAIL+1)); echo "  FAIL: S-6: actualizo un local de otro projectPath" ;;
+    *) PASS=$((PASS+1)); echo "  PASS: S-6: ignora instalaciones de otros projectPath" ;;
+esac
+
+printf '%s' "$S6_CACHE/$S6_MKT/mefisto/0.20.0" > "$S6_CONSUMER/.claude/pipeline/.plugin-root"
+S6_OUT=$(S6_PROJECT_VERSION=0.20.0 s6_run); S6_RC=$?
+[ "$S6_RC" -ne 0 ] && { PASS=$((PASS+1)); echo "  PASS: S-6: project desfasado -> exit != 0"; } || { FAIL=$((FAIL+1)); echo "  FAIL: S-6: project desfasado debia fallar"; }
+assert_contiene "$S6_OUT" "ERROR:" "S-6: imprime ERROR"
+assert_contiene "$S6_OUT" "scope project" "S-6: el error nombra el scope"
+assert_contiene "$S6_OUT" "0.20.0" "S-6: el error nombra la version efectiva"
+assert_igual "$S6_CACHE/$S6_MKT/mefisto/0.20.0" "$(cat "$S6_CONSUMER/.claude/pipeline/.plugin-root")" \
+    "S-6: .plugin-root apunta a la efectiva, no a la mas nueva del cache"
+rm -rf "$S6_STUB" "$S6_CONSUMER" "$S6_CACHE" "$S6_LOG"
 
 echo ""
 echo "===================================================================="

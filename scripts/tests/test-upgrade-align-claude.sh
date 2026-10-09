@@ -14,7 +14,7 @@ TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
 CONSUMER="$TMP/consumer"; STUBS="$TMP/scripts"; BIN="$TMP/bin"; NOCLAUDE="$TMP/nobin"
 mkdir -p "$CONSUMER" "$STUBS" "$BIN" "$NOCLAUDE" "$TMP/src/published/scripts" "$TMP/oc/active/bin"
 git -C "$CONSUMER" init -q
-cp "$REPO_ROOT/scripts/upgrade.sh" "$STUBS/upgrade.sh"
+cp "$REPO_ROOT/scripts/upgrade.sh" "$REPO_ROOT/scripts/_plugin-scopes.sh" "$STUBS/"
 cp "$REPO_ROOT/src/published/scripts/diagnose-installation-identity.sh" "$TMP/src/published/scripts/"
 chmod +x "$STUBS/upgrade.sh"
 
@@ -110,6 +110,37 @@ echo "[f] nunca poda el cache Claude"
 run --align-peer >/dev/null
 has "$(log)" "claude plugin prune" && ko "podo" || ok "sin poda de Claude"
 has "$(log)" "update-plugin.sh --prune" && ko "update-plugin --prune" || ok "sin --prune"
+
+echo "[g] scopes project/local: CA-1/CA-2/CA-5 (instalaciones de otros proyectos se ignoran)"
+cat > "$BIN/claude" <<'S'
+#!/usr/bin/env bash
+echo "claude $*" >> "$STUB_LOG"
+if [ "$1 $2 $3" = "plugin list --json" ]; then
+    top=$(git rev-parse --show-toplevel)
+    jq -n --arg top "$top" --arg c "$STUB_CACHE" --arg pv "$(cat "$STUB_TMP/proj-version" 2>/dev/null || echo 1.0.0)" '[
+      {id:"mefisto@mkt-x",version:"1.0.0",scope:"user",installPath:($c+"/mkt-x/mefisto/1.0.0")},
+      {id:"mefisto@mkt-x",version:$pv,scope:"project",projectPath:$top,installPath:($c+"/mkt-x/mefisto/"+$pv)},
+      {id:"mefisto@mkt-x",version:"1.0.0",scope:"local",projectPath:"/otro/proyecto",installPath:($c+"/mkt-x/mefisto/1.0.0")}]'
+    exit 0
+fi
+case "$1 $2" in
+    "plugin list") printf 'Installed plugins:\n\n  > mefisto@mkt-x\n    Version: %s\n    Scope: user\n' "$(cat "$STUB_TMP/claude-version" 2>/dev/null || echo 1.0.0)" ;;
+    "plugin update") printf '1.1.0' > "$STUB_TMP/claude-version"; [ "${STUB_PROJ_UPDATES:-1}" = 1 ] && printf '1.1.0' > "$STUB_TMP/proj-version" ;;
+    "plugin marketplace") ;;
+esac
+exit 0
+S
+chmod +x "$BIN/claude"
+export STUB_CACHE="$CACHE"
+rm -f "$TMP/proj-version"
+out=$(run --align-peer)
+l=$(log)
+has "$l" "plugin update mefisto@mkt-x --scope user" && has "$l" "plugin update mefisto@mkt-x --scope project" && ok "actualiza user y project" || ko "scopes: $l"
+has "$l" "--scope local" && ko "actualizo local de otro proyecto" || ok "ignora local de otro proyecto"
+has "$out" "Claude alineado en 1.1.0" && ok "alineado sobre la version efectiva" || ko "alineado: $out"
+rm -f "$TMP/proj-version"
+out=$(STUB_PROJ_UPDATES=0 run --align-peer)
+has "$out" "DERIVA VISIBLE: Claude quedo en 1.0.0" && ok "deriva si la instalacion project queda vieja" || ko "deriva project: $out"
 
 echo ""; echo "Resultado: $PASS pass, $FAIL fail"
 [ "$FAIL" -eq 0 ]

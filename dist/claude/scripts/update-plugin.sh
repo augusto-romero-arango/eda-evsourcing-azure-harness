@@ -17,10 +17,14 @@
 #          cache -- asi funciona igual en un fork publicado bajo otro marketplace
 #          (repoSlug).
 #       2. Actualiza catalogo y plugin sin interaccion ('claude plugin marketplace
-#          update <detectado>' + 'claude plugin update mefisto@<detectado> --scope user' --
+#          update <detectado>' + 'claude plugin update mefisto@<detectado> --scope <s>' por cada scope user/project/local
+#          que aplica al proyecto activo, issue #2130 --
 #          el nombre calificado con su marketplace: el CLI rechaza el nombre a secas
 #          aunque 'claude plugin list' si lo muestre instalado, issue #601).
-#       3. Reescribe .claude/pipeline/.plugin-root a la version mas reciente del cache,
+#       3. Reescribe .claude/pipeline/.plugin-root al installPath de la instalacion
+#          efectiva del proyecto (local > project > user; si no hay datos de 'claude
+#          plugin list --json', a la version mas reciente del cache) y falla con ERROR
+#          si esa version no es la destino (issue #2130),
 #          para que un pipeline headless que arranque antes del /reload-plugins ya
 #          resuelva la version nueva (mismo archivo que escribe el hook SessionStart;
 #          reescribirlo aqui es idempotente -- el hook lo reconfirma al proximo arranque).
@@ -68,6 +72,9 @@
 # si falta el CLI 'claude', si no hay 'mefisto' en el cache, o si el CLI fallo.
 
 set -uo pipefail
+
+# shellcheck disable=SC1091
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/_plugin-scopes.sh"
 
 PLUGIN_ROOT_FILE=".claude/pipeline/.plugin-root"
 MARKER_FILE=".claude/pipeline/.plugin-root.previous"
@@ -417,11 +424,11 @@ main() {
         fi
 
         echo ""
-        echo "Actualizando el plugin mefisto@$marketplace_name (scope user)..."
-        if ! claude plugin update "mefisto@$marketplace_name" --scope user; then
-            echo "ERROR: 'claude plugin update mefisto@$marketplace_name --scope user' fallo." >&2
+        repo_top=$(git rev-parse --show-toplevel 2>/dev/null) || repo_top=""
+        plugin_json=$(_plugin_list_json)
+        if ! _actualizar_scopes "$marketplace_name" "$plugin_json" "$repo_top"; then
             echo "       No se toco .plugin-root ni el cache; reintenta tras resolver la causa." >&2
-            echo "       Verifica que el plugin este instalado a scope user (claude plugin install mefisto@$marketplace_name --scope user)." >&2
+            echo "       Verifica que el plugin este instalado en ese scope (claude plugin install mefisto@$marketplace_name --scope <scope>)." >&2
             return 1
         fi
         echo ""
@@ -439,6 +446,18 @@ main() {
     new_version=$(basename "$new_version_dir")
 
     if [ "$prune" = false ]; then
+        # Version efectiva del proyecto (local > project > user), releida tras el update:
+        # .plugin-root debe apuntar a lo que la sesion siguiente cargara, no a lo mas
+        # nuevo del cache (issue #2130). Sin datos de 'plugin list --json' se mantiene
+        # el comportamiento previo (version mas nueva del cache).
+        local efectiva ef_scope ef_version ef_path
+        efectiva=$(_instalacion_efectiva "$marketplace_name" "$(_plugin_list_json)" "$repo_top")
+        if [ -n "$efectiva" ]; then
+            IFS=$'\t' read -r ef_scope ef_version ef_path <<< "$efectiva"
+            if [ -n "$ef_path" ] && [ -d "$ef_path" ]; then
+                new_version_dir="${ef_path%/}"
+            fi
+        fi
         mkdir -p .claude/pipeline
         if printf '%s' "$new_version_dir" > "$PLUGIN_ROOT_FILE"; then
             echo "OK: $PLUGIN_ROOT_FILE -> $new_version_dir"
@@ -448,6 +467,12 @@ main() {
         fi
         plugin_root_actual="$new_version_dir"
         echo ""
+
+        if [ -n "$efectiva" ] && [ "$ef_version" != "$new_version" ]; then
+            echo "ERROR: la instalacion efectiva del proyecto (scope $ef_scope) quedo en la version $ef_version y la version destino es $new_version." >&2
+            echo "       La sesion siguiente cargaria $ef_version. Corre 'claude plugin update mefisto@$marketplace_name --scope $ef_scope' y reintenta." >&2
+            return 1
+        fi
 
         # --- Delta de CHANGELOG.md entre la version cargada y la nueva (CA-5) ---------
         local changelog_file="$new_version_dir/CHANGELOG.md"
