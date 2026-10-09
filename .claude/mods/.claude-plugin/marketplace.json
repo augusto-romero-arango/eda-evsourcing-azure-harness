@@ -2,7 +2,7 @@
   "name": "mefisto-mods",
   "owner": { "name": "Mefisto" },
   "plugins": [
-    { "name": "mefisto-monitor", "source": "./mefisto-monitor" },
+    { "name": "mefisto-console", "source": "./mefisto-console" },
     { "name": "mefisto-planner-board", "source": "./mefisto-planner-board" }
   ]
 }

@@ -11,7 +11,7 @@ versionado) desde el marketplace de carpeta `.claude/mods/`:
 
 ```bash
 claude plugin marketplace add ./.claude/mods --scope local
-claude plugin install mefisto-monitor@mefisto-mods --scope local
+claude plugin install mefisto-console@mefisto-mods --scope local
 claude plugin install mefisto-planner-board@mefisto-mods --scope local
 ```
 
@@ -21,7 +21,7 @@ sesiones `-p` no los cargan. Para probar una copia suelta: `claude --plugin-dir 
 
 Solo se activa en una sesion interactiva cuyo proceso es `claude --agent mefisto-planner` (lo lee de la linea
 de comando del proceso, o del transcript como respaldo). Un planner lanzado como subagente o con `-p` no lo ve.
-En otra sesion, `/mefisto-board on` lo enciende a mano.
+En otra sesion, `/mefisto-planner-board on` lo enciende a mano.
 
 ## Estados
 
@@ -39,7 +39,7 @@ En otra sesion, `/mefisto-board on` lo enciende a mano.
 | `5`-`9` | Borradores: `Refina el borrador #N` en el prompt. Listos es solo lectura: el planner no lanza trabajo |
 | `0` | Siguiente pagina |
 
-`/mefisto-board [refresh|borradores|listos|cerrar|on|off]` cubre lo mismo sin teclas.
+`/mefisto-planner-board [refresh|borradores|listos|cerrar|on|off]` cubre lo mismo sin teclas.
 
 ## Verificar un cambio
 

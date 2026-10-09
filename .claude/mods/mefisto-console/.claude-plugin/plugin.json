@@ -1,0 +1,9 @@
+{
+  "name": "mefisto-console",
+  "version": "0.1.0",
+  "description": "Consola de operacion de Mefisto en la sesion de ejecucion: listos y lanzamiento, seguimiento de /mefisto-tooling y /mefisto-sequential, PRs, bitacora y release.",
+  "author": {
+    "name": "Mefisto"
+  },
+  "types": "./types/index.d.ts"
+}

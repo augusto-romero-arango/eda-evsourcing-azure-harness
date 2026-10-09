@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { BatchRun, LogLine, MonitorRun, ReadyList } from '../types'
+import type { BatchRun, LogLine, PipelineRun, ReadyList } from '../types'
 import {
   BATCH_STATUS,
   EVENTS_LOG,
@@ -60,7 +60,7 @@ import {
 } from './logic'
 import { DEFAULT_COLOR, HEIGHT, PALETTE, RASTER_ROWS, face, sprite } from './sprites'
 
-const PANE = 'mefisto-monitor'
+const PANE = 'mefisto-console'
 const MAX_LINES = 200
 const STATUS_GRACE_MS = 30_000
 // Un seguimiento que tras este tiempo sigue en setup sin status ni historial no corresponde a ninguna corrida.
@@ -79,7 +79,7 @@ const FIELD_NOTES_DIR = 'docs/bitacora/field-notes'
 const CHANGELOG_DIR = 'changelog.d'
 const SCRIPT_TIMEOUT_MS = 180_000
 
-// Recorte comun a todos los cuadros que usa el monitor, calculado una vez: sin margen y sin saltos al alternar.
+// Recorte comun a todos los cuadros que usa la consola, calculado una vez: sin margen y sin saltos al alternar.
 const MASCOT_POSES = [
   ['desarrollador', 'trabajando'],
   ['desarrollador', 'pensando'],
@@ -118,19 +118,19 @@ function mascotCells(grid: readonly string[]): string {
   return btoa(bin)
 }
 
-const runAtom = atom({ plugin: 'mefisto-monitor', key: 'run' } as const, null)
-const linesAtom = atom({ plugin: 'mefisto-monitor', key: 'lines' } as const, [])
-const nowAtom = atom({ plugin: 'mefisto-monitor', key: 'now' } as const, 0)
-const executionAtom = atom({ plugin: 'mefisto-monitor', key: 'isExecutionSession' } as const, false)
-const readyAtom = atom({ plugin: 'mefisto-monitor', key: 'ready' } as const, null)
-const readyPageAtom = atom({ plugin: 'mefisto-monitor', key: 'readyPage' } as const, 0)
-const batchAtom = atom({ plugin: 'mefisto-monitor', key: 'batch' } as const, null)
-const openPrsAtom = atom({ plugin: 'mefisto-monitor', key: 'openPrs' } as const, null)
-const fieldNotesAtom = atom({ plugin: 'mefisto-monitor', key: 'fieldNotes' } as const, null)
-const changelogAtom = atom({ plugin: 'mefisto-monitor', key: 'changelog' } as const, null)
-const holdAtom = atom({ plugin: 'mefisto-monitor', key: 'hold' } as const, null)
-const historianAtom = atom({ plugin: 'mefisto-monitor', key: 'historian' } as const, null)
-const releaseAtom = atom({ plugin: 'mefisto-monitor', key: 'release' } as const, null)
+const runAtom = atom({ plugin: 'mefisto-console', key: 'run' } as const, null)
+const linesAtom = atom({ plugin: 'mefisto-console', key: 'lines' } as const, [])
+const nowAtom = atom({ plugin: 'mefisto-console', key: 'now' } as const, 0)
+const executionAtom = atom({ plugin: 'mefisto-console', key: 'isExecutionSession' } as const, false)
+const readyAtom = atom({ plugin: 'mefisto-console', key: 'ready' } as const, null)
+const readyPageAtom = atom({ plugin: 'mefisto-console', key: 'readyPage' } as const, 0)
+const batchAtom = atom({ plugin: 'mefisto-console', key: 'batch' } as const, null)
+const openPrsAtom = atom({ plugin: 'mefisto-console', key: 'openPrs' } as const, null)
+const fieldNotesAtom = atom({ plugin: 'mefisto-console', key: 'fieldNotes' } as const, null)
+const changelogAtom = atom({ plugin: 'mefisto-console', key: 'changelog' } as const, null)
+const holdAtom = atom({ plugin: 'mefisto-console', key: 'hold' } as const, null)
+const historianAtom = atom({ plugin: 'mefisto-console', key: 'historian' } as const, null)
+const releaseAtom = atom({ plugin: 'mefisto-console', key: 'release' } as const, null)
 
 type Tail = { path: string; stream: AsyncGenerator<unknown, unknown> }
 
@@ -188,7 +188,7 @@ async function startTail($: EngineInterface, name: string) {
 async function watch($: EngineInterface, issue: string, sinceMs: number, keepLines = false) {
   await stopTail()
   watchSinceMs = sinceMs
-  const run: MonitorRun = {
+  const run: PipelineRun = {
     issue,
     title: '',
     stage: 'setup',
@@ -269,7 +269,7 @@ async function requestStop($: EngineInterface) {
   $.ui.toast('parada pedida: termina el issue en curso y no arranca los siguientes')
 }
 
-async function finish($: EngineInterface, run: MonitorRun) {
+async function finish($: EngineInterface, run: PipelineRun) {
   await stopTail()
   if (run.state === 'completed') {
     const pr = prNumber(run.pr)
@@ -281,7 +281,7 @@ async function finish($: EngineInterface, run: MonitorRun) {
   }
 }
 
-async function fromHistory($: EngineInterface, prev: MonitorRun): Promise<MonitorRun> {
+async function fromHistory($: EngineInterface, prev: PipelineRun): Promise<PipelineRun> {
   const { stdout } = await $.process.run(['tail', '-n', '50', HISTORY]).catch(() => ({ stdout: '' }))
   const done = finishedFromHistory(stdout, prev.issue, Math.min(prev.startedMs, watchSinceMs))
   if (!done) return prev
@@ -308,7 +308,7 @@ async function poll($: EngineInterface) {
     if (prev?.state === 'completed' && !inBatch) await closeIfMerged($, prev)
     if (!prev || prev.state !== 'running') return
 
-    let next: MonitorRun = prev
+    let next: PipelineRun = prev
     const status = statusPath(prev.issue)
     if (await $.fs.exists(status)) {
       const raw = await $.fs.read(status).catch(() => '')
@@ -317,7 +317,7 @@ async function poll($: EngineInterface) {
     } else if (watchSinceMs === 0 || Date.now() - watchSinceMs > STATUS_GRACE_MS || prev.stage !== 'setup') {
       next = await fromHistory($, prev)
       if (!inBatch && next === prev && prev.stage === 'setup' && Date.now() - prev.startedMs > ORPHAN_MS) {
-        $.ui.log(`mefisto-monitor: #${prev.issue} sin status ni historial tras ${ORPHAN_MS / 60_000} min; se deja de seguir`, { to: 'debug' })
+        $.ui.log(`mefisto-console: #${prev.issue} sin status ni historial tras ${ORPHAN_MS / 60_000} min; se deja de seguir`, { to: 'debug' })
         await closeRun($)
         return
       }
@@ -354,7 +354,7 @@ async function poll($: EngineInterface) {
 }
 
 // El PR mergeado da la corrida por terminada: venga del boton, de /mefisto-merge tecleado o de GitHub.
-async function closeIfMerged($: EngineInterface, run: MonitorRun) {
+async function closeIfMerged($: EngineInterface, run: PipelineRun) {
   const pr = prNumber(run.pr)
   if (!pr || Date.now() - lastPrCheckMs < PR_CHECK_MS) return
   lastPrCheckMs = Date.now()
@@ -363,7 +363,7 @@ async function closeIfMerged($: EngineInterface, run: MonitorRun) {
     .catch(() => ({ exitCode: 1, stdout: '' }))
   if (exitCode !== 0 || stdout.trim() !== 'MERGED') return
   await closeRun($)
-  $.ui.toast(`PR #${pr} mergeado · monitor de #${run.issue} cerrado`)
+  $.ui.toast(`PR #${pr} mergeado · corrida de #${run.issue} cerrada`)
 }
 
 async function openPane($: EngineInterface, isFocused = false) {
@@ -407,7 +407,7 @@ async function merge($: EngineInterface) {
     .ask(`¿Mergear el PR #${pr} con /mefisto-merge?`, ['Mergear', 'Cancelar'])
     .catch(() => 'Cancelar')
   if (answer !== 'Mergear') return
-  $.ui.toast(`/mefisto-merge ${pr} en cola: el monitor se cierra cuando el PR quede mergeado`)
+  $.ui.toast(`/mefisto-merge ${pr} en cola: la corrida se cierra cuando el PR quede mergeado`)
   lastPrCheckMs = 0
   await $.command.run({ command: 'mefisto-merge', args: pr })
 }
@@ -550,8 +550,8 @@ export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     isInteractive = e.isInteractive
     await $.command.register({
-      name: 'mefisto-monitor',
-      description: 'Abre el monitor de /mefisto-tooling (con <issue> sigue esa corrida; batch <issues> sigue un sequential; merge | close | refresh)',
+      name: 'mefisto-console',
+      description: 'Consola de Mefisto: sin argumentos abre el log; <issue> sigue esa corrida; batch <issues> sigue un sequential; merge | close | refresh',
       argumentHint: '[issue|batch <issues>|merge|close|refresh]',
       immediate: true,
     })
@@ -617,11 +617,11 @@ export const register: Register = on => {
     return ran
   })
 
-  on('command.run', { command: 'mefisto-monitor' }, async ($, e) => {
+  on('command.run', { command: 'mefisto-console' }, async ($, e) => {
     const arg = e.args.trim()
     if (arg === 'close') {
       await closeRun($)
-      return { text: 'Monitor cerrado.' }
+      return { text: 'Corrida cerrada.' }
     }
     if (arg === 'refresh') {
       await refreshReady($)
@@ -631,7 +631,7 @@ export const register: Register = on => {
       await merge($)
       return { text: 'Merge solicitado.' }
     }
-    // Reengancha un sequential ya lanzado (tras reiniciar la sesion): `/mefisto-monitor batch 12 13`.
+    // Reengancha un sequential ya lanzado (tras reiniciar la sesion): `/mefisto-console batch 12 13`.
     const batchArgs = /^batch((?:\s+#?\d+)+)$/.exec(arg)
     if (batchArgs?.[1]) {
       const issues = batchArgs[1].match(/\d+/g) ?? []
@@ -644,7 +644,7 @@ export const register: Register = on => {
       return { text: `Siguiendo #${arg.replace('#', '')} en la banda.` }
     }
     await openPane($, true)
-    return { text: 'Monitor abierto.' }
+    return { text: 'Log abierto.' }
   })
 
   // Cerrar el log solo cierra el pane: la banda conserva la corrida (y su PR) hasta que se cierre con 4.
@@ -956,7 +956,7 @@ export const register: Register = on => {
     if (!run) {
       return (
         <Box flexDirection="column">
-          <Text dimColor>Sin corrida. Lanza /mefisto-tooling &lt;issue&gt; o /mefisto-monitor &lt;issue&gt;.</Text>
+          <Text dimColor>Sin corrida. Lanza /mefisto-tooling &lt;issue&gt; o /mefisto-console &lt;issue&gt;.</Text>
         </Box>
       )
     }
@@ -1033,7 +1033,7 @@ function stageName(stage: string): string {
   return stage.replace(/^\d+-/, '')
 }
 
-function agentDuration(run: MonitorRun, step: string): string {
+function agentDuration(run: PipelineRun, step: string): string {
   const d = run.agents[step]?.duration
   return typeof d === 'number' && d > 0 ? ` ${Math.round(d / 60)}m` : ''
 }

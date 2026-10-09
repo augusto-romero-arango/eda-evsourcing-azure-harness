@@ -2,6 +2,7 @@ import { expect, test } from 'claude-code/testing'
 
 import {
   arrivals,
+  isMefistoManifest,
   isIssueChange,
   createdIssueOf,
   isIssueCreate,
@@ -158,4 +159,10 @@ test('un mismo comando puede crear un borrador y pasar a listo el issue del foco
   const cmd = 'gh issue create --title x --label "estado:borrador" && gh issue edit 2108 --add-label "estado:listo"'
   expect(isIssueCreate(cmd)).toBe(true)
   expect(issueMarkedListo(cmd)).toBe(2108)
+})
+
+test('reconoce el manifiesto del propio plugin Mefisto', async () => {
+  expect(isMefistoManifest('{ "name": "mefisto", "version": "0.43.0" }')).toBe(true)
+  expect(isMefistoManifest('{ "name": "otro-plugin" }')).toBe(false)
+  expect(isMefistoManifest('no json')).toBe(false)
 })

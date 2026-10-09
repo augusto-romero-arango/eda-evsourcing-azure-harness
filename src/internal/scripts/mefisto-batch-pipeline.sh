@@ -126,7 +126,7 @@ ISSUE_STATUS_NUMS=()
 ISSUE_STATUS_VALUES=()
 ISSUE_STATUS_PRS=()
 
-# Estado del batch publicado para el mod mefisto-monitor (MEF-ADR-0055): la cola,
+# Estado del batch publicado para el mod mefisto-console (MEF-ADR-0055): la cola,
 # el estado y el PR de cada issue, el eslabon en curso y si se pidio la parada.
 # Se reescribe entero en cada cambio (archivo temporal + mv); sin jq todavia
 # (antes de verificar dependencias) no se publica nada.
