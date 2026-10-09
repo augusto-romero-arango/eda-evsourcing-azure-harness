@@ -20,6 +20,7 @@
     "path_markers": ["Application*Support/mefisto", ".local/share/mefisto", "mefisto/releases", "mefisto/active", ".config/opencode/", "MEFISTO_PACKAGE_ROOT"]
   },
   "question": {"primary": "allow", "subagent": "deny", "all": "deny"},
+  "capability_question": {"capability": "ask", "value": "allow", "modes": ["primary", "all"]},
   "capability_scalar": {
     "web": ["webfetch", "websearch"],
     "skill": ["skill"],

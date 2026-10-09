@@ -308,5 +308,10 @@ mk_cmd rechazo-con-agent '{"kind":"command","id":"rechazo-con-agent","descriptio
 out="$(bash "$VALIDATOR" "$WORK/rechazo-con-agent.md" 2>&1)"; rc=$?
 [ "$rc" -ne 0 ] && contains "$out" 'un comando con agent no puede usar launch-agent' 'rechaza launch-agent junto a agent' || fail 'launch-agent junto a agent debio fallar'
 
+printf '%s\n' '[ask] capacidad neutral ask'
+printf '%s\n' '---' '{"kind":"agent","id":"ask-agent","description":"Prueba.","mode":"subagent","capabilities":["read","ask"]}' '---' '{{mefisto:assert-consumer-repo}}' > "$WORK/ask-agent.md"
+ask_out="$(render "$WORK/ask-agent.md")"
+contains "$ask_out" 'tools: "Read, Glob, Grep, AskUserQuestion"' 'ask se traduce a AskUserQuestion'
+
 printf 'RESULTADO: %s pasaron, %s fallaron\n' "$PASS" "$FAIL"
 exit "$FAIL"
