@@ -53,6 +53,15 @@ contains "$body" '(typeof(Evento), "topic")' 'exige el par exacto tipo-topic'
 contains "$body" 'tests de dominio Given/When/Then' 'excluye los tests de dominio'
 contains "$body" '- [ ] **Guardas de inventario de eventos**' 'checklist pre-listo incluye el item'
 
+echo '[fuente] preguntas nativas (#2137)'
+if printf '%s' "$metadata" | jq -e '.capabilities | index("ask") != null' >/dev/null; then pass 'metadata declara la capacidad ask'; else fail 'metadata sin capacidad ask'; fi
+contains "$body" '## Preguntas al usuario' 'seccion de preguntas al usuario presente'
+contains "$body" '(Recomendado)' 'la recomendada primero con (Recomendado)'
+contains "$body" 'pregunta en texto con las mismas reglas' 'fallback en texto sin la herramienta'
+contains "$body" '¿Paso #N "<título>" a estado:listo?' 'la pregunta de listo nombra el issue'
+absent "$body" 'AskUserQuestion' 'la fuente no nombra AskUserQuestion'
+contains "$(< "$CLAUDE")" 'AskUserQuestion' 'el adaptador Claude incluye AskUserQuestion'
+
 echo '[salidas] adaptadores y mirror'
 for file in "$CLAUDE" "$OPENCODE"; do [ -f "$file" ] && pass "existe ${file#"$REPO_ROOT/"}" || fail "falta ${file#"$REPO_ROOT/"}"; done
 claude_body="$(< "$CLAUDE")"
