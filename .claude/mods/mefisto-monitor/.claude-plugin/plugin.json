@@ -1,9 +1,0 @@
-{
-  "name": "mefisto-monitor",
-  "version": "0.1.0",
-  "description": "Monitor en vivo de /mefisto-tooling dentro de la sesion de ejecucion: stages, live log, PR y merge.",
-  "author": {
-    "name": "Mefisto"
-  },
-  "types": "./types/index.d.ts"
-}

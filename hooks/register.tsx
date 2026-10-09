@@ -288,8 +288,8 @@ async function fill($: EngineInterface, text: string) {
   await $.prompt.fill({ text, mode: 'replace' })
 }
 
-// En el repo del propio Mefisto el tablero es el mod interno, que registra el mismo /mefisto-board: el publicado
-// no se registra ni se activa, para no ganarle el comando y fallar con un next-order.sh que alli se niega a correr.
+// En el repo del propio Mefisto el tablero es el mod interno (/mefisto-planner-board): el publicado no se registra
+// ni se activa, porque su next-order.sh alli se niega a correr y la banda solo mostraria el fallo.
 async function isMefistoRepo($: EngineInterface): Promise<boolean> {
   const top = await $.process.run(['git', 'rev-parse', '--show-toplevel']).catch(() => ({ exitCode: 1, stdout: '' }))
   if (top.exitCode !== 0) return false
@@ -305,7 +305,7 @@ export const register: Register = on => {
       return next(e)
     }
     await $.command.register({
-      name: 'mefisto-board',
+      name: 'planner-board',
       description: 'Tablero del planner: refresh | borradores | listos | cerrar | on | off',
       argumentHint: '[refresh|borradores|listos|cerrar|on|off]',
       immediate: true,
@@ -347,7 +347,7 @@ export const register: Register = on => {
     return done
   })
 
-  on('command.run', { command: 'mefisto-board' }, async ($, e) => {
+  on('command.run', { command: 'planner-board' }, async ($, e) => {
     const arg = e.args.trim()
     if (arg === 'off') {
       await deactivate($)
@@ -473,7 +473,7 @@ export const register: Register = on => {
             {focus.created.length > 0 ? createdText(focus.created) : 'sin borradores nuevos'}
           </Text>
           <Text dimColor wrap="truncate-end">{ends}</Text>
-          <Text dimColor>{focus.kind === 'explorar' ? '1 cierra la sesión (pide confirmar)' : '/mefisto-board cerrar lo cierra a mano'}</Text>
+          <Text dimColor>{focus.kind === 'explorar' ? '1 cierra la sesión (pide confirmar)' : '/planner-board cerrar lo cierra a mano'}</Text>
         </Box>
       )
     } else if (!isExpanded) {

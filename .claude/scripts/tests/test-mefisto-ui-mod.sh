@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # test-mefisto-ui-mod.sh -- Modo MEFISTO_UI=mod de mefisto-tmux-pipeline.sh
 # (MEF-ADR-0055): --tooling y --batch corren desacoplados, sin sesion tmux ni
-# pane herdr, para que los siga el mod mefisto-monitor de la sesion que los lanzo.
+# pane herdr, para que los siga el mod mefisto-console de la sesion que los lanzo.
 #
 # Cubre:
 #   [1] --tooling con MEFISTO_UI=mod no toca tmux ni herdr, aun dentro de herdr.

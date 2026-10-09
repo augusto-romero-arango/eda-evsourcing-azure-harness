@@ -1,13 +1,13 @@
-export type MonitorAgent = { duration: number | null; result: string }
+export type RunAgent = { duration: number | null; result: string }
 
-export type MonitorRun = {
+export type PipelineRun = {
   issue: string
   title: string
   stage: string
   state: 'running' | 'completed' | 'failed'
   startedMs: number
   finishedMs: number | null
-  agents: Record<string, MonitorAgent>
+  agents: Record<string, RunAgent>
   pr: string | null
   lastError: string | null
   eventsFile: string | null
@@ -58,8 +58,8 @@ export type LogLine = { ts: string; kind: LogKind; text: string }
 
 declare module 'claude-code' {
   interface PluginState {
-    'mefisto-monitor': {
-      run: MonitorRun | null
+    'mefisto-console': {
+      run: PipelineRun | null
       lines: LogLine[]
       now: number
       isExecutionSession: boolean

@@ -1,4 +1,4 @@
-import type { BatchIssue, BatchRun, ChangelogSummary, Hold, IssueStats, OpenPr, BlockedItem, LogLine, MonitorAgent, MonitorRun, ReadyItem, ReadyList } from '../types'
+import type { BatchIssue, BatchRun, ChangelogSummary, Hold, IssueStats, OpenPr, BlockedItem, LogLine, RunAgent, PipelineRun, ReadyItem, ReadyList } from '../types'
 
 export const STATE_DIR = '.mefisto/pipeline'
 export const LOG_DIR = `${STATE_DIR}/logs`
@@ -69,12 +69,12 @@ type StatusFile = {
   stage?: string
   state?: string
   started?: string
-  agents?: Record<string, MonitorAgent>
+  agents?: Record<string, RunAgent>
   pr?: string | null
   last_error?: string | null
 }
 
-export function runFromStatus(raw: string, prev: MonitorRun | null): MonitorRun | null {
+export function runFromStatus(raw: string, prev: PipelineRun | null): PipelineRun | null {
   let s: StatusFile
   try {
     s = JSON.parse(raw)
@@ -201,7 +201,7 @@ const STAGES = [
   { id: 'done', name: 'done' },
 ]
 
-export function steps(run: MonitorRun): Step[] {
+export function steps(run: PipelineRun): Step[] {
   const stage = run.stage === 'merge-writer' ? '2-reviewer' : run.stage
   const at = Math.max(0, STAGES.findIndex(s => s.id === stage))
   return STAGES.map((s, i) => {
@@ -230,7 +230,7 @@ export type MascotPose = { role: 'desarrollador' | 'revisor'; state: string }
 const EDITS = /^(Edit|Write|MultiEdit|NotebookEdit)\b/
 
 /** El rol sale del stage y la pose del ultimo evento: herramienta trabaja, texto piensa, edicion del reviewer corrige. */
-export function mascotPose(run: MonitorRun, last: LogLine | undefined): MascotPose {
+export function mascotPose(run: PipelineRun, last: LogLine | undefined): MascotPose {
   if (run.state === 'completed') return { role: 'revisor', state: 'aprobado' }
   if (run.state === 'failed') return { role: 'desarrollador', state: 'error' }
   const role = run.stage === '2-reviewer' ? 'revisor' : 'desarrollador'
