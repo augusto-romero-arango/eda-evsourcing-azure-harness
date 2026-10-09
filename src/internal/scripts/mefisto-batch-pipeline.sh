@@ -491,7 +491,8 @@ sync_main_after_merge() {
             warn "sync: no se pudo fast-forwardear '$MAIN_BRANCH' por nombre a origin/main (rama activa observada: '$observed_branch')"
             return 1
         fi
-    elif ! git merge --ff-only origin/main >>"$LOG_FILE_ABS" 2>&1; then
+    elif ! git merge --ff-only origin/main >>"$LOG_FILE_ABS" 2>&1 \
+        && ! remediate_main_after_rescue "$(git rev-parse --show-toplevel)" "$MAIN_BRANCH" origin/main; then
         observed_branch=$(git rev-parse --abbrev-ref HEAD)
         warn "sync: no se pudo fast-forwardear '$observed_branch' local a origin/main (posible divergencia local)"
         return 1
