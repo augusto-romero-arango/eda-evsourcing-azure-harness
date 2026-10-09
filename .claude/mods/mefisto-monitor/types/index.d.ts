@@ -37,6 +37,8 @@ export type BatchRun = {
   stats: Record<string, IssueStats>
 }
 
+export type OpenPr = { number: number; title: string }
+
 export type LogKind = 'start' | 'tool' | 'text' | 'fail' | 'done'
 
 export type LogLine = { ts: string; kind: LogKind; text: string }
@@ -51,6 +53,7 @@ declare module 'claude-code' {
       ready: ReadyList | null
       readyPage: number
       batch: BatchRun | null
+      openPrs: OpenPr[] | null
     }
   }
 }

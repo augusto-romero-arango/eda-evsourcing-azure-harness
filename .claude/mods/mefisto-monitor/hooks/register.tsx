@@ -26,10 +26,13 @@ import {
   statsTotal,
   issueMark,
   mascotPose,
+  mergeCommandOf,
+  mergeOptions,
   newlyMerged,
   padEnd,
   pageOf,
   parseNextOrder,
+  parseOpenPrs,
   readyRows,
   sequentialOf,
   titlesOf,
@@ -101,6 +104,7 @@ const executionAtom = atom({ plugin: 'mefisto-monitor', key: 'isExecutionSession
 const readyAtom = atom({ plugin: 'mefisto-monitor', key: 'ready' } as const, null)
 const readyPageAtom = atom({ plugin: 'mefisto-monitor', key: 'readyPage' } as const, 0)
 const batchAtom = atom({ plugin: 'mefisto-monitor', key: 'batch' } as const, null)
+const openPrsAtom = atom({ plugin: 'mefisto-monitor', key: 'openPrs' } as const, null)
 
 type Tail = { path: string; stream: AsyncGenerator<unknown, unknown> }
 
@@ -389,14 +393,19 @@ async function refreshReady($: EngineInterface) {
   if (isRefreshingReady || !(await read($, executionAtom))) return
   isRefreshingReady = true
   try {
-    const [order, listos] = await Promise.all([
+    const [order, listos, prs] = await Promise.all([
       $.process
         .run([NEXT_ORDER, '--json'], { timeoutMs: SCRIPT_TIMEOUT_MS })
         .catch(err => ({ exitCode: 2, stdout: '', stderr: String(err) })),
       $.process
         .run(['gh', 'issue', 'list', '--state', 'open', '--label', 'estado:listo', '--limit', '200', '--json', 'number,title'])
         .catch(() => ({ exitCode: 1, stdout: '' })),
+      $.process
+        .run(['gh', 'pr', 'list', '--state', 'open', '--limit', '100', '--json', 'number,title,isDraft'])
+        .catch(() => ({ exitCode: 1, stdout: '' })),
     ])
+    const openPrs = prs.exitCode === 0 ? parseOpenPrs(prs.stdout) : null
+    await update($, openPrsAtom, () => openPrs)
     const ready: ReadyList = parseNextOrder(order.exitCode, order.stdout, order.stderr, titlesOf(listos.stdout))
     await update($, readyAtom, () => ready)
   } finally {
@@ -419,6 +428,22 @@ async function choose($: EngineInterface, issue: number) {
     .catch(() => null)
   if (answer === WITH_MERGE) await fill($, sequentialOf(issue))
   else if (answer === ONLY_PR) await fill($, toolingOf(issue))
+}
+
+// Mergear desde la espera: todos o los PRs elegidos; en la opcion de texto se escriben otros numeros. Queda en el prompt.
+async function chooseMerge($: EngineInterface) {
+  const prs = (await read($, openPrsAtom)) ?? []
+  if (prs.length === 0) return
+  const options = mergeOptions(prs)
+  const answer = await $.ui
+    .ask(`¿Qué mergear? ${prs.length} PRs abiertos${prs.length > 3 ? ' (otros números: escríbelos en la opción de texto)' : ''}`, {
+      header: 'Merge',
+      options,
+      ...(prs.length > 1 ? { multiSelect: true as const } : {}),
+    })
+    .catch(() => null)
+  const command = answer === null ? null : mergeCommandOf(answer, options)
+  if (command) await fill($, command)
 }
 
 async function confirmStop($: EngineInterface) {
@@ -620,6 +645,7 @@ export const register: Register = on => {
     }
     if (!run) {
       const ready = await read($, readyAtom)
+      const openPrs = await read($, openPrsAtom)
       const inner = Math.max(40, (e.props.bodyColumns ?? 80) - 4)
       const body = Math.max(30, inner - MASCOT_WIDTH - 2)
       const { page, pages } = pageOf(await read($, readyPageAtom), ready ? readyRows(ready).length : 0, READY_ROWS)
@@ -651,11 +677,16 @@ export const register: Register = on => {
               <Text color="claude">mefisto</Text>
               <Text dimColor> · listos {ready ? readyRows(ready).length : '…'}</Text>
             </Text>
-            {ready?.launch ? (
-              <Button key="ready-all" hotkey="1" plain label={clip(ready.launch, inner - 24)} onPress={() => void fill($, ready.launch ?? '')} />
-            ) : (
-              <Text dimColor>sin batch lanzable</Text>
-            )}
+            <Box gap={2}>
+              {openPrs && openPrs.length > 0 && (
+                <Button key="merge-prs" hotkey="2" plain label={`PRs ${openPrs.length}`} onPress={() => void chooseMerge($)} />
+              )}
+              {ready?.launch ? (
+                <Button key="ready-all" hotkey="1" plain label={clip(ready.launch, inner - 24)} onPress={() => void fill($, ready.launch ?? '')} />
+              ) : (
+                <Text dimColor>sin batch lanzable</Text>
+              )}
+            </Box>
           </Box>
           <Box gap={2} height={RASTER_ROWS + 1} alignItems="flex-start">
             {mascot}
@@ -688,7 +719,7 @@ export const register: Register = on => {
               ))}
               <Box justifyContent="space-between">
                 <Text dimColor wrap="truncate-end">
-                  1 todos · 5-9 uno (con o sin merge) · al prompt, sin Enter
+                  1 todos · 5-9 uno · 2 mergear PRs · al prompt, sin Enter
                 </Text>
                 <Box gap={2}>
                   {more !== '' && <Text dimColor>{more}</Text>}

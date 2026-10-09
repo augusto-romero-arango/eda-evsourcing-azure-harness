@@ -1,4 +1,4 @@
-import type { BatchIssue, BatchRun, IssueStats, BlockedItem, LogLine, MonitorAgent, MonitorRun, ReadyItem, ReadyList } from '../types'
+import type { BatchIssue, BatchRun, IssueStats, OpenPr, BlockedItem, LogLine, MonitorAgent, MonitorRun, ReadyItem, ReadyList } from '../types'
 
 export const STATE_DIR = '.mefisto/pipeline'
 export const LOG_DIR = `${STATE_DIR}/logs`
@@ -490,4 +490,43 @@ export function statsTotal(stats: IssueStats[]): IssueStats {
     durationMs: stats.reduce((a, s) => a + s.durationMs, 0),
     costUsd: costs.length > 0 ? costs.reduce((a, b) => a + b, 0) : null,
   }
+}
+
+/** PRs abiertos (`gh pr list --json number,title,isDraft`) sin los borradores, el mas reciente primero. */
+export function parseOpenPrs(stdout: string): OpenPr[] | null {
+  try {
+    const rows = JSON.parse(stdout) as { number: number; title: string; isDraft?: boolean }[]
+    return rows.filter(r => !r.isDraft).map(r => ({ number: r.number, title: r.title })).sort((a, b) => b.number - a.number)
+  } catch {
+    return null
+  }
+}
+
+export const MERGE_ALL = 'Todos (--all)'
+
+/** Opciones del dialogo de merge (2-4): todos y los PRs mas recientes; con uno solo, ese y cancelar. */
+export function mergeOptions(prs: OpenPr[]): string[] {
+  const label = (p: OpenPr) => clip(`#${p.number} ${p.title}`, 60)
+  if (prs.length === 1 && prs[0]) return [label(prs[0]), 'Cancelar']
+  return [MERGE_ALL, ...prs.slice(0, 3).map(label)]
+}
+
+/**
+ * La linea de /mefisto-merge que sale de la respuesta (las opciones marcadas, unidas por ", "): --all si se
+ * eligio todos; de cada opcion solo su #N (el titulo puede traer fechas); del texto libre de "Other", sus numeros.
+ * Null si no queda ningun PR.
+ */
+export function mergeCommandOf(answer: string, options: string[]): string | null {
+  if (answer.includes(MERGE_ALL)) return '/mefisto-merge --all'
+  let rest = answer
+  const numbers: string[] = []
+  for (const option of options) {
+    if (!rest.includes(option)) continue
+    rest = rest.replace(option, '')
+    const n = /^#(\d+)/.exec(option)?.[1]
+    if (n) numbers.push(n)
+  }
+  numbers.push(...(rest.match(/\d+/g) ?? []))
+  const unique = [...new Set(numbers)]
+  return unique.length > 0 ? `/mefisto-merge ${unique.join(' ')}` : null
 }
