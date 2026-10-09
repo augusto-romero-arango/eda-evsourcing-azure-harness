@@ -28,14 +28,14 @@ export const RASTER_ROWS = HEIGHT / 2
 export const DEFAULT_COLOR = 0x01000000
 
 /**
- * Paleta: letra -> color 0xRRGGBB. Los mods internos (este repo) usan un Mefisto blanco perla para no confundirse
+ * Paleta: letra -> color 0xRRGGBB. Los mods internos (este repo) usan un Mefisto blanco perla con cuernos dorados para no confundirse
  * con los del consumidor, que conservan el rojo de mefisto-sprites.ts (cuernos/cola 0xA32D2D, cuerpo 0xE24B4A,
  * boca 0x501313).
  */
 export const PALETTE: Record<string, number> = {
-  "h": 0x9A9AB0, // cuernos
+  "h": 0xD9A441, // cuernos (dorados)
   "r": 0xEEEDF5, // cuerpo
-  "t": 0x9A9AB0, // cola
+  "t": 0xD9A441, // cola (dorada)
   "E": 0x2C2C2A, // ojos / pupilas
   "M": 0x4A4A5E, // boca y cejas
   "W": 0xF1EFE8, // colmillos
