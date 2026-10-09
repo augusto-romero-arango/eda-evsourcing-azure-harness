@@ -48,13 +48,15 @@ echo "[A] commits rescatados + arbol limpio -> remedia y limpia la lista"
 W=$(make_fixture a)
 echo r > "$W/r"; git -C "$W" add r; git -C "$W" commit -qm rescatado
 SHA=$(git -C "$W" rev-parse HEAD)
-mkdir -p "$W/.mefisto/pipeline"; echo "$SHA" > "$W/.mefisto/pipeline/rescued-main.txt"
+OTRO=0123456789abcdef0123456789abcdef01234567
+mkdir -p "$W/.mefisto/pipeline"; printf '%s\n%s\n' "$OTRO" "$SHA" > "$W/.mefisto/pipeline/rescued-main.txt"
 squash_remote "$W"
 if remediate_main_after_rescue "$W" main origin/main \
    && [ "$(git -C "$W" rev-parse HEAD)" = "$(git -C "$W" rev-parse origin/main)" ]; then
     pass "main quedo igual a origin/main"
 else fail "no remedio"; fi
 if ! grep -q "$SHA" "$W/.mefisto/pipeline/rescued-main.txt"; then pass "SHA retirado de rescued-main.txt"; else fail "SHA sigue en la lista"; fi
+if grep -qx "$OTRO" "$W/.mefisto/pipeline/rescued-main.txt"; then pass "SHA ajeno conservado en rescued-main.txt"; else fail "se borro un SHA ajeno"; fi
 
 echo "[B] commit local no rescatado -> no remedia"
 W=$(make_fixture b)

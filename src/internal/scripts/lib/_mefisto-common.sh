@@ -149,7 +149,9 @@ remediate_main_after_rescue() {
 # Si ya esta en main/master es un no-op. Fuera de esas ramas, solo un arbol
 # limpio se recupera: prefiere main, cae a master, hace switch y pull --ff-only.
 # Un arbol sucio, una base ausente o un pull fallido abortan sin stash, reset ni
-# switch forzado. Opera siempre contra MEFISTO_REPO_ROOT, no contra el cwd.
+# switch forzado; la unica excepcion es un pull fallido cuyos commits locales de
+# mas fueron todos rescatados por el hook pre-push (remediate_main_after_rescue,
+# issue #2112). Opera siempre contra MEFISTO_REPO_ROOT, no contra el cwd.
 ensure_repo_on_base_branch() {
     local repo_root="${MEFISTO_REPO_ROOT:-}"
     if [ -z "$repo_root" ]; then
