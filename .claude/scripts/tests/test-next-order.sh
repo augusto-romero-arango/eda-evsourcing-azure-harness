@@ -671,6 +671,37 @@ else
     fail "Q: universo vacio inesperado (exit $RC): $OUTPUT"
 fi
 
+# -------- Bloque R: una negacion no genera ciclo (issue #2126) --------
+
+echo ""
+echo "[R] 'No depende de #M' no es dependencia: sin ciclo falso, ambos lanzables"
+
+reset_fixtures
+set_issue_list <<'EOF'
+[
+  {"number":501,"title":"Neg","body":"## Dependencias\n\n- No depende de #502"},
+  {"number":502,"title":"Dep","body":"## Dependencias\n\n- Depende de #501"}
+]
+EOF
+
+OUTPUT=$(run_script)
+RC=$?
+if [ "$RC" -eq 0 ]; then
+    pass "R: exit 0 (sin ciclos)"
+else
+    fail "R: se esperaba exit 0, se obtuvo $RC: $OUTPUT"
+fi
+if echo "$OUTPUT" | grep -q "^/mefisto-sequential 501 502$"; then
+    pass "R: ambos lanzables, 501 antes que 502"
+else
+    fail "R: linea de lanzamiento inesperada: $OUTPUT"
+fi
+if echo "$OUTPUT" | grep -qi "ciclo: "; then
+    fail "R: reporto un ciclo falso: $OUTPUT"
+else
+    pass "R: sin ciclo falso"
+fi
+
 # -------- Resumen --------
 
 echo ""

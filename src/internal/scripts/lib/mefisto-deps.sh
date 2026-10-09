@@ -7,7 +7,10 @@
 # que estos scripts de solo lectura no carguen la libreria de pipelines.
 #
 # Solo dependencias FORWARD ('Depende de #N' / 'Bloqueado por #N',
-# case-insensitive); 'Bloquea', 'Consumido por' y la prosa libre se ignoran.
+# case-insensitive) y solo cuando el marcador esta AL INICIO del item (tras
+# espacios y una vineta '-' o '*' opcional); por linea se toma unicamente el
+# primer numero. 'No depende de #N', 'Ya no depende de #N' y el marcador a mitad
+# de linea no cuentan; 'Bloquea', 'Consumido por' y la prosa libre se ignoran.
 # Todas leen el body por stdin. No invocar directamente (sourceable).
 
 # El texto de la seccion, sin su encabezado; vacio si no existe.
@@ -17,7 +20,8 @@ mefisto_dependencies_section() {
 
 # Numeros de las dependencias forward, uno por linea, ascendentes y sin repetir.
 mefisto_forward_dependencies() {
-    mefisto_dependencies_section | grep -ioE '(Depende de|Bloqueado por)[[:space:]]+#[0-9]+' \
+    mefisto_dependencies_section \
+        | grep -ioE '^[[:space:]]*([-*][[:space:]]+)?(Depende de|Bloqueado por)[[:space:]]+#[0-9]+' \
         | grep -oE '[0-9]+' | sort -u
 }
 
