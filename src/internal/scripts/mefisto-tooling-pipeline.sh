@@ -27,6 +27,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/lib/_mefisto-common.sh"
 assert_in_mefisto || exit 1
+ensure_githooks_installed
 
 # Frontera explicita con el nucleo comun (MEF-ADR-0053): el pipeline conserva
 # scope, prompts, worktrees y entrega internos; runtime, modelos y ejecucion

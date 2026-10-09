@@ -80,6 +80,31 @@ assert_in_mefisto() {
     fi
 }
 
+# ensure_githooks_installed
+#
+# Activa los hooks de git versionados (issue #2110): configura core.hooksPath a
+# src/internal/githooks si esta vacio, avisando una vez. Si ya apunta ahi, no
+# hace nada (idempotente); si apunta a otro lugar, no lo pisa y solo avisa.
+# Nunca falla el pipeline que la invoca.
+ensure_githooks_installed() {
+    local repo_root="${MEFISTO_REPO_ROOT:-}"
+    [ -n "$repo_root" ] || repo_root=$(git rev-parse --show-toplevel 2>/dev/null) || return 0
+    local want="src/internal/githooks" current
+    current=$(git -C "$repo_root" config --get core.hooksPath 2>/dev/null || true)
+    case "$current" in
+        "")
+            if git -C "$repo_root" config core.hooksPath "$want" 2>/dev/null; then
+                echo "AVISO: core.hooksPath configurado a $want (hook pre-push que desvia a PR los push directos a main)." >&2
+            fi
+            ;;
+        "$want"|"$want/"|"$repo_root/$want"|"$repo_root/$want/") ;;
+        *)
+            echo "AVISO: core.hooksPath apunta a '$current'; no se pisa, y el hook pre-push de $want no queda activo." >&2
+            ;;
+    esac
+    return 0
+}
+
 # ensure_repo_on_base_branch
 #
 # Gate canonico de arranque para batches internos. Cada worktree del tooling
