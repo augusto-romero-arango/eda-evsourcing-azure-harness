@@ -132,6 +132,7 @@
         { "pattern": ".github/workflows/**", "value": "allow" },
         { "pattern": ".github/rulesets/**", "value": "allow" },
         { "pattern": ".mefisto/pipeline/summaries/**", "value": "allow" },
+        { "pattern": ".mefisto/pipeline/sandbox/**", "value": "allow" },
         { "pattern": ".claude/pipeline/summaries/**", "value": "allow" }
       ]
     },
