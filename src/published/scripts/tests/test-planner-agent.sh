@@ -118,6 +118,20 @@ contains "$body" 'sin cambiar el label' 'refinar guarda el cuerpo sin cambiar el
 contains "$body" 'Una única confirmación pasa a listo' 'una unica confirmacion cubre refinado y creados'
 contains "$body" 'sin volver a preguntar' 'excepcion de pedido explicito en el mismo turno'
 
+echo '[fuente] regla de ## Dependencias sin negaciones (#2129)'
+contains "$body" '### Regla de `## Dependencias`' 'la regla de Dependencias existe'
+contains "$body" 'todos los templates (dominio, infraestructura, proyección, MCP)' 'la regla aplica a todos los templates'
+contains "$body" '`- Depende de #N`' 'marcador Depende de'
+contains "$body" '`- Bloqueado por #N`' 'marcador Bloqueado por'
+contains "$body" '`- Bloquea #N`' 'marcador Bloquea'
+contains "$body" '`- Relacionado: #N`' 'marcador Relacionado'
+contains "$body" '`Ninguna - ...`' 'linea Ninguna'
+contains "$body" 'Nunca declares una dependencia en negativo ("No depende de #N", "Ya no depende de #N")' 'prohibe la negacion'
+contains "$body" 'borra la línea' 'la dependencia caducada se borra'
+contains "$body" '`gh issue comment`' 'la explicacion va en comentario'
+contains "$body" 'cumpliendo la "Regla de `## Dependencias`"' 'desglosar referencia la regla'
+contains "$body" 'borra las dependencias negadas' 'refinar paso 8 borra negaciones'
+
 echo '[mirror] agents/planner.md pasa a generado'
 if cmp -s "$MIRROR" "$CLAUDE"; then pass 'mirror Claude coincide byte a byte'; else fail 'mirror Claude diverge'; fi
 contains "$(< "$MIRROR")" '<!-- GENERADO por src/published/scripts/generate-published-adapters.sh desde src/published/agents/planner.md. No editar a mano. -->' 'mirror conserva marcador generado'

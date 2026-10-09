@@ -268,7 +268,7 @@ Tu rol:
 
 Al crear los issues del desglose:
 1. Crea cada issue como **`estado:borrador`** con cuerpo enriquecido que incluya: Contexto, Modelo de eventos (sketch del desglose), Dependencias entre sub-issues. No es necesario que tengan CAs detallados ni notas tecnicas completas — cada issue se refinara individualmente antes de ir a desarrollo.
-2. Usa la sección `## Dependencias` de cada issue para declarar las relaciones entre ellos (ej: "Depende de #N1"). Esto es suficiente para establecer el orden de implementación — no se necesita un issue padre contenedor.
+2. Usa la sección `## Dependencias` de cada issue para declarar las relaciones entre ellos (ej: `- Depende de #N1`), cumpliendo la "Regla de `## Dependencias`" de `## Crear issues`. Esto es suficiente para establecer el orden de implementación — no se necesita un issue padre contenedor.
 3. Agrega `--label "bloqueado"` a los issues que dependen de otro no cerrado
 
 **Verifica el corte contra la Revisión de complejidad**: cada sub-issue resultante debe, por sí solo, pasar el checklist pre-listo antes de proponer su paso a `estado:listo` en `refinar`. Si alguno todavía dispara las alertas cuantitativas o cualitativas, el corte no es suficiente: sigue partiendo o propón un desglose distinto. Ningún sub-issue debería heredar el problema del issue grande original (ambigüedad cruzada, ejes ortogonales múltiples, CAs implícitos).
@@ -411,6 +411,8 @@ Tu rol:
 8. Verifica el Definition of Ready antes de proponer el paso a listo:
 
    Lee `{{mefisto:package-root}}/docs/adr/mef-adr-0011-definition-of-ready.md`, determina el tipo del issue, y verifica cada criterio obligatorio y critico de la tabla DoR correspondiente.
+
+   Exige además que `## Dependencias` cumpla la "Regla de `## Dependencias`" de `## Crear issues`: borra las dependencias negadas ("No depende de #N", "Ya no depende de #N") que traiga el borrador.
 
    Si el issue no cumple el DoR, completa las secciones faltantes con la informacion de la sesion antes de proponer el paso a `estado:listo`. Si falta informacion que solo el usuario puede dar, pregunta antes de asumir.
 
@@ -806,6 +808,12 @@ Lee y aplica los criterios de `{{mefisto:package-root}}/docs/adr/mef-adr-0011-de
 ## Crear issues
 
 **Antes de crear**, aplica la sección "Routing de target" arriba. Si el target es Mefisto, usa exclusivamente el bloque "Crear draft cross-repo" y detente; los templates de abajo NO aplican a issues del harness.
+
+### Regla de `## Dependencias`
+
+Esta regla aplica a la sección `## Dependencias` de todos los templates (dominio, infraestructura, proyección, MCP). Solo admite items con el marcador al inicio: `- Depende de #N`, `- Bloqueado por #N`, `- Bloquea #N`, `- Relacionado: #N`, o la línea `Ninguna - ...`. Una relación por línea. Los parsers de `next-order` y `/sequential` leen el marcador al inicio del item; `Bloquea` y `Relacionado` son informativos.
+
+Nunca declares una dependencia en negativo ("No depende de #N", "Ya no depende de #N"): lo que no es dependencia no se declara. Si una dependencia deja de serlo, borra la línea; si hace falta explicar el cambio, coméntalo en el issue (`gh issue comment`), no en el body.
 
 ### Convención de títulos
 
