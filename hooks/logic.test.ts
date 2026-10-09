@@ -129,8 +129,33 @@ test('traduce el tipo a su letra y color, y ? gris si falta', async () => {
   expect(typeBadge('otro').letter).toBe('?')
 })
 
+test('el cierre acepta la invocacion real del planner, con ruta expandida y comillas', async () => {
+  expect(isPlannerClosing('MEFISTO_RUNTIME=claude "${MEFISTO_PACKAGE_ROOT}/scripts/field-note.sh" --session-id abc')).toBe(true)
+  expect(isPlannerClosing('MEFISTO_RUNTIME=claude "/p/mefisto/scripts/field-note.sh" --session-id abc')).toBe(true)
+  expect(isPlannerClosing('MEFISTO_RUNTIME=claude "/Users/a b/mefisto plugin/scripts/field-note.sh" --session-id abc')).toBe(true)
+  expect(isPlannerClosing('cd x && /p/scripts/field-note.sh --session-id abc')).toBe(true)
+  expect(isPlannerClosing('/p/scripts/mefisto-field-note.sh')).toBe(false)
+})
+
+test('nombrar field-note.sh o gh issue create sin ejecutarlos no cuenta', async () => {
+  expect(isPlannerClosing('cat scripts/field-note.sh')).toBe(false)
+  expect(isPlannerClosing('grep -n foo scripts/field-note.sh')).toBe(false)
+  expect(isPlannerClosing('git show HEAD:scripts/field-note.sh')).toBe(false)
+  expect(isPlannerClosing("cat <<'EOF'\n/p/scripts/field-note.sh --x\nEOF")).toBe(false)
+  expect(isIssueCreate('git show abc:x | grep "gh issue create"')).toBe(false)
+  expect(isIssueCreate('cat <<EOF\ngh issue create --title x\nEOF')).toBe(false)
+  expect(isIssueChange('echo "gh issue edit 1"')).toBe(false)
+  expect(issueMarkedListo('gh issue edit 801 --title x; echo --add-label estado:listo')).toBe(null)
+})
+
 test('el cierre es field-note.sh y la ruta de next-order cuelga de la raiz del plugin', async () => {
   expect(isPlannerClosing('"$root/scripts/field-note.sh" --agent mefisto:planner')).toBe(true)
   expect(isPlannerClosing('gh issue view 3')).toBe(false)
   expect(nextOrderPath('/p/mefisto/')).toBe('/p/mefisto/scripts/next-order.sh')
+})
+
+test('un mismo comando puede crear un borrador y pasar a listo el issue del foco', async () => {
+  const cmd = 'gh issue create --title x --label "estado:borrador" && gh issue edit 2108 --add-label "estado:listo"'
+  expect(isIssueCreate(cmd)).toBe(true)
+  expect(issueMarkedListo(cmd)).toBe(2108)
 })
