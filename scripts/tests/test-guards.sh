@@ -83,7 +83,7 @@ PUBLISHED_SKILLS=(
     batch-stop.md bitacora.md bug.md draft.md eraser-diagram.md fix-review.md health-check.md
     implement.md infra.md infra-base.md install-apim.md install-auth.md install-workos.md
     merge.md next-order.md onboard.md parallel.md purge-store.md scaffold.md scaffold-mcp.md
-    scaffold-projections.md seed-secret.md sequential.md tooling.md upgrade.md work-status.md
+    scaffold-projections.md seed-secret.md sequential.md tooling.md upgrade.md
 )
 
 for skill in "${PUBLISHED_SKILLS[@]}"; do

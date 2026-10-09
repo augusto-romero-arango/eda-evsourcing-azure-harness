@@ -201,7 +201,7 @@ else
     fail "H-a: la segunda invocacion no lleva --resume-session con el session_id esperado"
 fi
 if grep -q '\[hold\] RATE_LIMIT: esperando' "$TMP_DIR/events.log"; then
-    pass "H-a: events.log deja la linea [hold] RATE_LIMIT (CA-4, leida por /work-status)"
+    pass "H-a: events.log deja la linea [hold] RATE_LIMIT (CA-4, leida por work-status-collect.sh)"
 else
     fail "H-a: no se encontro la linea [hold] en events.log"
 fi

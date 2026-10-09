@@ -31,7 +31,7 @@ contains "$body" '{{mefisto:run setup-github-labels.sh 2>&1}}' 'directiva setup-
 contains "$body" '{{mefisto:run setup-github-ci.sh <id>}}' 'directiva setup-github-ci.sh'
 contains "$body" '{{mefisto:run tmux-pipeline.sh --infra <issue>}}' 'directiva tmux-pipeline.sh --infra'
 contains "$body" '{{mefisto:command infra-base}}' 'paso 6 remite a infra-base'
-contains "$body" '{{mefisto:command work-status}}' 'remite el progreso a work-status'
+absent "$body" "work-status" "no remite a work-status"
 contains "$body" 'az account set --subscription <id>' 'indica cambiar de suscripcion fuera del chat'
 contains "$body" 'az login' 'indica az login ante fallo'
 contains "$body" 'Nunca le pidas que escriba el id de suscripción' 'no pide el id al usuario'

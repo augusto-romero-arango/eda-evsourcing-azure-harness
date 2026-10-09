@@ -16,7 +16,7 @@
 #       produce `[archivo] x` y `[tool] <agente> Read ok x`.
 #   [B2] CA-1: un `tool.started` de `Bash` (input_summary = comando, no ruta)
 #       produce la "ruta-o-resumen" de la linea `[tool]` pero NUNCA una linea
-#       `[archivo]` -- ese tag lo lee /work-status (publicado) como actividad de
+#       `[archivo]` -- ese tag lo lee work-status-collect.sh como actividad de
 #       archivos.
 #   [C] CA-2: contra el fixture REAL de OpenCode
 #       (fixtures/runtime-opencode/success-tool-1.18.29.jsonl, tool `glob`
@@ -174,7 +174,7 @@ echo "[B2] CA-1: un tool.started de Bash NO produce linea [archivo] (su input_su
 # CLI, solo reordena los mismos bloques que success.jsonl con un tool `Bash`).
 # `Bash` SI lleva input_summary -- los primeros 80 caracteres del comando, ver
 # "Notas tecnicas" de #863 -- asi que alimenta la "ruta-o-resumen" de la linea
-# [tool]; pero un comando no es una ruta y /work-status (publicado) lee
+# [tool]; pero un comando no es una ruta y work-status-collect.sh lee
 # `[archivo]` como actividad de archivos, de modo que esa linea NO debe salir.
 B2_FIXTURE="$TMP/b2-bash.jsonl"
 cat > "$B2_FIXTURE" <<'FIXEOF'

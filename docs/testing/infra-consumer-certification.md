@@ -205,15 +205,14 @@ evidencia aparezca bajo `.claude/pipeline/` en vez de `.mefisto/pipeline/` es
 una divergencia de MEF-ADR-0053 seccion 4, no solo del protocolo, y produce
 `NO PASA` para esa corrida.
 
-## Visibilidad en `/work-status` (CA-4 de #1629)
+## Visibilidad en la salida de `work-status-collect.sh --json` (CA-4 de #1629)
 
 - **En curso**: mientras cualquiera de las cuatro corridas esta `running`,
-  `/mefisto:work-status` (`/work-status` en Claude Code) en ambos runtimes
-  muestra una fila con `pipeline=infra`, el `issue`, el `runtime` y el
+  `scripts/work-status-collect.sh --json` en ambos runtimes
+  devuelve una fila con `pipeline=infra`, el `issue`, el `runtime` y el
   `stage` vigente (`1-infra-writer` o `2-infra-reviewer`), con el
   `progress_pct` que asigna `scripts/work-status-collect.sh` (30 para
-  `infra-writer`, 80 para `infra-reviewer`); la barra se dibuja cuando es la
-  unica fila activa con `activity.kind = stage`.
+  `infra-writer`, 80 para `infra-reviewer`) y `activity.kind = stage`.
 - **Terminada**: al completar, la fila pasa a reflejar el PR (`pr` no vacio) y
   dejar de aparecer como `running`, conforme al historial en
   `pipeline-history.jsonl`.
@@ -224,7 +223,7 @@ una divergencia de MEF-ADR-0053 seccion 4, no solo del protocolo, y produce
   stubean para el resto de pipelines), o aprovechando un limite real de uso
   del proveedor si ocurre durante la ventana de la corrida. Mientras el hold
   esta activo, la fila del colector debe traer `state: hold` /
-  `activity.kind = hold` y `/work-status` debe mostrar `EN ESPERA` en lugar del stage, con
+  `activity.kind = hold` en lugar de `stage`, con
   la causa (`activity.cause`) y la proxima sonda (`activity.next_probe`)
   visibles, en ambos runtimes -- MEF-ADR-0051 (mecanismo) y MEF-ADR-0053
   seccion 4 (raiz de estado unica) convergen aqui con MEF-ADR-0031: la
@@ -266,8 +265,8 @@ La limpieza es idempotente, igual que en `tdd-consumer-certification.md`.
 ## Escala de veredicto y fail-closed
 
 - **`PASA`**: las cuatro corridas cumplen integramente "Resultados esperados
-  de cada corrida", "Evidencia correlacionada" y "Visibilidad en
-  `/work-status`" (incluido el hold inducido en al menos una corrida), con
+  de cada corrida", "Evidencia correlacionada" y "Visibilidad en la salida
+  de `work-status-collect.sh --json`" (incluido el hold inducido en al menos una corrida), con
   centinelas en cero y limpieza completa.
 - **`NO PASA`**: cualquier gap -- stage sin summary, PR con `Closes`,
   evidencia bajo `.claude/pipeline/`, hold no visible, centinela positivo sin

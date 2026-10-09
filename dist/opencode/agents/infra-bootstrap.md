@@ -128,16 +128,16 @@ MEFISTO_RUNTIME=opencode "${MEFISTO_PACKAGE_ROOT}/scripts/tmux-pipeline.sh" --in
 
 El pipeline corre **sin credenciales de Azure** (MEF-ADR-0021, MEF-ADR-0022): Write (HCL) -> Review (revision estatica: `fmt -check` + `init -backend=false` + `validate`, sin `terraform plan`) -> PR. El PR resultante **no cierra el issue** (no lleva `Closes #N`): el `terraform plan` real corre en el PR y el `terraform apply` real corre en CI al mergear a `main` (workflow `Infra CD`, ver MEF-ADR-0022); ese workflow cierra el issue tras un apply exitoso.
 
-**No esperes** a que termine: devuelve el control de inmediato con las instrucciones de conexión (pane del multiplexor si el lanzador abrió uno, o `tmux -CC attach -t infra-<N>`) y remite a /mefisto:work-status para ver el progreso.
+**No esperes** a que termine: devuelve el control de inmediato con las instrucciones de conexión (pane del multiplexor si el lanzador abrió uno, o `tmux -CC attach -t infra-<N>`) y remite al usuario a ese pane o sesión tmux para ver el progreso.
 
 ### 8. Reportar resultado
 
 Tras lanzar el pipeline, responde con:
-- Las instrucciones de conexión al pipeline en curso y la remisión a /mefisto:work-status.
+- Las instrucciones de conexión al pipeline en curso y la remisión al pane o sesión tmux del pipeline.
 - El recordatorio de que el PR resultante se revisa y mergea a `main`, donde ocurre el `apply` real y el cierre del issue en CI.
 
 ## Manejo de errores
 
 Si `setup-github-labels.sh` (paso 4) o `setup-github-ci.sh` (paso 5) fallan con un error real (exit distinto de 0, no un "ya existe"), corrige la causa (permisos, `gh auth login`, `az login`) y **reintenta solo ese script**: ambos son idempotentes, no hace falta repetir el bootstrap del backend (paso 3) ni ningún otro eslabón previo.
 
-Si el pipeline IaC (paso 7) falla después de que el bootstrap fue exitoso, indica al usuario que consulte el log con /mefisto:work-status y ofrece relanzarlo con el mismo comando del paso 7.
+Si el pipeline IaC (paso 7) falla después de que el bootstrap fue exitoso, indica al usuario que consulte el log que el pipeline imprime al abortar (`Revisa el log: <ruta>`) y ofrece relanzarlo con el mismo comando del paso 7.

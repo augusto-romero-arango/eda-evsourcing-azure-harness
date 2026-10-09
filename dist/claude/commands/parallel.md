@@ -135,7 +135,6 @@ Dentro de Herdr (`HERDR_ENV=1` en el entorno), el wrapper delega en la interfaz 
 ```
 Pipeline paralelo corriendo: un pane apilado por issue en este workspace.
 Los PRs NO se mergean automaticamente.
-Usa /mefisto:work-status para ver el progreso sin salir de aqui.
 ```
 
 Fuera de Herdr responde con:
@@ -145,7 +144,6 @@ Pipeline paralelo lanzado en tmux. Para monitorear:
   tmux -CC attach -t parallel-<timestamp>
 
 Cada issue tiene su propio pane. Los PRs NO se mergean automaticamente.
-Usa /mefisto:work-status para ver el progreso sin salir de aqui.
 ```
 
 ## Reglas

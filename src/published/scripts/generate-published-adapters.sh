@@ -105,7 +105,6 @@ CLAUDE_ROOT_MIRRORS=(
     'src/published/commands/merge.md|commands/merge.md'
     'src/published/commands/sequential.md|commands/sequential.md'
     'src/published/commands/batch-stop.md|commands/batch-stop.md'
-    'src/published/commands/work-status.md|commands/work-status.md'
     'src/published/commands/parallel.md|commands/parallel.md'
     'src/published/commands/infra.md|commands/infra.md'
     'src/published/commands/infra-base.md|commands/infra-base.md'

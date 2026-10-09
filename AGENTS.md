@@ -60,7 +60,6 @@ y `Verificación de fuentes` en el `AGENTS.md` del consumidor, el puente mínimo
 | `/bug` | Investiga un síntoma (bug-investigator o tooling-investigator) |
 | `/fix-review` | Resuelve comentarios pendientes de un PR |
 | `/health-check` | Dashboard del entorno desplegado |
-| `/work-status` | Progreso de los pipelines activos en tmux |
 | `/eraser-diagram` | Genera diagrama para Eraser |
 | `/merge` | Mergea uno o varios PRs a main |
 | `/bitacora` | Invoca al agente `historiador` y, si crea PR, encadena `/merge` automaticamente |

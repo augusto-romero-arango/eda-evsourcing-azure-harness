@@ -71,7 +71,6 @@ Dentro de Herdr (`HERDR_ENV=1` en el entorno), el wrapper delega en la interfaz 
 ```
 Secuencial corriendo en un pane de este workspace (visor en vivo del agente).
 Los issues se procesaran en orden: pipeline -> PR -> merge -> siguiente.
-Usa /mefisto:work-status para ver el progreso sin salir de aqui.
 ```
 
 Fuera de Herdr responde con:
@@ -81,7 +80,6 @@ Secuencial lanzado en tmux. Para monitorear:
   tmux -CC attach -t batch-<timestamp>
 
 Los issues se procesaran en orden: pipeline -> PR -> merge -> siguiente.
-Usa /mefisto:work-status para ver el progreso sin salir de aqui.
 ```
 
 ## Reglas
