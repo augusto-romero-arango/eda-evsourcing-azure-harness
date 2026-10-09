@@ -877,7 +877,8 @@ export const register: Register = on => {
           </Box>
           {/* La linea de todos los listos crece con la cola: va abajo, a lo ancho, y no empuja los menus fijos. */}
           {ready?.launch && (
-            <Button key="ready-all" hotkey="1" plain label={clip(ready.launch, inner - 3)} onPress={() => void fill($, ready.launch ?? '')} />
+            <Button key="ready-all" hotkey="1" plain label={clip(ready.launch.replace(/^\/mefisto-/, ''), inner - 3)}
+              onPress={() => void fill($, ready.launch ?? '')} />
           )}
         </Box>
       )
