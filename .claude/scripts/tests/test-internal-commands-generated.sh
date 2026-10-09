@@ -339,7 +339,8 @@ check_run_invocation mefisto-merge 'mefisto-validate-batch-deps.sh --reconcile-p
 # otro continue en la rama post-merge. Asi una lista mixta reconcilia los merges
 # exitosos anteriores y posteriores sin reconciliar ni reintentar el fallido.
 merge_loop=$(sed -n '/^for pr in <prs>; do$/,/^done$/p' "$merge_source")
-merge_line=$(printf '%s\n' "$merge_loop" | grep -nF 'gh pr merge "$pr" --squash --delete-branch || {' | cut -d: -f1)
+merge_line=$(printf '%s\n' "$merge_loop" | grep -nF 'gh pr merge "$pr" --squash || {' | cut -d: -f1)
+remote_delete_line=$(printf '%s\n' "$merge_loop" | grep -nF 'git push origin --delete "$head"' | cut -d: -f1)
 continue_line=$(printf '%s\n' "$merge_loop" | grep -nF 'continue' | cut -d: -f1)
 reconcile_line=$(printf '%s\n' "$merge_loop" | grep -nF "$reconcile_directive" | cut -d: -f1)
 merged_line=$(printf '%s\n' "$merge_loop" | grep -nF 'resultado="MERGED"' | cut -d: -f1)
@@ -350,11 +351,20 @@ if [ -n "$merge_line" ] && [ -n "$continue_line" ] && [ -n "$reconcile_line" ] \
     && [ "$continue_count" -eq 1 ] \
     && [ "$merge_line" -lt "$continue_line" ] \
     && [ "$continue_line" -lt "$merged_line" ] \
+    && [ -n "$remote_delete_line" ] \
+    && [ "$continue_line" -lt "$remote_delete_line" ] \
+    && [ "$remote_delete_line" -lt "$reconcile_line" ] \
     && [ "$merged_line" -lt "$reconcile_line" ] \
     && [ "$reconcile_line" -lt "$degraded_line" ]; then
     pass "mefisto-merge: una lista mixta omite el fallido, reconcilia cada exitoso y degrada solo el post-merge"
 else
     fail "mefisto-merge: el loop no aisla correctamente merges fallidos, exitosos y reconciliaciones degradadas"
+fi
+
+if grep -qF -- '--delete-branch' "$merge_source" 2>/dev/null; then
+    fail "mefisto-merge: la fuente aun contiene --delete-branch (issue #2159)"
+else
+    pass "mefisto-merge: la fuente no usa --delete-branch (issue #2159)"
 fi
 
 echo ""

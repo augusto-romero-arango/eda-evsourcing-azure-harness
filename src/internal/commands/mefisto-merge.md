@@ -64,23 +64,37 @@ No pidas confirmacion adicional. El usuario ya la dio al escribir `/mefisto-merg
 
 ### 3. Mergear
 
-En Mefisto no usamos `scripts/pr-sync.sh` (es del lado publicado y depende de configuracion del consumidor). Aqui mergeamos con `gh pr merge` directo, con squash (consistente con la mayoria de PRs del repo) y eliminacion de rama.
+En Mefisto no usamos `scripts/pr-sync.sh` (es del lado publicado y depende de configuracion del consumidor). Aqui mergeamos con `gh pr merge` directo, con squash (consistente con la mayoria de PRs del repo) y borrado explicito de ramas (sin la opcion de borrado de rama de `gh`: esta borra primero la rama local y, si un worktree la tiene checkouteada, corta con error dejando viva la remota).
 
 ```bash
 for pr in <prs>; do
     echo "Mergeando #$pr..."
-    gh pr merge "$pr" --squash --delete-branch || {
+    head=$(gh pr view "$pr" --json headRefName -q .headRefName)
+    gh pr merge "$pr" --squash || {
         echo "Fallo al mergear #$pr"
         continue
     }
 
     resultado="MERGED"
+    git push origin --delete "$head" \
+        || echo "ADVERTENCIA: no se pudo borrar la rama remota $head de #$pr (el merge quedo MERGED)."
+    if git show-ref --verify --quiet "refs/heads/$head"; then
+        if git worktree list --porcelain | grep -qxF "branch refs/heads/$head"; then
+            echo "Rama local $head en uso por un worktree: se conserva; mefisto-worktree.sh clean la limpiara."
+        else
+            git branch -D "$head" || echo "ADVERTENCIA: no se pudo borrar la rama local $head."
+        fi
+    fi
     if ! {{mefisto:run mefisto-validate-batch-deps.sh --reconcile-pr "$pr"}}; then
         echo "ADVERTENCIA: #$pr se mergeo, pero fallo la reconciliacion post-merge de bloqueados."
         resultado="MERGED (POST-MERGE DEGRADADO)"
     fi
 done
 ```
+
+El borrado de ramas nunca degrada el resultado: un fallo de `git push origin --delete`
+o de `git branch -D` solo imprime una advertencia y el PR sigue `MERGED`. La rama local
+se borra unicamente si ningun worktree la tiene checkouteada.
 
 La invocacion del reconciliador queda dentro de la rama exitosa de cada vuelta:
 un PR inexistente, cerrado, ya mergeado, conflictivo o cuyo merge falle no la
@@ -115,5 +129,5 @@ PR | Titulo                              | Resultado
 - **No uses `scripts/pr-sync.sh`**: ese script requiere la configuracion del harness del consumidor (`harness.config.json`, no existe en Mefisto) y esta pensado para el consumidor.
 - **No auto-reintentes** un PR fallido. Si el merge falla, reporta el error y espera instruccion.
 - **Verifica que el PR esta MERGEABLE** antes de intentar; si esta `CONFLICTING`, indicalo y omite.
-- **Squash por defecto**: el historial de Mefisto se mantiene limpio con squash + delete-branch.
+- **Squash por defecto**: el historial de Mefisto se mantiene limpio con squash + borrado explicito de la rama remota (la local solo si ningun worktree la usa).
 - **Reconciliacion aislada**: tras cada merge exitoso ejecuta una sola vez el reconciliador interno con `--reconcile-pr`; si falla, advierte y continua con el siguiente PR.
