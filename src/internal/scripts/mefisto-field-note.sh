@@ -119,6 +119,7 @@ done
 
 source "$SCRIPT_DIR/lib/_mefisto-common.sh"
 assert_in_mefisto || exit 1
+ensure_githooks_installed
 
 if [ -z "${MEFISTO_REPO_SLUG:-}" ]; then
     echo "ERROR: no se pudo resolver el repo remoto (gh repo view --json nameWithOwner); revisa 'gh auth status'" >&2

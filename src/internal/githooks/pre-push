@@ -1,0 +1,72 @@
+#!/usr/bin/env bash
+# pre-push -- Desvia a un PR de rescate los push directos a main/master (issue #2110).
+#
+# Red de seguridad: un push cuyo destino es refs/heads/main|master no se pierde
+# ni se bloquea a secas; sus commits se empujan a rescate/<fecha>-<sha corto>,
+# se abre un PR contra main y solo el push directo se rechaza (exit 1).
+# Falla cerrada: nunca deja pasar el push a main. Via de escape: git push --no-verify.
+# Un hook de git es neutral a runtime (MEF-ADR-0050).
+#
+# stdin: <local ref> <local sha> <remote ref> <remote sha>  (el destino se
+# detecta por <remote ref>, no por la rama activa).
+set -u
+
+REMOTE_NAME="${1:-origin}"
+ZERO="0000000000000000000000000000000000000000"
+TOPLEVEL="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+RESCUED_FILE="$TOPLEVEL/.mefisto/pipeline/rescued-main.txt"
+BLOCKED=0
+
+while read -r local_ref local_sha remote_ref remote_sha; do
+    case "$remote_ref" in
+        refs/heads/main|refs/heads/master) ;;
+        *) continue ;;
+    esac
+    # Borrado remoto de main: no hay commits que rescatar; se rechaza igual.
+    if [ "$local_sha" = "$ZERO" ]; then
+        echo "pre-push: borrar '$remote_ref' no esta permitido (usa --no-verify si es intencional)." >&2
+        BLOCKED=1
+        continue
+    fi
+    BLOCKED=1
+
+    if [ "$remote_sha" = "$ZERO" ]; then
+        range=("$local_sha" --not "--remotes=$REMOTE_NAME")
+    else
+        range=("$remote_sha..$local_sha")
+    fi
+    commits="$(git log --format='%h %s' "${range[@]}" 2>/dev/null)"
+    [ -n "$commits" ] || commits="$(git log -1 --format='%h %s' "$local_sha")"
+    shas="$(git log --format='%H' "${range[@]}" 2>/dev/null)"
+    [ -n "$shas" ] || shas="$local_sha"
+    short="$(git rev-parse --short "$local_sha")"
+    branch="rescate/$(date +%Y-%m-%d)-$short"
+    title="$(git log -1 --format='%s' "$local_sha")"
+
+    if ! git push --no-verify "$REMOTE_NAME" "$local_sha:refs/heads/$branch" >&2; then
+        echo "pre-push: no se pudo empujar la rama de rescate '$branch'; no se hizo nada remoto." >&2
+        echo "  Reintenta: git push --no-verify $REMOTE_NAME $local_sha:refs/heads/$branch  (y abre el PR), o repite tu push." >&2
+        continue
+    fi
+
+    mkdir -p "$(dirname "$RESCUED_FILE")" 2>/dev/null && printf '%s\n' "$shas" >> "$RESCUED_FILE"
+
+    body="Rescatado por el hook pre-push: se intento empujar directo a \`main\` desde \`$TOPLEVEL\`.
+
+Commits:
+$(printf '%s\n' "$commits" | sed 's/^/- /')
+
+Generado automaticamente por el hook pre-push de Mefisto (issue #2110)."
+
+    if ! url="$(gh pr create --base main --head "$branch" --title "$title" --body "$body" 2>&1)"; then
+        echo "pre-push: la rama '$branch' quedo empujada pero 'gh pr create' fallo: $url" >&2
+        echo "  Abre el PR a mano:" >&2
+        printf '  gh pr create --base main --head %q --title %q --body %q\n' "$branch" "$title" "$body" >&2
+        continue
+    fi
+    num="$(printf '%s\n' "$url" | grep -Eo '[0-9]+$' | tail -1)"
+    echo "pre-push: push directo a main rechazado; entregado como PR #${num:-?} ($url)" >&2
+done
+
+[ "$BLOCKED" -eq 0 ] || exit 1
+exit 0
