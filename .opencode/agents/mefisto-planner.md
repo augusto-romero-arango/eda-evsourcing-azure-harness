@@ -106,7 +106,7 @@ Tu rol:
   - **Por lado**: si la mejora toca lado publicado + lado interno, considera un issue por lado (siempre que cada uno aporte valor por si solo).
   - **Por capa**: si el cambio toca scripts bash + agentes + documentacion, partir por capa puede simplificar la revision.
 - Cada sub-issue debe llevar su propia seccion "Componente afectado" y "Criterios de aceptacion".
-- Usa la seccion `## Dependencias` para declarar relaciones entre sub-issues (`Depende de #N1`).
+- Usa la seccion `## Dependencias` para declarar relaciones entre sub-issues (`- Depende de #N1`), segun la regla de "Seccion `## Dependencias`" (bajo "Crear issues").
 - Crea todos los sub-issues como `estado:borrador`.
 - Agrega `--label "bloqueado"` a los issues que dependen de otro no cerrado.
 
@@ -166,7 +166,7 @@ Tu rol:
 5. Cuando este completo, redacta el cuerpo con el template completo (ver "Crear issues" abajo).
 6. Ejecuta la **Revision de complejidad simplificada**.
 7. Enumera los ADRs aplicables (si los hay).
-8. Verifica el Definition of Ready (version simplificada): contexto claro, criterios verificables, dependencias declaradas, ADRs listados (o "Ninguno"), componente afectado claro.
+8. Verifica el Definition of Ready (version simplificada): contexto claro, criterios verificables, dependencias declaradas (la seccion `## Dependencias` debe cumplir la regla de "Seccion `## Dependencias`"; borra las negaciones que traiga el borrador), ADRs listados (o "Ninguno"), componente afectado claro.
 9. Guarda el cuerpo en el issue (`gh issue edit <num> --body ...`) **sin cambiar el label**: sigue en `estado:borrador`. Luego muestra un resumen compacto: titulo, dependencias, un renglon por CA, ADRs y link al issue. Pregunta si pasa a `estado:listo` y **espera la respuesta**; nunca ejecutes `--add-label "estado:listo"` en el mismo turno de la ultima respuesta de refinamiento.
    - Si durante el refinado se crearon issues nuevos (p. ej. al partirlo), se crean como `estado:borrador` y entran al mismo resumen. Una unica confirmacion pasa a listo el refinado y todos los creados que esten completos; los incompletos quedan en borrador y dices cuales.
    - Si el usuario pide cambios al ver el resumen, edita el cuerpo ya guardado y vuelve a mostrar el resumen; el issue sigue en borrador hasta la confirmacion.
@@ -233,7 +233,7 @@ gh issue create \
 ## Dependencias
 - Depende de #XX (razon)
 - Bloquea #YY
-(O "Ninguna - se puede implementar de forma independiente")
+(O "Ninguna - se puede implementar de forma independiente". Sigue la regla de la subseccion "Seccion `## Dependencias`" mas abajo: sin negaciones.)
 
 ## Componente afectado
 - **Lado**: publicado | interno | ambos
@@ -259,6 +259,13 @@ Enumera ADRs del marco que apliquen (nombre + descripcion breve). Si el cambio m
 ISSUEEOF
 )"
 ```
+
+### Seccion `## Dependencias`
+
+Regla unica (la referencian el template, `desglosar` y el paso 8 de `refinar`):
+
+- Solo admite items `- Depende de #N`, `- Bloqueado por #N`, `- Bloquea #N`, `- Relacionado: #N` o la linea "Ninguna - ...". Una relacion por linea y el marcador **al inicio del item** (es lo que leen los parsers anclados).
+- **Prohibido declarar en negativo** ("No depende de #N", "Ya no depende de #N"): lo que no es dependencia no se declara. Si una dependencia deja de serlo, **borra la linea**. Si hace falta explicar el cambio, comentalo en el issue (`gh issue comment`), no en el body.
 
 Si el issue depende de otro no cerrado, agrega `--label "bloqueado"`.
 
