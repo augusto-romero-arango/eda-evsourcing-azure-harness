@@ -58,7 +58,7 @@ export type LogLine = { ts: string; kind: LogKind; text: string }
 
 declare module 'claude-code' {
   interface PluginState {
-    'mefisto-console': {
+    'mefisto-divine-wager': {
       run: PipelineRun | null
       lines: LogLine[]
       now: number

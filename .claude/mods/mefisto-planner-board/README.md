@@ -11,7 +11,7 @@ versionado) desde el marketplace de carpeta `.claude/mods/`:
 
 ```bash
 claude plugin marketplace add ./.claude/mods --scope local
-claude plugin install mefisto-console@mefisto-mods --scope local
+claude plugin install mefisto-divine-wager@mefisto-mods --scope local
 claude plugin install mefisto-planner-board@mefisto-mods --scope local
 ```
 

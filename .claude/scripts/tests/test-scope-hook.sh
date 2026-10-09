@@ -79,7 +79,7 @@ for p in \
     "docs/bitacora/prueba.md" \
     ".claude/scripts/mefisto-tooling-pipeline.sh" \
     ".claude/settings.json" \
-    ".claude/mods/mefisto-console/hooks/register.tsx" \
+    ".claude/mods/mefisto-divine-wager/hooks/register.tsx" \
     ".mcp.json" \
     "changelog.d/523.added.md" \
     "commands/implement.md" \
