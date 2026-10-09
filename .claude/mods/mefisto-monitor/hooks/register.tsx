@@ -718,9 +718,7 @@ export const register: Register = on => {
                 <Text key={`ready-blank-${i}`}> </Text>
               ))}
               <Box justifyContent="space-between">
-                <Text dimColor wrap="truncate-end">
-                  1 todos · 5-9 uno · 2 mergear PRs · al prompt, sin Enter
-                </Text>
+                <Text> </Text>
                 <Box gap={2}>
                   {more !== '' && <Text dimColor>{more}</Text>}
                   {pages > 1 && (
