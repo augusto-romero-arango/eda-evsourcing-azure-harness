@@ -507,7 +507,7 @@ cmd_tooling() {
 # cmd_tooling_detached <issue> [flags...]
 #
 # MEFISTO_UI=mod (MEF-ADR-0055): la sesion de Claude Code que lanzo el skill
-# muestra el avance en su mod mefisto-console, asi que no se abre ni sesion tmux
+# muestra el avance en su mod mefisto-divine-wager, asi que no se abre ni sesion tmux
 # ni pane herdr. El pipeline corre desacoplado (nohup) para sobrevivir al cierre
 # de esa sesion, con el mismo string de comando que el pane tmux re-parsea y
 # sin las variables HERDR_* (mismo aislamiento que cmd_pane_runner del lado
@@ -544,7 +544,7 @@ cmd_tooling_detached() {
     (cd "$PROJECT_ROOT" && nohup env "${env_unset[@]}" bash -c "${ENV_PREFIX}$CAFF $pipeline_cmd" \
         >"$report_log" 2>&1 </dev/null &)
 
-    success "Pipeline mefisto-tooling iniciado para issue #$issue (sin pane: lo sigue el mod mefisto-console)"
+    success "Pipeline mefisto-tooling iniciado para issue #$issue (sin pane: lo sigue el mod mefisto-divine-wager)"
     log "Reporte: $report_log"
 }
 
@@ -552,7 +552,7 @@ cmd_tooling_detached() {
 #
 # MEFISTO_UI=mod (MEF-ADR-0055), mismo criterio que cmd_tooling_detached: el
 # batch corre desacoplado (nohup), sin sesion tmux ni pane herdr, y el mod
-# mefisto-console lo sigue desde pipeline-status-mefisto-batch.json y el status
+# mefisto-divine-wager lo sigue desde pipeline-status-mefisto-batch.json y el status
 # de cada eslabon. Las validaciones de flags ya las hizo preflight_batch_start.
 cmd_batch_detached() {
     extract_wrapper_flags "$@"
@@ -582,7 +582,7 @@ cmd_batch_detached() {
     (cd "$PROJECT_ROOT" && nohup env "${env_unset[@]}" bash -c "${ENV_PREFIX}$CAFF $BATCH_SCRIPT_Q ${issues[*]}" \
         >"$report_log" 2>&1 </dev/null &)
 
-    success "Batch pipeline interno iniciado: issues ${issues[*]} (sin pane: lo sigue el mod mefisto-console)"
+    success "Batch pipeline interno iniciado: issues ${issues[*]} (sin pane: lo sigue el mod mefisto-divine-wager)"
     log "Reporte: $report_log"
 }
 

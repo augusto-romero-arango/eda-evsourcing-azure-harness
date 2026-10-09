@@ -2,7 +2,7 @@
 
 - **Fecha**: 2026-10-08
 - **Estado**: aceptado
-- **Aplica a**: la consola de operacion `mefisto-console` (lado interno de MEF-ADR-0019) y el tablero del planner en sus dos lados, interno y publicado (decision 8), con los nombres de la decision 9. Una consola publicada para el consumidor y los issues que genera el reviewer quedan para enmiendas posteriores. Se apoya en MEF-ADR-0049 (adaptadores por runtime) y en MEF-ADR-0050 (neutralidad de toda operacion), y reserva el identificador `0055` (MEF-ADR-0030).
+- **Aplica a**: la consola de operacion `mefisto-divine-wager` (lado interno de MEF-ADR-0019) y el tablero del planner en sus dos lados, interno y publicado (decision 8), con los nombres de la decision 9. La consola publicada para el consumidor (nombre reservado en la decision 9) y los issues que genera el reviewer quedan para enmiendas posteriores. Se apoya en MEF-ADR-0049 (adaptadores por runtime) y en MEF-ADR-0050 (neutralidad de toda operacion), y reserva el identificador `0055` (MEF-ADR-0030).
 
 ## Contexto
 
@@ -62,7 +62,7 @@ Toda accion con efecto sale del mod hacia un skill o comando que ya existe. Nunc
 
 Las acciones viven en la banda sobre el prompt (`AbovePrompt`), con hotkeys numericos: `1` mergear, `2` ver PR, `3` log, `4` cerrar. Un digito con el prompt vacio presiona el boton de la banda sin enfocar nada, y es la unica forma que da el engine para pulsar un boton sin foco.
 
-El pane de detalle (stages y live log) es secundario. `/mefisto-console` lo abre ya enfocado, porque abierto por la persona se coloca a cualquier ancho. Cada accion tiene ademas un subcomando (`/mefisto-console merge|close`) por si las teclas no responden.
+El pane de detalle (stages y live log) es secundario. `/mefisto-divine-wager` lo abre ya enfocado, porque abierto por la persona se coloca a cualquier ancho. Cada accion tiene ademas un subcomando (`/mefisto-divine-wager merge|close`) por si las teclas no responden.
 
 ### 4. Ubicacion: una por lado
 
@@ -133,16 +133,21 @@ La raiz del plugin publicado la resuelve el propio tablero; el ADR no fija el me
 
 ### 9. Nombres: dos superficies, un par por lado
 
-Los mods siguen la regla de nombres de MEF-ADR-0019: lo publicado lleva el nombre especifico y lo interno el
-prefijo `mefisto-`. El comando que registra cada mod es su propio nombre, asi que el par interno y el publicado
+Los nombres siguen el *Fausto* de Goethe: Fausto decide y Mefisto ejecuta. Lo publicado es la superficie del
+humano que opera el plugin, Fausto, y lleva el prefijo `fausto-`; lo interno lleva el prefijo `mefisto-` de
+MEF-ADR-0019, porque en este repo se construyen los poderes de Mefisto. Los sustantivos van en ingles. El comando que registra cada mod es su propio nombre, asi que el par interno y el publicado
 nunca colisionan aunque ambos carguen en el repo de Mefisto.
 
 | Superficie | Sesion donde aparece | Interno (mod · comando) | Publicado (modulo · comando) |
 |---|---|---|---|
-| Tablero del planner | la del planner | `mefisto-planner-board` · `/mefisto-planner-board` | `planner-board` en `hooks/` · `/planner-board` |
-| Consola de operacion | toda sesion interactiva que no es la del planner | `mefisto-console` · `/mefisto-console` | no existe todavia |
+| Tablero del planner | la del planner | `mefisto-planner-board` · `/mefisto-planner-board` | `fausto-board` en `hooks/` · `/fausto-board` |
+| Consola de operacion | toda sesion interactiva que no es la del planner | `mefisto-divine-wager` · `/mefisto-divine-wager` | `fausto-blood-pact` · `/fausto-blood-pact` (nombre reservado: no existe todavia) |
 
-- **El tablero del planner** solo aplica a la sesion del planner: no es un "board" generico.
+- **El tablero del planner** solo aplica a la sesion del planner: no es un "board" generico. El planner es Fausto
+  (su mascota lo dibuja), asi que el publicado es `fausto-board` sin repetir `planner`.
+- **La consola interna es la apuesta divina** (*Prolog im Himmel*): Mefisto apuesta contra Dios que puede con Fausto,
+  y en este repo se le da lo que necesita para ganarla. **La publicada es el pacto de sangre** (*Studierzimmer*):
+  donde se cumplen los deseos de Fausto.
 - **La consola** dejo de ser un monitor: lista y lanza los listos, sigue `/mefisto-tooling` y `/mefisto-sequential`,
   y ofrece PRs, bitacora y release. Es el hub de operacion del plugin en la sesion de ejecucion.
 - **El tablero publicado no se registra ni se activa en el repo de Mefisto** (manifiesto `.claude-plugin/plugin.json`
@@ -157,6 +162,7 @@ nunca colisionan aunque ambos carguen en el repo de Mefisto.
 
 ## Control de cambios
 
+- 2026-10-09: decision 9 (nombres): nombres desde el *Fausto*; `mefisto-console` pasa a `mefisto-divine-wager`, el tablero publicado `planner-board` pasa a `fausto-board` y se reserva `fausto-blood-pact` para la consola publicada.
 - 2026-10-09: decision 9 (nombres): `mefisto-monitor` pasa a `mefisto-console`, consola de operacion; los tableros del planner registran `/mefisto-planner-board` (interno) y `/planner-board` (publicado) en vez de `/mefisto-board`; el publicado no se activa en el repo de Mefisto.
 - 2026-10-08: generalizacion al tablero del planner publicado: aplica a ambos lados, decision 4 con dos ubicaciones, decision 8 con tabla de diferencias por lado y tableros independientes, version minima 2.1.287 del plugin publicado.
 - 2026-10-08: decision 8 (tablero del planner) y orden de refinamiento en `mefisto-next-order.sh`.

@@ -2,7 +2,7 @@
   "name": "mefisto-mods",
   "owner": { "name": "Mefisto" },
   "plugins": [
-    { "name": "mefisto-console", "source": "./mefisto-console" },
+    { "name": "mefisto-divine-wager", "source": "./mefisto-divine-wager" },
     { "name": "mefisto-planner-board", "source": "./mefisto-planner-board" }
   ]
 }

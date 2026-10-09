@@ -60,7 +60,7 @@ import {
 } from './logic'
 import { DEFAULT_COLOR, HEIGHT, PALETTE, RASTER_ROWS, face, sprite } from './sprites'
 
-const PANE = 'mefisto-console'
+const PANE = 'mefisto-divine-wager'
 const MAX_LINES = 200
 const STATUS_GRACE_MS = 30_000
 // Un seguimiento que tras este tiempo sigue en setup sin status ni historial no corresponde a ninguna corrida.
@@ -118,19 +118,19 @@ function mascotCells(grid: readonly string[]): string {
   return btoa(bin)
 }
 
-const runAtom = atom({ plugin: 'mefisto-console', key: 'run' } as const, null)
-const linesAtom = atom({ plugin: 'mefisto-console', key: 'lines' } as const, [])
-const nowAtom = atom({ plugin: 'mefisto-console', key: 'now' } as const, 0)
-const executionAtom = atom({ plugin: 'mefisto-console', key: 'isExecutionSession' } as const, false)
-const readyAtom = atom({ plugin: 'mefisto-console', key: 'ready' } as const, null)
-const readyPageAtom = atom({ plugin: 'mefisto-console', key: 'readyPage' } as const, 0)
-const batchAtom = atom({ plugin: 'mefisto-console', key: 'batch' } as const, null)
-const openPrsAtom = atom({ plugin: 'mefisto-console', key: 'openPrs' } as const, null)
-const fieldNotesAtom = atom({ plugin: 'mefisto-console', key: 'fieldNotes' } as const, null)
-const changelogAtom = atom({ plugin: 'mefisto-console', key: 'changelog' } as const, null)
-const holdAtom = atom({ plugin: 'mefisto-console', key: 'hold' } as const, null)
-const historianAtom = atom({ plugin: 'mefisto-console', key: 'historian' } as const, null)
-const releaseAtom = atom({ plugin: 'mefisto-console', key: 'release' } as const, null)
+const runAtom = atom({ plugin: 'mefisto-divine-wager', key: 'run' } as const, null)
+const linesAtom = atom({ plugin: 'mefisto-divine-wager', key: 'lines' } as const, [])
+const nowAtom = atom({ plugin: 'mefisto-divine-wager', key: 'now' } as const, 0)
+const executionAtom = atom({ plugin: 'mefisto-divine-wager', key: 'isExecutionSession' } as const, false)
+const readyAtom = atom({ plugin: 'mefisto-divine-wager', key: 'ready' } as const, null)
+const readyPageAtom = atom({ plugin: 'mefisto-divine-wager', key: 'readyPage' } as const, 0)
+const batchAtom = atom({ plugin: 'mefisto-divine-wager', key: 'batch' } as const, null)
+const openPrsAtom = atom({ plugin: 'mefisto-divine-wager', key: 'openPrs' } as const, null)
+const fieldNotesAtom = atom({ plugin: 'mefisto-divine-wager', key: 'fieldNotes' } as const, null)
+const changelogAtom = atom({ plugin: 'mefisto-divine-wager', key: 'changelog' } as const, null)
+const holdAtom = atom({ plugin: 'mefisto-divine-wager', key: 'hold' } as const, null)
+const historianAtom = atom({ plugin: 'mefisto-divine-wager', key: 'historian' } as const, null)
+const releaseAtom = atom({ plugin: 'mefisto-divine-wager', key: 'release' } as const, null)
 
 type Tail = { path: string; stream: AsyncGenerator<unknown, unknown> }
 
@@ -317,7 +317,7 @@ async function poll($: EngineInterface) {
     } else if (watchSinceMs === 0 || Date.now() - watchSinceMs > STATUS_GRACE_MS || prev.stage !== 'setup') {
       next = await fromHistory($, prev)
       if (!inBatch && next === prev && prev.stage === 'setup' && Date.now() - prev.startedMs > ORPHAN_MS) {
-        $.ui.log(`mefisto-console: #${prev.issue} sin status ni historial tras ${ORPHAN_MS / 60_000} min; se deja de seguir`, { to: 'debug' })
+        $.ui.log(`mefisto-divine-wager: #${prev.issue} sin status ni historial tras ${ORPHAN_MS / 60_000} min; se deja de seguir`, { to: 'debug' })
         await closeRun($)
         return
       }
@@ -550,7 +550,7 @@ export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     isInteractive = e.isInteractive
     await $.command.register({
-      name: 'mefisto-console',
+      name: 'mefisto-divine-wager',
       description: 'Consola de Mefisto: sin argumentos abre el log; <issue> sigue esa corrida; batch <issues> sigue un sequential; merge | close | refresh',
       argumentHint: '[issue|batch <issues>|merge|close|refresh]',
       immediate: true,
@@ -617,7 +617,7 @@ export const register: Register = on => {
     return ran
   })
 
-  on('command.run', { command: 'mefisto-console' }, async ($, e) => {
+  on('command.run', { command: 'mefisto-divine-wager' }, async ($, e) => {
     const arg = e.args.trim()
     if (arg === 'close') {
       await closeRun($)
@@ -631,7 +631,7 @@ export const register: Register = on => {
       await merge($)
       return { text: 'Merge solicitado.' }
     }
-    // Reengancha un sequential ya lanzado (tras reiniciar la sesion): `/mefisto-console batch 12 13`.
+    // Reengancha un sequential ya lanzado (tras reiniciar la sesion): `/mefisto-divine-wager batch 12 13`.
     const batchArgs = /^batch((?:\s+#?\d+)+)$/.exec(arg)
     if (batchArgs?.[1]) {
       const issues = batchArgs[1].match(/\d+/g) ?? []
@@ -956,7 +956,7 @@ export const register: Register = on => {
     if (!run) {
       return (
         <Box flexDirection="column">
-          <Text dimColor>Sin corrida. Lanza /mefisto-tooling &lt;issue&gt; o /mefisto-console &lt;issue&gt;.</Text>
+          <Text dimColor>Sin corrida. Lanza /mefisto-tooling &lt;issue&gt; o /mefisto-divine-wager &lt;issue&gt;.</Text>
         </Box>
       )
     }
