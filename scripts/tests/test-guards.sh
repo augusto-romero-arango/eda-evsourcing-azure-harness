@@ -123,7 +123,7 @@ echo "[B] Skills internos (.claude/commands/mefisto-*.md): guard inverso present
 
 INTERNAL_SKILLS=(
     mefisto-tooling.md mefisto-tooling-verbose.md mefisto-plan.md mefisto-bug.md
-    mefisto-fix-review.md mefisto-merge.md mefisto-work-status.md
+    mefisto-fix-review.md mefisto-merge.md
     mefisto-sequential.md mefisto-release.md mefisto-bitacora.md
     mefisto-next-order.md mefisto-batch-stop.md
 )

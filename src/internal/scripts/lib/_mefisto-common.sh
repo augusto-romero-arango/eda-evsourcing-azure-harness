@@ -1167,8 +1167,8 @@ unset _mefisto_process_lib
 # existia.
 #
 # El nombre y la ruta de <out_file> NO cambian (sigue siendo
-# mefisto-tooling-stage-<N>-<agente>-<TS>-issue-<N>.log): _mefisto-work-status
-# y mefisto-investigator lo referencian, y run_agent muestra el `tail` de
+# mefisto-tooling-stage-<N>-<agente>-<TS>-issue-<N>.log): mefisto-investigator
+# lo referencia, y run_agent muestra el `tail` de
 # diagnostico del abort contra este mismo archivo derivado.
 #
 # CA-4 (#425): tolera una traza truncada (la ultima linea puede haber quedado

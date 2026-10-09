@@ -666,7 +666,7 @@ EVENTS_LOG_LINES="$(printf '%s\n' "$NON_TERMINAL_JSON" | jq -s -r \
     # `Bash`/`bash` tambien trae input_summary -- los primeros 80 caracteres
     # del comando (ver "Notas tecnicas" de #863) -- pero un comando NO es una
     # ruta: emitirlo como [archivo] llenaria el events.log que lee
-    # /mefisto-work-status de archivos inexistentes. CA-1 lo dice literal:
+    # /work-status (publicado) de archivos inexistentes. CA-1 lo dice literal:
     # linea [archivo] "por cada tool.started CON RUTA DE ARCHIVO en
     # input_summary". El nombre se compara en minusculas porque es la unica
     # forma de cubrir los dos runtimes con una sola lista sin volver el runner

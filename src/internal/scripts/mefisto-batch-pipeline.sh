@@ -100,7 +100,7 @@ LOG_FILE="$LOG_DIR/mefisto-batch-$TIMESTAMP.log"
 #   - EN VIVO, mientras el eslabon espera: la linea la emite el propio
 #     eslabon (issue #967, `warn "... en espera (hold), proxima sonda ..."`)
 #     y llega al pane del batch por el `tee` de mas abajo; en paralelo,
-#     /mefisto-work-status la lee de este mismo events.log y renderiza
+#     la consola de observacion la lee de este mismo events.log y renderiza
 #     "EN ESPERA" con causa y hora de sonda (CA-2/CA-4). El batch no la
 #     duplica: mientras el eslabon corre esta bloqueado en el `tee`.
 #   - AL CERRAR el eslabon: este script anota cuanto se espero, como nota
@@ -609,7 +609,7 @@ log "Rama base: $MAIN_BRANCH (el batch la mantiene sincronizada con origin/main 
 log "Modo en error: $([ "$STOP_ON_ERROR" = true ] && echo 'detener' || echo 'continuar')"
 log "Log: $LOG_FILE_ABS"
 log "Parada suave: /mefisto-batch-stop detiene el batch tras el eslabon en curso (issue #966)"
-log "Espera automatica: ante RATE_LIMIT/PROVIDER_UNAVAILABLE el eslabon en curso espera (hold) en vez de fallar (issue #967) -- mientras espera, /mefisto-work-status lo reporta 'en espera' (issue #969)"
+log "Espera automatica: ante RATE_LIMIT/PROVIDER_UNAVAILABLE el eslabon en curso espera (hold) en vez de fallar (issue #967) -- mientras espera, la consola de observacion lo reporta 'en espera' (issue #969)"
 log "Ejecucion aislada: cada eslabon fija sus ejecutables en el SHA verificado de origin/main (issue #1107)"
 
 # --- Loop principal ---

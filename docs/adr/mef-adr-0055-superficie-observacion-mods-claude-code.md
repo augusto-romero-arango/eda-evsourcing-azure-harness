@@ -45,7 +45,7 @@ Un mod del propio Mefisto **no contiene logica de pipeline**. Lee unicamente el 
 | `pipeline-history.jsonl` | Cierre de la corrida: el status se borra al terminar bien |
 | `logs/mefisto-tooling-stage-<s>-<agent>-<ts>-issue-<n>*.events.jsonl` | Live log, segun el contrato `src/runtime/contract/run-events.schema.json` |
 
-Si un dato no esta en esos archivos, se agrega al contrato en el pipeline, no se infiere en el mod. Asi la operacion sigue siendo neutral (MEF-ADR-0050): los pipelines no saben que existe el mod y `/mefisto-work-status` lee los mismos archivos.
+Si un dato no esta en esos archivos, se agrega al contrato en el pipeline, no se infiere en el mod. Asi la operacion sigue siendo neutral (MEF-ADR-0050): los pipelines no saben que existe el mod.
 
 ### 2. Las acciones delegan en skills existentes
 
@@ -83,7 +83,7 @@ La ruta queda registrada en `is_path_in_mefisto_scope` y en la politica OpenCode
 
 ### 5. Encaje con la neutralidad
 
-El mod es una superficie de **observacion**, no una operacion. MEF-ADR-0050 exige que toda operacion nazca neutral, y aqui la operacion (el pipeline, el merge) sigue neutral e intacta. Sin el mod (OpenCode, `claude -p`, VS Code o una politica administrada que lo bloquee), el flujo es exactamente el de hoy: pane de herdr o sesion tmux. El mod nunca es requisito de un pipeline.
+El mod es una superficie de **observacion**, no una operacion. MEF-ADR-0050 exige que toda operacion nazca neutral, y aqui la operacion (el pipeline, el merge) sigue neutral e intacta. Sin el mod (OpenCode, `claude -p`, VS Code o una politica administrada que lo bloquee), el flujo es exactamente el de hoy: pane de herdr, sesion tmux o el panel de logs de OpenCode, sin un comando de dashboard equivalente. El mod nunca es requisito de un pipeline.
 
 ### 6. Modo de lanzamiento sin pane: `MEFISTO_UI=mod`
 
@@ -156,12 +156,13 @@ nunca colisionan aunque ambos carguen en el repo de Mefisto.
 ## Consecuencias
 
 - La sesion de ejecucion muestra el avance y ofrece el merge sin cambiar de pane, y la fila de herdr baja de tres panes a dos.
-- Una corrida lanzada con el mod no tiene pane donde mirar su stdout. Su reporte queda en `logs/mefisto-tooling-run-*.report.log`, y `/mefisto-work-status` sigue funcionando igual.
+- Una corrida lanzada con el mod no tiene pane donde mirar su stdout. Su reporte queda en `logs/mefisto-tooling-run-*.report.log`, y la corrida no pierde ningun archivo de estado.
 - Un cambio en el formato del status, del historial o de los nombres de los `events.jsonl` puede romper el mod en silencio. Quien cambie ese contrato debe correr los tests del mod.
 - La API *early access* puede cambiar entre releases: ante una actualizacion de Claude Code, se revalida con `claude plugin validate`.
 
 ## Control de cambios
 
+- 2026-10-09: decision 1, decision 5 y Consecuencias: se retira el skill interno de dashboard como segundo lector de los archivos de estado; sin el mod la observacion es el pane de herdr, la sesion tmux o el panel de logs de OpenCode (issue #2161).
 - 2026-10-09: decision 9 (nombres): nombres desde el *Fausto*; `mefisto-console` pasa a `mefisto-divine-wager`, el tablero publicado `planner-board` pasa a `fausto-board` y se reserva `fausto-blood-pact` para la consola publicada.
 - 2026-10-09: decision 9 (nombres): `mefisto-monitor` pasa a `mefisto-console`, consola de operacion; los tableros del planner registran `/mefisto-planner-board` (interno) y `/planner-board` (publicado) en vez de `/mefisto-board`; el publicado no se activa en el repo de Mefisto.
 - 2026-10-08: generalizacion al tablero del planner publicado: aplica a ambos lados, decision 4 con dos ubicaciones, decision 8 con tabla de diferencias por lado y tableros independientes, version minima 2.1.287 del plugin publicado.

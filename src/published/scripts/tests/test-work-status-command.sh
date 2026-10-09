@@ -32,7 +32,7 @@ contains "$body" 'EN ESPERA' 'presenta hold como EN ESPERA'
 contains "$body" 'SIN NOVEDADES' 'presenta stale como SIN NOVEDADES'
 contains "$body" '(sin pipelines registrados)' 'mensaje sin pipelines registrados'
 contains "$body" '(sin pipelines completados aun)' 'mensaje sin pipelines completados'
-for forbidden in 'Claude' 'OpenCode' 'claude' 'opencode' '.claude' '.opencode' 'cache' 'model:' 'tools:' 'allowed-tools:' 'permission:' 'Glob' 'Read' 'Bash(' '/mefisto-work-status' '.mefisto/pipeline' '.claude/pipeline'; do absent "$body" "$forbidden" "fuente no publica token prohibido: $forbidden"; done
+for forbidden in 'Claude' 'OpenCode' 'claude' 'opencode' '.claude' '.opencode' 'cache' 'model:' 'tools:' 'allowed-tools:' 'permission:' 'Glob' 'Read' 'Bash(' '.mefisto/pipeline' '.claude/pipeline'; do absent "$body" "$forbidden" "fuente no publica token prohibido: $forbidden"; done
 
 echo '[salidas] adaptadores y mirror'
 for file in "$CLAUDE" "$OPENCODE"; do [ -f "$file" ] && pass "existe ${file#"$REPO_ROOT/"}" || fail "falta ${file#"$REPO_ROOT/"}"; done
