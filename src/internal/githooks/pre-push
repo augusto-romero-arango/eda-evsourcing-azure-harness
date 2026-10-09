@@ -61,7 +61,7 @@ Generado automaticamente por el hook pre-push de Mefisto (issue #2110)."
     if ! url="$(gh pr create --base main --head "$branch" --title "$title" --body "$body" 2>&1)"; then
         echo "pre-push: la rama '$branch' quedo empujada pero 'gh pr create' fallo: $url" >&2
         echo "  Abre el PR a mano:" >&2
-        echo "  gh pr create --base main --head $branch --title \"$title\"" >&2
+        printf '  gh pr create --base main --head %q --title %q --body %q\n' "$branch" "$title" "$body" >&2
         continue
     fi
     num="$(printf '%s\n' "$url" | grep -Eo '[0-9]+$' | tail -1)"

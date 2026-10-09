@@ -32,6 +32,11 @@ MAIN_ROOT="$(dirname "$COMMON_DIR")"
 WT_BASE="$MAIN_ROOT/.mefisto/worktrees"
 BASE_BRANCH="main"
 
+# ensure_githooks_installed (issue #2110): activa el hook pre-push de rescate.
+# Si la libreria no carga, se degrada a no-op: el helper no depende de ella.
+# shellcheck source=lib/_mefisto-common.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/_mefisto-common.sh" 2>/dev/null || true
+
 cmd_new() {
     local slug="${1:-}"
     if [ -z "$slug" ]; then
@@ -46,6 +51,10 @@ cmd_new() {
     fi
 
     local wt="$WT_BASE/$slug"
+
+    if declare -F ensure_githooks_installed >/dev/null; then
+        MEFISTO_REPO_ROOT="$MAIN_ROOT" ensure_githooks_installed
+    fi
 
     if git -C "$MAIN_ROOT" worktree list --porcelain | grep -qxF "worktree $wt" && [ -d "$wt" ]; then
         echo "$wt"

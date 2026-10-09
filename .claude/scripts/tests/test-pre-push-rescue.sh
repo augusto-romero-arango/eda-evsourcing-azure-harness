@@ -39,7 +39,7 @@ echo "[A] rescate exitoso"
 setup
 out="$(git push origin main 2>&1)"; rc=$?
 check "push rechazado" "[ $rc -ne 0 ]"
-check "mensaje PR #77" "echo '$out' | grep -q 'entregado como PR #77'"
+check "mensaje PR #77" "printf '%s' \"\$out\" | grep -q 'entregado como PR #77'"
 check "main remoto intacto" "[ \"\$(git --git-dir=$TMP/remote.git rev-parse main)\" != \"\$(git rev-parse HEAD)\" ]"
 check "rama rescate existe" "git --git-dir=$TMP/remote.git branch --list 'rescate/*' | grep -q rescate"
 check "gh con titulo del commit" "grep -q 'cambio directo' $GH_LOG"
@@ -61,7 +61,7 @@ chmod +x "$TMP/remote.git/hooks/pre-receive"
 out="$(git push origin main 2>&1)"; rc=$?
 check "rechazado" "[ $rc -ne 0 ]"
 check "sin PR" "[ ! -s $GH_LOG ]"
-check "da comando de reintento" "echo '$out' | grep -q 'Reintenta'"
+check "da comando de reintento" "printf '%s' \"\$out\" | grep -q 'Reintenta'"
 rm -f "$TMP/remote.git/hooks/pre-receive"
 
 echo "[D] falla gh"
@@ -69,7 +69,7 @@ setup
 out="$(GH_FAIL=1 git push origin main 2>&1)"; rc=$?
 check "rechazado" "[ $rc -ne 0 ]"
 check "rama empujada" "git --git-dir=$TMP/remote.git branch --list 'rescate/*' | grep -q rescate"
-check "imprime gh pr create" "echo '$out' | grep -q 'gh pr create --base main --head rescate/'"
+check "imprime gh pr create" "printf '%s' \"\$out\" | grep -q 'gh pr create --base main --head rescate/'"
 
 echo "[E] ensure_githooks_installed"
 setup
@@ -77,12 +77,12 @@ git config --unset core.hooksPath
 export MEFISTO_REPO_ROOT="$TMP/work"
 source "$ROOT/src/internal/scripts/lib/_mefisto-common.sh"
 w="$(ensure_githooks_installed 2>&1)"
-check "vacio: configura" "[ \"\$(git config core.hooksPath)\" = src/internal/githooks ] && echo '$w' | grep -q AVISO"
+check "vacio: configura" "[ \"\$(git config core.hooksPath)\" = src/internal/githooks ] && printf '%s' \"\$w\" | grep -q AVISO"
 w="$(ensure_githooks_installed 2>&1)"
-check "propio: idempotente y silencioso" "[ -z '$w' ] && [ \"\$(git config core.hooksPath)\" = src/internal/githooks ]"
+check "propio: idempotente y silencioso" "[ -z \"\$w\" ] && [ \"\$(git config core.hooksPath)\" = src/internal/githooks ]"
 git config core.hooksPath /otro/lugar
 w="$(ensure_githooks_installed 2>&1)"
-check "ajeno: no pisa, avisa" "[ \"\$(git config core.hooksPath)\" = /otro/lugar ] && echo '$w' | grep -q AVISO"
+check "ajeno: no pisa, avisa" "[ \"\$(git config core.hooksPath)\" = /otro/lugar ] && printf '%s' \"\$w\" | grep -q AVISO"
 
 echo "Resultado: $PASS ok, $FAIL fail"
 [ "$FAIL" -eq 0 ]
