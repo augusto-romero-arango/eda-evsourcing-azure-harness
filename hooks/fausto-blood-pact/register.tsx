@@ -3,7 +3,7 @@ import type { EngineInterface, Register } from 'claude-code'
 
 import { RASTER_ROWS, ROLES, face, sprite, toRasterCells, waitingFace } from '../sprites'
 import type { Role } from '../sprites'
-import { cropGrid, usedColumns } from '../logic'
+import { cropGrid, numberWidth, usedColumns } from '../logic'
 import type { BoardList, PipelineResult, PipelineRun } from '../types'
 import type { BatchStatus, LastEvent, LaunchKind, LaunchPlan, MascotPose, OpenPr } from './logic'
 import {
@@ -43,7 +43,7 @@ import {
   stateDirOf,
   pageOf,
   parseNextOrder,
-  rowText,
+  rowParts,
   transcriptPathOf,
   PR_CHECK_MS,
   mergeArgsOf,
@@ -724,7 +724,9 @@ export const register: Register = on => {
     if (!list) void refresh($)
     const { page, pages } = pageOf(await read($, pageAtom), list?.items.length ?? 0, PAGE_ROWS)
     const visible = list?.items.slice(page * PAGE_ROWS, (page + 1) * PAGE_ROWS) ?? []
-    const numWidth = String(list?.items.length ?? 0).length + 2
+    const numWidth = numberWidth(visible)
+    const afterWidth = Math.min(16, Math.max(0, ...visible.map(i => rowParts(i, numWidth, 0).after.length)))
+    const titleWidth = Math.max(12, body - 3 - 2 - numWidth - 1 - (afterWidth > 0 ? afterWidth + 2 : 0))
     const footerRest = list ? footerRestOf(list, Boolean(list.launch || list.parallel?.launch) || openPrs.length > 0) : ''
     return (
       <Box flexDirection="column" borderStyle="round" borderColor="claude" borderDimColor paddingX={1}>
@@ -735,11 +737,18 @@ export const register: Register = on => {
             {!list && <Text dimColor>cargando…</Text>}
             {list?.error && <Text color="error">next-order falló: {clip(list.error, body - 20)}</Text>}
             {list && !list.error && visible.length === 0 && <Text dimColor>Sin issues lanzables</Text>}
-            {visible.map((item, i) => (
-              <Button key={`row-${item.number}`} hotkey={ROW_KEYS[i] as string} plain dimColor={page > 0 || i > 0}
-                label={rowText(item, page * PAGE_ROWS + i + 1, numWidth, Math.max(12, body - numWidth - 24), Number(ROW_KEYS[i]))}
-                onPress={() => void launchRow($, item.number)} />
-            ))}
+            {visible.map((item, i) => {
+              const row = rowParts(item, numWidth, titleWidth)
+              return (
+                <Box key={`row-${item.number}`}>
+                  <Text color={row.color}>{`${row.letter} `}</Text>
+                  <Button hotkey={ROW_KEYS[i] as string} plain dimColor={page > 0 || i > 0}
+                    label={row.label}
+                    onPress={() => void launchRow($, item.number)} />
+                  <Text dimColor>{row.after ? `  ${clip(row.after, afterWidth)}` : ''}</Text>
+                </Box>
+              )
+            })}
             {Array.from({ length: Math.max(0, PAGE_ROWS - Math.max(visible.length, 1)) }, (_, i) => (
               <Text key={`blank-${i}`}> </Text>
             ))}

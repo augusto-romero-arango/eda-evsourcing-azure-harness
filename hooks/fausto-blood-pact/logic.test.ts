@@ -40,6 +40,7 @@ import {
   nextOrderPath,
   pageOf,
   parseNextOrder,
+  rowParts,
   rowText,
   answerText,
   footerRestOf,
@@ -91,10 +92,11 @@ test('parseNextOrder con exit 2 informa el error', () => {
   expect(parseNextOrder(0, 'no json', '').error).toBe('salida de next-order no es JSON')
 })
 
-test('rowText muestra orden, numero, tipo y titulo', () => {
-  const item = { number: 7, title: 'Hacer algo', tipo: 'tooling', after: [], hasDepsSection: true }
-  expect(rowText(item, 1, 3, 40)).toBe('1.  #7 [tooling] Hacer algo')
-  expect(rowText({ ...item, tipo: null }, 1, 3, 40)).toBe('1.  #7 [?] Hacer algo')
+test('rowText y rowParts: sin tecla, posicion ni [tipo]; letra de typeBadge y tras #M', () => {
+  const item = { number: 7, title: 'Hacer algo', tipo: 'tooling', after: [3], hasDepsSection: true }
+  expect(rowText(item, 4, 40)).toBe('#7   Hacer algo')
+  expect(rowParts(item, 4, 40)).toEqual({ letter: 'T', color: 'magenta', label: '#7   Hacer algo', after: 'tras #3' })
+  expect(rowParts({ ...item, tipo: null, after: [] }, 4, 40)).toEqual({ letter: '?', color: 'gray', label: '#7   Hacer algo', after: '' })
 })
 
 test('pageOf acota la pagina', () => {
@@ -249,11 +251,11 @@ test('tipo -> opciones de un solo issue', () => {
   expect(planIssue(item('docs')).kind).toBe('none')
 })
 
-test('pie: teclas, infra y excluidos; filas con prefijo', () => {
+test('pie: teclas, infra y excluidos; fila sin prefijo', () => {
   const l = board({ infra: [9] })
   expect(footerOf(l)).toBe('1 sequential · 2 parallel 2 · 5-9 uno · infra: #9 · 1 bloqueados')
   expect(footerRestOf(l, true)).toBe(' · 5-9 uno · infra: #9 · 1 bloqueados')
-  expect(rowText(l.items[0]!, 1, 3, 20, 5)).toBe('5: 1.  #7 [tooling] A')
+  expect(rowText(l.items[0]!, 4, 20)).toBe('#7   A')
 })
 
 test('lanzar: sin argumento es 1, un numero fuera de los lanzables lo dice', () => {
