@@ -115,6 +115,8 @@ Luego lanza el pipeline interno en tmux:
 
 ### 4. Instrucciones de conexion
 
+Seguimiento segun runtime (MEF-ADR-0050, issue #2284): si el runtime activo tiene cinta de sesion (el mod, MEF-ADR-0055), el script corre desacoplado, sin pane ni sesion tmux, y el avance lo sigue la cinta de esta misma sesion; en el resto de runtimes el seguimiento es el pane a la derecha del pane que despacha, con logs y resumen. Un `MEFISTO_UI=tmux|herdr|mod` explicito siempre gana.
+
 Dentro de herdr (`HERDR_ENV=1` en el entorno), el script delega en la interfaz herdr (`mefisto-herdr-pipeline.sh`) y no hay nada que adjuntar: el pipeline queda corriendo en un pane de este mismo workspace con el visor en vivo del agente. En ese caso responde con:
 
 ```

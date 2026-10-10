@@ -145,6 +145,27 @@ require_herdr_context() {
         || abort "La interfaz herdr requiere jq para leer las respuestas del socket API. Instala jq o usa MEFISTO_UI=tmux."
 }
 
+# assert_pane_ownership
+#
+# Issue #2284: HERDR_PANE_ID puede ser heredado y ajeno (un daemon o un proceso
+# lanzado desde otro pane lo arrastra). Antes de cualquier herdr pane
+# split/run/close se exige que este proceso descienda del shell_pid que herdr
+# reporta para ese pane; si no, aborta sin tocar ningun pane.
+assert_pane_ownership() {
+    [ -n "${HERDR_PANE_OWNERSHIP_OK:-}" ] && return 0
+    local info shell_pid pid
+    info=$(herdr pane process-info --pane "$HERDR_PANE_ID" 2>/dev/null) || info=""
+    shell_pid=$(echo "$info" | jq -r '.result.process_info.shell_pid // empty' 2>/dev/null)
+    pid=$$
+    local depth=0
+    while [ -n "$shell_pid" ] && [ -n "$pid" ] && [ "$pid" -gt 1 ] && [ "$depth" -lt 64 ]; do
+        [ "$pid" = "$shell_pid" ] && { HERDR_PANE_OWNERSHIP_OK=1; return 0; }
+        pid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ')
+        depth=$((depth + 1))
+    done
+    abort "HERDR_PANE_ID=$HERDR_PANE_ID es heredado y no es el pane de esta sesion (este proceso no desciende de su shell): no se abre ningun pane. Usa MEFISTO_UI=mod o MEFISTO_UI=tmux, o lanza desde el pane herdr propio."
+}
+
 # --- Helpers de panes (mismo contrato que scripts/herdr-pipeline.sh) ---
 
 pane_exists() {
@@ -198,6 +219,7 @@ resolve_report_runtime() {
 # (CA-3, issue #1563/#1571) exige un pane que NUNCA se tecleo antes -- nunca
 # el pane sospechoso de un arranque no confirmado.
 split_new_report_pane() {
+    assert_pane_ownership
     local resp chosen
     resp=$(herdr pane split --pane "$HERDR_PANE_ID" --direction right --cwd "$PROJECT_ROOT" --no-focus 2>&1) \
         || abort "No se pudo crear el pane de ejecucion (herdr pane split): $resp"
@@ -227,6 +249,7 @@ split_new_report_pane() {
 # al primer barrido, sin cerrar su pane -- costo unico de migracion, conservador
 # (CA-5): no hay forma de saber a que runtime pertenecian.
 acquire_report_pane() {
+    assert_pane_ownership
     resolve_report_runtime
     local runtime="$HERDR_RUNTIME"
 
