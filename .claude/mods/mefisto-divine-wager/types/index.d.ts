@@ -46,8 +46,14 @@ export type ChangelogSummary = { issues: number; added: number; changed: number;
 /** Espera por rate limit en curso, de la ultima linea de events.log. */
 export type Hold = { family: string; nextProbe: string; deadline: string }
 
+/** Una field note de la cinta de la bitacora: pendiente hasta que aparece en `procesadas/`. */
+export type BitacoraNote = { name: string; estado: 'pendiente' | 'procesada' }
+
+/** El PR de bitacora que dejo el historiador, abierto a la espera de mergearlo o cerrarlo. */
+export type BitacoraPr = { number: number; title: string }
+
 /** El subagente mefisto-historiador escribiendo la bitacora en esta sesion (lo lanza /mefisto-bitacora). */
-export type Historian = { startedMs: number; finishedMs: number | null }
+export type Historian = { startedMs: number; finishedMs: number | null; notes: BitacoraNote[]; pr: BitacoraPr | null }
 
 /** Un /mefisto-release en esta sesion: en reposo mientras se prepara, despegando mientras corre su script. */
 export type Release = { phase: 'reposo' | 'despegando'; startedMs: number; finishedMs: number | null }

@@ -45,7 +45,13 @@ sesiones `-p` no los cargan. Para probar una copia suelta: `claude --plugin-dir 
   espera por rate limit), los PRs de cada issue y `4` cierra. Un toast avisa cada merge.
   `/mefisto-divine-wager batch <issues>` reengancha un sequential ya lanzado.
 - Mientras `/mefisto-bitacora` corre al subagente `mefisto-historiador`, la banda de espera muestra al historiador
-  escribiendo en su libro (`historiador escribiendo la bitácora MM:SS`) y, al terminar, `bitácora escrita`.
+  escribiendo (`historiador escribiendo la bitácora N/M MM:SS`) y la cinta de sus field notes: al arrancar toma las
+  de `docs/bitacora/field-notes/` y las de los PRs de field notes sin mergear (la misma fuente que `bitácora N`), y
+  cada una pasa de `●` pendiente a `✓` procesada cuando aparece en `procesadas/`, en el checkout o en el worktree
+  del historiador (`.mefisto/pipeline/summaries/bitacora-<fecha>/`, de `mefisto-bitacora-worktree.sh`). Al terminar,
+  `bitácora escrita`; si su PR quedo abierto, la banda lo ofrece: `1` mergea (`/mefisto-merge N`, con su cinta),
+  `2` lo abre en GitHub y `3` lo cierra sin mergear y borra la rama (confirma en el dialogo nativo). Si el PR ya
+  no esta abierto (el skill lo mergeo), la cinta se limpia sola a los pocos segundos.
 - Mientras corre `/mefisto-release` (lanzado con `4` o escrito a mano), la banda muestra un cohete: en reposo sobre
   su plataforma mientras se prepara, despegando con llama mientras corre `mefisto-release.sh`, y `release terminado`
   al cerrar el turno.
