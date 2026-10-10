@@ -1,6 +1,6 @@
 # Quickstart greenfield: arrancar Mefisto en un proyecto nuevo
 
-Esto es lo que le contarías a un compañero que acaba de clonar un repo vacío y quiere adoptar Mefisto: qué se instala, quién necesita permisos de Azure y en qué orden se enciende todo. No repite reglas — cada una vive en su ADR y se enlaza desde aquí. El detalle exhaustivo, con cada comando y cada caveat de campo, sigue en el [guía del consumidor, sección "Primeros pasos con el harness (greenfield)"](guia-del-consumidor.md#primeros-pasos-con-el-harness-greenfield).
+Esto es lo que le contarías a un compañero que acaba de clonar un repo vacío y quiere adoptar Mefisto: qué se instala, quién necesita permisos de Azure y en qué orden se enciende todo. No repite reglas — cada una vive en su ADR y se enlaza desde aquí. El detalle exhaustivo, con cada comando y cada caveat de campo, sigue en la [guía del consumidor, sección "Primeros pasos con el harness (greenfield)"](guia-del-consumidor.md#primeros-pasos-con-el-harness-greenfield).
 
 ## Dos roles, no una persona haciendo de todo
 

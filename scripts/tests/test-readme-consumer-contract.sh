@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
-# test-readme-consumer-contract.sh -- Contrato canonico .mefisto/harness.config.json en README.md (#1518).
+# test-readme-consumer-contract.sh -- Contrato canonico .mefisto/harness.config.json en la
+# documentacion del consumidor (#1518): README.md y el manual operativo que #2239 movio a
+# docs/guia-del-consumidor.md y docs/migracion-y-versionado.md.
 #
-# Grep puro sobre README.md: ninguna instruccion de instalacion/onboarding debe
+# Grep puro sobre ese corpus: ninguna instruccion de instalacion/onboarding debe
 # nacer legacy (MEF-ADR-0053 decision 4). Verifica que toda mencion superviviente
 # de la ruta legacy sea explicitamente de fallback/migracion, que el canonico
 # aparezca lo suficiente, la regla de .gitignore de .mefisto/pipeline/ (igual que
@@ -11,7 +13,10 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
-README="$REPO_ROOT/README.md"
+# El nombre README se conserva: designa el corpus completo de la documentacion del consumidor.
+README="$(mktemp)"
+trap 'rm -f "$README"' EXIT
+cat "$REPO_ROOT/README.md" "$REPO_ROOT/docs/guia-del-consumidor.md" "$REPO_ROOT/docs/migracion-y-versionado.md" > "$README"
 PASS=0
 FAIL=0
 
