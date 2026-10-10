@@ -75,6 +75,15 @@ declare module 'claude-code' {
       pactResults: PipelineResult[]
       pactLastEvent: { kind: 'tool' | 'text'; tool: string } | null
       pactOpenPrs: { number: string; title: string }[]
+      pactBatch: {
+        pipeline: string
+        started: string
+        state: 'running' | 'completed' | 'failed' | 'stopped'
+        current: number | null
+        stopRequested: boolean
+        holdSeconds: number
+        issues: { issue: number; status: 'pendiente' | 'en-curso' | 'mergeado' | 'fallido' | 'aplazado' | 'saltado'; pr: string | null; detail: string }[]
+      } | null
       pactTick: number
     }
   }

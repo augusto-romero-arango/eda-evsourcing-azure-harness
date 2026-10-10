@@ -72,3 +72,15 @@ En reposo (lanzables visibles), si hay PRs abiertos de trabajo, el pie suma `3 P
 
 - `3`: con un solo PR, `$.ui.ask` con `#N título` y "Cancelar"; con varios, selección múltiple: "Todos" y los 3 más recientes (otros números, en la opción de texto). Ejecuta `/mefisto:merge` con `$.command.run`, anunciado con un toast. "Todos" pasa los números listados, nunca `--all` (mergearía borradores y field notes). Cancelar o no elegir no ejecuta nada.
 - `/fausto-blood-pact prs`: lo mismo sin teclas.
+
+## Capacidad vigente (incremento 7): seguir un sequential como lote
+
+Con `pipeline-status-batch.json` (lo escribe `batch-pipeline.sh`, #2202) en `state: running`, **el lote ocupa la banda**. Lectura pura del archivo; la consola nunca lo modifica.
+
+- Cabecera `sequential N/M · Mm` (N cuenta los `mergeado`; con parada pedida, `deteniendo`), la cola por issue (`✓` mergeado, `●` en curso, `✗` fallido, `⏸` aplazado, `-` saltado, `·` pendiente), y el eslabon en curso con pipeline, agente y tiempo de su propio status; la mascota sigue la regla del incremento 4. Ese eslabon no se repite como corrida suelta; las otras corridas activas se cuentan al pie (`+N corridas`).
+- `1`: `$.ui.ask` ("Detener tras el actual" / "Seguir"); al aceptar escribe la señal vacía `pipeline-state/batch-stop` en la raíz del checkout principal (`git rev-parse --git-common-dir`), la misma de `/mefisto:batch-stop` (MEF-ADR-0017); nunca mata un proceso. Con `stop_requested` la tecla no se ofrece.
+- `2`: `gh pr view --web` del PR del eslabón en curso o, si aún no tiene, del último `mergeado`. Sin PR no se muestra.
+- Cada issue que pasa a `mergeado` dispara un toast. Con el lote en `completed`/`failed`/`stopped` la banda muestra el resumen (mergeados, fallidos, aplazados, saltados, espera por rate limit) con el PR de cada issue; `4` lo cierra (descarte persistente en `$.store`, clave repo + `started`, sin tocar el archivo).
+- `/fausto-blood-pact detener` equivale a `1`; sin lote en curso, lo dice.
+
+Fuera de alcance: el log acumulado del lote (queda para el incremento de log en vivo).
