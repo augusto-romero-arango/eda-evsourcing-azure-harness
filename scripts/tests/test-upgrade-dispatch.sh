@@ -50,16 +50,16 @@ log() { cat "$STUB_LOG"; }
 echo "[a] claude: delegacion y traduccion de flags"
 MEFISTO_RUNTIME=claude run >/dev/null; [ "$(log)" = "update-plugin " ] && ok "sin flags" || ko "sin flags: $(log)"
 MEFISTO_RUNTIME=claude run --align-peer >/dev/null; has "$(log)" "update-plugin --align-opencode" && ok "--align-peer" || ko "--align-peer"
-MEFISTO_RUNTIME=claude run --prune --loaded 0.9.0 >/dev/null; [ "$(log)" = "update-plugin --prune --loaded 0.9.0" ] && ok "--prune --loaded" || ko "--prune --loaded: $(log)"
-MEFISTO_RUNTIME=claude run --prune >/dev/null; [ "$(log)" = "update-plugin --prune" ] && ok "--prune sin --loaded no lo infiere de .plugin-root" || ko "--prune: $(log)"
+MEFISTO_RUNTIME=claude run --prune --only 0.8.0 --loaded 0.9.0 >/dev/null; [ "$(log)" = "update-plugin --prune --only 0.8.0 --loaded 0.9.0" ] && ok "--prune --loaded" || ko "--prune --loaded: $(log)"
+MEFISTO_RUNTIME=claude run --prune --only 0.43.0,0.44.0 >/dev/null; [ "$(log)" = "update-plugin --prune --only 0.43.0,0.44.0" ] && ok "--prune reenvia --only y sin --loaded no lo infiere de .plugin-root" || ko "--prune: $(log)"
 
 LR="$TMP/cache/mefisto"
 for v in 0.44.0 0.44.1; do mkdir -p "$LR/$v/.claude-plugin"; printf '{"name":"mefisto","version":"%s"}' "$v" > "$LR/$v/.claude-plugin/plugin.json"; done
 mkdir -p "$TMP/cache/otro/9.9.9/.claude-plugin"; printf '{"name":"otro","version":"9.9.9"}' > "$TMP/cache/otro/9.9.9/.claude-plugin/plugin.json"
 MEFISTO_LOADED_ROOT="$LR/0.44.1" MEFISTO_RUNTIME=claude run >/dev/null; has "$(log)" "--loaded 0.44.1" && ok "MEFISTO_LOADED_ROOT valida reenvia --loaded (actualizar)" || ko "loaded actualizar: $(log)"
 MEFISTO_LOADED_ROOT="$LR/0.44.1" MEFISTO_RUNTIME=claude run --align-peer >/dev/null; [ "$(log)" = "update-plugin --align-opencode --loaded 0.44.1" ] && ok "--align-peer reenvia --loaded" || ko "align loaded: $(log)"
-MEFISTO_LOADED_ROOT="$LR/0.44.1" MEFISTO_RUNTIME=claude run --prune >/dev/null; [ "$(log)" = "update-plugin --prune --loaded 0.44.1" ] && ok "--prune reenvia --loaded desde MEFISTO_LOADED_ROOT" || ko "prune loaded: $(log)"
-MEFISTO_LOADED_ROOT="$LR/0.44.1" MEFISTO_RUNTIME=claude run --prune --loaded 0.9.0 >/dev/null; [ "$(log)" = "update-plugin --prune --loaded 0.9.0" ] && ok "--loaded explicito gana" || ko "explicito: $(log)"
+MEFISTO_LOADED_ROOT="$LR/0.44.1" MEFISTO_RUNTIME=claude run --prune --only 0.43.0 >/dev/null; [ "$(log)" = "update-plugin --prune --only 0.43.0 --loaded 0.44.1" ] && ok "--prune reenvia --loaded desde MEFISTO_LOADED_ROOT" || ko "prune loaded: $(log)"
+MEFISTO_LOADED_ROOT="$LR/0.44.1" MEFISTO_RUNTIME=claude run --prune --only 0.8.0 --loaded 0.9.0 >/dev/null; [ "$(log)" = "update-plugin --prune --only 0.8.0 --loaded 0.9.0" ] && ok "--loaded explicito gana" || ko "explicito: $(log)"
 for bad in "" '${CLAUDE_PLUGIN_ROOT}' "$LR/0.44.0/../0.44.1" "$LR/9.9.9" "$TMP/cache/otro/9.9.9" "relativa/0.44.1"; do
     MEFISTO_LOADED_ROOT="$bad" MEFISTO_RUNTIME=claude run >/dev/null; [ "$(log)" = "update-plugin " ] && ok "MEFISTO_LOADED_ROOT '$bad' se ignora" || ko "invalida '$bad': $(log)"
 done

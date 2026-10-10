@@ -87,10 +87,12 @@ MARKER_FILE=".claude/pipeline/.plugin-root.previous"
 CANONICAL_ROOT_FILE=".mefisto/pipeline/.plugin-root"
 
 usage() {
-    echo "Uso: $0 [--align-opencode] [--prune [--loaded <version>]]" >&2
+    echo "Uso: $0 [--align-opencode] [--prune --only <v>[,<v>...] [--loaded <version>]]" >&2
     echo "  (sin flags)        actualiza marketplace + plugin, reescribe .plugin-root, imprime el" >&2
     echo "                     delta de CHANGELOG y reporta versiones podables del cache (sin borrar)." >&2
-    echo "  --prune            borra las versiones podables (solo tras confirmar con el usuario, CA-4)." >&2
+    echo "  --prune            borra versiones podables (solo tras confirmar con el usuario, CA-4); exige --only." >&2
+    echo "  --only <lista>     versiones confirmadas por el usuario (separadas por coma). La poda borra solo la" >&2
+    echo "                     interseccion entre esa lista y las podables recalculadas al borrar." >&2
     echo "  --loaded <version> version que la sesion activa tiene cargada; la poda nunca la borra." >&2
     echo "  --align-opencode alinea OpenCode con el manifiesto de la nueva raiz Claude (sin podar releases OpenCode)." >&2
 }
@@ -350,7 +352,7 @@ main() {
         return 1
     fi
 
-    local prune=false align_opencode=false loaded_cli=""
+    local prune=false align_opencode=false loaded_cli="" only_raw="" only_given=false
     while [ "$#" -gt 0 ]; do
         case "$1" in
             --prune) prune=true; shift ;;
@@ -362,6 +364,13 @@ main() {
                     return 1
                 fi
                 loaded_cli="$2"; shift 2 ;;
+            --only)
+                if [ "$#" -lt 2 ]; then
+                    echo "ERROR: --only requiere una lista de versiones (p. ej. --only 0.43.0,0.44.0)" >&2
+                    usage
+                    return 1
+                fi
+                only_given=true; only_raw="$2"; shift 2 ;;
             -h|--help) usage; return 0 ;;
             *) echo "ERROR: argumento desconocido '$1'" >&2; usage; return 1 ;;
         esac
@@ -370,6 +379,35 @@ main() {
         echo "ERROR: --align-opencode pertenece al modo de actualizacion y no se combina con --prune." >&2
         usage
         return 1
+    fi
+
+    local only_list=()
+    if [ "$only_given" = true ] && [ "$prune" = false ]; then
+        echo "ERROR: --only solo aplica junto con --prune." >&2
+        usage
+        return 1
+    fi
+    if [ "$prune" = true ]; then
+        if [ "$only_given" = false ]; then
+            echo "ERROR: --prune exige --only <v>[,<v>...] con las versiones que el usuario confirmo. No se borro nada." >&2
+            usage
+            return 1
+        fi
+        local item
+        while IFS= read -r item; do
+            [ -z "$item" ] && continue
+            if ! printf '%s' "$item" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.+-]+)?$'; then
+                echo "ERROR: '$item' en --only no es una version (se espera X.Y.Z). No se borro nada." >&2
+                usage
+                return 1
+            fi
+            only_list+=("$item")
+        done < <(printf '%s\n' "$only_raw" | tr ',' '\n')
+        if [ "${#only_list[@]}" -eq 0 ]; then
+            echo "ERROR: --only recibio una lista vacia. No se borro nada." >&2
+            usage
+            return 1
+        fi
     fi
 
     # Overridable por entorno para que los tests puedan apuntar a un cache de mentira.
@@ -514,10 +552,16 @@ main() {
     if [ -z "$podables" ]; then
         echo "Cache limpio: no hay versiones podables."
     elif [ "$prune" = true ]; then
-        echo "Borrando versiones podables del cache (--prune)..."
-        local v destino
+        echo "Borrando del cache solo las versiones confirmadas (--only) que siguen siendo podables..."
+        local v destino c confirmada no_confirmadas="" ahora_protegidas=""
         while IFS= read -r v; do
             [ -z "$v" ] && continue
+            confirmada=false
+            for c in "${only_list[@]}"; do [ "$c" = "$v" ] && confirmada=true; done
+            if [ "$confirmada" = false ]; then
+                no_confirmadas+="$v"$'\n'
+                continue
+            fi
             destino="${mefisto_cache_dir%/}/$v"
             # Doble chequeo antes de un rm -rf: el destino debe ser un directorio de
             # version dentro del cache de mefisto, nunca una ruta armada a medias.
@@ -532,6 +576,19 @@ main() {
                 *) echo "  omitida (ruta inesperada): $destino" ;;
             esac
         done <<< "$podables"
+        for c in "${only_list[@]}"; do
+            if ! printf '%s\n' "$podables" | grep -qxF "$c"; then
+                if printf '%s\n' "$protegidas" | grep -qxF "$c"; then
+                    ahora_protegidas+="$c "
+                fi
+            fi
+        done
+        if [ -n "$no_confirmadas" ]; then
+            echo "Podables NO confirmadas (no se borraron): $(printf '%s' "$no_confirmadas" | tr '\n' ' ')"
+        fi
+        if [ -n "$ahora_protegidas" ]; then
+            echo "Confirmadas que ahora estan protegidas (no se borraron): $ahora_protegidas"
+        fi
         echo ""
         echo "El marker de sesion ($MARKER_FILE) se conserva: lo limpia el hook SessionStart"
         echo "del plugin en el proximo arranque. Mientras esta sesion viva, protege la version cargada."
@@ -539,11 +596,13 @@ main() {
         echo "Versiones podables en el cache (ni la cargada en esta sesion ni la nueva):"
         printf '%s\n' "$podables" | sed 's/^/  - /'
         echo ""
-        echo "No se borro nada. Pide confirmacion al usuario y, si acepta, vuelve a correr:"
+        echo "No se borro nada. Pide confirmacion al usuario y, si acepta, vuelve a correr con la lista exacta mostrada:"
+        local only_hint
+        only_hint=$(printf '%s\n' "$podables" | paste -sd, -)
         if [ -n "$loaded_version" ]; then
-            echo "  $0 --prune --loaded $loaded_version"
+            echo "  $0 --prune --only $only_hint --loaded $loaded_version"
         else
-            echo "  $0 --prune"
+            echo "  $0 --prune --only $only_hint"
         fi
     fi
     echo ""
