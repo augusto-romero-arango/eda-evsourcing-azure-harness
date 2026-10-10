@@ -44,15 +44,17 @@
 #   - .plugin-root NO sirve por si solo: el modo actualizar lo reescribe a la version
 #     nueva (paso 3), asi que desde ese momento ya no describe lo que la sesion tiene
 #     cargado en memoria, sino lo que resolvera el proximo proceso.
-#   - Fuente primaria: --loaded <version>, que commands/upgrade.md copia de la linea
-#     "Version cargada en esta sesion:" que imprimio la invocacion de actualizacion
-#     (mismo patron con el que commands/onboard.md pasa SUBSCRIPTION_ID entre bloques).
+#   - Fuente primaria: --loaded <version>. Bajo /upgrade lo reenvia upgrade.sh, que lo
+#     deriva de MEFISTO_LOADED_ROOT: la raiz de la version viva que el comando recibe
+#     sustituida por el runtime al cargarse, valida aun tras /reload-plugins (issue #2249).
 #   - Fuente secundaria: .claude/pipeline/.plugin-root.previous, que el modo actualizar
 #     escribe UNA sola vez por sesion -- nunca lo sobreescribe si ya existe -- copiando
 #     el .plugin-root previo al paso 3. Lo borra el hook SessionStart del plugin, no
 #     este script: mientras la sesion siga viva sigue describiendo la version que cargo,
 #     asi que dos corridas de /mefisto:upgrade en la misma sesion (el camino que el
 #     propio skill sugiere cuando el usuario declina podar) siguen protegiendola.
+#     /reload-plugins no dispara SessionStart, asi que puede quedar viejo: solo es
+#     fallback para corridas directas del script, sin --loaded.
 #   - Si ninguna de las dos resuelve nada, se protegen las DOS versiones mas nuevas del
 #     cache (la nueva y la N-1, que en el caso normal es la que la sesion cargo) y se
 #     avisa que la version cargada se infirio.
