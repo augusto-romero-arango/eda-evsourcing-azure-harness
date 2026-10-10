@@ -288,6 +288,32 @@ export function resultLine(r: PipelineResult): string {
   return `#${r.issue} ${r.pipeline} ${r.text}`
 }
 
+export type BandView = 'runs' | 'ready-with-results' | 'ready'
+
+/** Las corridas toman la banda solo con al menos una activa; sin activas se ven los listos (y los resultados al pie). */
+export function bandViewOf(runs: readonly PipelineRun[], results: readonly PipelineResult[]): BandView {
+  if (runs.some(isActive)) return 'runs'
+  return results.length > 0 ? 'ready-with-results' : 'ready'
+}
+
+/** Texto de un resultado en el pie: `✓#N PR #X` o `✗#M <stage>`. */
+export function resultFooterItem(r: PipelineResult): string {
+  const m = /^([✓✗])\s*(.*)$/u.exec(r.text)
+  return m ? `${m[1]}#${r.issue}${m[2] ? ` ${m[2]}` : ''}` : `#${r.issue} ${r.text}`
+}
+
+/** `resultados: ✓#N PR #X · ✗#M stage` recortado a `max` columnas; lo que no cabe se resume en `+N`. */
+export function resultsFooterText(results: readonly PipelineResult[], max: number): string {
+  const head = 'resultados: '
+  const items = results.map(resultFooterItem)
+  for (let shown = items.length; shown >= 1; shown -= 1) {
+    const hidden = items.length - shown
+    const text = `${head}${items.slice(0, shown).join(' · ')}${hidden > 0 ? ` +${hidden}` : ''}`
+    if (text.length <= max) return text
+  }
+  return clip(`${head}${items[0] ?? ''}${items.length > 1 ? ` +${items.length - 1}` : ''}`, max)
+}
+
 /** Descarta de `dismissed` las claves del repo sin status vivo y con mas de un dia (gracia para otros panes). */
 export function pruneDismissed(dismissed: string[], repo: string, liveKeys: ReadonlySet<string>, nowMs: number): string[] {
   return dismissed.filter(key => {

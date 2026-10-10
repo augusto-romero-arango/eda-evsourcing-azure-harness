@@ -10,7 +10,7 @@ Se activa sola en una sesión **interactiva** del proyecto consumidor. No se act
 - una sesión no interactiva (`-p`),
 - el repo de Mefisto (manifiesto `name: mefisto`).
 
-Comandos: `/fausto-blood-pact on` | `off` | `refresh` | `descartar`. `on`/`off` sobreviven a `/clear`.
+Comandos: `/fausto-blood-pact on` | `off` | `refresh` | `ocultar`. `on`/`off` sobreviven a `/clear`.
 
 Si al arrancar no se puede leer la línea de comando de Claude Code y el transcript aún no existe, la consola arranca y reintenta la detección del planner en cada refresco; si resulta ser el planner, se apaga.
 
@@ -24,11 +24,11 @@ Estado en `PluginState['mefisto']` con claves de prefijo `pact` (`pactIsActive`,
 
 ## Capacidad vigente (incremento 2): seguir corridas
 
-Mientras haya una corrida activa o un resultado sin descartar, la banda muestra solo las corridas del repo (todas, no solo las lanzadas por la sesión), una línea por corrida; al descartar la última vuelven los listos.
+Las corridas toman la banda solo mientras haya al menos una activa (`running` o `hold`): muestra las del repo (todas, no solo las lanzadas por la sesión), una línea por corrida. Sin activas se ven los listos con todas sus teclas, y los resultados sin ocultar quedan en una línea al pie: `resultados: ✓#N PR #X · ✗#M <stage> · 4 ocultar` (recortada al ancho, con `+N`).
 
-- Lee `pipeline-status-{tdd,tooling,infra}-<n>[-<variante>].json` del checkout principal (`git rev-parse --git-common-dir`, aunque la sesión esté en un worktree). `running`: `#N pipeline agente Mm`; `hold`: `rate limit · sonda HH:MM`.
+- Lee solo de `.mefisto/pipeline/` (la ruta legada `.claude/pipeline/` se ignora, MEF-ADR-0053) `pipeline-status-{tdd,tooling,infra}-<n>[-<variante>].json` del checkout principal (`git rev-parse --git-common-dir`, aunque la sesión esté en un worktree). `running`: `#N pipeline agente Mm`; `hold`: `rate limit · sonda HH:MM`.
 - Resultados: `✗ <stage>` para `failed`/`blocked`/`gaps`; `✓ PR #X` cuando desaparece el status de una corrida que la sesión vio activa (PR leído de `pipeline-history.jsonl`).
-- Descartar: tecla `4` o `/fausto-blood-pact descartar`. No toca `.mefisto/pipeline/`: se guarda en `$.store` con clave repo + pipeline + issue + variante + `started`, y no reaparece en otros panes ni sesiones. Las claves de status inexistente y de más de un día se podan.
+- Ocultar: tecla `4` o `/fausto-blood-pact ocultar` (`descartar` sigue como alias del comando). No toca `.mefisto/pipeline/`: se guarda en `$.store` con clave repo + pipeline + issue + variante + `started`, y no reaparece en otros panes ni sesiones. Las claves de status inexistente y de más de un día se podan.
 - Alto fijo de 5 filas, paginado con `0`. Con alguna corrida activa se refrescan cada 5 s; sin corridas activas, al ritmo de los listos (cada minuto).
 
 ## Capacidad vigente (incremento 3): lanzar trabajo
@@ -57,7 +57,7 @@ Anima solo mientras hay corrida activa o Claude trabaja. Es lectura pura de stat
 
 ## Capacidad vigente (incremento 5): mergear el PR de una corrida terminada
 
-Con la banda en corridas y al menos un `✓ PR #X`, el pie suma `1 mergear · 2 ver PR` a `4 descartar` y `0` página. Sin `✓` con PR (o solo `✗`) las teclas no se muestran ni actúan.
+Con la banda en corridas y al menos un `✓ PR #X`, el pie suma `1 mergear · 2 ver PR` a `4 ocultar` y `0` página. Sin `✓` con PR (o solo `✗`) las teclas no se muestran ni actúan.
 
 - `1`: con un solo `✓`, confirma con `$.ui.ask` ("Mergear #X" / "Cancelar") y ejecuta `/mefisto:merge <pr>` con `$.command.run`, anunciado con un toast. Con varios, selección múltiple: "Todos" y hasta 3 PRs más recientes (los demás números, en la opción de texto). Se pasan solo los números de los `✓`, nunca `--all`. Cancelar o no elegir no ejecuta nada. La confirmación del diálogo es la única.
 - `2`: `gh pr view <pr> --web`; con varios `✓`, pregunta cuál.
@@ -80,7 +80,7 @@ Con `pipeline-status-batch.json` (lo escribe `batch-pipeline.sh`, #2202) en `sta
 - Cabecera `sequential N/M · Mm` (N cuenta los `mergeado`; con parada pedida, `deteniendo`), la cola por issue (`✓` mergeado, `●` en curso, `✗` fallido, `⏸` aplazado, `-` saltado, `·` pendiente), y el eslabon en curso con pipeline, agente y tiempo de su propio status; la mascota sigue la regla del incremento 4. Ese eslabon no se repite como corrida suelta; las otras corridas activas se cuentan al pie (`+N corridas`).
 - `1`: `$.ui.ask` ("Detener tras el actual" / "Seguir"); al aceptar escribe la señal vacía `pipeline-state/batch-stop` en la raíz del checkout principal (`git rev-parse --git-common-dir`), la misma de `/mefisto:batch-stop` (MEF-ADR-0017); nunca mata un proceso. Con `stop_requested` la tecla no se ofrece.
 - `2`: `gh pr view --web` del PR del eslabón en curso o, si aún no tiene, del último `mergeado`. Sin PR no se muestra.
-- Cada issue que pasa a `mergeado` dispara un toast. Con el lote en `completed`/`failed`/`stopped` la banda muestra el resumen (mergeados, fallidos, aplazados, saltados, espera por rate limit) con el PR de cada issue; `4` lo cierra (descarte persistente en `$.store`, clave repo + `started`, sin tocar el archivo).
+- Cada issue que pasa a `mergeado` dispara un toast. Con el lote en `completed`/`failed`/`stopped` la banda muestra el resumen (mergeados, fallidos, aplazados, saltados, espera por rate limit) con el PR de cada issue; `4` lo cierra (ocultado persistente en `$.store`, clave repo + `started`, sin tocar el archivo).
 - `/fausto-blood-pact detener` equivale a `1`; sin lote en curso, lo dice.
 
 Fuera de alcance: el log acumulado del lote (queda para el incremento de log en vivo).

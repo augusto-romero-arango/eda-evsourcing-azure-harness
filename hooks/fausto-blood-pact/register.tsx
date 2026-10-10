@@ -9,6 +9,8 @@ import type { BatchStatus, LastEvent, LaunchKind, LaunchPlan, MascotPose, OpenPr
 import {
   LOGS_DIR,
   activeRunOf,
+  bandViewOf,
+  resultsFooterText,
   eventsFileOf,
   lastEventOf,
   poseOfResults,
@@ -79,6 +81,7 @@ import {
 import type { ResultPr } from './logic'
 
 const POLL_MS = 60_000
+const STATE_DIR = '.mefisto/pipeline'
 const SCRIPT_TIMEOUT_MS = 180_000
 
 const activeAtom = atom({ plugin: 'mefisto', key: 'pactIsActive' } as const, false)
@@ -152,59 +155,47 @@ async function saveDismissed($: EngineInterface, keys: string[]) {
   await $.store.set(DISMISSED_STORE_KEY, keys).catch(() => undefined)
 }
 
-// Lector puro: solo lee `.mefisto/pipeline/` del checkout principal (con `.claude/pipeline/` de respaldo).
+// Lector puro: solo lee `.mefisto/pipeline/` del checkout principal; la ruta legada se ignora (MEF-ADR-0053).
 async function readRuns($: EngineInterface): Promise<PipelineRun[]> {
   const cwd = await $.session.cwd()
   const common = await $.process.run(['git', 'rev-parse', '--git-common-dir']).catch(() => ({ exitCode: 1, stdout: '' }))
   const dir = stateDirOf(common.exitCode === 0 ? common.stdout.trim() : '.git', cwd)
   runsRepo = repoRootOf(dir)
-  const found = new Map<string, PipelineRun>()
-  for (const base of [dir, `${runsRepo}/.claude/pipeline`]) {
-    const ls = await $.process.run(['ls', base]).catch(() => ({ exitCode: 1, stdout: '' }))
-    if (ls.exitCode !== 0) continue
-    for (const name of ls.stdout.split('\n')) {
-      const file = name.trim()
-      if (!file.startsWith('pipeline-status-')) continue
-      const raw = await $.fs.read(`${base}/${file}`).catch(() => '')
-      const run = typeof raw === 'string' ? parseStatus(file, raw) : null
-      if (run && !found.has(file)) found.set(file, run)
-    }
+  const ls = await $.process.run(['ls', dir]).catch(() => ({ exitCode: 1, stdout: '' }))
+  if (ls.exitCode !== 0) return []
+  const runs: PipelineRun[] = []
+  for (const name of ls.stdout.split('\n')) {
+    const file = name.trim()
+    if (!file.startsWith('pipeline-status-')) continue
+    const raw = await $.fs.read(`${dir}/${file}`).catch(() => '')
+    const run = typeof raw === 'string' ? parseStatus(file, raw) : null
+    if (run) runs.push(run)
   }
-  return [...found.values()]
+  return runs
 }
 
 // Ultimo evento del ultimo intento del agente activo; lector puro de `<estado>/logs/*.events.jsonl`.
 async function readLastEvent($: EngineInterface, run: PipelineRun | null): Promise<LastEvent | null> {
   if (!run) return null
-  for (const base of [`${runsRepo}/.mefisto/pipeline`, `${runsRepo}/.claude/pipeline`]) {
-    const dir = `${base}/${LOGS_DIR}`
-    const ls = await $.process.run(['ls', dir]).catch(() => ({ exitCode: 1, stdout: '' }))
-    if (ls.exitCode !== 0) continue
-    const file = eventsFileOf(run, ls.stdout.split('\n'))
-    if (!file) continue
-    const tail = await $.process.run(['tail', '-c', '65536', `${dir}/${file}`]).catch(() => ({ exitCode: 1, stdout: '' }))
-    return tail.exitCode === 0 ? lastEventOf(tail.stdout) : null
-  }
-  return null
+  const dir = `${runsRepo}/${STATE_DIR}/${LOGS_DIR}`
+  const ls = await $.process.run(['ls', dir]).catch(() => ({ exitCode: 1, stdout: '' }))
+  if (ls.exitCode !== 0) return null
+  const file = eventsFileOf(run, ls.stdout.split('\n'))
+  if (!file) return null
+  const tail = await $.process.run(['tail', '-c', '65536', `${dir}/${file}`]).catch(() => ({ exitCode: 1, stdout: '' }))
+  return tail.exitCode === 0 ? lastEventOf(tail.stdout) : null
 }
 
-// `.mefisto/pipeline/` primero; `.claude/pipeline/` solo como respaldo de lectura (MEF-ADR-0053).
+// Solo `.mefisto/pipeline/` (MEF-ADR-0053): la ruta legada ya no la escribe ningun pipeline.
 async function readHistory($: EngineInterface): Promise<string> {
-  for (const base of ['.mefisto/pipeline', '.claude/pipeline']) {
-    const raw = await $.fs.read(`${runsRepo}/${base}/${HISTORY_FILE}`).catch(() => '')
-    if (typeof raw === 'string' && raw !== '') return raw
-  }
-  return ''
+  const raw = await $.fs.read(`${runsRepo}/${STATE_DIR}/${HISTORY_FILE}`).catch(() => '')
+  return typeof raw === 'string' ? raw : ''
 }
 
 // Lector puro del status del lote (#2202); un lote terminado y cerrado (clave repo + `started` en el store) no se muestra.
 async function readBatch($: EngineInterface): Promise<BatchStatus | null> {
-  for (const base of ['.mefisto/pipeline', '.claude/pipeline']) {
-    const raw = await $.fs.read(batchStatusPath(`${runsRepo}/${base}`)).catch(() => '')
-    const batch = typeof raw === 'string' && raw !== '' ? parseBatchStatus(raw) : null
-    if (batch) return batch
-  }
-  return null
+  const raw = await $.fs.read(batchStatusPath(`${runsRepo}/${STATE_DIR}`)).catch(() => '')
+  return typeof raw === 'string' && raw !== '' ? parseBatchStatus(raw) : null
 }
 
 async function refreshBatch($: EngineInterface) {
@@ -512,8 +503,8 @@ export const register: Register = on => {
     agentChecksLeft = agent === null ? AGENT_CHECKS : 0
     await $.command.register({
       name: 'fausto-blood-pact',
-      description: 'Consola de Fausto: refresh | on | off | descartar | detener | lanzar | merge | prs | pr',
-      argumentHint: '[refresh|on|off|descartar|detener|lanzar [sequential|parallel|<n>]|merge [<pr>...]|prs|pr [<pr>]]',
+      description: 'Consola de Fausto: refresh | on | off | ocultar | detener | lanzar | merge | prs | pr',
+      argumentHint: '[refresh|on|off|ocultar|detener|lanzar [sequential|parallel|<n>]|merge [<pr>...]|prs|pr [<pr>]]',
       immediate: true,
     })
     if (isWanted) await activate($)
@@ -527,9 +518,9 @@ export const register: Register = on => {
       await deactivate($)
       return { text: 'Consola de Fausto apagada.' }
     }
-    if (arg === 'descartar') {
+    if (arg === 'ocultar' || arg === 'descartar') {
       const n = await dismissResults($)
-      return { text: n > 0 ? `Resultados descartados: ${n}.` : 'No hay resultados que descartar.' }
+      return { text: n > 0 ? `Resultados ocultados: ${n}.` : 'No hay resultados que ocultar.' }
     }
     if (arg === 'detener') {
       const batch = await read($, batchAtom)
@@ -670,7 +661,7 @@ export const register: Register = on => {
       ...runs.map(r => ({ key: `run-${r.pipeline}-${r.issue}-${r.variant ?? ''}`, text: runLine(r, Date.now()), color: undefined as string | undefined })),
       ...results.map(r => ({ key: `res-${r.key}`, text: resultLine(r), color: r.ok ? 'success' : 'error' })),
     ]
-    if (lines.length > 0) {
+    if (bandViewOf(runs, results) === 'runs') {
       const { page, pages } = pageOf(await read($, pageAtom), lines.length, PAGE_ROWS)
       const visible = lines.slice(page * PAGE_ROWS, (page + 1) * PAGE_ROWS)
       return (
@@ -696,7 +687,7 @@ export const register: Register = on => {
                       <Button key="pact-view-pr" hotkey="2" plain dimColor label=" · 2 ver PR"
                         onPress={() => void viewPr($)} />
                     )}
-                    <Button key="pact-dismiss" hotkey="4" plain dimColor label={`${hasPrs ? ' · ' : ''}4 descartar`}
+                    <Button key="pact-dismiss" hotkey="4" plain dimColor label={`${hasPrs ? ' · ' : ''}4 ocultar`}
                       onPress={() => void dismissResults($)} />
                   </Box>
                 ) : (
@@ -735,6 +726,12 @@ export const register: Register = on => {
             {Array.from({ length: Math.max(0, PAGE_ROWS - Math.max(visible.length, 1)) }, (_, i) => (
               <Text key={`blank-${i}`}> </Text>
             ))}
+            {results.length > 0 && (
+              <Box>
+                <Text dimColor wrap="truncate-end">{resultsFooterText(results, Math.max(12, body - 12))}</Text>
+                <Button key="pact-dismiss" hotkey="4" plain dimColor label=" · 4 ocultar" onPress={() => void dismissResults($)} />
+              </Box>
+            )}
             <Box justifyContent="space-between">
               <Box>
                 {list?.launch && (
