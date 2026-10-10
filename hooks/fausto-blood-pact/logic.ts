@@ -542,10 +542,15 @@ export function viewOptions(prs: ResultPr[]): string[] {
  * solo numeros de PRs `✓` conocidos, nunca `--all`. Null si no queda ninguno (cancelar o nada elegido).
  */
 export function mergeArgsOf(answer: string | null, options: string[], prs: ResultPr[]): string | null {
+  return argsOfAnswer(answer, options, prs.map(p => p.pr))
+}
+
+/** Comun a ambos dialogos de merge: un solo numero exige su opcion; "Todos" pasa todos los listados; si no, elegidos + texto libre. */
+function argsOfAnswer(answer: string | null, options: string[], numbersListed: string[]): string | null {
   if (answer === null) return null
-  const known = new Set(prs.map(p => p.pr))
-  if (prs.length === 1) return answer === options[0] && prs[0] ? prs[0].pr : null
-  if (answer.includes(MERGE_ALL)) return prs.map(p => p.pr).join(' ')
+  if (numbersListed.length === 1) return answer === options[0] && numbersListed[0] ? numbersListed[0] : null
+  if (answer.includes(MERGE_ALL)) return numbersListed.join(' ')
+  const known = new Set(numbersListed)
   let rest = answer
   const numbers: string[] = []
   for (const option of options) {
@@ -615,19 +620,5 @@ export function openPrOptions(prs: OpenPr[]): string[] {
 
 /** Argumentos de /mefisto:merge: "Todos" pasa los numeros listados (nunca `--all`); si no, los elegidos y los del texto libre. */
 export function openPrArgsOf(answer: string | null, options: string[], prs: OpenPr[]): string | null {
-  if (answer === null) return null
-  if (prs.length === 1) return answer === options[0] && prs[0] ? prs[0].number : null
-  if (answer.includes(MERGE_ALL)) return prs.map(p => p.number).join(' ')
-  const known = new Set(prs.map(p => p.number))
-  let rest = answer
-  const numbers: string[] = []
-  for (const option of options) {
-    if (option === MERGE_ALL || !rest.includes(option)) continue
-    rest = rest.replace(option, '')
-    const n = /^#(\d+)/.exec(option)?.[1]
-    if (n) numbers.push(n)
-  }
-  numbers.push(...(rest.match(/\d+/g) ?? []))
-  const picked = [...new Set(numbers)].filter(n => known.has(n))
-  return picked.length > 0 ? picked.join(' ') : null
+  return argsOfAnswer(answer, options, prs.map(p => p.number))
 }
