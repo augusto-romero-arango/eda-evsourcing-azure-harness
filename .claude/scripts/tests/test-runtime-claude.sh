@@ -355,6 +355,36 @@ else
     fail "A-14: refresh interactivo Claude inesperado: '$REFRESH_OUTPUT'"
 fi
 
+# --- Raiz de la release del pipeline (MEF-ADR-0053 decision 2) ---
+
+PLUGIN_ROOT_OK="$TMP/release-claude"
+mkdir -p "$PLUGIN_ROOT_OK/.claude-plugin"
+printf '{"name":"mefisto","version":"0.0.0"}' > "$PLUGIN_ROOT_OK/.claude-plugin/plugin.json"
+
+MEFISTO_RUNTIME_CMD=()
+MEFISTO_AGENT_PACKAGE_ROOT="$PLUGIN_ROOT_OK" runtime_claude_build_cmd "writer" "$TMP" "$PROMPT_PLAIN" "" ""
+if contains_pair "--plugin-dir" "$PLUGIN_ROOT_OK"; then
+    pass "A-15: MEFISTO_AGENT_PACKAGE_ROOT con .claude-plugin/plugin.json -> --plugin-dir <raiz>"
+else
+    fail "A-15: falta --plugin-dir $PLUGIN_ROOT_OK: ${MEFISTO_RUNTIME_CMD[*]}"
+fi
+
+MEFISTO_RUNTIME_CMD=()
+MEFISTO_AGENT_PACKAGE_ROOT="$TMP" runtime_claude_build_cmd "writer" "$TMP" "$PROMPT_PLAIN" "" ""
+if ! contains_elem "--plugin-dir"; then
+    pass "A-16: raiz sin .claude-plugin/plugin.json -> ningun --plugin-dir"
+else
+    fail "A-16: --plugin-dir con una raiz que no es plugin: ${MEFISTO_RUNTIME_CMD[*]}"
+fi
+
+MEFISTO_RUNTIME_CMD=()
+(unset MEFISTO_AGENT_PACKAGE_ROOT; runtime_claude_build_cmd "writer" "$TMP" "$PROMPT_PLAIN" "" ""; printf '%s\n' "${MEFISTO_RUNTIME_CMD[@]}") > "$TMP/argv-sin-raiz"
+if ! grep -qx -- "--plugin-dir" "$TMP/argv-sin-raiz"; then
+    pass "A-17: sin MEFISTO_AGENT_PACKAGE_ROOT (pipelines internos) -> ningun --plugin-dir"
+else
+    fail "A-17: --plugin-dir sin MEFISTO_AGENT_PACKAGE_ROOT: $(tr '\n' ' ' < "$TMP/argv-sin-raiz")"
+fi
+
 # ============================================================================
 echo ""
 echo "[B] CA-2: mapeo de eventos (assistant/text->message, tool_use->tool.started, tool_result->tool.completed)"
