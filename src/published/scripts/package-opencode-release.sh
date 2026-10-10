@@ -37,6 +37,9 @@ done
 [ -f "$PROJECTOR_SOURCE" ] || usage_error "no existe el proyector OpenCode"
 [ -f "$DIAGNOSTIC_SOURCE" ] || usage_error "no existe el diagnostico de identidad"
 [ -f "$PLUGIN_JSON" ] || usage_error "no existe .claude-plugin/plugin.json"
+for legal_name in LICENSE NOTICE; do
+    [ -f "$REPO_ROOT/$legal_name" ] && [ ! -L "$REPO_ROOT/$legal_name" ] || usage_error "$legal_name no existe en la raiz del repo, no es un archivo regular o es un enlace simbolico"
+done
 [ -f "$RELEASE_IDENTITY" ] && [ ! -L "$RELEASE_IDENTITY" ] || usage_error "release-identity.json no existe o no es un archivo regular"
 command -v jq >/dev/null 2>&1 || usage_error "jq no esta instalado (MEF-ADR-0049: bash + jq)"
 command -v tar >/dev/null 2>&1 || usage_error "tar no esta instalado"
@@ -69,6 +72,9 @@ invalid_entry="$(find "$DIST_ROOT" -mindepth 1 \( -type l -o ! \( -type f -o -ty
 [ ! -e "$DIST_ROOT/install.sh" ] && [ ! -L "$DIST_ROOT/install.sh" ] || usage_error "dist/opencode no puede contener install.sh"
 [ ! -e "$DIST_ROOT/bin/mefisto-opencode" ] && [ ! -L "$DIST_ROOT/bin/mefisto-opencode" ] || usage_error "dist/opencode no puede contener bin/mefisto-opencode"
 [ ! -e "$DIST_ROOT/diagnose-installation-identity.sh" ] && [ ! -L "$DIST_ROOT/diagnose-installation-identity.sh" ] || usage_error "dist/opencode no puede contener el diagnostico de identidad"
+for legal_name in LICENSE NOTICE; do
+    [ ! -e "$DIST_ROOT/$legal_name" ] && [ ! -L "$DIST_ROOT/$legal_name" ] || usage_error "dist/opencode no puede contener $legal_name"
+done
 
 WORK="$(mktemp -d)" || usage_error "no se pudo crear el staging temporal"
 cleanup() { rm -rf "$WORK"; }
@@ -93,6 +99,10 @@ jq -n --arg version "$VERSION" --arg commit "$COMMIT" --arg minimumRuntimeVersio
     > "$STAGE/mefisto-manifest.json" || usage_error "no se pudo crear el manifiesto"
 chmod 0755 "$STAGE" || usage_error "no se pudo normalizar el directorio raiz"
 chmod 0644 "$STAGE/mefisto-manifest.json" || usage_error "no se pudo normalizar el manifiesto"
+for legal_name in LICENSE NOTICE; do
+    cp "$REPO_ROOT/$legal_name" "$STAGE/$legal_name" || usage_error "no se pudo incorporar $legal_name"
+    chmod 0644 "$STAGE/$legal_name" || usage_error "no se pudo normalizar $legal_name"
+done
 
 # El timestamp fijo, el orden C y gzip -n eliminan datos de maquina y de reloj.
 find "$STAGE" -exec touch -t 198001010000 {} + || usage_error "no se pudo normalizar timestamps"
