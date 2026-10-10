@@ -31,6 +31,8 @@
 
 set -uo pipefail
 
+export HERDR_STUB_OWNER_PID=$$
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 TMUX_SCRIPT="$REPO_ROOT/scripts/tmux-pipeline.sh"
@@ -236,6 +238,12 @@ case "${1:-} ${2:-}" in
         echo '{"result":{"pane":{"pane_id":"stub"}}}'
         ;;
     "pane process-info")
+        # Issue #2285: el guard de pane propio exige que el wrapper descienda del
+        # shell_pid del pane despachante (HERDR_PANE_ID); se reporta el PID del test.
+        if [ -n "${HERDR_STUB_OWNER_PID:-}" ] && [ "${4:-}" = "${HERDR_PANE_ID:-}" ]; then
+            echo "{\"result\":{\"process_info\":{\"shell_pid\":$HERDR_STUB_OWNER_PID,\"foreground_process_group_id\":$HERDR_STUB_OWNER_PID}}}"
+            exit 0
+        fi
         echo '{"result":{"process_info":{"shell_pid":100,"foreground_process_group_id":100}}}'
         ;;
     "pane run")
@@ -261,7 +269,7 @@ DELEGATE_OUT="$TMP_DIR/delegate-out"
     cd "$FAKE_CONSUMER" || exit 99
     env -u MEFISTO_UI \
         PATH="$FAKE_BIN:$PATH" \
-        MEFISTO_RUNTIME=claude HERDR_ENV=1 HERDR_PANE_ID="w1:p0" HERDR_WORKSPACE_ID="w1" \
+        MEFISTO_RUNTIME=opencode HERDR_ENV=1 HERDR_PANE_ID="w1:p0" HERDR_WORKSPACE_ID="w1" \
         "$TMUX_SCRIPT" --tooling 253
 ) </dev/null >"$DELEGATE_OUT" 2>&1
 DELEGATE_RC=$?

@@ -34,6 +34,8 @@
 
 set -uo pipefail
 
+export HERDR_STUB_OWNER_PID=$$
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 HERDR_SCRIPT="$REPO_ROOT/scripts/herdr-pipeline.sh"
@@ -133,6 +135,12 @@ case "${1:-} ${2:-}" in
         echo '{"result":{"pane":{"pane_id":"stub"}}}'
         ;;
     "pane process-info")
+        # Issue #2285: el guard de pane propio exige que el wrapper descienda del
+        # shell_pid del pane despachante (HERDR_PANE_ID); se reporta el PID del test.
+        if [ -n "${HERDR_STUB_OWNER_PID:-}" ] && [ "${4:-}" = "${HERDR_PANE_ID:-}" ]; then
+            echo "{\"result\":{\"process_info\":{\"shell_pid\":$HERDR_STUB_OWNER_PID,\"foreground_process_group_id\":$HERDR_STUB_OWNER_PID}}}"
+            exit 0
+        fi
         id="${4:-}"
         for o in ${HERDR_STUB_OCCUPIED:-}; do
             if [ "$o" = "$id" ]; then

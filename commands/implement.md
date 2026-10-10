@@ -175,7 +175,7 @@ Con un unico scaffold confirmado, ejecuta la forma equivalente agregando el domi
 MEFISTO_RUNTIME=claude "${MEFISTO_PACKAGE_ROOT}/scripts/tmux-pipeline.sh" $ARGUMENTS --scaffold-domain <dominio-kebab-confirmado>
 ```
 
-En ambas rutas reenvia los argumentos intactos y deja al wrapper la validacion definitiva. Dentro de Herdr, informa que el pipeline queda corriendo en un pane de este workspace con el visor en vivo. Fuera de Herdr, informa que fue lanzado en una sesion tmux; el wrapper informa la sesion o pane creado.
+En ambas rutas reenvia los argumentos intactos y deja al wrapper la validacion definitiva. Seguimiento por runtime: cuando el runtime activo trae su propia cinta de seguimiento (la consola `fausto-blood-pact`) y el usuario no fijo la interfaz, el wrapper no abre pane ni sesion tmux: corre desacoplado, imprime la ruta del log y el avance lo sigue esa consola desde esta misma sesion. En el resto de los runtimes (MEF-ADR-0050): dentro de Herdr, informa que el pipeline queda corriendo en un pane de este workspace con el visor en vivo. Fuera de Herdr, informa que fue lanzado en una sesion tmux; el wrapper informa la sesion o pane creado.
 
 ## Reglas
 
