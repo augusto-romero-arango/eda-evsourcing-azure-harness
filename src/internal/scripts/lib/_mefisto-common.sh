@@ -351,6 +351,10 @@ get_harness_sha() {
 #                            .github/ (p. ej. CODEOWNERS) sigue fuera. NO se replican en
 #                            is_path_in_consumer_blocklist: .github/ es territorio del consumidor.
 #   README.md, CHANGELOG.md, CLAUDE.md, .gitignore   Gobierno del repo
+#   LICENSE, NOTICE          Licencia y avisos de atribucion del repo (issue #2230). Entradas
+#                            EXACTAS de la raiz: LICENSE.txt, sub/LICENSE o docs2/NOTICE siguen
+#                            fuera. NO se replican en is_path_in_consumer_blocklist: el consumidor
+#                            tiene su propio LICENSE.
 is_path_in_mefisto_scope() {
     local path="$1"
     [ -z "$path" ] && return 1
@@ -407,7 +411,7 @@ validate_mefisto_scope_changes() {
         echo "hooks/, docs/, .claude-plugin/, .claude/{commands,skills,agents,scripts,mods}/," >&2
         echo ".claude/settings.json, .mcp.json, src/{internal,published,runtime}/, dist/," >&2
         echo ".opencode/{agents,commands,plugins,skills}/, .github/{workflows,rulesets}/, AGENTS.md, opencode.json," >&2
-        echo "changelog.d/, README.md, CHANGELOG.md, CLAUDE.md, .gitignore" >&2
+        echo "changelog.d/, README.md, CHANGELOG.md, CLAUDE.md, .gitignore, LICENSE, NOTICE" >&2
         return 1
     fi
 }
