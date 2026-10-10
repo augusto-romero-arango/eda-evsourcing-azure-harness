@@ -13,7 +13,7 @@ Mefisto es un harness opinionado para agentes de código que orquesta el desarro
 
 ## El nombre
 
-Un guiño a Mefistófeles, el espíritu de *Fausto* de Goethe: quien invoca el harness encarna a Fausto, fija la intención y firma el pacto; el plugin, como Mefisto, la ejecuta bajo las reglas del marco (EDA, Event Sourcing, TDD). *Fausto decide, Mefisto ejecuta* ([MEF-ADR-0055](docs/adr/INDICE-TEMATICO.md)).
+Un guiño a Mefistófeles, el espíritu de *Fausto* de Goethe: quien invoca el harness encarna a Fausto, fija la intención y firma el pacto; el plugin, como Mefisto, la ejecuta bajo las reglas del marco (EDA, Event Sourcing, TDD). *Fausto decide, Mefisto ejecuta* ([MEF-ADR-0055](docs/adr/mef-adr-0055-superficie-observacion-mods-claude-code.md)).
 
 ## Por qué
 
@@ -41,11 +41,11 @@ Claude Code y OpenCode, ambos con adaptador en el repo y sin privilegiar a uno (
 
 ## Instalación rápida
 
-**Claude Code** (>= 2.1.287):
+**Claude Code** (>= 2.1.287): dentro de la sesión registra el marketplace y, desde una terminal en la raíz del repo consumidor, instala a scope `user` (los pipelines corren en worktrees hermanos que un scope `project` no carga):
 
 ```
 /plugin marketplace add augusto-romero-arango-harness
-/plugin install mefisto@augusto-romero-arango-harness --scope user
+claude plugin install mefisto@augusto-romero-arango-harness --scope user
 ```
 
 **OpenCode**: desde Claude Code, `/mefisto:upgrade` proyecta el adaptador; el procedimiento directo está en la [guía del consumidor](docs/guia-del-consumidor.md#opencode-bootstrap-upgrade-y-rollback).
