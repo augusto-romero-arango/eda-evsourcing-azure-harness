@@ -54,7 +54,9 @@ for spec in "claude:$CLAUDE" "opencode:$OPENCODE"; do
     absent "$body" 'plugins/cache' "$name sin plugins/cache"
     absent "$body" 'update-plugin.sh' "$name no invoca update-plugin.sh directo"
     absent "$body" 'mefisto-opencode' "$name sin ruta de launcher calculada"
-    absent "$body" 'CLAUDE_' "$name sin variables CLAUDE_"
+    stripped="$(printf '%s\n' "$body" | grep -v '^MEFISTO_LOADED_ROOT=')"
+    absent "$stripped" 'CLAUDE_' "$name sin variables CLAUDE_ salvo la raiz viva"
+    if [ "$rt" = claude ]; then contains "$body" "MEFISTO_LOADED_ROOT='\${CLAUDE_PLUGIN_ROOT}'" "$name pasa la raiz viva"; else contains "$body" "MEFISTO_LOADED_ROOT=''" "$name pasa la raiz vacia"; fi
     absent "$body" 'solo desde Claude Code' "$name sin regla transitoria"
     echo "[$rt] poda"
     prune_line="$(printf '%s\n' "$body" | grep -n 'upgrade.sh" --prune' | head -1 | cut -d: -f1)"

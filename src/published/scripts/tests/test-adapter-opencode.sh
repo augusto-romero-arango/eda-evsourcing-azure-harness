@@ -437,6 +437,9 @@ mk_cmd cmd-completo '{"kind":"command","id":"cmd-completo","description":"x","ag
 completo_o="$(render "$WORK/cmd-completo.md")"
 assert_contains "$completo_o" 'agent: "agent-completo"' 'frontmatter agent emite agent'
 assert_contains "$completo_o" 'subtask: true' 'frontmatter agent emite subtask'
+mk_cmd cmd-lr '{"kind":"command","id":"cmd-lr","description":"x"}' "MEFISTO_LOADED_ROOT='{{mefisto:loaded-root}}' fin"
+render "$WORK/cmd-lr.md" > "$WORK/cmd-lr.out"; lr_c="$(< "$WORK/cmd-lr.out")"
+assert_contains "$lr_c" "MEFISTO_LOADED_ROOT='' fin" 'loaded-root se renderiza como cadena vacia'
 mk_cmd cmd-puntual '{"kind":"command","id":"cmd-puntual","description":"x"}' 'Paso 1: pregunta al usuario.' '{{mefisto:launch-agent agent-completo Escribe el ambiente dev y el proposito Facturas}}' 'Paso 3: crea el PR.'
 puntual_o="$(render "$WORK/cmd-puntual.md")"
 assert_not_contains "$puntual_o" 'subtask' 'puntual no convierte el comando en subtask'

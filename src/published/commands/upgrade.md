@@ -43,11 +43,11 @@ Invoca exactamente una de estas dos formas, segun la decision:
 
 Con alineacion del par:
 
-{{mefisto:run upgrade.sh --align-peer}}
+MEFISTO_LOADED_ROOT='{{mefisto:loaded-root}}' {{mefisto:run upgrade.sh --align-peer}}
 
 Solo el runtime activo:
 
-{{mefisto:run upgrade.sh 2>&1}}
+MEFISTO_LOADED_ROOT='{{mefisto:loaded-root}}' {{mefisto:run upgrade.sh 2>&1}}
 
 Si el script termina con `ERROR`, muestra su salida tal cual. Una falla deja las releases existentes para reintento o rollback; no intentes una reparacion adicional ni una poda.
 
@@ -67,7 +67,7 @@ Reporta la salida sin reinterpretar: por cada linea no vacia `<pane_id> <runtime
 
 La poda aplica solo al runtime activo y solo si el script listo versiones podables. Muestra la lista exacta y pide confirmacion explicita. Si responde exactamente `si`, invoca la poda; si la version cargada es conocida, agrega `--loaded <version-cargada>`. Si no confirma, no borres nada. Nunca podes la version cargada ni el par.
 
-{{mefisto:run upgrade.sh --prune}}
+MEFISTO_LOADED_ROOT='{{mefisto:loaded-root}}' {{mefisto:run upgrade.sh --prune}}
 
 ### 6. Cerrar con el reload
 

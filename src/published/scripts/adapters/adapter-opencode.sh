@@ -150,6 +150,8 @@ published_opencode_translate_body() {
                     translated="${BASH_REMATCH[1]}\"\${MEFISTO_PACKAGE_ROOT}/skills/mefisto-${BASH_REMATCH[2]}\"${BASH_REMATCH[4]}"
                 elif [[ "$line" =~ ^(.*)\{\{mefisto:command-doc[[:space:]]+([a-z0-9]+(-[a-z0-9]+)*)\}\}(.*)$ ]]; then
                     translated="${BASH_REMATCH[1]}\"\${MEFISTO_PACKAGE_ROOT}/commands/mefisto:${BASH_REMATCH[2]}.md\"${BASH_REMATCH[4]}"
+                elif [[ "$line" =~ ^(.*)\{\{mefisto:loaded-root\}\}(.*)$ ]]; then
+                    translated="${BASH_REMATCH[1]}${BASH_REMATCH[2]}"
                 elif [[ "$line" =~ ^(.*)\{\{mefisto:lifecycle-launcher\}\}(.*)$ ]]; then
                     translated="${BASH_REMATCH[1]}$(lifecycle_launcher_preamble)${BASH_REMATCH[2]}"
                 elif [[ "$line" =~ ^(.*)\{\{mefisto:config-path\}\}(.*)$ ]]; then
