@@ -622,3 +622,189 @@ export function openPrOptions(prs: OpenPr[]): string[] {
 export function openPrArgsOf(answer: string | null, options: string[], prs: OpenPr[]): string | null {
   return argsOfAnswer(answer, options, prs.map(p => p.number))
 }
+
+// ---- Incremento 7: seguir un sequential como lote (MEF-ADR-0055 decision 10/11; #2202 escribe el status) ----
+export const BATCH_STATUS_FILE = 'pipeline-status-batch.json'
+/** Senal de parada suave (MEF-ADR-0017), relativa a la raiz del checkout principal. */
+export const BATCH_STOP_FILE = 'pipeline-state/batch-stop'
+export const BATCH_STOP_ANSWER = 'Detener tras el actual'
+export const BATCH_KEEP_ANSWER = 'Seguir'
+
+export type BatchIssueStatus = 'pendiente' | 'en-curso' | 'mergeado' | 'fallido' | 'aplazado' | 'saltado'
+export type BatchState = 'running' | 'completed' | 'failed' | 'stopped'
+export type BatchIssue = { issue: number; status: BatchIssueStatus; pr: string | null; detail: string }
+export type BatchStatus = {
+  pipeline: string
+  started: string
+  state: BatchState
+  current: number | null
+  stopRequested: boolean
+  holdSeconds: number
+  issues: BatchIssue[]
+}
+
+const BATCH_ISSUE_STATUSES: readonly string[] = ['pendiente', 'en-curso', 'mergeado', 'fallido', 'aplazado', 'saltado']
+const BATCH_STATES: readonly string[] = ['running', 'completed', 'failed', 'stopped']
+
+export function batchStatusPath(stateDir: string): string {
+  return `${stateDir.replace(/\/+$/, '')}/${BATCH_STATUS_FILE}`
+}
+
+/** Ruta de la senal de parada: la raiz del checkout principal (donde `batch-pipeline.sh` lee su cwd), nunca el worktree. */
+export function batchStopPath(repoRoot: string): string {
+  return `${repoRoot.replace(/\/+$/, '')}/${BATCH_STOP_FILE}`
+}
+
+function prNumberOf(value: unknown): string | null {
+  if (typeof value === 'number') return String(value)
+  if (typeof value !== 'string') return null
+  return /(\d+)\s*$/.exec(value)?.[1] ?? null
+}
+
+/** Parseo de `pipeline-status-batch.json`; null si no es JSON valido o no trae un `state` conocido. */
+export function parseBatchStatus(raw: string): BatchStatus | null {
+  let json: Record<string, unknown>
+  try {
+    const parsed: unknown = JSON.parse(raw)
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null
+    json = parsed as Record<string, unknown>
+  } catch {
+    return null
+  }
+  if (typeof json.state !== 'string' || !BATCH_STATES.includes(json.state)) return null
+  const issues: BatchIssue[] = []
+  for (const row of Array.isArray(json.issues) ? (json.issues as Record<string, unknown>[]) : []) {
+    const issue = Number(row?.issue)
+    if (!Number.isFinite(issue)) continue
+    const status = typeof row.status === 'string' && BATCH_ISSUE_STATUSES.includes(row.status) ? (row.status as BatchIssueStatus) : 'pendiente'
+    issues.push({ issue, status, pr: prNumberOf(row.pr), detail: typeof row.detail === 'string' ? row.detail : '' })
+  }
+  const current = Number(json.current)
+  return {
+    pipeline: typeof json.pipeline === 'string' ? json.pipeline : 'sequential',
+    started: typeof json.started === 'string' ? json.started : '',
+    state: json.state as BatchState,
+    current: json.current !== null && json.current !== undefined && json.current !== '' && Number.isFinite(current) ? current : null,
+    stopRequested: json.stop_requested === true,
+    holdSeconds: typeof json.hold_seconds === 'number' && json.hold_seconds > 0 ? json.hold_seconds : 0,
+    issues,
+  }
+}
+
+export const isBatchRunning = (b: BatchStatus) => b.state === 'running'
+
+export type BatchCounts = { merged: number; failed: number; deferred: number; skipped: number; total: number }
+
+export function batchCounts(b: BatchStatus): BatchCounts {
+  const count = (s: BatchIssueStatus) => b.issues.filter(i => i.status === s).length
+  return { merged: count('mergeado'), failed: count('fallido'), deferred: count('aplazado'), skipped: count('saltado'), total: b.issues.length }
+}
+
+/** Marca de la cola: `✓` mergeado, `●` en curso, `✗` fallido, `⏸` aplazado, `-` saltado, `·` pendiente. */
+export function batchMark(status: BatchIssueStatus): string {
+  switch (status) {
+    case 'mergeado':
+      return '✓'
+    case 'en-curso':
+      return '●'
+    case 'fallido':
+      return '✗'
+    case 'aplazado':
+      return '⏸'
+    case 'saltado':
+      return '-'
+    default:
+      return '·'
+  }
+}
+
+/** Cabecera: `sequential N/M · Xm`; con parada pedida, `· deteniendo`. N cuenta los `mergeado`. */
+export function batchHeader(b: BatchStatus, nowMs: number): string {
+  const mins = minutesSince(b.started, nowMs)
+  const stopping = isBatchRunning(b) && b.stopRequested ? ' · deteniendo' : ''
+  return `${b.pipeline || 'sequential'} ${batchCounts(b).merged}/${b.issues.length}${mins === null ? '' : ` · ${mins}m`}${stopping}`
+}
+
+/** Cola en una linea por tramo: `✓ #12 · ● #13 · ⏸ #14`. */
+export function batchQueueText(b: BatchStatus): string {
+  return b.issues.map(i => `${batchMark(i.status)} #${i.issue}`).join(' · ')
+}
+
+/** El eslabon en curso: `current` del status o, si no, el primero `en-curso`; null si no hay. */
+export function batchCurrentOf(b: BatchStatus): BatchIssue | null {
+  return b.issues.find(i => i.issue === b.current) ?? b.issues.find(i => i.status === 'en-curso') ?? null
+}
+
+/** PR del eslabon en curso o, si aun no tiene, el del ultimo `mergeado` con PR; null sin PR. */
+export function batchPrOf(b: BatchStatus): string | null {
+  const current = batchCurrentOf(b)
+  if (current?.pr) return current.pr
+  for (let i = b.issues.length - 1; i >= 0; i -= 1) {
+    const row = b.issues[i] as BatchIssue
+    if (row.status === 'mergeado' && row.pr) return row.pr
+  }
+  return null
+}
+
+/** Corrida suelta del eslabon en curso (su propio status), para pipeline, agente, tiempo y mascota. */
+export function batchRunOf(b: BatchStatus, runs: readonly PipelineRun[]): PipelineRun | null {
+  const current = batchCurrentOf(b)
+  if (!current) return null
+  return runs.filter(r => r.issue === current.issue && isActive(r)).sort((a, c) => c.updated.localeCompare(a.updated))[0] ?? null
+}
+
+/** Corridas que no son el eslabon en curso: ese no se repite como corrida suelta. */
+export function runsOutsideBatch(b: BatchStatus, runs: readonly PipelineRun[]): PipelineRun[] {
+  const mine = batchRunOf(b, runs)
+  return runs.filter(r => r !== mine)
+}
+
+/** Pie `+N corridas`; vacio sin otras corridas. */
+export function otherRunsText(n: number): string {
+  return n > 0 ? `+${n} ${n === 1 ? 'corrida' : 'corridas'}` : ''
+}
+
+/** Minutos de espera por rate limit acumulados, como `Mm`; vacio sin espera. */
+export function holdText(holdSeconds: number): string {
+  return holdSeconds > 0 ? `${Math.max(1, Math.round(holdSeconds / 60))}m` : ''
+}
+
+/** Resumen de cierre: `N mergeados · N fallidos · N aplazados · N saltados · espera Mm` (omite lo que esta en cero). */
+export function batchSummaryText(b: BatchStatus): string {
+  const c = batchCounts(b)
+  const hold = holdText(b.holdSeconds)
+  return [
+    `${c.merged} mergeados`,
+    c.failed > 0 ? `${c.failed} fallidos` : '',
+    c.deferred > 0 ? `${c.deferred} aplazados` : '',
+    c.skipped > 0 ? `${c.skipped} saltados` : '',
+    hold ? `espera ${hold} por rate limit` : '',
+  ]
+    .filter(Boolean)
+    .join(' · ')
+}
+
+/** Una linea por issue del resumen: marca, issue, PR y motivo. */
+export function batchIssueLine(i: BatchIssue): string {
+  return `${batchMark(i.status)} #${i.issue}${i.pr ? ` · PR #${i.pr}` : ''}${i.detail ? ` · ${i.detail}` : ''}`
+}
+
+/** Issues que pasaron a `mergeado` entre dos lecturas; con `prev` vacio no hay toasts (el primer vistazo no anuncia). */
+export function newlyMerged(prev: readonly BatchIssue[] | null, next: readonly BatchIssue[]): BatchIssue[] {
+  if (!prev) return []
+  const before = new Map(prev.map(i => [i.issue, i.status]))
+  return next.filter(i => i.status === 'mergeado' && before.get(i.issue) !== 'mergeado')
+}
+
+/** Clave de descarte persistente del lote: repo + `started`. */
+export function batchDismissKey(repo: string, b: BatchStatus): string {
+  return [repo, 'batch', b.started].join('|')
+}
+
+/** Pregunta del dialogo de parada. */
+export function stopQuestion(b: BatchStatus): string {
+  return `¿Detener el sequential tras ${b.current ? `#${b.current}` : 'el issue en curso'}?`
+}
+
+/** `1` se ofrece solo con el lote corriendo y sin parada pedida. */
+export const canStopBatch = (b: BatchStatus | null): boolean => b !== null && isBatchRunning(b) && !b.stopRequested

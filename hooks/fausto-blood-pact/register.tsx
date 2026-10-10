@@ -5,7 +5,7 @@ import { RASTER_ROWS, ROLES, face, sprite, toRasterCells, waitingFace } from '..
 import type { Role } from '../sprites'
 import { cropGrid, usedColumns } from '../logic'
 import type { BoardList, PipelineResult, PipelineRun } from '../types'
-import type { LastEvent, LaunchKind, LaunchPlan, MascotPose, OpenPr } from './logic'
+import type { BatchStatus, LastEvent, LaunchKind, LaunchPlan, MascotPose, OpenPr } from './logic'
 import {
   LOGS_DIR,
   activeRunOf,
@@ -55,6 +55,26 @@ import {
   resultPrs,
   viewOptions,
   viewPrOf,
+  BATCH_KEEP_ANSWER,
+  BATCH_STOP_ANSWER,
+  batchCounts,
+  batchCurrentOf,
+  batchDismissKey,
+  batchHeader,
+  batchIssueLine,
+  batchPrOf,
+  batchQueueText,
+  batchRunOf,
+  batchStatusPath,
+  batchStopPath,
+  batchSummaryText,
+  canStopBatch,
+  isBatchRunning,
+  newlyMerged,
+  otherRunsText,
+  parseBatchStatus,
+  runsOutsideBatch,
+  stopQuestion,
 } from './logic'
 import type { ResultPr } from './logic'
 
@@ -68,6 +88,7 @@ const runsAtom = atom({ plugin: 'mefisto', key: 'pactRuns' } as const, [] as Pip
 const resultsAtom = atom({ plugin: 'mefisto', key: 'pactResults' } as const, [] as PipelineResult[])
 const lastEventAtom = atom({ plugin: 'mefisto', key: 'pactLastEvent' } as const, null as LastEvent | null)
 const openPrsAtom = atom({ plugin: 'mefisto', key: 'pactOpenPrs' } as const, [] as OpenPr[])
+const batchAtom = atom({ plugin: 'mefisto', key: 'pactBatch' } as const, null as BatchStatus | null)
 const tickAtom = atom({ plugin: 'mefisto', key: 'pactTick' } as const, 0)
 
 // Columnas comunes a todos los cuadros de la mascota: el recorte no cambia al alternar poses.
@@ -98,6 +119,8 @@ let isRefreshingRuns = false
 let seenRuns: Record<string, PipelineRun> = {}
 let carriedResults: PipelineResult[] = []
 let runsRepo = ''
+// Ultimo estado del lote leido: base para anunciar con un toast cada issue que pasa a `mergeado`.
+let lastBatchIssues: BatchStatus['issues'] | null = null
 // Si al arrancar no se pudo saber el agente (sin linea de comando y sin transcript aun), se reintenta en cada refresh.
 let agentChecksLeft = 0
 const AGENT_CHECKS = 20
@@ -174,6 +197,65 @@ async function readHistory($: EngineInterface): Promise<string> {
   return ''
 }
 
+// Lector puro del status del lote (#2202); un lote terminado y cerrado (clave repo + `started` en el store) no se muestra.
+async function readBatch($: EngineInterface): Promise<BatchStatus | null> {
+  for (const base of ['.mefisto/pipeline', '.claude/pipeline']) {
+    const raw = await $.fs.read(batchStatusPath(`${runsRepo}/${base}`)).catch(() => '')
+    const batch = typeof raw === 'string' && raw !== '' ? parseBatchStatus(raw) : null
+    if (batch) return batch
+  }
+  return null
+}
+
+async function refreshBatch($: EngineInterface) {
+  const batch = await readBatch($)
+  if (!batch) {
+    lastBatchIssues = null
+    await update($, batchAtom, () => null)
+    return
+  }
+  for (const i of newlyMerged(lastBatchIssues, batch.issues)) $.ui.toast(`#${i.issue} mergeado${i.pr ? ` · PR #${i.pr}` : ''}`)
+  lastBatchIssues = batch.issues
+  const closed = !isBatchRunning(batch) && (await readDismissed($)).includes(batchDismissKey(runsRepo, batch))
+  await update($, batchAtom, () => (closed ? null : batch))
+}
+
+// Parada suave (MEF-ADR-0017): la misma senal vacia que /mefisto:batch-stop, en la raiz del checkout principal.
+async function requestStop($: EngineInterface): Promise<string> {
+  const batch = await read($, batchAtom)
+  if (!batch || !canStopBatch(batch)) return 'No hay un sequential en curso que detener.'
+  await $.fs.write(batchStopPath(runsRepo), '')
+  await update($, batchAtom, b => (b ? { ...b, stopRequested: true } : b))
+  $.ui.toast('parada pedida: termina el issue en curso y no arranca los siguientes')
+  return 'Parada pedida: termina el issue en curso y no arranca los siguientes.'
+}
+
+async function confirmStop($: EngineInterface): Promise<string> {
+  const batch = await read($, batchAtom)
+  if (!batch || !canStopBatch(batch)) return 'No hay un sequential en curso que detener.'
+  const answer = await $.ui
+    .ask(stopQuestion(batch), { header: 'Detener', options: [BATCH_STOP_ANSWER, BATCH_KEEP_ANSWER] })
+    .catch(() => null)
+  return answer === BATCH_STOP_ANSWER ? requestStop($) : 'Sin cambios.'
+}
+
+async function viewBatchPr($: EngineInterface): Promise<string> {
+  const batch = await read($, batchAtom)
+  const pr = batch ? batchPrOf(batch) : null
+  if (!pr) return 'El lote no tiene PR que abrir.'
+  await $.process.run(['gh', 'pr', 'view', pr, '--web']).catch(() => undefined)
+  return `PR #${pr} abierto en GitHub.`
+}
+
+async function closeBatch($: EngineInterface) {
+  const batch = await read($, batchAtom)
+  if (!batch || isBatchRunning(batch)) return
+  const keys = new Set(await readDismissed($))
+  keys.add(batchDismissKey(runsRepo, batch))
+  await saveDismissed($, [...keys])
+  await update($, batchAtom, () => null)
+}
+
 async function refreshRuns($: EngineInterface) {
   if (isRefreshingRuns || !isEligible || !isWanted) return
   isRefreshingRuns = true
@@ -198,6 +280,7 @@ async function refreshRuns($: EngineInterface) {
     const last = await readLastEvent($, activeRunOf(view.runs))
     await update($, lastEventAtom, () => last)
     await update($, runsAtom, () => view.runs)
+    await refreshBatch($)
     await update($, resultsAtom, () => view.results)
   } finally {
     isRefreshingRuns = false
@@ -370,7 +453,7 @@ async function activate($: EngineInterface) {
   runsTimer?.cancel()
   // Ritmo rapido solo con corridas activas; sin ellas, `refresh` las relee al ritmo de los listos (CA-5).
   runsTimer = $.clock.every(RUNS_POLL_MS, () => {
-    if (Object.keys(seenRuns).length > 0) void refreshRuns($)
+    if (Object.keys(seenRuns).length > 0 || lastBatchIssues !== null) void refreshRuns($)
   })
   prTimer?.cancel()
   prTimer = $.clock.every(PR_CHECK_MS, () => void closeMergedPrs($))
@@ -428,8 +511,8 @@ export const register: Register = on => {
     agentChecksLeft = agent === null ? AGENT_CHECKS : 0
     await $.command.register({
       name: 'fausto-blood-pact',
-      description: 'Consola de Fausto: refresh | on | off | descartar | lanzar | merge | prs | pr',
-      argumentHint: '[refresh|on|off|descartar|lanzar [sequential|parallel|<n>]|merge [<pr>...]|prs|pr [<pr>]]',
+      description: 'Consola de Fausto: refresh | on | off | descartar | detener | lanzar | merge | prs | pr',
+      argumentHint: '[refresh|on|off|descartar|detener|lanzar [sequential|parallel|<n>]|merge [<pr>...]|prs|pr [<pr>]]',
       immediate: true,
     })
     if (isWanted) await activate($)
@@ -446,6 +529,11 @@ export const register: Register = on => {
     if (arg === 'descartar') {
       const n = await dismissResults($)
       return { text: n > 0 ? `Resultados descartados: ${n}.` : 'No hay resultados que descartar.' }
+    }
+    if (arg === 'detener') {
+      const batch = await read($, batchAtom)
+      if (!batch || !isBatchRunning(batch)) return { text: 'No hay un sequential en curso.' }
+      return { text: await confirmStop($) }
     }
     if (arg === 'merge' || arg.startsWith('merge ')) {
       const given = arg.slice('merge'.length).trim()
@@ -487,13 +575,19 @@ export const register: Register = on => {
     const body = Math.max(30, inner - MASCOT_WIDTH - 2)
     const runs = await read($, runsAtom)
     const results = await read($, resultsAtom)
+    const batch = await read($, batchAtom)
     const openPrs = await read($, openPrsAtom)
     await read($, tickAtom)
     const isWorking = Boolean(e.props.isWorking)
     const sec = Math.floor(Date.now() / 1000)
-    const active = activeRunOf(runs)
-    isAnimating = isWorking || active !== null
-    const pose: MascotPose | null = active ? poseOfRun(active, await read($, lastEventAtom)) : poseOfResults(results)
+    const batchRun = batch ? batchRunOf(batch, runs) : null
+    const active = batch ? batchRun : activeRunOf(runs)
+    isAnimating = isWorking || active !== null || (batch !== null && isBatchRunning(batch))
+    const pose: MascotPose | null = active
+      ? poseOfRun(active, await read($, lastEventAtom))
+      : batch
+        ? { role: 'desarrollador', state: batch.state === 'failed' ? 'error' : isBatchRunning(batch) ? 'pensando' : batch.state === 'completed' ? 'aprobado' : 'pensando' }
+        : poseOfResults(results)
     const grid = pose
       ? mascotGrid(pose, active ? (sec % 2 === 0 ? 0 : 1) : 0)
       : cropGrid(waitingFace(face('normal'), isWorking ? sec : null), MASCOT_COLS)
@@ -503,6 +597,67 @@ export const register: Register = on => {
       ) : (
         <Box width={MASCOT_WIDTH} />
       )
+    if (batch) {
+      const running = isBatchRunning(batch)
+      const c = batchCounts(batch)
+      const pr = batchPrOf(batch)
+      const current = batchCurrentOf(batch)
+      const others = otherRunsText(runsOutsideBatch(batch, runs).length)
+      const queue = batch.issues.map(i => ({ key: `b-${i.issue}`, text: batchIssueLine(i), dim: i.status === 'saltado' || i.status === 'pendiente' }))
+      const { page, pages } = pageOf(await read($, pageAtom), queue.length, PAGE_ROWS)
+      const visible = running ? [] : queue.slice(page * PAGE_ROWS, (page + 1) * PAGE_ROWS)
+      const headColor = batch.state === 'failed' ? 'error' : batch.state === 'stopped' || batch.stopRequested ? 'warning' : 'claude'
+      return (
+        <Box flexDirection="column" borderStyle="round" borderColor="claude" borderDimColor paddingX={1}>
+          <Box gap={2} alignItems="flex-start">
+            {mascot}
+            <Box flexDirection="column" width={body}>
+              <Text bold color={headColor} wrap="truncate-end">
+                {clip(`${batchHeader(batch, Date.now())}${running ? '' : ` · ${batch.state === 'completed' ? 'terminado' : batch.state === 'stopped' ? 'detenido' : 'con fallos'}`}`, body)}
+              </Text>
+              {running ? (
+                <>
+                  <Text wrap="truncate-end">{clip(batchQueueText(batch), body)}</Text>
+                  <Text color="claude" wrap="truncate-end">
+                    {clip(batchRun ? runLine(batchRun, Date.now()) : `#${current?.issue ?? batch.current ?? '…'} en curso`, body)}
+                  </Text>
+                  {batch.holdSeconds > 0 && <Text dimColor>{clip(batchSummaryText(batch), body)}</Text>}
+                </>
+              ) : (
+                <>
+                  {visible.map(l => (
+                    <Text key={l.key} dimColor={l.dim} wrap="truncate-end">{clip(l.text, body)}</Text>
+                  ))}
+                  <Text wrap="truncate-end">{clip(batchSummaryText(batch), body)}</Text>
+                </>
+              )}
+              {Array.from({ length: Math.max(0, PAGE_ROWS - (running ? 3 : visible.length + 1)) }, (_, i) => (
+                <Text key={`blank-${i}`}> </Text>
+              ))}
+              <Box justifyContent="space-between">
+                <Box>
+                  {canStopBatch(batch) && (
+                    <Button key="batch-stop" hotkey="1" plain dimColor label="1 detener" onPress={() => void confirmStop($)} />
+                  )}
+                  {pr && (
+                    <Button key="batch-pr" hotkey="2" plain dimColor label={`${canStopBatch(batch) ? ' · ' : ''}2 ver PR #${pr}`}
+                      onPress={() => void viewBatchPr($)} />
+                  )}
+                  {!running && (
+                    <Button key="batch-close" hotkey="4" plain dimColor label={`${pr ? ' · ' : ''}4 cerrar`} onPress={() => void closeBatch($)} />
+                  )}
+                  <Text dimColor>{others ? ` · ${others}` : ''}{c.failed > 0 && running ? ` · ${c.failed} ✗` : ''}</Text>
+                </Box>
+                {pages > 1 && !running && (
+                  <Button key="pact-next-page" hotkey="0" plain dimColor label={`página ${page + 1}/${pages} ▸`}
+                    onPress={() => void update($, pageAtom, () => (page + 1) % pages)} />
+                )}
+              </Box>
+            </Box>
+          </Box>
+        </Box>
+      )
+    }
     const hasPrs = resultPrs(results).length > 0
     const lines = [
       ...runs.map(r => ({ key: `run-${r.pipeline}-${r.issue}-${r.variant ?? ''}`, text: runLine(r, Date.now()), color: undefined as string | undefined })),

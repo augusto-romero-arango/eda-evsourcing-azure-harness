@@ -44,6 +44,19 @@ import {
   planIssue,
   planLaunch,
   transcriptPathOf,
+  batchCounts,
+  batchDismissKey,
+  batchHeader,
+  batchPrOf,
+  batchQueueText,
+  batchRunOf,
+  batchStopPath,
+  batchSummaryText,
+  canStopBatch,
+  newlyMerged,
+  otherRunsText,
+  parseBatchStatus,
+  runsOutsideBatch,
 } from './logic'
 
 const json = JSON.stringify({
@@ -388,4 +401,100 @@ test('openPrArgsOf: uno, varios, "Todos" y texto libre; nunca --all', () => {
   expect(openPrArgsOf('#8 T8, 5, 99', options, many)).toBe('8 5')
   expect(openPrArgsOf('99', options, many)).toBe(null)
   expect(openPrArgsOf(null, options, many)).toBe(null)
+})
+
+// ---- Incremento 7: lote ----
+const batchRaw = (over: Record<string, unknown> = {}) =>
+  JSON.stringify({
+    pipeline: 'sequential',
+    started: '2026-10-09T10:00:00',
+    state: 'running',
+    current: 13,
+    stop_requested: false,
+    hold_seconds: 0,
+    log: 'x.log',
+    issues: [
+      { issue: 12, status: 'mergeado', pr: '#101', detail: '' },
+      { issue: 13, status: 'en-curso', pr: null, detail: '' },
+      { issue: 14, status: 'pendiente', pr: null, detail: '' },
+    ],
+    ...over,
+  })
+const batchNow = Date.parse('2026-10-09T10:07:30')
+
+test('parseBatchStatus lee un lote running y calcula cabecera, cola y avance', () => {
+  const b = parseBatchStatus(batchRaw())!
+  expect(b.state).toBe('running')
+  expect(b.current).toBe(13)
+  expect(b.issues[0]?.pr).toBe('101')
+  expect(batchHeader(b, batchNow)).toBe('sequential 1/3 · 7m')
+  expect(batchQueueText(b)).toBe('✓ #12 · ● #13 · · #14')
+  expect(canStopBatch(b)).toBe(true)
+})
+
+test('parseBatchStatus con stop_requested dice deteniendo y no ofrece 1', () => {
+  const b = parseBatchStatus(batchRaw({ stop_requested: true }))!
+  expect(batchHeader(b, batchNow)).toContain('deteniendo')
+  expect(canStopBatch(b)).toBe(false)
+})
+
+test('parseBatchStatus completed con fallidos y saltados: conteos y resumen', () => {
+  const b = parseBatchStatus(
+    batchRaw({
+      state: 'completed',
+      current: null,
+      hold_seconds: 600,
+      issues: [
+        { issue: 1, status: 'mergeado', pr: 5 },
+        { issue: 2, status: 'fallido', pr: null, detail: 'review' },
+        { issue: 3, status: 'saltado', pr: null, detail: 'infra' },
+        { issue: 4, status: 'aplazado', pr: null },
+      ],
+    }),
+  )!
+  expect(batchCounts(b)).toEqual({ merged: 1, failed: 1, deferred: 1, skipped: 1, total: 4 })
+  expect(batchSummaryText(b)).toBe('1 mergeados · 1 fallidos · 1 aplazados · 1 saltados · espera 10m por rate limit')
+  expect(canStopBatch(b)).toBe(false)
+})
+
+test('parseBatchStatus stopped y entradas invalidas', () => {
+  expect(parseBatchStatus(batchRaw({ state: 'stopped' }))?.state).toBe('stopped')
+  expect(parseBatchStatus('no json')).toBe(null)
+  expect(parseBatchStatus(batchRaw({ state: 'raro' }))).toBe(null)
+  expect(parseBatchStatus('[]')).toBe(null)
+})
+
+test('batchPrOf: PR del eslabon en curso o del ultimo mergeado; sin PR, null', () => {
+  expect(batchPrOf(parseBatchStatus(batchRaw())!)).toBe('101')
+  const own = parseBatchStatus(
+    batchRaw({ issues: [{ issue: 12, status: 'mergeado', pr: 101 }, { issue: 13, status: 'en-curso', pr: 102 }] }),
+  )!
+  expect(batchPrOf(own)).toBe('102')
+  expect(batchPrOf(parseBatchStatus(batchRaw({ issues: [{ issue: 13, status: 'en-curso' }] }))!)).toBe(null)
+})
+
+test('newlyMerged solo anuncia las transiciones a mergeado', () => {
+  const a = parseBatchStatus(batchRaw())!
+  const b = parseBatchStatus(
+    batchRaw({ issues: [{ issue: 12, status: 'mergeado' }, { issue: 13, status: 'mergeado', pr: 7 }, { issue: 14, status: 'en-curso' }] }),
+  )!
+  expect(newlyMerged(a.issues, b.issues).map(i => i.issue)).toEqual([13])
+  expect(newlyMerged(null, b.issues)).toEqual([])
+})
+
+test('el eslabon en curso no se repite como corrida suelta y las demas se cuentan', () => {
+  const b = parseBatchStatus(batchRaw())!
+  const mk = (issue: number): ReturnType<typeof parseStatus> =>
+    parseStatus(`pipeline-status-tdd-${issue}.json`, JSON.stringify({ issue, started: '20261009-100000', updated: '20261009-100100', stage: '2-implementer', state: 'running' }))
+  const runs = [mk(13)!, mk(40)!]
+  expect(batchRunOf(b, runs)?.issue).toBe(13)
+  expect(runsOutsideBatch(b, runs).map(r => r.issue)).toEqual([40])
+  expect(otherRunsText(1)).toBe('+1 corrida')
+  expect(otherRunsText(2)).toBe('+2 corridas')
+  expect(otherRunsText(0)).toBe('')
+})
+
+test('senal de parada en la raiz del checkout principal y clave de descarte por repo + started', () => {
+  expect(batchStopPath('/r/')).toBe('/r/pipeline-state/batch-stop')
+  expect(batchDismissKey('/r', parseBatchStatus(batchRaw())!)).toBe('/r|batch|2026-10-09T10:00:00')
 })
