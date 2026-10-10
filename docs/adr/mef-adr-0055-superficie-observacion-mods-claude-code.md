@@ -2,7 +2,7 @@
 
 - **Fecha**: 2026-10-08
 - **Estado**: aceptado
-- **Aplica a**: la consola de operacion `mefisto-divine-wager` (lado interno de MEF-ADR-0019) y el tablero del planner en sus dos lados, interno y publicado (decision 8), con los nombres de la decision 9. La consola publicada `fausto-blood-pact` (decision 10) tambien aplica. Los issues que genera el reviewer y el modo de lanzamiento sin pane en el consumidor quedan para enmiendas posteriores. Se apoya en MEF-ADR-0049 (adaptadores por runtime) y en MEF-ADR-0050 (neutralidad de toda operacion), y reserva el identificador `0055` (MEF-ADR-0030).
+- **Aplica a**: la consola de operacion `mefisto-divine-wager` (lado interno de MEF-ADR-0019) y el tablero del planner en sus dos lados, interno y publicado (decision 8), con los nombres de la decision 9. La consola publicada `fausto-blood-pact` (decision 10) tambien aplica. La paridad de experiencia entre pares (decision 11) aplica a ambos lados. Los issues que genera el reviewer y el modo de lanzamiento sin pane en el consumidor quedan para enmiendas posteriores. Se apoya en MEF-ADR-0049 (adaptadores por runtime) y en MEF-ADR-0050 (neutralidad de toda operacion), y reserva el identificador `0055` (MEF-ADR-0030).
 
 ## Contexto
 
@@ -113,7 +113,7 @@ La sesion del planner tiene su propio mod, que muestra que se esta haciendo y qu
 
 La raiz del plugin publicado la resuelve el propio tablero; el ADR no fija el mecanismo.
 
-**Los dos tableros son totalmente independientes.** No comparten codigo y no hay obligacion de sincronizarlos: un fix o una mejora en uno no se replica en el otro, y pueden divergir. Ninguna cabecera de copia hermana los vincula y ningun cambio de un lado toca los archivos del otro. El interno solo sirvio de punto de partida del port. Es lo opuesto a la regla de tres de `next-order.sh` (MEF-ADR-0018), que obliga a mantener sincronizadas sus copias; esa regla no aplica entre los dos tableros.
+**Los dos tableros son independientes en codigo.** No comparten codigo y no hay obligacion de sincronizarlos: un fix o una mejora en uno no se replica en el otro. La tabla anterior recoge diferencias de mecanica, no de experiencia: la experiencia sigue la referencia de la decision 11. Ninguna cabecera de copia hermana los vincula y ningun cambio de un lado toca los archivos del otro. El interno solo sirvio de punto de partida del port. Es lo opuesto a la regla de tres de `next-order.sh` (MEF-ADR-0018), que obliga a mantener sincronizadas sus copias; esa regla no aplica entre los dos tableros.
 
 - **Activacion**: solo en una sesion interactiva cuyo proceso es el agente del planner (`claude --agent <agente>`). El mod lo
   lee de la linea de comando de su proceso padre (`ps`) y, como respaldo, de la fila `agent-setting` del
@@ -160,9 +160,22 @@ La consola de operacion del lado publicado se construye por incrementos y se rig
 - **Activacion**: solo en sesiones interactivas del consumidor que no son la del planner (`claude --agent mefisto:planner`). Nunca en el repo de Mefisto ni en sesiones `-p`.
 - **Ubicacion**: modulo propio en `hooks/fausto-blood-pact/`. Claude Code admite una sola entrada en `modules` por plugin (`claude plugin validate` rechaza una segunda) y un solo `session.start` sin matcher, asi que el `hooks/hooks.json` que genera el adaptador Claude (decision 4) carga el punto de entrada `hooks/index.tsx`, que solo compone el tablero (`hooks/register.tsx`) y la consola; la consola registra su `session.start` con el matcher `{ isInteractive: true }`.
 - **Decisiones que aplican**: la 1 (lector puro del contrato de estado) y la 2 (las acciones delegan en skills publicados existentes). Opera solo sobre archivos del consumidor (MEF-ADR-0019) y es observacion; la operacion sigue neutral (MEF-ADR-0050).
-- **Independencia**: es independiente de `mefisto-divine-wager`. No comparten codigo ni hay obligacion de sincronizarlos, igual que los dos tableros (decision 8).
+- **Independencia**: es independiente en codigo de `mefisto-divine-wager`: no lo comparten ni hay obligacion de sincronizarlos, igual que los dos tableros (decision 8). Su experiencia toma como referencia la de `mefisto-divine-wager` (decision 11).
 - **Regla incremental**: cada capacidad se construye en su propio issue. Se mergea, se publica y se verifica en un consumidor antes de abrir la siguiente; lo que falle se itera con issues nuevos.
 - **Catalogo de capacidades**: vive en `hooks/fausto-blood-pact/README.md`, no en este ADR, para no enmendarlo en cada incremento.
+
+### 11. Experiencia de referencia entre pares
+
+Los mods de ambos lados no comparten codigo (MEF-ADR-0019), pero no deben divergir en experiencia. Los pares son:
+
+| Superficie | Interno | Publicado |
+|---|---|---|
+| Tablero del planner | `mefisto-planner-board` | `fausto-board` |
+| Consola de operacion | `mefisto-divine-wager` | `fausto-blood-pact` |
+
+- **Referencia**: al construir o cambiar en un mod una capacidad que su par ya tiene, el comportamiento visual y funcional del par es la referencia: mascota y poses por momento, teclas, forma de la banda y textos. Apartarse de la referencia es una decision explicita del issue, no un descuido.
+- **Referencia, no sincronizacion**: un cambio en un mod no obliga a cambiar su par ni a abrir un issue espejo. Las capacidades exclusivas de un lado no tienen par: historiador y release en el interno, issues del reviewer en el publicado.
+- **Identidad visual por lado**: Mefisto es rojo en lo publicado (paleta de `hooks/sprites.ts`) y blanco perla con cuernos dorados en lo interno (paleta de los mods de `.claude/mods/`). Fausto conserva su tunica roja en ambos.
 
 ## Consecuencias
 
@@ -173,6 +186,7 @@ La consola de operacion del lado publicado se construye por incrementos y se rig
 
 ## Control de cambios
 
+- 2026-10-09: decision 11 nueva (experiencia de referencia entre pares: referencia y no sincronizacion, identidad visual por lado); decision 8: los tableros son independientes en codigo y la tabla de diferencias es de mecanica, no de experiencia; decision 10 remite a la 11 (issue #2192).
 - 2026-10-09: decision 10 (ubicacion): la consola no es una segunda entrada de `modules` -- el runtime la rechaza --; un punto de entrada `hooks/index.tsx` compone tablero y consola (issue #2180).
 - 2026-10-09: decision 10 nueva (consola publicada `fausto-blood-pact`: activacion, ubicacion, independencia y regla incremental); "Aplica a" y "Que queda fuera de este ADR" la incluyen; decision 9 retira "nombre reservado: no existe todavia" (issue #2179).
 - 2026-10-09: decision 1, decision 5 y Consecuencias: se retira el skill interno de dashboard como segundo lector de los archivos de estado; sin el mod la observacion es el pane de herdr, la sesion tmux o el panel de logs de OpenCode (issue #2161).
