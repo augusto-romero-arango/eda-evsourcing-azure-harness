@@ -36,6 +36,7 @@ make_release() {
     cp "$INSTALLER" "$root/install.sh"; cp "$LAUNCHER" "$root/bin/mefisto-opencode"; cp "$PROJECTOR" "$root/project-opencode-release.sh"; cp "$DIAGNOSTIC" "$root/diagnose-installation-identity.sh"
     chmod +x "$root/install.sh" "$root/bin/mefisto-opencode" "$root/project-opencode-release.sh" "$root/diagnose-installation-identity.sh"
     printf 'fixture %s\n' "$version" > "$root/contenido con espacios.txt"
+    if [ "$version" != 3.0.0 ]; then printf 'LICENSE fixture\n' > "$root/LICENSE"; printf 'NOTICE fixture\n' > "$root/NOTICE"; fi
     jq -n --arg version "$version" --arg commit "$commit" '{schemaVersion: 1, runtime: "opencode", version: $version, commit: $commit, minimumRuntimeVersion: "1.18.29"}' > "$root/mefisto-manifest.json"
     (cd "$root" && tar -czf "$WORK/assets/v$version/$asset" .) || exit 1
     (cd "$WORK/assets/v$version" && shasum -a 256 "$asset" > "$asset.sha256") || exit 1
@@ -79,6 +80,7 @@ EXTRACT="$WORK/extract inicial"; mkdir "$EXTRACT"; tar -xzf "$WORK/assets/v1.2.3
 assert_active 1.2.3 'primera instalacion activa la version inicial'
 [ -d "$XDG_DATA_HOME/mefisto/releases/.operation.lock" ] && fail 'install deja el lock adquirido' || pass 'install libera el lock antes de la siguiente operacion'
 [ -f "$XDG_DATA_HOME/mefisto/releases/1.2.3/contenido con espacios.txt" ] && pass 'release inmutable conserva paths con espacios' || fail 'release no conserva paths con espacios'
+[ -f "$XDG_DATA_HOME/mefisto/releases/1.2.3/LICENSE" ] && [ -f "$XDG_DATA_HOME/mefisto/releases/1.2.3/NOTICE" ] && pass 'install deja LICENSE y NOTICE en la release instalada' || fail 'install no dejo LICENSE y NOTICE en la release'
 [ -z "$(find "$XDG_DATA_HOME/mefisto/releases/1.2.3" \( -perm -0200 -o -perm -0020 -o -perm -0002 \) -print -quit)" ] && pass 'release instalada queda sin permisos de escritura' || fail 'release instalada conserva permisos de escritura'
 assert_only_data_root 'bootstrap solo escribe bajo la raiz de datos'
 

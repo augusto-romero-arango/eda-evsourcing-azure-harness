@@ -33,6 +33,9 @@ setup_repo() {
     chmod +x "$TEST_REPO/src/published/scripts/package-opencode-release.sh" "$TEST_REPO/src/published/scripts/project-opencode-release.sh" "$TEST_REPO/src/published/scripts/diagnose-installation-identity.sh"
     chmod +x "$TEST_REPO/src/published/scripts/install-opencode-release.sh" "$TEST_REPO/src/published/scripts/mefisto-opencode"
     printf '{"version":"1.2.3"}\n' > "$TEST_REPO/.claude-plugin/plugin.json"
+    printf 'Apache License fixture\n' > "$TEST_REPO/LICENSE"
+    printf 'Mefisto NOTICE fixture\n' > "$TEST_REPO/NOTICE"
+    chmod 0600 "$TEST_REPO/LICENSE" "$TEST_REPO/NOTICE"
     cp "$FIXTURES/valid.json" "$TEST_REPO/src/published/release-identity.json"
     cat > "$TEST_REPO/src/published/scripts/generate-published-adapters.sh" <<'EOF'
 #!/usr/bin/env bash
@@ -108,6 +111,11 @@ SHA_DIGEST="${SHA_VALUE%%  *}"; SHA_FILE="${SHA_VALUE#*  }"
 EXTRACT="$WORK/extract"; mkdir "$EXTRACT"; tar -xzf "$TAR" -C "$EXTRACT"
 [ -f "$EXTRACT/mefisto-manifest.json" ] && [ -x "$EXTRACT/comandos/run.sh" ] && [ -x "$EXTRACT/install.sh" ] && [ -x "$EXTRACT/project-opencode-release.sh" ] && [ -x "$EXTRACT/diagnose-installation-identity.sh" ] && [ -x "$EXTRACT/bin/mefisto-opencode" ] && [ -d "$EXTRACT/directorio-vacio" ] && pass 'extrae instalador, proyector, diagnostico y contenido sin envolvente' || fail 'layout o permisos incorrectos'
 [ "$(file_mode "$EXTRACT/mefisto-manifest.json")" = 644 ] && pass 'manifiesto tiene modo 0644' || fail 'modo del manifiesto invalido'
+legal_ok=true
+for legal_name in LICENSE NOTICE; do
+    [ -f "$EXTRACT/$legal_name" ] && [ ! -L "$EXTRACT/$legal_name" ] && [ "$(file_mode "$EXTRACT/$legal_name")" = 644 ] && cmp -s "$EXTRACT/$legal_name" "$TEST_REPO/$legal_name" || legal_ok=false
+done
+[ "$legal_ok" = true ] && pass 'LICENSE y NOTICE en la raiz del paquete, regulares, modo 0644 y copiados de la raiz' || fail 'LICENSE o NOTICE ausentes o incorrectos en el paquete'
 closure_ok=true
 for source in \
     scripts/_pipeline-common.sh scripts/tmux-pipeline.sh scripts/herdr-pipeline.sh scripts/stream-watch.sh scripts/tooling-pipeline.sh scripts/tdd-pipeline.sh \
@@ -161,6 +169,20 @@ setup_repo stale; NEG_OUT="$WORK/stale"; GENERATOR_RC=1 run_package --output "$N
 setup_repo link; ln -s archivo "$TEST_REPO/dist/opencode/link"; NEG_OUT="$WORK/link"; run_package --output "$NEG_OUT" >/dev/null 2>&1; assert_rc "$?" 1 'rechaza symlink'; assert_no_assets "$NEG_OUT" 'symlink no deja assets'
 setup_repo special; mkfifo "$TEST_REPO/dist/opencode/pipe"; NEG_OUT="$WORK/special"; run_package --output "$NEG_OUT" >/dev/null 2>&1; assert_rc "$?" 1 'rechaza archivo especial'; assert_no_assets "$NEG_OUT" 'archivo especial no deja assets'
 setup_repo manifest; printf '{}' > "$TEST_REPO/dist/opencode/mefisto-manifest.json"; NEG_OUT="$WORK/manifest"; run_package --output "$NEG_OUT" >/dev/null 2>&1; assert_rc "$?" 1 'rechaza manifiesto preexistente'; assert_no_assets "$NEG_OUT" 'conflicto de manifiesto no deja assets'
+for legal_name in LICENSE NOTICE; do
+    setup_repo "legal-absent-$legal_name"; rm "$TEST_REPO/$legal_name"; NEG_OUT="$WORK/legal-absent-$legal_name"
+    ERR="$(run_package --output "$NEG_OUT" 2>&1 >/dev/null)"; assert_rc "$?" 1 "rechaza $legal_name ausente"
+    case "$ERR" in *"$legal_name"*) pass "mensaje de $legal_name ausente nombra el archivo" ;; *) fail "mensaje de $legal_name ausente no nombra el archivo" ;; esac
+    assert_no_assets "$NEG_OUT" "$legal_name ausente no deja assets"
+    setup_repo "legal-dir-$legal_name"; rm "$TEST_REPO/$legal_name"; mkdir "$TEST_REPO/$legal_name"; NEG_OUT="$WORK/legal-dir-$legal_name"
+    run_package --output "$NEG_OUT" >/dev/null 2>&1; assert_rc "$?" 1 "rechaza $legal_name que no es archivo regular"; assert_no_assets "$NEG_OUT" "$legal_name no regular no deja assets"
+    setup_repo "legal-link-$legal_name"; rm "$TEST_REPO/$legal_name"; printf 'x\n' > "$TEST_REPO/destino-enlace"; ln -s destino-enlace "$TEST_REPO/$legal_name"; NEG_OUT="$WORK/legal-link-$legal_name"
+    run_package --output "$NEG_OUT" >/dev/null 2>&1; assert_rc "$?" 1 "rechaza $legal_name como enlace simbolico"; assert_no_assets "$NEG_OUT" "$legal_name enlace no deja assets"
+    setup_repo "legal-dist-$legal_name"; printf 'dup\n' > "$TEST_REPO/dist/opencode/$legal_name"; NEG_OUT="$WORK/legal-dist-$legal_name"
+    ERR="$(run_package --output "$NEG_OUT" 2>&1 >/dev/null)"; assert_rc "$?" 1 "rechaza $legal_name preexistente en dist/opencode"
+    case "$ERR" in *"$legal_name"*) pass "mensaje de $legal_name en dist nombra el archivo" ;; *) fail "mensaje de $legal_name en dist no nombra el archivo" ;; esac
+    assert_no_assets "$NEG_OUT" "$legal_name en dist no deja assets"
+done
 setup_repo write; printf x > "$WORK/no-directorio"; run_package --output "$WORK/no-directorio" >/dev/null 2>&1; assert_rc "$?" 1 'fallo al crear output no publica assets'
 setup_repo partial; PARTIAL_OUT="$WORK/partial"; mkdir -p "$PARTIAL_OUT/mefisto-opencode-v1.2.3.tar.gz.sha256"; run_package --output "$PARTIAL_OUT" >/dev/null 2>&1; assert_rc "$?" 1 'conflicto de destino aborta'; [ ! -e "$PARTIAL_OUT/mefisto-opencode-v1.2.3.tar.gz" ] && pass 'fallo de publicacion no deja tarball parcial' || fail 'fallo dejo tarball parcial'
 for fixture in absent corrupt extra semver-invalido commit-invalido version-divergente; do
