@@ -15,6 +15,11 @@ import {
   createdText,
   cropGrid,
   isIssueChange,
+  issueClosed,
+  addPending,
+  applyPending,
+  dropIssue,
+  type Pending,
   isIssueCreate,
   usedColumns,
   mascotPose,
@@ -59,6 +64,7 @@ const workingAtom = atom({ plugin: 'mefisto', key: 'isWorking' } as const, false
 const knownAtom = atom({ plugin: 'mefisto', key: 'known' } as const, [])
 
 let isInteractive = false
+let pending: Pending = new Map()
 let isRefreshing = false
 let settle: { cancel: () => void } | null = null
 let timer: { cancel: () => void } | null = null
@@ -102,7 +108,9 @@ async function refresh($: EngineInterface, isForced: boolean) {
       if (!focus?.created.includes(a.number)) $.ui.toast(`Nuevo ${a.kind} #${a.number}: ${clip(a.title, 60)}`)
     }
     const [refine, develop] = await Promise.all([runNextOrder($, ['--refinement', '--json']), runNextOrder($, ['--json'])])
-    await update($, refineAtom, () => refine)
+    const applied = applyPending(refine, pending, Date.now())
+    pending = applied.pending
+    await update($, refineAtom, () => applied.list)
     await update($, developAtom, () => develop)
     await update($, signatureAtom, () => signature)
     await update($, knownAtom, () => issues.map(i => i.number))
@@ -235,7 +243,15 @@ function refreshAfterSettle($: EngineInterface) {
   settle = $.clock.after(SETTLE_MS, () => void refresh($, true))
 }
 
+// Quita #N de la lista de borradores en el acto y lo oculta en los refrescos siguientes hasta que se confirme.
+async function hideFromDrafts($: EngineInterface, issue: number) {
+  pending = addPending(pending, issue, Date.now())
+  await update($, refineAtom, list => dropIssue(list, issue))
+}
+
 async function onBash($: EngineInterface, command: string, output: string) {
+  const transitioned = issueMarkedListo(command) ?? issueClosed(command)
+  if (transitioned !== null) await hideFromDrafts($, transitioned)
   if (isIssueChange(command)) refreshAfterSettle($)
   const focus = await read($, focusAtom)
   if (!focus) return
@@ -381,6 +397,7 @@ export const register: Register = on => {
     const develop = await read($, developAtom)
     const inner = Math.max(40, (e.props.bodyColumns ?? 80) - 4)
     const count = (l: BoardList | null) => (l ? String(l.items.length) : '…')
+    const isUpdating = pending.size > 0
     const tab = await read($, tabAtom)
     const suggested = refine?.items[0]?.number ?? null
     const listButtons = (
@@ -388,6 +405,7 @@ export const register: Register = on => {
         <Button key="list-borrador" hotkey="3" plain variant={isExpanded && tab === 'borrador' ? 'primary' : undefined}
           dimColor={!(isExpanded && tab === 'borrador')} label={`borradores ${count(refine)}`}
           onPress={() => void toggleList($, 'borrador')} />
+        {isUpdating && <Text dimColor>actualizando…</Text>}
         <Button key="list-listo" hotkey="4" plain variant={isExpanded && tab === 'listo' ? 'primary' : undefined}
           dimColor={!(isExpanded && tab === 'listo')} label={`listos ${count(develop)}`}
           onPress={() => void toggleList($, 'listo')} />

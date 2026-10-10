@@ -11,6 +11,11 @@ import {
   usedColumns,
   isPlannerClosing,
   issueMarkedListo,
+  issueClosed,
+  addPending,
+  applyPending,
+  dropIssue,
+  PENDING_TTL_MS,
   agentFlagOf,
   agentSettingOf,
   transcriptPathOf,
@@ -165,4 +170,35 @@ test('reconoce el manifiesto del propio plugin Mefisto', async () => {
   expect(isMefistoManifest('{ "name": "mefisto", "version": "0.43.0" }')).toBe(true)
   expect(isMefistoManifest('{ "name": "otro-plugin" }')).toBe(false)
   expect(isMefistoManifest('no json')).toBe(false)
+})
+
+test('reconoce el cierre de un issue', async () => {
+  expect(issueClosed('gh issue close 801 --comment "ok"')).toBe(801)
+  expect(issueClosed('cd x && gh issue close #802')).toBe(802)
+  expect(issueClosed('gh issue edit 801 --add-label bloqueado')).toBe(null)
+  expect(issueClosed('echo "gh issue close 5"')).toBe(null)
+})
+
+const item = (number: number) => ({ number, title: `T${number}`, tipo: null, after: [], hasDepsSection: true })
+const board = (...numbers: number[]) => ({ items: numbers.map(item), blockedCount: 0, cycleCount: 0, launch: null, error: null })
+
+test('la quita optimista saca el item y recalcula los indices de la pagina visible', async () => {
+  const list = dropIssue(board(1, 2, 3, 4, 5, 6, 7), 2)
+  expect(list?.items.map(i => i.number)).toEqual([1, 3, 4, 5, 6, 7])
+  expect(list?.items.slice(0, 5).map(i => i.number)).toEqual([1, 3, 4, 5, 6])
+  expect(dropIssue(null, 2)).toBe(null)
+  const same = board(1)
+  expect(dropIssue(same, 9)).toBe(same)
+})
+
+test('el conjunto pendiente filtra el borrador y sale al confirmarse o a los 60 s', async () => {
+  const pending = addPending(new Map(), 2, 1000)
+  const still = applyPending(board(1, 2, 3), pending, 1000 + 5_000)
+  expect(still.list.items.map(i => i.number)).toEqual([1, 3])
+  expect(still.pending.has(2)).toBe(true)
+  const confirmed = applyPending(board(1, 3), still.pending, 1000 + 10_000)
+  expect(confirmed.pending.size).toBe(0)
+  const expired = applyPending(board(1, 2, 3), pending, 1000 + PENDING_TTL_MS)
+  expect(expired.list.items.map(i => i.number)).toEqual([1, 2, 3])
+  expect(expired.pending.size).toBe(0)
 })
