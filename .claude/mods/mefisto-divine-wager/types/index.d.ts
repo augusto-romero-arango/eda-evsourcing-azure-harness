@@ -55,8 +55,30 @@ export type BitacoraPr = { number: number; title: string }
 /** El subagente mefisto-historiador escribiendo la bitacora en esta sesion (lo lanza /mefisto-bitacora). */
 export type Historian = { startedMs: number; finishedMs: number | null; notes: BitacoraNote[]; pr: BitacoraPr | null }
 
-/** Un /mefisto-release en esta sesion: en reposo mientras se prepara, despegando mientras corre su script. */
-export type Release = { phase: 'reposo' | 'despegando'; startedMs: number; finishedMs: number | null }
+/** Una fase de mefisto-release.sh, en el orden en que ocurren. */
+export type ReleaseStep = 'rama' | 'consolidar' | 'pr' | 'merge' | 'tag' | 'release'
+
+/** Un issue con fragmentos en changelog.d/ al arrancar el release, y sus categorias de Keep a Changelog. */
+export type ReleaseIssue = { issue: string; title: string; categories: string[] }
+
+/**
+ * Un /mefisto-release en esta sesion: en reposo mientras se prepara, despegando mientras corre su script.
+ * `steps` son las fases que esta corrida recorre (--prepare-only se detiene en el PR; sin bump solo publica);
+ * `done` las ya observadas por sondeo y `failed` la que quedo en curso si el turno termino sin completarlas.
+ */
+export type Release = {
+  phase: 'reposo' | 'despegando'
+  startedMs: number
+  finishedMs: number | null
+  version: string | null
+  steps: ReleaseStep[]
+  done: ReleaseStep[]
+  failed: ReleaseStep | null
+  issues: ReleaseIssue[]
+  fragments: string[]
+  pr: string | null
+  url: string | null
+}
 
 /** Un PR de la cinta de /mefisto-merge: sale de la lista al quedar mergeado; si su merge falla queda con ✗. */
 export type MergePr = { num: string; title: string; estado: 'pendiente' | 'mergeado' | 'fallido' }

@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { BatchRun, LogLine, PipelineRun, ReadyList } from '../types'
+import type { BatchRun, LogLine, PipelineRun, ReadyList, Release, ReleaseStep } from '../types'
 import {
   BATCH_STATUS,
   EVENTS_LOG,
@@ -39,6 +39,16 @@ import {
   fieldNotesIn,
   releaseArgsOf,
   releaseOptions,
+  releaseInvocationOf,
+  releasePlan,
+  releaseIssuesOf,
+  releaseBranchOf,
+  releaseTagOf,
+  releaseChecklist,
+  releaseHeader,
+  isConsolidated,
+  withObservedSteps,
+  finishRelease,
   mergeArgsOf,
   mergeOptions,
   newlyMerged,
@@ -119,6 +129,11 @@ const SCRIPT_TIMEOUT_MS = 180_000
 const MERGE_POLL_MS = 5_000
 // Sin ningun `gh pr merge` a la vista, una cinta que pasa este tiempo se cierra al terminar el turno.
 const MERGE_STALE_MS = 10 * 60_000
+/** Cada cuanto se sondea la fase del release en GitHub mientras corre su script. */
+const RELEASE_POLL_MS = 5_000
+/** Cuanto queda en la banda el release terminado, con su boton para abrirlo. */
+const RELEASE_DONE_MS = 120_000
+const PLUGIN_JSON = '.claude-plugin/plugin.json'
 
 // Recorte comun a todos los cuadros que usa la consola, calculado una vez: sin margen y sin saltos al alternar.
 const MASCOT_POSES = [
@@ -192,6 +207,8 @@ let isRefreshingReady = false
 let readyTimer: { cancel: () => void } | null = null
 let lastMergePollMs = 0
 let isMergeSeen = false
+let lastReleasePollMs = 0
+let isReleaseScriptSeen = false
 let lastNotesPollMs = 0
 let lastBitacoraPrCheckMs = 0
 
@@ -468,6 +485,7 @@ async function poll($: EngineInterface) {
     await pollBatch($)
     await pollHistorian($)
     await pollMerge($)
+    await pollRelease($)
     const inBatch = (await read($, batchAtom)) !== null
     const prev = await read($, runAtom)
     if (prev?.state === 'completed' && !inBatch) await closeIfMerged($, prev)
@@ -735,12 +753,117 @@ async function chooseRelease($: EngineInterface) {
   const args = answer === null ? null : releaseArgsOf(answer)
   if (!args) return
   $.ui.toast(`/mefisto-release ${args} en cola`)
-  await startRelease($)
+  await startRelease($, `/mefisto-release ${args}`)
   await $.command.run({ command: 'mefisto-release', args })
 }
 
-async function startRelease($: EngineInterface) {
-  await update($, releaseAtom, r => (r && !r.finishedMs ? r : { phase: 'reposo', startedMs: Date.now(), finishedMs: null }))
+// La cinta del release: la foto de changelog.d/ al arrancar, agrupada por issue, y las fases que recorre el script.
+async function startRelease($: EngineInterface, invocationText: string) {
+  const current = await read($, releaseAtom)
+  if (current && !current.finishedMs && Array.isArray(current.steps)) return
+  let version: string | null = null
+  try {
+    const parsed = JSON.parse(await $.fs.read(await inRepo($, PLUGIN_JSON)).catch(() => ''))
+    version = typeof parsed?.version === 'string' ? parsed.version : null
+  } catch {
+    version = null
+  }
+  const plan = releasePlan(version, releaseInvocationOf(invocationText))
+  const listed = await $.fs.list(await inRepo($, CHANGELOG_DIR)).catch(() => [])
+  const fragments = listed.filter(n => n.kind === 'file' && n.name !== 'README.md' && n.name.endsWith('.md')).map(n => n.name)
+  const issues = releaseIssuesOf(fragments)
+  const release: Release = {
+    phase: 'reposo',
+    startedMs: Date.now(),
+    finishedMs: null,
+    version: plan.version,
+    steps: plan.steps,
+    done: [],
+    failed: null,
+    issues,
+    fragments,
+    pr: null,
+    url: null,
+  }
+  isReleaseScriptSeen = false
+  lastReleasePollMs = 0
+  await update($, releaseAtom, () => release)
+  void fillReleaseTitles($, issues.map(i => i.issue))
+}
+
+// El titulo de cada issue de la foto, en paralelo; los que gh no devuelve se quedan con el numero solo.
+async function fillReleaseTitles($: EngineInterface, issues: string[]) {
+  const titles = await Promise.all(
+    issues.map(n =>
+      runInRepo($, ['gh', 'issue', 'view', n, '--json', 'title', '-q', '.title']).catch(() => ({ exitCode: 1, stdout: '' })),
+    ),
+  )
+  const byIssue = new Map(issues.map((n, i) => [n, titles[i]?.exitCode === 0 ? titles[i].stdout.trim() : '']))
+  await update($, releaseAtom, r =>
+    r && Array.isArray(r.issues) ? { ...r, issues: r.issues.map(i => (byIssue.get(i.issue) ? { ...i, title: byIssue.get(i.issue) ?? '' } : i)) } : r,
+  )
+}
+
+// Las fases por sondeo de GitHub, no por la salida del Bash (que llega entera al terminar el script).
+async function pollRelease($: EngineInterface, isForced = false) {
+  const release = await read($, releaseAtom)
+  if (!release || release.finishedMs || !release.version || !Array.isArray(release.steps)) return
+  if (!isForced && Date.now() - lastReleasePollMs < RELEASE_POLL_MS) return
+  lastReleasePollMs = Date.now()
+  const branch = releaseBranchOf(release.version)
+  const tag = releaseTagOf(release.version)
+  const pending = (step: ReleaseStep) => release.steps.includes(step) && !release.done.includes(step)
+  const none = Promise.resolve(null)
+  const probe = (argv: string[]) => runInRepo($, argv).catch(() => null)
+  const [heads, contents, prs, tags, published] = await Promise.all([
+    pending('rama') ? probe(['git', 'ls-remote', '--heads', 'origin', branch]) : none,
+    pending('consolidar') ? probe(['gh', 'api', `repos/{owner}/{repo}/contents/changelog.d?ref=${branch}`, '--jq', '.[].name']) : none,
+    pending('pr') || pending('merge') ? probe(['gh', 'pr', 'list', '--head', branch, '--state', 'all', '--limit', '1', '--json', 'number,state']) : none,
+    pending('tag') ? probe(['git', 'ls-remote', '--tags', 'origin', `refs/tags/${tag}`]) : none,
+    pending('release') ? probe(['gh', 'release', 'view', tag, '--json', 'url,isDraft']) : none,
+  ])
+  const observed: ReleaseStep[] = []
+  let pr = release.pr
+  let url = release.url
+  if (heads?.exitCode === 0 && heads.stdout.trim() !== '') observed.push('rama')
+  if (contents?.exitCode === 0 && isConsolidated(release.fragments, contents.stdout.split('\n').map(l => l.trim()).filter(Boolean))) {
+    observed.push('consolidar')
+  }
+  if (prs?.exitCode === 0) {
+    try {
+      const first = (JSON.parse(prs.stdout) as { number: number; state: string }[])[0]
+      if (first) {
+        pr = String(first.number)
+        observed.push(first.state === 'MERGED' ? 'merge' : 'pr')
+      }
+    } catch {
+      // salida inesperada: se reintenta en el siguiente sondeo
+    }
+  }
+  if (tags?.exitCode === 0 && tags.stdout.trim() !== '') observed.push('tag')
+  if (published?.exitCode === 0) {
+    try {
+      const info = JSON.parse(published.stdout) as { url?: string; isDraft?: boolean }
+      if (!info.isDraft) {
+        url = info.url ?? null
+        observed.push('release')
+      }
+    } catch {
+      // idem
+    }
+  }
+  await update($, releaseAtom, r => {
+    if (!r || r.finishedMs || !Array.isArray(r.steps)) return r
+    const next = withObservedSteps(r, observed)
+    return next === r && pr === r.pr && url === r.url ? r : { ...next, pr, url }
+  })
+}
+
+async function openRelease($: EngineInterface) {
+  const release = await read($, releaseAtom)
+  if (!release?.version) return
+  if (release.url) await runInRepo($, ['gh', 'release', 'view', releaseTagOf(release.version), '--web']).catch(() => undefined)
+  else if (release.pr) await runInRepo($, ['gh', 'pr', 'view', release.pr, '--web']).catch(() => undefined)
 }
 
 async function confirmStop($: EngineInterface) {
@@ -779,17 +902,21 @@ export const register: Register = on => {
   // El cohete del release: en reposo desde que se pide /mefisto-release, despegando mientras corre su script y
   // listo cuando termina el turno que lo ejecuto.
   on('prompt.submit', async ($, e, next) => {
-    if (isInteractive && isReleasePrompt(e.text)) await startRelease($)
+    if (isInteractive && isReleasePrompt(e.text)) await startRelease($, e.text)
     const mergeArgs = isInteractive ? mergePromptArgs(e.text) : null
     if (mergeArgs) await startMerge($, mergeArgs)
     return next(e)
   })
 
   on('turn.complete', async ($, e, next) => {
+    // Solo cierra el turno que corrio el script: un /mefisto-release encolado arranca en un turno posterior.
     const release = await read($, releaseAtom)
-    if (release && !release.finishedMs) {
-      await update($, releaseAtom, r => (r ? { ...r, phase: 'reposo', finishedMs: Date.now() } : r))
-      $.clock.after(HISTORIAN_DONE_MS, () => void update($, releaseAtom, r => (r?.finishedMs ? null : r)))
+    if (release && !release.finishedMs && (isReleaseScriptSeen || Date.now() - release.startedMs > MERGE_STALE_MS)) {
+      await pollRelease($, true)
+      await update($, releaseAtom, r => (r ? (Array.isArray(r.steps) ? finishRelease(r, Date.now()) : { ...r, phase: 'reposo', finishedMs: Date.now() }) : r))
+      const done = await read($, releaseAtom)
+      if (done?.version) $.ui.toast(releaseHeader(done, ''))
+      $.clock.after(RELEASE_DONE_MS, () => void update($, releaseAtom, r => (r?.finishedMs ? null : r)))
       void refreshReady($)
     }
     // El turno de /mefisto-merge termino: lo que siga pendiente lo descarto el skill o no se llego a mergear.
@@ -804,7 +931,8 @@ export const register: Register = on => {
 
   on('tool.call', { tool: 'Bash' }, async ($, e, next) => {
     if (isInteractive && isReleaseRun(e.command)) {
-      await startRelease($)
+      await startRelease($, e.command)
+      isReleaseScriptSeen = true
       await update($, releaseAtom, r => (r ? { ...r, phase: 'despegando' } : r))
       try {
         return await next(e)
@@ -1051,6 +1179,15 @@ export const register: Register = on => {
       const notesHidden = notes.length - noteLines.length
       const notesDone = historian ? historian.notes.filter(n => n.estado === 'procesada').length : 0
       const bitacoraPr = !mergeRun ? (historian?.pr ?? null) : null
+      // La cinta del release: la foto de changelog.d/ (✓ al consolidarse) y las fases en una linea debajo.
+      const releaseRun = release && Array.isArray(release.steps) ? release : null
+      const releaseIssues = releaseRun?.issues ?? []
+      const releaseSlots = READY_ROWS - 1
+      const releaseRows = releaseIssues.length > releaseSlots ? releaseSlots - 1 : releaseSlots
+      const releaseLines = releaseIssues.slice(0, releaseRows)
+      const releaseHidden = releaseIssues.length - releaseLines.length
+      const isConsolidatedRun = releaseRun?.done.includes('consolidar') ?? false
+      const releaseLink = releaseRun?.finishedMs && !mergeRun ? (releaseRun.url ? 'ver release' : releaseRun.pr ? 'ver PR' : null) : null
       return (
         <Box flexDirection="column" borderStyle="round" borderColor="claude" borderDimColor paddingX={1}>
           <Box justifyContent="space-between">
@@ -1067,19 +1204,22 @@ export const register: Register = on => {
               {historian?.finishedMs && (
                 <Text color="success"> · bitácora escrita{historian.pr ? ` · PR #${historian.pr.number}` : ''}</Text>
               )}
-              {release && !release.finishedMs && (
-                <Text color="warning">
-                  {release.phase === 'despegando' ? ' · release despegando' : ' · release en preparación'} {elapsed((now || Date.now()) - release.startedMs)}
+              {releaseRun && (
+                <Text color={releaseRun.failed ? 'error' : releaseRun.finishedMs ? 'success' : 'warning'}>
+                  {' · '}{releaseHeader(releaseRun, releaseRun.finishedMs ? '' : elapsed((now || Date.now()) - releaseRun.startedMs))}
                 </Text>
               )}
-              {release?.finishedMs && <Text color="success"> · release terminado</Text>}
               {mergeRun && (
                 <Text color={!mergeRun.finishedMs ? 'warning' : mergeCounts(mergeRun).failed > 0 ? 'error' : 'success'}>
                   {' · '}{mergeHeader(mergeRun, elapsed((mergeRun.finishedMs ?? (now || Date.now())) - mergeRun.startedMs))}
                 </Text>
               )}
             </Text>
-            {bitacoraPr ? (
+            {releaseLink ? (
+              <Box gap={2}>
+                <Button key="release-web" hotkey="2" plain variant="primary" label={releaseLink} onPress={() => void openRelease($)} />
+              </Box>
+            ) : bitacoraPr ? (
               <Box gap={2}>
                 <Button key="bitacora-merge" hotkey="1" plain variant="primary" label="mergear" onPress={() => void mergeBitacoraPr($)} />
                 <Button key="bitacora-web" hotkey="2" plain label="ver PR" onPress={() => void openBitacoraPr($)} />
@@ -1111,6 +1251,24 @@ export const register: Register = on => {
                 ))}
                 {mergeLines.length === 0 && <Text color="success">✓ todos mergeados</Text>}
                 {mergeHidden > 0 && <Text dimColor>+{mergeHidden} más</Text>}
+              </Box>
+            ) : releaseRun ? (
+              <Box flexDirection="column" width={body} marginTop={1}>
+                {releaseLines.map(i => (
+                  <Text key={`release-${i.issue}`} wrap="truncate-end" dimColor={isConsolidatedRun}>
+                    <Text color={isConsolidatedRun ? 'success' : 'warning'}>{isConsolidatedRun ? '✓' : '●'}</Text>
+                    {` #${i.issue}${i.title ? ` ${i.title}` : ''}${i.categories.length > 0 ? ` · ${i.categories.join('/')}` : ''}`}
+                  </Text>
+                ))}
+                {releaseIssues.length === 0 && <Text dimColor>sin fragmentos pendientes en changelog.d/</Text>}
+                {releaseHidden > 0 && <Text dimColor>+{releaseHidden} más</Text>}
+                <Text wrap="truncate-end">
+                  {releaseChecklist(releaseRun).map((s, i) => (
+                    <Text key={`fase-${s.step}`} color={s.mark === '✓' ? 'success' : s.mark === '●' ? 'warning' : s.mark === '✗' ? 'error' : undefined} dimColor={s.mark === '·'}>
+                      {i > 0 ? ' → ' : ''}{s.mark} {s.label}
+                    </Text>
+                  ))}
+                </Text>
               </Box>
             ) : historian ? (
               <Box flexDirection="column" width={body} marginTop={1}>

@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { bitacoraPrOf, fieldNoteNamesOf, pendingNotes, processedDirsOf, withProcessedNotes, finishMerge, ghMergeNumbersOf, isGhMergeRun, mergeCounts, mergeHeader, mergeOutcomesOf, mergePromptArgs, mergePrsOf, withMergeOutcomes, agentFlagOf, historianFrom, isAgentActive, isReleasePrompt, isReleaseRun, holdOf, holdText, bitacoraPrompt, changelogOf, fieldNotesIn, releaseArgsOf, releaseOptions, mergeArgsOf, mergeOptions, parseOpenPrs, withoutHeredocs, fmtCost, issueStatsFromHistory, statsPending, fitTitle, summaryTitleWidth, statsTotal, batchFromStatus, batchIssuesOf, batchPr, batchSummary, issueMark, newlyMerged, readyRows, titlesOf, toolingOf, waitingFace, cropGrid, pageOf, parseNextOrder, sequentialOf, finishedFromHistory, mascotPose, parseEvent, usedColumns, relative, pickEventsFile, steps, stampToMs, toolingIssueOf, withModUi } from './logic'
+import { RELEASE_STEPS, bumpVersion, currentReleaseStep, finishRelease, isConsolidated, releaseBranchOf, releaseChecklist, releaseHeader, releaseInvocationOf, releaseIssuesOf, releasePlan, releaseTagOf, withObservedSteps, bitacoraPrOf, fieldNoteNamesOf, pendingNotes, processedDirsOf, withProcessedNotes, finishMerge, ghMergeNumbersOf, isGhMergeRun, mergeCounts, mergeHeader, mergeOutcomesOf, mergePromptArgs, mergePrsOf, withMergeOutcomes, agentFlagOf, historianFrom, isAgentActive, isReleasePrompt, isReleaseRun, holdOf, holdText, bitacoraPrompt, changelogOf, fieldNotesIn, releaseArgsOf, releaseOptions, mergeArgsOf, mergeOptions, parseOpenPrs, withoutHeredocs, fmtCost, issueStatsFromHistory, statsPending, fitTitle, summaryTitleWidth, statsTotal, batchFromStatus, batchIssuesOf, batchPr, batchSummary, issueMark, newlyMerged, readyRows, titlesOf, toolingOf, waitingFace, cropGrid, pageOf, parseNextOrder, sequentialOf, finishedFromHistory, mascotPose, parseEvent, usedColumns, relative, pickEventsFile, steps, stampToMs, toolingIssueOf, withModUi } from './logic'
 
 test('detecta el lanzamiento de /mefisto-tooling', async () => {
   expect(toolingIssueOf('MEFISTO_RUNTIME=claude ./.claude/scripts/mefisto-tmux-pipeline.sh --tooling 2059')).toBe('2059')
@@ -137,7 +137,7 @@ test('la redireccion 2>&1 tras el batch no cuenta como issue', async () => {
 })
 
 test('el estado de un batch arrancado poco antes de que vuelva la llamada no se descarta', async () => {
-  const prev = { issues: [], state: 'running' as const, current: null, stopRequested: false, holdSeconds: 0, startedMs: 0, finishedMs: null, stats: {} }
+  const prev: import('../types').BatchRun = { issues: [], state: 'running', current: null, stopRequested: false, holdSeconds: 0, startedMs: 0, finishedMs: null, stats: {} }
   const raw = JSON.stringify({ started: '20261010-143424', state: 'completed', current: null, issues: [{ issue: '2260', status: 'completado (PR #2268 mergeado)', pr: '2268' }] })
   const launchedMs = stampToMs('20261010-143424') - 5_000
   expect(batchFromStatus(raw, prev, launchedMs).state).toBe('completed')
@@ -377,4 +377,74 @@ test('detecta el PR de bitacora abierto y descarta los de field notes', async ()
   expect(bitacoraPrOf(JSON.stringify(rows))).toEqual({ number: 41, title: 'docs(bitacora): entradas' })
   expect(bitacoraPrOf(JSON.stringify([rows[0]]))).toBe(null)
   expect(bitacoraPrOf('no json')).toBe(null)
+})
+
+const baseRelease = (over: Partial<import('../types').Release> = {}): import('../types').Release => ({
+  phase: 'despegando', startedMs: 0, finishedMs: null, version: '0.46.0', steps: [...RELEASE_STEPS], done: [],
+  failed: null, issues: [], fragments: [], pr: null, url: null, ...over,
+})
+
+test('lee el bump y el modo de /mefisto-release y de su script', async () => {
+  expect(releaseInvocationOf('/mefisto-release minor')).toEqual({ bump: 'minor', prepareOnly: false })
+  expect(releaseInvocationOf('/mefisto-release patch --prepare-only')).toEqual({ bump: 'patch', prepareOnly: true })
+  expect(releaseInvocationOf('/mefisto-release')).toEqual({ bump: null, prepareOnly: false })
+  expect(releaseInvocationOf('MEFISTO_RUNTIME=claude ./.claude/scripts/mefisto-release.sh minor 2>&1 | tail -40')).toEqual({ bump: 'minor', prepareOnly: false })
+  expect(releaseInvocationOf('./.claude/scripts/mefisto-release.sh; echo major')).toEqual({ bump: null, prepareOnly: false })
+})
+
+test('calcula version, rama y tag como mefisto-release.sh', async () => {
+  expect(bumpVersion('0.45.0', 'minor')).toBe('0.46.0')
+  expect(bumpVersion('0.45.3', 'patch')).toBe('0.45.4')
+  expect(bumpVersion('0.45.3', 'major')).toBe('1.0.0')
+  expect(bumpVersion('v0.45', 'minor')).toBe(null)
+  expect(releaseTagOf('0.46.0')).toBe('v0.46.0')
+  expect(releaseBranchOf('0.46.0')).toBe('release/v0.46.0')
+})
+
+test('el plan de fases depende del modo', async () => {
+  expect(releasePlan('0.45.0', { bump: 'minor', prepareOnly: false })).toEqual({ version: '0.46.0', steps: [...RELEASE_STEPS] })
+  expect(releasePlan('0.45.0', { bump: 'minor', prepareOnly: true }).steps).toEqual(['rama', 'consolidar', 'pr'])
+  expect(releasePlan('0.46.0', { bump: null, prepareOnly: false })).toEqual({ version: '0.46.0', steps: ['tag', 'release'] })
+  expect(releasePlan(null, { bump: 'minor', prepareOnly: false }).version).toBe(null)
+})
+
+test('la foto de changelog.d agrupa por issue sin README y ordena sus categorias', async () => {
+  const issues = releaseIssuesOf(['README.md', '2261.changed.md', '2261.added.md', '2261.adr-index.md', '980.fixed.md', 'nota.txt'])
+  expect(issues).toEqual([
+    { issue: '980', title: '', categories: ['fixed'] },
+    { issue: '2261', title: '', categories: ['added', 'changed'] },
+  ])
+})
+
+test('consolidado: ningun fragmento de la foto queda en la rama', async () => {
+  expect(isConsolidated(['1.added.md', '2.fixed.md'], ['README.md'])).toBe(true)
+  expect(isConsolidated(['1.added.md', '2.fixed.md'], ['README.md', '2.fixed.md'])).toBe(false)
+  expect(isConsolidated([], ['README.md'])).toBe(false)
+})
+
+test('las fases avanzan en orden y una observada implica las anteriores', async () => {
+  const r = baseRelease()
+  expect(withObservedSteps(r, [])).toBe(r)
+  const merged = withObservedSteps(r, ['merge'])
+  expect(merged.done).toEqual(['rama', 'consolidar', 'pr', 'merge'])
+  expect(currentReleaseStep(merged)).toBe('tag')
+  expect(withObservedSteps(merged, ['rama']).done).toEqual(merged.done)
+  const prepareOnly = baseRelease({ steps: ['rama', 'consolidar', 'pr'] })
+  expect(withObservedSteps(prepareOnly, ['tag'])).toBe(prepareOnly)
+})
+
+test('checklist, encabezado y cierre del release', async () => {
+  const running = withObservedSteps(baseRelease(), ['pr'])
+  expect(releaseChecklist(running).map(s => s.mark).join('')).toBe('✓✓✓●··')
+  expect(releaseHeader(running, '01:10')).toBe('release v0.46.0 despegando 01:10')
+  const failed = finishRelease(running, 5)
+  expect(failed.failed).toBe('merge')
+  expect(releaseChecklist(failed).map(s => s.mark).join('')).toBe('✓✓✓✗··')
+  expect(releaseHeader(failed, '')).toBe('release v0.46.0 falló en merge')
+  const published = finishRelease(withObservedSteps(baseRelease(), ['release']), 5)
+  expect(published.failed).toBe(null)
+  expect(releaseHeader(published, '')).toBe('release v0.46.0 publicado')
+  const prepared = finishRelease(withObservedSteps(baseRelease({ steps: ['rama', 'consolidar', 'pr'], pr: '2273' }), ['pr']), 5)
+  expect(releaseHeader(prepared, '')).toBe('release v0.46.0 · PR #2273 listo')
+  expect(finishRelease(published, 9)).toBe(published)
 })
