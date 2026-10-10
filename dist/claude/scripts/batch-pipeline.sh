@@ -58,6 +58,7 @@ header()  { local m="\n${CYAN}${BOLD}── $1 ──${NC}"; echo -e "$m"; _log_
 abort() {
     echo -e "\n${RED}${BOLD}✗ ERROR FATAL: $1${NC}" | tee -a "$LOG_FILE_ABS"
     echo -e "${YELLOW}Revisa el log: $LOG_FILE_ABS${NC}"
+    write_batch_status failed
     exit 1
 }
 
@@ -66,18 +67,72 @@ ISSUE_STATUS_NUMS=()
 ISSUE_STATUS_VALUES=()
 ISSUE_STATUS_PRS=()
 
+# Estado del lote para las superficies que lo siguen (MEF-ADR-0055 decision 1,
+# MEF-ADR-0053): pipeline-status-batch.json en el directorio de estado. Se
+# reescribe entero (tmp + mv) al arrancar, en cada cambio de estado de un issue
+# y al terminar; el archivo final no se borra. `status` se normaliza desde el
+# texto libre del tracker (pendiente|en-curso|mergeado|fallido|aplazado|saltado)
+# y el texto pasa a `detail`. Sin jq no se escribe nada y el lote corre igual.
+BATCH_STATUS_FILE=""
+BATCH_STATE="running"
+BATCH_CURRENT=""
+
+write_batch_status() {
+    [ -n "${1:-}" ] && BATCH_STATE="$1"
+    [ -n "$BATCH_STATUS_FILE" ] || return 0
+    command -v jq >/dev/null 2>&1 || return 0
+    local rows="" i stop=false
+    [ -f "${BATCH_STOP_SIGNAL:-/nonexistent}" ] && stop=true
+    for i in "${!ISSUE_STATUS_NUMS[@]}"; do
+        rows="${rows}${ISSUE_STATUS_NUMS[$i]}"$'\t'"${ISSUE_STATUS_VALUES[$i]}"$'\t'"${ISSUE_STATUS_PRS[$i]}"$'\n'
+    done
+    printf '%s' "$rows" | jq -R -s \
+        --arg started "$TIMESTAMP" --arg state "$BATCH_STATE" --arg current "$BATCH_CURRENT" \
+        --arg log "${LOG_FILE_ABS:-}" --argjson hold "${BATCH_TOTAL_HOLD_SECONDS:-0}" \
+        --argjson stop "$stop" '
+        def norm: if startswith("completado") then "mergeado"
+                  elif startswith("ERROR") then "fallido"
+                  elif startswith("aplazado") then "aplazado"
+                  elif startswith("saltado") then "saltado"
+                  elif startswith("en-curso") then "en-curso"
+                  else "pendiente" end;
+        def det($n): sub("^(ERROR|saltado): ";"") | if . == $n then null else . end;
+        { pipeline: "batch", started: $started, state: $state,
+          current: (if $current == "" then null else ($current | tonumber? // .) end),
+          stop_requested: $stop, hold_seconds: $hold, log: $log,
+          issues: [split("\n")[] | select(. != "") | split("\t")
+                   | (.[1] | norm) as $n
+                   | { issue: (.[0] | tonumber? // .), status: $n,
+                       pr: (if (.[2] // "") == "" then null else (.[2] | tonumber? // .) end),
+                       detail: (.[1] | det($n)) }] }' \
+        > "$BATCH_STATUS_FILE.tmp" 2>/dev/null && mv "$BATCH_STATUS_FILE.tmp" "$BATCH_STATUS_FILE" || true
+}
+
+# El tracker tambien lo extraen los tests en aislamiento: sin write_batch_status
+# cargada, set_status/set_pr siguen funcionando.
+_publish_batch_status() {
+    if declare -F write_batch_status >/dev/null 2>&1; then write_batch_status; fi
+    return 0
+}
+
 set_status() {
     local issue="$1" val="$2"
     local i
+    case "$val" in
+        en-curso*) BATCH_CURRENT="$issue" ;;
+        *) [ "${BATCH_CURRENT:-}" = "$issue" ] && BATCH_CURRENT="" ;;
+    esac
     for i in "${!ISSUE_STATUS_NUMS[@]}"; do
         if [ "${ISSUE_STATUS_NUMS[$i]}" = "$issue" ]; then
             ISSUE_STATUS_VALUES[$i]="$val"
-            return
+            _publish_batch_status
+            return 0
         fi
     done
     ISSUE_STATUS_NUMS+=("$issue")
     ISSUE_STATUS_VALUES+=("$val")
     ISSUE_STATUS_PRS+=("")
+    _publish_batch_status
 }
 
 get_status() {
@@ -97,12 +152,14 @@ set_pr() {
     for i in "${!ISSUE_STATUS_NUMS[@]}"; do
         if [ "${ISSUE_STATUS_NUMS[$i]}" = "$issue" ]; then
             ISSUE_STATUS_PRS[$i]="$pr"
-            return
+            _publish_batch_status
+            return 0
         fi
     done
     ISSUE_STATUS_NUMS+=("$issue")
     ISSUE_STATUS_VALUES+=("pendiente")
     ISSUE_STATUS_PRS+=("$pr")
+    _publish_batch_status
 }
 
 get_pr() {
@@ -303,6 +360,10 @@ fi
 # auto-detectar por su cuenta y podria divergir del batch.
 export MEFISTO_RUNTIME="$BATCH_RUNTIME"
 
+# Estado del lote (CA-1): desde aqui el archivo existe y refleja la cola completa.
+BATCH_STATUS_FILE="$(mefisto_state_path 'pipeline-status-batch.json')"
+write_batch_status running
+
 # ─── Cabecera ─────────────────────────────────────────────────────────────────
 header "batch-pipeline --- Procesamiento secuencial de issues"
 log "Runtime: $MEFISTO_RUNTIME"
@@ -345,6 +406,7 @@ for ISSUE_NUM in ${BATCH_QUEUE[@]+"${BATCH_QUEUE[@]}"}; do
 
     if [ "$ISSUE_STATE" != "OPEN" ]; then
         log "Issue #$ISSUE_NUM esta $ISSUE_STATE --- saltando."
+        set_status "$ISSUE_NUM" "saltado: issue $ISSUE_STATE"
         FAILED=$((FAILED + 1))
         continue
     fi
@@ -352,11 +414,13 @@ for ISSUE_NUM in ${BATCH_QUEUE[@]+"${BATCH_QUEUE[@]}"}; do
     if [[ "$PIPELINE_SCRIPT" == SKIP:* ]]; then
         local_reason="${PIPELINE_SCRIPT#SKIP:}"
         warn "Issue #$ISSUE_NUM saltado ($local_reason) --- no se puede enrutar a un pipeline."
+        set_status "$ISSUE_NUM" "saltado: $local_reason"
         FAILED=$((FAILED + 1))
         continue
     fi
 
     PIPELINE_NAME=$(basename "$PIPELINE_SCRIPT")
+    set_status "$ISSUE_NUM" "en-curso"
 
     # ── Stage 1: Ejecutar pipeline ────────────────────────────────────────────
     log "Ejecutando $PIPELINE_NAME para issue #$ISSUE_NUM..."
@@ -507,6 +571,12 @@ if [ "$DEFERRED" -gt 0 ]; then
     warn "Parada solicitada: $DEFERRED issue(s) quedaron aplazados en esta corrida. No es un fallo del batch: el exit code no cambia por esto y nada quedo a medio pipeline."
     echo -e "  Relanza los aplazados, en el mismo orden: ${BOLD}/sequential ${DEFERRED_NUMS[*]}${NC}"
     echo ""
+fi
+
+if [ "$DEFERRED" -gt 0 ]; then
+    write_batch_status stopped
+else
+    write_batch_status completed
 fi
 
 if [ "$HAVE_ERRORS" = true ]; then
