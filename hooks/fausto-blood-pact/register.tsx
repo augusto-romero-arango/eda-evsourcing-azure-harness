@@ -548,7 +548,7 @@ export const register: Register = on => {
       await $.ui.invalidate('ui.render')
     }
     return next(e)
-  })
+  }).catch(($, e, next) => next(e))
 
   on('command.run', { command: 'fausto-blood-pact' }, async ($, e) => {
     const arg = e.args.trim()
