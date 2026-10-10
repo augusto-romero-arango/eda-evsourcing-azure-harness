@@ -14,6 +14,12 @@ _mefisto_state_root="$(git rev-parse --show-toplevel 2>/dev/null)" || _mefisto_s
 export MEFISTO_STATE_DIR MEFISTO_LEGACY_STATE_DIR
 unset _mefisto_state_root
 
+# Raiz de la release que corre este pipeline (MEF-ADR-0053 decision 2): el
+# adaptador de runtime la entrega a cada agente para que cargue esta version
+# y no dependa de que Mefisto este instalado o habilitado en el worktree.
+: "${MEFISTO_AGENT_PACKAGE_ROOT:=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)}"
+export MEFISTO_AGENT_PACKAGE_ROOT
+
 # mefisto_state_path <rel> [root]
 # Imprime la ruta canonica de escritura y crea solo su directorio padre.
 mefisto_state_path() {

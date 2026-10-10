@@ -55,6 +55,8 @@
 # contenido) solo si <system_file> no es vacio; `--model
 # <model>` solo si el runner entrego un modelo no vacio (CA-1 de #858:
 # vacio/ausente = heredar, el adaptador real nunca debe ver un `--model ""`).
+# `--plugin-dir <raiz>` solo si MEFISTO_AGENT_PACKAGE_ROOT apunta a una raiz
+# de plugin Claude (la exportan los pipelines publicados; los internos no).
 # `--append-system-prompt-file` existe ademas de `--append-system-prompt`,
 # verificado en Claude Code 2.1.276 local: `claude --help` lo lista en forma
 # abreviada (`--append-system-prompt[-file]`) y la sonda
@@ -98,6 +100,15 @@ runtime_claude_build_cmd() {
 
     if [ -n "$system_file" ]; then
         MEFISTO_RUNTIME_CMD+=(--append-system-prompt-file "$system_file")
+    fi
+
+    # MEF-ADR-0053 decision 2: el agente carga el plugin de la release que
+    # corre el pipeline, no la instalacion registrada para la ruta del
+    # worktree (que puede no existir, estar deshabilitada o ser otra version).
+    # `--plugin-dir` precede a la copia instalada (verificado en 2.1.296).
+    local package_root="${MEFISTO_AGENT_PACKAGE_ROOT:-}"
+    if [ -n "$package_root" ] && [ -f "$package_root/.claude-plugin/plugin.json" ]; then
+        MEFISTO_RUNTIME_CMD+=(--plugin-dir "$package_root")
     fi
 
     # MEFISTO_RUNTIME_STDIN_FILE (issue #1448): <prompt_file> viaja tal cual,
