@@ -149,3 +149,6 @@ no necesita estar residente en cada sesión, solo cuando se busca en qué ADR vi
 | Superficie de observacion de pipelines como mod de Claude Code: lector puro del estado, acciones via skills, banda con digitos y modo `MEFISTO_UI=mod` | MEF-ADR-0055 |
 | Tablero del planner como mod: foco refinar/explorar, orden de refinamiento y carga por marketplace local (enmienda de la superficie de observacion por mods) | MEF-ADR-0055 |
 | Tablero del planner en ambos lados: ubicacion de mods por lado, tableros independientes sin regla de tres y version minima 2.1.287 (enmienda de la superficie de observacion por mods) | MEF-ADR-0055 |
+| Nombres de los mods desde el *Fausto*: prefijo `fausto-` en lo publicado (tablero `fausto-board`, consola reservada `fausto-blood-pact`) y `mefisto-` en lo interno (`mefisto-planner-board`, consola `mefisto-divine-wager`), comando igual al nombre del mod (enmienda de la superficie de observacion por mods) | MEF-ADR-0055 |
+| Definition of Ready: issue listo sin preguntas abiertas ni decisiones diferidas (enmienda de MEF-ADR-0011) | MEF-ADR-0011 |
+| Observacion sin el skill interno de dashboard: pane herdr, sesion tmux o panel de logs de OpenCode (enmienda de la superficie de observacion por mods) | MEF-ADR-0055 |
