@@ -4,6 +4,20 @@ Todo cambio notable a este proyecto se documenta aquí. Sigue [Keep a Changelog]
 
 ## [Unreleased]
 
+## [0.44.0] - 2026-10-10
+
+### Added
+
+- Esqueleto de la consola publicada `fausto-blood-pact` (MEF-ADR-0055): modulo `hooks/fausto-blood-pact/` compuesto con el tablero `fausto-board` por el punto de entrada unico `hooks/index.tsx` (Claude Code admite un solo modulo por plugin; el generador emite y valida `modules: ["./index.tsx"]`), con una banda de solo lectura que lista los lanzables de `next-order.sh --json`, `/fausto-blood-pact on|off|refresh` y exclusion del planner, de `-p` y del repo de Mefisto.
+
+### Changed
+
+- MEF-ADR-0055 enmendado: decision 10 incluye la consola publicada `fausto-blood-pact` (activacion, ubicacion en `hooks/fausto-blood-pact/`, independencia de `mefisto-divine-wager` y construccion por incrementos) (#2179).
+
+### Fixed
+
+- Tablero del planner: `/clear` ya no lo apaga (reaparece en reposo y recarga las listas) y `/mefisto-planner-board off` dura toda la sesion hasta un `on` (#2176).
+
 ## [0.43.1] - 2026-10-10
 
 ### Added
@@ -3271,7 +3285,8 @@ Y reemplazar referencias en `CLAUDE.md` del proyecto: `/eda-evsourcing-azure-har
 - Los agentes `reviewer` e `implementer` mantienen el placeholder literal `ADR-XXXX` en sus plantillas de reporte (no es un bug; el agente lo sustituye en tiempo de ejecución por el número real del ADR aplicable).
 - Los ejemplos de código en `test-writer.md`, `implementer.md` y `smoke-test-writer.md` conservan nombres concretos de un proyecto consumidor (`Programacion`, `ControlHoras`) anotados en el "Contrato con el consumidor" de cada agente como ejemplos pedagógicos.
 
-[Unreleased]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.43.1...HEAD
+[Unreleased]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.44.0...HEAD
+[0.44.0]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.43.1...v0.44.0
 [0.43.1]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.43.0...v0.43.1
 [0.43.0]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.42.1...v0.43.0
 [0.42.1]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.42.0...v0.42.1
