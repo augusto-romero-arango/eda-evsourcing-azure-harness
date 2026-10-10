@@ -175,7 +175,7 @@ Los mods de ambos lados no comparten codigo (MEF-ADR-0019), pero no deben diverg
 
 - **Referencia**: al construir o cambiar en un mod una capacidad que su par ya tiene, el comportamiento visual y funcional del par es la referencia: mascota y poses por momento, teclas, forma de la banda y textos. Apartarse de la referencia es una decision explicita del issue, no un descuido.
 - **Referencia, no sincronizacion**: un cambio en un mod no obliga a cambiar su par ni a abrir un issue espejo. Las capacidades exclusivas de un lado no tienen par: historiador y release en el interno, issues del reviewer en el publicado.
-- **Identidad visual por lado**: Mefisto es rojo en lo publicado (paleta de `hooks/sprites.ts`) y blanco perla con cuernos dorados en lo interno (paleta de los mods de `.claude/mods/`). Fausto conserva su tunica roja en ambos.
+- **Identidad visual por lado**: Mefisto es rojo en lo publicado (paleta de `hooks/sprites.ts`) y blanco perla con cuernos dorados en lo interno (paleta de los mods de `.claude/mods/`). Fausto viste la tunica del color del Mefisto de su lado: roja en lo publicado y blanco perla con ribete dorado en lo interno (`T` y `d` de la paleta de cada lado).
 
 ## Consecuencias
 
