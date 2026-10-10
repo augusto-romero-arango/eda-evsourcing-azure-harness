@@ -7,7 +7,9 @@
 #             Con --align-peer alinea tambien la instalacion Claude a la misma version (#1679).
 #
 # Uso:
-#   scripts/upgrade.sh --status                   JSON versionado con el estado del par
+#   scripts/upgrade.sh --status                   JSON versionado (schemaVersion 2) con la version
+#                                                 instalada en disco y el estado del par; es local,
+#                                                 no informa si hay una version mas nueva publicada
 #   scripts/upgrade.sh [--align-peer]             actualiza (y alinea el par si se pide)
 #   scripts/upgrade.sh --prune [--keep <n>] [--loaded <v>]
 #                                                 poda (solo tras confirmar en el comando);
@@ -103,13 +105,15 @@ _peer_opencode() {
     fi
 }
 
-_loaded_claude() {
+# Version instalada en disco (la que cargara la proxima sesion), no la de la sesion viva.
+_installed_claude() {
     local root
     root=$(cat .claude/pipeline/.plugin-root 2>/dev/null) || root=""
     [ -n "$root" ] && basename "${root%/}"
 }
 
-_loaded_opencode() {
+# Release activa del launcher en disco; no es la version cargada en la sesion viva.
+_installed_opencode() {
     local launcher json
     launcher=$(_launcher_path)
     [ -x "$launcher" ] || return 0
@@ -152,20 +156,20 @@ _claude_marketplace_for_install() {
 
 cmd_status() {
     command -v jq >/dev/null 2>&1 || { echo "ERROR: jq es requerido para --status." >&2; return 1; }
-    local loaded="" peer_runtime
+    local installed="" peer_runtime
     if [ "$RUNTIME" = claude ]; then
         peer_runtime=opencode
-        loaded=$(_loaded_claude)
+        installed=$(_installed_claude)
         _peer_opencode
     else
         peer_runtime=claude
-        loaded=$(_loaded_opencode)
+        installed=$(_installed_opencode)
         _peer_claude
     fi
-    jq -cn --arg rt "$RUNTIME" --arg loaded "$loaded" --arg prt "$peer_runtime" \
+    jq -cn --arg rt "$RUNTIME" --arg installed "$installed" --arg prt "$peer_runtime" \
         --arg ps "$PEER_STATE" --arg pv "$PEER_VERSION" '
-        {schemaVersion: 1, runtime: $rt,
-         loadedVersion: (if $loaded == "" then null else $loaded end),
+        {schemaVersion: 2, runtime: $rt,
+         installedVersion: (if $installed == "" then null else $installed end),
          peer: {runtime: $prt, state: $ps, version: (if $pv == "" then null else $pv end)}}'
 }
 
@@ -217,7 +221,7 @@ _update_opencode() {
         echo "ERROR: no se pudo resolver la ultima release de $slug con 'gh release view'." >&2
         return 1
     fi
-    loaded=$(_loaded_opencode)
+    loaded=$(_installed_opencode)
     echo "Version cargada en esta sesion: ${loaded:-desconocida}"
 
     if [ -n "$loaded" ] && [ "$loaded" = "$version" ]; then
