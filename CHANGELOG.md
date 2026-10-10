@@ -4,6 +4,64 @@ Todo cambio notable a este proyecto se documenta aquí. Sigue [Keep a Changelog]
 
 ## [Unreleased]
 
+## [0.46.0] - 2026-10-10
+
+### Added
+
+- Banner pixel art de Mefisto para el README (#2234): `docs/assets/mefisto-banner.svg` (Fausto, la palabra MEFISTO y Mefisto ejecutando, con los sprites y la `PALETTE` de `hooks/sprites.ts`), su generador determinista `docs/assets/generate-banner.ts` con modo `--check` y `docs/assets/README.md`.
+- Mefisto se activa por repositorio en Claude Code (MEF-ADR-0053, decision 2). Se
+  instala una vez por usuario y queda deshabilitado a ese nivel; cada consumidor lo
+  habilita en su `.claude/settings.json` commiteado, asi que ya no se carga en repos
+  ajenos.
+  - `/mefisto:upgrade` reporta la activacion. Si el repo ya la tiene, ofrece con
+    una confirmacion `--disable-user`; ese modo se niega si el repo no lo habilita.
+  - La alineacion desde OpenCode deshabilita el nivel usuario tras
+    `claude plugin install`, que lo reescribe a habilitado.
+  - `/mefisto:onboard` diagnostica la activacion (`OK`/`FALTA`, mas una fila `INFO`
+    si sigue habilitado a nivel usuario) y ofrece el paso opt-in
+    `onboard-activate-repo.sh`, que fusiona la habilitacion sin commitear.
+  - README, guia del consumidor y quickstart describen el nuevo modelo de
+    instalacion.
+
+### Changed
+
+- El gate de scope interno (`is_path_in_mefisto_scope`), el commit automatico de `mefisto-tooling` y la politica de permisos de OpenCode admiten `LICENSE` y `NOTICE` exactos en la raiz (#2230); la blocklist publicada no cambia.
+- Relicenciado el repo bajo Apache-2.0 (#2231): `LICENSE` con el texto oficial integro, nuevo `NOTICE` con la atribucion, `"license": "Apache-2.0"` en `.claude-plugin/plugin.json` y seccion "Licencia" del README actualizada; se elimina la contradiccion previa entre MIT y una declaracion propietaria.
+- `README.md` reescrito como portada de proyecto open source en español: banner, insignias, qué es y por qué, stack, runtimes, requisitos, instalación rápida, primer uso, documentación, contribuir, licencia Apache-2.0 y autor (#2235).
+- El manual operativo del README (instalacion, greenfield, uso, migracion, versionado y desarrollo del plugin) se mueve a `docs/guia-del-consumidor.md`, `docs/migracion-y-versionado.md` y `docs/desarrollo-del-plugin.md`; el README deja enlaces y se actualizan las referencias que lo citaban.
+- `/mefisto-bitacora` ya no encadena `/mefisto-merge`: verifica el PR del historiador y sugiere `/mefisto-merge <N>` o `gh pr close <N>`; la decision de mergear vuelve al usuario.
+- Los pipelines publicados entregan a cada agente Claude la raiz de su propia
+  release con `--plugin-dir` (`MEFISTO_AGENT_PACKAGE_ROOT`, exportada por
+  `scripts/_pipeline-common.sh`). Asi el agente del worktree corre exactamente la
+  version del pipeline, este o no Mefisto habilitado o registrado para esa ruta.
+  Es el primer paso para activar Mefisto solo en los repos consumidores
+  (MEF-ADR-0053, decision 2).
+- Mefisto se activa por repositorio también en OpenCode (MEF-ADR-0053, decision 2):
+  - **Cargador:** cada consumidor commitea `.opencode/plugins/mefisto.js`, que
+    registra agentes, comandos, Skills, MCP y hooks de la release activa sin copiarlos
+    al repo. `onboard-activate-repo.sh` lo escribe junto con la activación de Claude.
+  - **Pipelines:** los agentes reciben su release con `OPENCODE_CONFIG_DIR`. No se
+    inyecta si el usuario ya lo define o si la proyección global está activa.
+  - **Proyección global:** `/mefisto:upgrade` deja de proyectar automáticamente;
+    queda como modo opt-in de `/mefisto:runtimes` y solo se refresca si ya existe.
+    `--disable-user` la retira cuando el repo commitea el cargador.
+  - **Detalles de compatibilidad:**
+    - El cargador se inhibe mientras exista la proyección, para no cargar la
+      superficie dos veces.
+    - Una release OpenCode instalada cuenta como par adherido aunque no esté
+      proyectada.
+- El README enlaza el sitio comercial [mefisto.io](https://mefisto.io) con una insignia en el encabezado y una línea tras el párrafo inicial (#2267).
+- Se protege `main` con el ruleset de GitHub `.github/rulesets/main.json` (aplicado como id `24852837`): PR obligatorio, sin force-push, sin borrado y sin bypass. No exige el check `tests` porque el CI corre solo de noche. `git push --no-verify` deja de ser una via para empujar a `main`.
+
+### Fixed
+
+- El tarball de la release de OpenCode ahora incluye `LICENSE` y `NOTICE` de la raiz del repo (Apache-2.0 §4a/§4d); `package-opencode-release.sh` aborta si faltan, no son archivos regulares o `dist/opencode/` ya trae alguno (#2237).
+- `fausto-blood-pact`: las filas de listos usan la notacion de `fausto-board` (letra de tipo en color, tecla del boton una sola vez, `#N` y titulo, `tras #M` atenuado) sin posicion ni `[tipo]`.
+- `upgrade.sh --status` emite `schemaVersion: 2` con `installedVersion` (version en disco) en lugar de `loadedVersion`, y `/upgrade` ejecuta siempre la actualizacion una vez sin concluir "al dia" a partir de `--status`, que es local y no consulta la ultima version publicada (#2247).
+- `update-plugin.sh` conserva en la poda la version a la que apunta `.mefisto/pipeline/.plugin-root`, para que `--prune` no deje el marcador canonico apuntando a un directorio borrado (sin reescribirlo en el update).
+- `/upgrade` ya no toma como cargada una version vieja de `.plugin-root.previous` tras `/reload-plugins`: la nueva directiva `{{mefisto:loaded-root}}` entrega la raiz viva (`MEFISTO_LOADED_ROOT`), que `upgrade.sh` valida y reenvia como `--loaded` al actualizar y al podar (#2249).
+- `/upgrade`: la poda del runtime Claude ya no puede borrar versiones que el usuario no confirmo. `update-plugin.sh --prune` exige `--only <v>[,<v>...]` y borra solo la interseccion entre esa lista y las podables recalculadas, informando aparte las no confirmadas y las confirmadas que ahora estan protegidas; la pista del modo actualizar imprime la lista exacta, `upgrade.sh` reenvia `--only` y el paso 5 de `upgrade.md` pasa la lista confirmada (#2250).
+
 ## [0.45.0] - 2026-10-10
 
 ### Added
@@ -3322,7 +3380,8 @@ Y reemplazar referencias en `CLAUDE.md` del proyecto: `/eda-evsourcing-azure-har
 - Los agentes `reviewer` e `implementer` mantienen el placeholder literal `ADR-XXXX` en sus plantillas de reporte (no es un bug; el agente lo sustituye en tiempo de ejecución por el número real del ADR aplicable).
 - Los ejemplos de código en `test-writer.md`, `implementer.md` y `smoke-test-writer.md` conservan nombres concretos de un proyecto consumidor (`Programacion`, `ControlHoras`) anotados en el "Contrato con el consumidor" de cada agente como ejemplos pedagógicos.
 
-[Unreleased]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.45.0...HEAD
+[Unreleased]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.46.0...HEAD
+[0.46.0]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.45.0...v0.46.0
 [0.45.0]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.44.1...v0.45.0
 [0.44.1]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.44.0...v0.44.1
 [0.44.0]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.43.1...v0.44.0
