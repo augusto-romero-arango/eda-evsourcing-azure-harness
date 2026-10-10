@@ -54,3 +54,14 @@ A la izquierda de la banda, Mefisto (rojo, de `hooks/sprites.ts`; código propio
 - **Solo resultados**: `✓` -> revisor aprobado (infra: arriba); `✗` -> desarrollador error (infra: caído).
 
 Anima solo mientras hay corrida activa o Claude trabaja. Es lectura pura de status y `events.jsonl`. Fuera de alcance: las últimas líneas del agente bajo la mascota.
+
+## Capacidad vigente (incremento 5): mergear el PR de una corrida terminada
+
+Con la banda en corridas y al menos un `✓ PR #X`, el pie suma `1 mergear · 2 ver PR` a `4 descartar` y `0` página. Sin `✓` con PR (o solo `✗`) las teclas no se muestran ni actúan.
+
+- `1`: con un solo `✓`, confirma con `$.ui.ask` ("Mergear #X" / "Cancelar") y ejecuta `/mefisto:merge <pr>` con `$.command.run`, anunciado con un toast. Con varios, selección múltiple: "Todos" y hasta 3 PRs más recientes (los demás números, en la opción de texto). Se pasan solo los números de los `✓`, nunca `--all`. Cancelar o no elegir no ejecuta nada. La confirmación del diálogo es la única.
+- `2`: `gh pr view <pr> --web`; con varios `✓`, pregunta cuál.
+- Mientras haya `✓` con PR, se consulta su estado cada 15 s; al quedar `MERGED` la línea desaparece sola (se guarda en `$.store`, no toca `.mefisto/pipeline/`). En infra el toast avisa que el issue se cierra al terminar el `apply` de CI (MEF-ADR-0022).
+- `/fausto-blood-pact merge [<pr>...]` y `/fausto-blood-pact pr [<pr>]`: lo mismo sin teclas.
+
+Fuera de alcance: mergear PRs que la sesión no vio terminar y resolver comentarios de review.
