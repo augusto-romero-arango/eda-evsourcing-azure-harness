@@ -4,6 +4,19 @@ Todo cambio notable a este proyecto se documenta aquí. Sigue [Keep a Changelog]
 
 ## [Unreleased]
 
+## [0.44.1] - 2026-10-10
+
+### Added
+
+- `fausto-blood-pact`: la banda sigue las corridas de `/implement`, `/tooling` e `/infra` del repo (agente en curso, `hold` por rate limit, `✗ <stage>`, `✓ PR #X`) y permite descartar resultados de forma persistente con la tecla `4` o `/fausto-blood-pact descartar` (#2183).
+- `fausto-blood-pact`: lanzar trabajo desde los listos escribiendo el comando en el prompt sin enviarlo: `1` sequential, `2` parallel, `5`-`9` un issue con diálogo por tipo (con merge o solo PR), diálogo previo si hay infra lanzable y `/fausto-blood-pact lanzar [sequential|parallel|<n>]` (#2187).
+- La consola publicada `fausto-blood-pact` dibuja la mascota de Mefisto (rojo) con `Raster` junto a la banda: de frente en reposo, mirando de lado a lado con un reloj de arena mientras Claude trabaja, y con corridas el rol y la pose del agente activo según su último evento (`events.jsonl`), o aprobado/error con solo resultados (#2193).
+
+### Changed
+
+- `scripts/next-order.sh` separa los `tipo:infra` y los issues sin tipo de la linea `launch` (siguen en `items[]`), agrega `infra` y el lote `parallel` por dependencias declaradas (a lo sumo una `projection`) y el flag `--parallel-command` (default `/mefisto:parallel`); `/next-order` reproduce las lineas nuevas (#2190).
+- MEF-ADR-0055 se enmienda con la decision 11 (experiencia de referencia entre mods pares, sin compartir codigo ni sincronizar, e identidad visual por lado); las decisiones 8 y 10 dejan de permitir que los pares diverjan en experiencia.
+
 ## [0.44.0] - 2026-10-10
 
 ### Added
@@ -3285,7 +3298,8 @@ Y reemplazar referencias en `CLAUDE.md` del proyecto: `/eda-evsourcing-azure-har
 - Los agentes `reviewer` e `implementer` mantienen el placeholder literal `ADR-XXXX` en sus plantillas de reporte (no es un bug; el agente lo sustituye en tiempo de ejecución por el número real del ADR aplicable).
 - Los ejemplos de código en `test-writer.md`, `implementer.md` y `smoke-test-writer.md` conservan nombres concretos de un proyecto consumidor (`Programacion`, `ControlHoras`) anotados en el "Contrato con el consumidor" de cada agente como ejemplos pedagógicos.
 
-[Unreleased]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.44.0...HEAD
+[Unreleased]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.44.1...HEAD
+[0.44.1]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.44.0...v0.44.1
 [0.44.0]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.43.1...v0.44.0
 [0.43.1]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.43.0...v0.43.1
 [0.43.0]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.42.1...v0.43.0
