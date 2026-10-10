@@ -36,7 +36,8 @@
 #   --refinement  Orden de REFINAMIENTO: el universo son los 'estado:borrador'
 #                 abiertos. Una dependencia ya 'estado:listo' (abierta) o
 #                 cerrada cuenta como satisfecha. Un borrador que depende de
-#                 otro va despues de el. Lo consume el modo refinar del planner
+#                 otro va despues de el; entre los disponibles gana el de mayor
+#                 numero (el mas reciente primero). Lo consume el modo refinar del planner
 #                 publicado y el tablero del planner (MEF-ADR-0055 decision 1:
 #                 el orden vive aqui, el tablero solo lo lee). Ultima linea de
 #                 texto: 'Siguiente a refinar: #N' (o '(sin borradores
@@ -109,9 +110,10 @@
 #       menos una quedo excluida por (a), (b) o (c) -- excluido del orden,
 #       reportado como '#N bloqueado por #M: excluido del orden'.
 #   (d) Lanzable: todas sus dependencias abiertas estan en el orden, antes que
-#       el. Entra al orden por Kahn con seleccion golosa del menor numero
-#       disponible en cada paso (empate resuelto por numero de issue
-#       ascendente).
+#       el. Entra al orden por Kahn con seleccion golosa segun el modo:
+#       en lanzamiento el menor numero disponible en cada paso (numero de
+#       issue ascendente); en --refinement el MAYOR (descendente: los
+#       borradores recientes primero), sin romper la dependencia, que manda.
 #
 # No usa 'set -e': 'gh issue view' de una dependencia puede ser un PR, y esa
 # falla es esperada -- se cae a 'gh pr view' explicitamente, nunca se propaga
@@ -348,7 +350,11 @@ while [ "$progress" -eq 1 ]; do
     best=-1
     for ((i = 0; i < COUNT; i++)); do
         if [ "${RESOLVED[i]}" -eq 0 ] && [ "${EXCLUDED[i]}" -eq 0 ] && [ "${INDEG[i]}" -eq 0 ]; then
-            if [ "$best" -eq -1 ] || [ "${NUM[i]}" -lt "${NUM[best]}" ]; then
+            if [ "$best" -eq -1 ]; then
+                best=$i
+            elif [ "$MODE" = "refinement" ] && [ "${NUM[i]}" -gt "${NUM[best]}" ]; then
+                best=$i
+            elif [ "$MODE" != "refinement" ] && [ "${NUM[i]}" -lt "${NUM[best]}" ]; then
                 best=$i
             fi
         fi

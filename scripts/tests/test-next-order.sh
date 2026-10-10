@@ -809,17 +809,17 @@ set_state 801 CLOSED
 OUTPUT=$(run_script --refinement)
 RC=$?
 ORDER_NUMS=$(echo "$OUTPUT" | grep -oE '^[0-9]+\. #[0-9]+' | grep -oE '#[0-9]+' | tr '\n' ' ')
-if [ "$RC" -eq 0 ] && [ "$ORDER_NUMS" = "#703 #705 #702 #706 " ]; then
+if [ "$RC" -eq 0 ] && [ "$ORDER_NUMS" = "#706 #705 #703 #702 " ]; then
     pass "S: orden de refinamiento (dependiente despues; listo y cerrada no bloquean)"
 else
     fail "S: orden inesperado ($RC, '$ORDER_NUMS'): $OUTPUT"
 fi
-if [ "$(echo "$OUTPUT" | tail -1)" = "Siguiente a refinar: #703" ]; then
-    pass "S: ultima linea 'Siguiente a refinar: #703'"
+if [ "$(echo "$OUTPUT" | tail -1)" = "Siguiente a refinar: #706" ]; then
+    pass "S: ultima linea 'Siguiente a refinar: #706'"
 else
     fail "S: ultima linea inesperada: $OUTPUT"
 fi
-if echo "$OUTPUT" | grep -q "^1\. #703 \[tipo:tooling\] "; then
+if echo "$OUTPUT" | grep -q "^3\. #703 \[tipo:tooling\] "; then
     pass "S: texto conserva '[tipo:X]' por linea"
 else
     fail "S: falta '[tipo:X]': $OUTPUT"
@@ -828,8 +828,8 @@ fi
 OUTPUT=$(run_script --refinement --json)
 RC=$?
 if [ "$RC" -eq 0 ] && echo "$OUTPUT" | jq -e '.mode=="refinement" and .launch==null
-    and (.items|map(.number)==[703,705,702,706]) and .items[0].tipo=="tooling" and .items[1].tipo==null
-    and .items[2].after==[705]' >/dev/null; then
+    and (.items|map(.number)==[706,705,703,702]) and .items[2].tipo=="tooling" and .items[1].tipo==null
+    and .items[3].after==[705]' >/dev/null; then
     pass "S: --refinement --json combina (mode, launch null, tipo, after)"
 else
     fail "S: combinacion inesperada ($RC): $OUTPUT"
@@ -850,6 +850,31 @@ if [ "$RC" -eq 1 ] && echo "$OUTPUT" | grep -q "#710 bloqueado por #901: fuera d
     pass "S: sin borradores refinables -> exit 1 y linea explicita"
 else
     fail "S: caso sin refinables inesperado ($RC): $OUTPUT"
+fi
+
+reset_fixtures
+set_borrador_list <<'EOF'
+[
+ {"number":10,"title":"Antiguo","body":"## Dependencias\nNinguna","labels":[]},
+ {"number":20,"title":"Medio","body":"## Dependencias\nNinguna","labels":[]},
+ {"number":30,"title":"Reciente tras 10","body":"## Dependencias\nDepende de #10","labels":[]}
+]
+EOF
+set_listo_list <<'EOF'
+[]
+EOF
+OUTPUT=$(run_script --refinement)
+ORDER_NUMS=$(echo "$OUTPUT" | grep -oE '^[0-9]+\. #[0-9]+' | grep -oE '#[0-9]+' | tr '\n' ' ')
+if [ "$ORDER_NUMS" = "#20 #10 #30 " ] && [ "$(echo "$OUTPUT" | tail -1)" = "Siguiente a refinar: #20" ]; then
+    pass "S: desempate por mayor numero, la dependencia manda (#20, #10, #30)"
+else
+    fail "S: orden mayor-primero inesperado ('$ORDER_NUMS'): $OUTPUT"
+fi
+OUTPUT=$(run_script --refinement --json)
+if [ "$(echo "$OUTPUT" | jq -c '[.items[] | [.position, .number]]')" = '[[1,20],[2,10],[3,30]]' ]; then
+    pass "S: --json refleja position en orden mayor-primero"
+else
+    fail "S: position inesperado: $OUTPUT"
 fi
 
 # -------- Bloque T: infra/sin tipo fuera de launch y lote parallel (#2190) --------
@@ -940,7 +965,7 @@ set_listo_list <<'EOF'
 EOF
 OUTPUT=$(run_script --refinement --json)
 if [ "$(echo "$OUTPUT" | jq -c '[.infra, .parallel, .launch]')" = '[[],null,null]' ] \
-    && [ "$(echo "$OUTPUT" | jq -c '[.items[].number]')" = '[530,531]' ]; then
+    && [ "$(echo "$OUTPUT" | jq -c '[.items[].number]')" = '[531,530]' ]; then
     pass "T: --refinement sin cambios (infra [], parallel null, items completos)"
 else
     fail "T: --refinement inesperado: $OUTPUT"

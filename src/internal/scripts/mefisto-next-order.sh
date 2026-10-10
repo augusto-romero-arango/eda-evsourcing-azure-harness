@@ -29,7 +29,8 @@
 #   --refinement  Orden de REFINAMIENTO: el universo son los 'estado:borrador'
 #                 abiertos. Una dependencia ya 'estado:listo' (abierta) cuenta
 #                 como satisfecha: esta refinada y no impide refinar. Un
-#                 borrador que depende de otro va despues de el. Lo consume el
+#                 borrador que depende de otro va despues de el; entre los disponibles
+#                 gana el de mayor numero (el mas reciente primero). Lo consume el
 #                 modo refinar de mefisto-planner y el tablero del planner
 #                 (MEF-ADR-0055). Sin el flag, orden de LANZAMIENTO de los
 #                 'estado:listo'.
@@ -75,9 +76,10 @@
 #       paso 1.5: para el validador, una dependencia abierta fuera del batch
 #       es un bloqueo real y aborta el batch entero.
 #   (d) Lanzable: todas sus dependencias abiertas estan en el orden, antes que
-#       el. Entra al orden por Kahn con seleccion golosa del menor numero
-#       disponible en cada paso -- de ahi el empate resuelto por numero de
-#       issue ascendente que pide CA-2.
+#       el. Entra al orden por Kahn con seleccion golosa segun el modo:
+#       en lanzamiento el menor numero disponible en cada paso (numero de
+#       issue ascendente, CA-2); en --refinement el MAYOR (descendente: los
+#       borradores recientes primero), sin romper la dependencia, que manda.
 #
 # La ultima linea de la salida es SIEMPRE la linea de lanzamiento
 # ('/mefisto-sequential <orden>', o '/mefisto-sequential (sin issues
@@ -260,7 +262,11 @@ while [ "$progress" -eq 1 ]; do
     best=-1
     for ((i = 0; i < COUNT; i++)); do
         if [ "${RESOLVED[i]}" -eq 0 ] && [ "${EXCLUDED[i]}" -eq 0 ] && [ "${INDEG[i]}" -eq 0 ]; then
-            if [ "$best" -eq -1 ] || [ "${NUM[i]}" -lt "${NUM[best]}" ]; then
+            if [ "$best" -eq -1 ]; then
+                best=$i
+            elif [ "$MODE" = "refinement" ] && [ "${NUM[i]}" -gt "${NUM[best]}" ]; then
+                best=$i
+            elif [ "$MODE" != "refinement" ] && [ "${NUM[i]}" -lt "${NUM[best]}" ]; then
                 best=$i
             fi
         fi
