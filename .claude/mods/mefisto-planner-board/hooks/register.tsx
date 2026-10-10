@@ -15,6 +15,7 @@ import {
   createdCardText,
   createdIssueOf,
   createdText,
+  showsDraftList,
   cropGrid,
   depsText,
   labelsText,
@@ -278,7 +279,9 @@ async function onBash($: EngineInterface, command: string, output: string) {
   if (isIssueCreate(command)) {
     const created = createdIssueOf(output)
     if (created !== null && !focus.created.includes(created)) {
+      if (focus.kind === 'explorar' && focus.created.length === 0) await update($, pageAtom, () => 0)
       await update($, focusAtom, f => (f ? { ...f, created: [...f.created, created] } : f))
+      void refresh($, true)
     }
   }
   const listo = issueMarkedListo(command)
@@ -308,8 +311,8 @@ async function toggleList($: EngineInterface, tab: BoardTab) {
 
 // Avanza de pagina y da la vuelta al final.
 async function nextPage($: EngineInterface) {
-  const list = (await read($, tabAtom)) === 'borrador' ? await read($, refineAtom) : await read($, developAtom)
-  const tab = await read($, tabAtom)
+  const tab = showsDraftList(await read($, focusAtom)) ? 'borrador' : await read($, tabAtom)
+  const list = tab === 'borrador' ? await read($, refineAtom) : await read($, developAtom)
   const { page, pages } = pageOf(await read($, pageAtom), list?.items.length ?? 0, pageSizeOf(tab))
   await update($, pageAtom, () => (page + 1) % pages)
 }
@@ -432,7 +435,7 @@ export const register: Register = on => {
     const develop = await read($, developAtom)
     const inner = Math.max(40, (e.props.bodyColumns ?? 80) - 4)
     const count = (l: BoardList | null) => (l ? String(l.items.length) : '…')
-    const tab = await read($, tabAtom)
+    const tab = showsDraftList(focus) ? 'borrador' : await read($, tabAtom)
     const pendingCount = await read($, pendingAtom)
     const suggested = refine?.items[0]?.number ?? null
     const listButtons = (
@@ -520,7 +523,7 @@ export const register: Register = on => {
           {card && <Text dimColor wrap="truncate-end">{blocksText(blockedBy(focus.issue, [refine, develop]))}</Text>}
         </Box>
       )
-    } else if (focus) {
+    } else if (focus && !showsDraftList(focus)) {
       const open = await read($, openAtom)
       const shown = focus.created.slice(-3)
       content = (
@@ -533,7 +536,7 @@ export const register: Register = on => {
           ))}
         </Box>
       )
-    } else if (!isExpanded) {
+    } else if (!isExpanded && !showsDraftList(focus)) {
       const nextRefine = refine?.items.slice(0, 2) ?? []
       const nextDevelop = develop?.items[0]
       content = (
