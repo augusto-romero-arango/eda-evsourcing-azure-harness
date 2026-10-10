@@ -46,7 +46,7 @@ lo que la conversacion no muestra:
 | Tecla | Accion |
 |---|---|
 | `1` / `2` | En reposo: `Quiero explorar: ` / `Refina el borrador #N` en el prompt |
-| `3` / `4` | Abre o cierra la lista de borradores / listos |
+| `3` / `4` | Abre o cierra la lista de borradores / listos. En `explorar`, tras crear el primer borrador la banda muestra sola la lista de borradores (`5`-`9`, `0` pagina) y un borrador nuevo la refresca al instante; sin creados se ve el tema |
 | `5`-`9` | Borradores: `Refina el borrador #N` en el prompt. Listos es solo lectura: el planner no lanza trabajo |
 | `0` | Siguiente pagina |
 

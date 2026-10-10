@@ -4,6 +4,7 @@ import {
   arrivals,
   blockedBy,
   createdCardText,
+  showsDraftList,
   dependenciesOf,
   depsText,
   labelsText,
@@ -218,4 +219,11 @@ test('el conjunto pendiente se filtra, se confirma o expira a los 60 s', async (
   expect(settlePending(pending, [7], 1_000 + PENDING_TTL_MS).size).toBe(0)
   expect([...settlePending(pending, null, 2_000).keys()]).toEqual([7])
   expect(settlePending(pending, null, 1_000 + PENDING_TTL_MS).size).toBe(0)
+})
+
+test('showsDraftList: solo explorar con borradores creados', () => {
+  expect(showsDraftList(null)).toBe(false)
+  expect(showsDraftList({ kind: 'explorar', created: [] })).toBe(false)
+  expect(showsDraftList({ kind: 'explorar', created: [7] })).toBe(true)
+  expect(showsDraftList({ kind: 'refinar', created: [7] })).toBe(false)
 })

@@ -345,3 +345,8 @@ export function createdCardText(n: number, open: OpenIssueBrief[], max: number):
 export function minutesSince(startedMs: number, nowMs: number): number {
   return Math.max(0, Math.floor((nowMs - startedMs) / 60_000))
 }
+
+// En una exploracion con borradores creados el cuerpo de la banda es la lista de borradores (#2217).
+export function showsDraftList(focus: { kind: string; created: number[] } | null): boolean {
+  return focus?.kind === 'explorar' && focus.created.length > 0
+}
