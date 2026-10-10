@@ -77,7 +77,6 @@ let isInteractive = false
 // La intencion vive en el modulo, no en atoms: /clear abre una sesion nueva con los atoms en blanco, el modulo sigue.
 let isBoardOn = false
 let isTurnedOff = false
-let isRevivePending = false
 let isRefreshing = false
 let settle: { cancel: () => void } | null = null
 let timer: { cancel: () => void } | null = null
@@ -142,7 +141,6 @@ async function activate($: EngineInterface) {
 async function deactivate($: EngineInterface) {
   isBoardOn = false
   isTurnedOff = true
-  isRevivePending = false
   pending.clear()
   timer?.cancel()
   timer = null
@@ -347,10 +345,10 @@ export const register: Register = on => {
     return next(e)
   })
 
-  // /clear abre una sesion nueva sin volver a disparar session.start: se anota la reactivacion y la consume el
-  // primer render de la sesion nueva.
-  on('session.end', async ($, e, next) => {
-    if (e.reason === 'clear' && isBoardOn && !isTurnedOff) isRevivePending = true
+  // /clear, /resume y /branch reinician $.state sin volver a disparar session.start; classic.SessionStart si
+  // dispara. ui.render no puede reactivar: dibujar es puro y el engine rechaza su state.set.
+  on('classic.SessionStart', { source: ['clear', 'resume', 'fork'] }, async ($, e, next) => {
+    if (isInteractive && isBoardOn && !isTurnedOff && !(await read($, activeAtom))) await activate($)
     return next(e)
   }).catch(($, e, next) => next(e))
 
@@ -418,10 +416,6 @@ export const register: Register = on => {
   }).catch(($, e, next) => next(e))
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
-    if (isRevivePending) {
-      isRevivePending = false
-      if (isInteractive && !isTurnedOff && !(await read($, activeAtom))) await activate($)
-    }
     if (!(await read($, activeAtom))) return next(e)
     if (e.props.hasSurvey) {
       await debugLog($, () => `render omitido hasSurvey=true isWorking=${!!e.props.isWorking} maxRows=${String(e.props.maxRows)}`)

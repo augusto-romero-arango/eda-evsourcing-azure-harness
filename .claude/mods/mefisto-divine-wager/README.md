@@ -37,6 +37,10 @@ sesiones `-p` no los cargan. Para probar una copia suelta: `claude --plugin-dir 
   fragmentos en `changelog.d/`) ofrece `/mefisto-release` con el bump que sugiere SemVer (`minor` si hay `added`)
   o solo preparar el PR, y lo ejecuta al aceptar. Los PRs de field notes no cuentan en `PRs`.
   `/mefisto-divine-wager refresh` la actualiza a mano.
+- `/clear`, `/resume` y `/branch` reinician el estado de la sesion: la banda vuelve sola a reposo con los listos,
+  `PRs N`, `bitácora N` y `release N` recargados en el acto, sin esperar al siguiente minuto (los rearma el hook
+  `classic.SessionStart`, que el engine dispara en esos tres casos, a diferencia de `session.start`). Una corrida o
+  un sequential en curso no se conserva: se reengancha con `/mefisto-divine-wager <issue>` o `batch <issues>`.
 - `/mefisto-sequential` (`--batch`) corre desacoplado y la banda lo sigue desde
   `pipeline-status-mefisto-batch.json`: avance `N/M`, la cola (`✓` mergeado, `●` en curso, `✗` fallido, `⏸`
   aplazado) y el issue en curso con su mascota, pasos y ultimas lineas. `1` detiene tras el issue en curso
