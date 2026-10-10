@@ -1,6 +1,8 @@
 import { expect, test } from 'claude-code/testing'
 
 import {
+  bandViewOf,
+  resultsFooterText,
   mergeArgsOf,
   mergeOptions,
   mergeToast,
@@ -497,4 +499,26 @@ test('el eslabon en curso no se repite como corrida suelta y las demas se cuenta
 test('senal de parada en la raiz del checkout principal y clave de descarte por repo + started', () => {
   expect(batchStopPath('/r/')).toBe('/r/pipeline-state/batch-stop')
   expect(batchDismissKey('/r', parseBatchStatus(batchRaw())!)).toBe('/r|batch|2026-10-09T10:00:00')
+})
+
+test('bandViewOf: las corridas toman la banda solo con una activa', () => {
+  const active = parseStatus('pipeline-status-tdd-7.json', status())!
+  const failed = parseStatus('pipeline-status-tdd-8.json', status({ state: 'failed', stage: '2-infra-reviewer' }))!
+  const res = [{ key: 'k', issue: 8, pipeline: 'tdd', ok: false, text: '✗ setup' }]
+  expect(bandViewOf([active], [])).toBe('runs')
+  expect(bandViewOf([active], res)).toBe('runs')
+  expect(bandViewOf([], res)).toBe('ready-with-results')
+  expect(bandViewOf([failed], [])).toBe('ready')
+  expect(bandViewOf([], [])).toBe('ready')
+})
+
+test('resultsFooterText: formato, recorte al ancho y +N', () => {
+  const res = [
+    { key: 'a', issue: 7, pipeline: 'tdd', ok: true, text: '✓ PR #55' },
+    { key: 'b', issue: 413, pipeline: 'infra', ok: false, text: '✗ 2-infra-reviewer' },
+    { key: 'c', issue: 99, pipeline: 'tooling', ok: false, text: '✗ setup' },
+  ]
+  expect(resultsFooterText(res, 200)).toBe('resultados: ✓#7 PR #55 · ✗#413 2-infra-reviewer · ✗#99 setup')
+  expect(resultsFooterText(res, 45)).toBe('resultados: ✓#7 PR #55 +2')
+  expect(resultsFooterText(res, 45).length).toBeLessThanOrEqual(45)
 })
