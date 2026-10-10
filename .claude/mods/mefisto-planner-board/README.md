@@ -50,7 +50,18 @@ lo que la conversacion no muestra:
 | `5`-`9` | Borradores: `Refina el borrador #N` en el prompt. Listos es solo lectura: el planner no lanza trabajo |
 | `0` | Siguiente pagina |
 
-`/mefisto-planner-board [refresh|borradores|listos|cerrar|on|off]` cubre lo mismo sin teclas.
+`/mefisto-planner-board [refresh|borradores|listos|cerrar|cerrar-sesion|on|off]` cubre lo mismo sin teclas.
+`cerrar-sesion` hace lo mismo que el boton `1: cerrar sesión`: pide al planner su rutina de cierre sin confirmar
+(`cerrar` solo cierra el foco, sin pedirla).
+
+### Cuando un digito llega como texto
+
+Un digito con el prompt vacio solo presiona un boton si la banda lo tiene armado: no lo esta con la banda
+colapsada, con el boton fuera de la ventana visible o con una encuesta en la banda. Si no, el digito se escribe
+en el prompt y viaja como mensaje. Se vio una vez, intermitente, con `1` en `explorar` justo tras pegar una
+imagen (#2210, sin reproducir). El mod deja en el log de debug cada render de la cabecera (foco, teclas dibujadas,
+`isWorking`, `hasSurvey`, `maxRows`) y cada `ui.press`: si falla de nuevo, ese log dice si el boton estaba en el
+arbol y si llego la pulsacion. Mientras tanto, usar `/mefisto-planner-board cerrar-sesion`.
 
 ## Verificar un cambio
 

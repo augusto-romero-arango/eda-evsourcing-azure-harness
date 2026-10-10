@@ -293,6 +293,16 @@ async function nextPage($: EngineInterface) {
   await update($, pageAtom, () => (page + 1) % pages)
 }
 
+// Rastro para diagnosticar teclas que llegan como texto (#2210): el log de debug dice si el boton estaba en el
+// arbol de la banda y si la pulsacion llego al mod.
+async function debugLog($: EngineInterface, text: () => string) {
+  try {
+    await $.ui.log(`[mefisto-planner-board] ${text()}`, { to: 'debug' })
+  } catch {
+    // El rastro nunca debe tumbar el render ni la pulsacion que observa.
+  }
+}
+
 async function fill($: EngineInterface, text: string) {
   await $.prompt.fill({ text, mode: 'replace' })
 }
@@ -302,8 +312,8 @@ export const register: Register = on => {
     isInteractive = e.isInteractive
     await $.command.register({
       name: 'mefisto-planner-board',
-      description: 'Tablero del planner: refresh | borradores | listos | cerrar | on | off',
-      argumentHint: '[refresh|borradores|listos|cerrar|on|off]',
+      description: 'Tablero del planner: refresh | borradores | listos | cerrar | cerrar-sesion | on | off',
+      argumentHint: '[refresh|borradores|listos|cerrar|cerrar-sesion|on|off]',
       immediate: true,
     })
     const isWanted = (await read($, activeAtom)) || (await read($, plannerAtom))
@@ -365,6 +375,10 @@ export const register: Register = on => {
       await toggleList($, arg === 'borradores' ? 'borrador' : 'listo')
       return { text: `Lista de ${arg} alternada.` }
     }
+    if (arg === 'cerrar-sesion') {
+      await closeSession($)
+      return { text: 'Cierre de sesión solicitado al planner.' }
+    }
     if (arg === 'cerrar') {
       const focus = await read($, focusAtom)
       if (focus) await closeFocus($, summaryOf(focus, false))
@@ -374,12 +388,21 @@ export const register: Register = on => {
     return { text: 'Tablero actualizado.' }
   })
 
+  on('ui.press', async ($, e, next) => {
+    await debugLog($, () => `ui.press ${JSON.stringify(e)}`)
+    return next(e)
+  }).catch(($, e, next) => next(e))
+
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     if (isRevivePending) {
       isRevivePending = false
       if (isInteractive && !isTurnedOff && !(await read($, activeAtom))) await activate($)
     }
-    if (!(await read($, activeAtom)) || e.props.hasSurvey) return next(e)
+    if (!(await read($, activeAtom))) return next(e)
+    if (e.props.hasSurvey) {
+      await debugLog($, () => `render omitido hasSurvey=true isWorking=${!!e.props.isWorking} maxRows=${String(e.props.maxRows)}`)
+      return next(e)
+    }
     const { Box, Text, Button } = $.ui.resolve(e)
     const focus = await read($, focusAtom)
     const flash = await read($, flashAtom)
@@ -442,6 +465,8 @@ export const register: Register = on => {
     }
 
     const body = Math.max(30, inner - MASCOT_WIDTH - 2)
+    const hotkeys = focus ? (focus.kind === 'explorar' ? ['1'] : []) : flash && flash.untilMs > Date.now() ? ['3', '4'] : suggested !== null ? ['1', '2', '3', '4'] : ['1', '3', '4']
+    await debugLog($, () => `render kind=${focus?.kind ?? 'reposo'} hotkeys=[${hotkeys.join(',')}] isWorking=${!!e.props.isWorking} hasSurvey=${!!e.props.hasSurvey} maxRows=${String(e.props.maxRows)}`)
     const frame = await read($, frameAtom)
     const isWorking = e.props.isWorking || (await read($, workingAtom))
     const state = mascotPose(isWorking, await read($, stepsAtom), !!flash && flash.untilMs > Date.now())
