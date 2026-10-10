@@ -181,20 +181,17 @@ async function refresh($: EngineInterface) {
 }
 
 // El comando queda escrito sin Enter: la persona lo revisa y lo envia (MEF-ADR-0055 decision 2).
-async function applyPlan($: EngineInterface, plan: LaunchPlan) {
+async function applyPlan($: EngineInterface, plan: LaunchPlan): Promise<boolean> {
   if (plan.kind === 'none') {
     $.ui.toast(plan.message)
-    return
+    return false
   }
-  if (plan.kind === 'fill') {
-    await $.prompt.fill({ text: plan.text, mode: 'replace' })
-    return
-  }
-  const answer = await $.ui
-    .ask(plan.question, plan.options.map(o => o.label))
-    .catch(() => null)
-  const text = answerText(plan.options, answer)
-  if (text !== null) await $.prompt.fill({ text, mode: 'replace' })
+  const text = plan.kind === 'fill'
+    ? plan.text
+    : answerText(plan.options, await $.ui.ask(plan.question, plan.options.map(o => o.label)).catch(() => null))
+  if (text === null) return false
+  await $.prompt.fill({ text, mode: 'replace' })
+  return true
 }
 
 async function launchKey($: EngineInterface, kind: LaunchKind) {
@@ -288,8 +285,7 @@ export const register: Register = on => {
       if (target.kind === 'invalid') return { text: target.message }
       const plan = target.kind === 'launch' ? planLaunch(list, target.launch) : planIssue(list.items.find(i => i.number === target.issue)!)
       if (plan.kind === 'none') return { text: plan.message }
-      await applyPlan($, plan)
-      return { text: plan.kind === 'fill' ? 'Comando escrito en el prompt.' : 'Lanzamiento listo.' }
+      return { text: (await applyPlan($, plan)) ? 'Comando escrito en el prompt.' : 'Sin cambios en el prompt.' }
     }
     if (arg === 'on' || !isWanted) {
       await activate($)
