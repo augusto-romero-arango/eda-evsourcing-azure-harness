@@ -160,6 +160,43 @@ export function issueMarkedListo(command: string): number | null {
   return m ? Number(m[1]) : null
 }
 
+/** `gh issue close 801 ...`: el issue que se cierra, o null. */
+export function issueClosed(command: string): number | null {
+  const m = runs(command, String.raw`gh\s+issue\s+close\s+#?(\d+)\b`)
+  return m ? Number(m[1]) : null
+}
+
+/** Cuanto tiempo se oculta un issue en transicion si ningun refresco confirma el cambio. */
+export const PENDING_TTL_MS = 60_000
+
+/** Transiciones pendientes: numero de issue -> instante (ms) en que se registro. */
+export type Pending = ReadonlyMap<number, number>
+
+export function addPending(pending: Pending, issue: number, nowMs: number): Pending {
+  return new Map(pending).set(issue, nowMs)
+}
+
+/** Quita un issue de la lista de borradores sin reordenar ni tocar el resto. */
+export function dropIssue(list: BoardList | null, issue: number): BoardList | null {
+  if (!list || !list.items.some(i => i.number === issue)) return list
+  return { ...list, items: list.items.filter(i => i.number !== issue) }
+}
+
+/**
+ * Aplica las transiciones pendientes a una lista recien refrescada: filtra los pendientes vigentes y devuelve
+ * las que siguen pendientes (salen si el refresco ya no los trae como borrador, o al pasar PENDING_TTL_MS).
+ * Una lista con error de next-order no confirma nada: sus pendientes solo vencen por plazo.
+ */
+export function applyPending(list: BoardList, pending: Pending, nowMs: number): { list: BoardList; pending: Pending } {
+  const present = new Set(list.items.map(i => i.number))
+  const kept = new Map<number, number>()
+  for (const [n, since] of pending) {
+    if (nowMs - since < PENDING_TTL_MS && (list.error !== null || present.has(n))) kept.set(n, since)
+  }
+  const items = kept.size > 0 ? list.items.filter(i => !kept.has(i.number)) : list.items
+  return { list: items === list.items ? list : { ...list, items }, pending: kept }
+}
+
 /** El cierre del planner: ejecuta field-note.sh, con ruta sin comillas o entre comillas (puede tener espacios). */
 export function isPlannerClosing(command: string): boolean {
   return runs(command, String.raw`(?:\S*/|"(?:[^"]*/)?|'(?:[^']*/)?)?field-note\.sh\b`) !== null

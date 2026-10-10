@@ -68,6 +68,7 @@ declare module 'claude-code' {
       updatedMs: number
       signature: string
       known: number[]
+      pendingCount: number
       pactIsActive: boolean
       pactList: BoardList | null
       pactPage: number
