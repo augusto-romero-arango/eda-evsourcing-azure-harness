@@ -79,6 +79,7 @@ import {
   runsOutsideBatch,
   stopQuestion,
 } from './logic'
+import { versionLabel } from '../logic'
 import type { ResultPr } from './logic'
 
 const POLL_MS = 60_000
@@ -139,6 +140,16 @@ async function pluginRoot($: EngineInterface): Promise<string | null> {
   const base = top.exitCode === 0 ? top.stdout.trim() : await $.session.cwd()
   const root = await $.fs.read(`${base}/.mefisto/pipeline/.plugin-root`).catch(() => '')
   return typeof root === 'string' && root.trim() !== '' ? root.trim() : null
+}
+
+const versionAtom = atom({ plugin: 'mefisto', key: 'pactVersion' } as const, null as string | null)
+
+async function loadVersion($: EngineInterface) {
+  const root = await pluginRoot($)
+  const base = root ? root.replace(/\/+$/, '') : null
+  const read1 = async (file: string) => (base ? await $.fs.read(`${base}/${file}`).catch(() => null) : null)
+  const label = versionLabel(await read1('mefisto-manifest.json'), await read1('.claude-plugin/plugin.json'))
+  await update($, versionAtom, () => label)
 }
 
 async function runNextOrder($: EngineInterface): Promise<BoardList> {
@@ -459,6 +470,7 @@ async function activate($: EngineInterface) {
   await update($, activeAtom, () => true)
   timer?.cancel()
   timer = $.clock.every(POLL_MS, () => void refresh($))
+  void loadVersion($)
   runsTimer?.cancel()
   // Ritmo rapido solo con corridas activas; sin ellas, `refresh` las relee al ritmo de los listos (CA-5).
   runsTimer = $.clock.every(RUNS_POLL_MS, () => {
@@ -571,6 +583,7 @@ export const register: Register = on => {
       await activate($)
       return { text: 'Consola de Fausto activa.' }
     }
+    await loadVersion($)
     await refresh($)
     return { text: 'Consola actualizada.' }
   })
@@ -600,12 +613,23 @@ export const register: Register = on => {
     const grid = pose
       ? mascotGrid(pose, active ? (sec % 2 === 0 ? 0 : 1) : 0)
       : cropGrid(waitingFace(face('normal'), isWorking ? sec : null), MASCOT_COLS)
-    const mascot =
+    const version = await read($, versionAtom)
+    const raster =
       'Raster' in elements ? (
         <elements.Raster key="mefisto-mascota" columns={MASCOT_WIDTH} rows={RASTER_ROWS} cells={toRasterCells(grid, MASCOT_WIDTH)} />
       ) : (
         <Box width={MASCOT_WIDTH} />
       )
+    const mascot = version ? (
+      <Box key="mefisto-mascota-version" flexDirection="column" width={MASCOT_WIDTH}>
+        {raster}
+        <Box width={MASCOT_WIDTH} justifyContent="center">
+          <Text dimColor wrap="truncate-end">{version}</Text>
+        </Box>
+      </Box>
+    ) : (
+      raster
+    )
     if (batch) {
       const running = isBatchRunning(batch)
       const c = batchCounts(batch)

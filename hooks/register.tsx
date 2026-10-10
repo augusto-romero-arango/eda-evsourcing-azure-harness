@@ -36,6 +36,7 @@ import {
   refineTargetOf,
   signatureOf,
   topicOf,
+  versionLabel,
 } from './logic'
 import { DEFAULT_COLOR, HEIGHT, PALETTE, RASTER_ROWS, sprite } from './sprites'
 
@@ -83,6 +84,16 @@ async function pluginRoot($: EngineInterface): Promise<string | null> {
   return typeof root === 'string' && root.trim() !== '' ? root.trim() : null
 }
 
+const versionAtom = atom({ plugin: 'mefisto', key: 'version' } as const, null as string | null)
+
+async function loadVersion($: EngineInterface) {
+  const root = await pluginRoot($)
+  const base = root ? root.replace(/\/+$/, '') : null
+  const read1 = async (file: string) => (base ? await $.fs.read(`${base}/${file}`).catch(() => null) : null)
+  const label = versionLabel(await read1('mefisto-manifest.json'), await read1('.claude-plugin/plugin.json'))
+  await update($, versionAtom, () => label)
+}
+
 async function runNextOrder($: EngineInterface, args: string[]): Promise<BoardList> {
   const root = await pluginRoot($)
   if (!root) return parseNextOrder(2, '', 'raiz del plugin desconocida')
@@ -127,6 +138,7 @@ async function activate($: EngineInterface) {
   await update($, activeAtom, () => true)
   timer?.cancel()
   timer = $.clock.every(POLL_MS, () => void refresh($, false))
+  void loadVersion($)
   void refresh($, true)
 }
 
@@ -390,6 +402,7 @@ export const register: Register = on => {
       if (focus) await closeFocus($, summaryOf(focus, false))
       return { text: focus ? 'Foco cerrado.' : 'No había foco abierto.' }
     }
+    await loadVersion($)
     await refresh($, true)
     return { text: 'Tablero actualizado.' }
   })
@@ -476,12 +489,23 @@ export const register: Register = on => {
     const state = mascotPose(isWorking, await read($, stepsAtom), !!flash && flash.untilMs > Date.now())
     const grid = cropGrid(sprite('planner', state, frame), MASCOT_COLS)
     const elements = $.ui.resolve(e)
-    const mascot =
+    const version = await read($, versionAtom)
+    const raster =
       'Raster' in elements ? (
         <elements.Raster key="mefisto-mascota" columns={MASCOT_WIDTH} rows={RASTER_ROWS} cells={mascotCells(grid)} />
       ) : (
         <Box width={MASCOT_WIDTH} />
       )
+    const mascot = version ? (
+      <Box key="mefisto-mascota-version" flexDirection="column" width={MASCOT_WIDTH}>
+        {raster}
+        <Box width={MASCOT_WIDTH} justifyContent="center">
+          <Text dimColor wrap="truncate-end">{version}</Text>
+        </Box>
+      </Box>
+    ) : (
+      raster
+    )
 
     const updatedMs = await read($, updatedAtom)
     let content
