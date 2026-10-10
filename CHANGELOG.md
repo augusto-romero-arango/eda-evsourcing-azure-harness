@@ -4,6 +4,41 @@ Todo cambio notable a este proyecto se documenta aquí. Sigue [Keep a Changelog]
 
 ## [Unreleased]
 
+## [0.43.1] - 2026-10-10
+
+### Added
+
+- Capacidad neutral `ask` en el contrato publicado: el adaptador Claude la traduce a `AskUserQuestion` y el adaptador OpenCode a `question: allow` para agentes `primary`/`all` (un `subagent` sigue en `deny`) (#2139).
+- Capacidad neutral `ask` en el contrato interno: el schema la acepta, el adaptador de Claude la traduce a `AskUserQuestion` y el de OpenCode sube `question` a `allow` en agentes `primary`/`all` que la declaran (`subagent` sigue en `deny`).
+
+### Changed
+
+- `mefisto-planner` (interno) prohibe declarar dependencias en negativo ("No depende de #N") en `## Dependencias`: una dependencia que deja de serlo se borra, y la explicacion va en un comentario del issue.
+- `planner` (publicado) prohibe declarar dependencias en negativo ("No depende de #N") en `## Dependencias`: solo admite items con marcador al inicio (`Depende de`, `Bloqueado por`, `Bloquea`, `Relacionado:`) o "Ninguna - ..."; una dependencia que deja de serlo se borra y la explicacion va en un comentario del issue.
+- El mod interno `mefisto-monitor` pasa a `mefisto-console` (`/mefisto-console`), la consola de operación; los tableros del planner registran `/mefisto-planner-board` (interno) y `/planner-board` (publicado) en vez de `/mefisto-board`. Requiere reinstalar el mod local una vez.
+- El `planner` publicado pregunta al usuario con la herramienta de preguntas del runtime (capacidad `ask`): una pregunta por turno, opciones con la recomendada primero, y la confirmacion de `estado:listo` muestra lo redactado y lleva titulo y CAs en la vista previa (#2137).
+- `mefisto-planner` (interno) declara la capacidad `ask` y pregunta con la herramienta nativa del runtime (una decision por turno, opciones con la recomendada primero); la confirmacion de `estado:listo` muestra antes titulo, alcance, CAs, dependencias, ADRs y cambios respecto del borrador (#2140).
+- MEF-ADR-0011 (Definition of Ready) exige que un issue `estado:listo` no tenga preguntas abiertas ni decisiones diferidas al implementador: nueva fila en la tabla DoR y criterio 8 en la validacion de `/implement` (linea `## Preguntas abiertas`).
+- El `planner` publicado cierra todas las preguntas antes de pasar un issue a `estado:listo` (criterio "decisiones cerradas" de MEF-ADR-0011): las resuelve preguntando, con fuente oficial o con una prueba de concepto en un sandbox bajo `.mefisto/pipeline/sandbox/<SESSION_ID>/`; declara la capacidad `web` y suma la casilla "Decisiones cerradas" al checklist pre-listo.
+- `mefisto-planner` cierra todas las preguntas antes de pasar un issue a `estado:listo` (criterio "decisiones cerradas" de MEF-ADR-0011), puede hacer pruebas de concepto desechables en `.mefisto/pipeline/sandbox/<SESSION_ID>/` y declara la capacidad `web`; la politica OpenCode interna permite `edit` en esa ruta.
+- La mascota del tablero del planner pasa a ser Fausto, el que decide (birrete de doctor y barba, sin mapa), en lugar de un Mefisto: con túnica roja y birrete negro en el lado publicado y blanco perla con dorado en el interno, cada uno en la familia de color del Mefisto de su lado.
+- Los mods toman sus nombres del *Fausto* (MEF-ADR-0055, decisión 9): el tablero publicado del planner pasa de `/planner-board` a `/fausto-board`, la consola interna de `mefisto-console` a `mefisto-divine-wager`, y se reserva `fausto-blood-pact` para la consola publicada.
+
+### Fixed
+
+- `mefisto_forward_dependencies` ancla la extraccion al inicio del item: "No depende de #N" ya no se lee como dependencia, lo que elimina ciclos y exclusiones falsas en `mefisto-next-order.sh` y `mefisto-validate-batch-deps.sh` (#2126).
+- `next-order.sh` y `pr-sync.sh` solo cuentan `Depende de #N` / `Bloqueado por #N` al inicio del item: "No depende de #N" ya no genera ciclos falsos ni mantiene `bloqueado` un issue (#2127).
+- `/upgrade` actualiza todas las instalaciones de Mefisto que aplican al proyecto (`user` y cada `project`/`local` del repo activo, vía `claude plugin list --json`) en `update-plugin.sh` y en la alineación del par; `.plugin-root` apunta a la instalación efectiva (local > project > user) y el upgrade falla con `ERROR:` si esa versión no coincide con la destino (#2130).
+- El tablero del planner publicado ya no le gana `/mefisto-board` al interno ni se activa en el repo de Mefisto, donde fallaba con "salida de next-order no es JSON".
+- `/mefisto-merge` ya no usa `gh pr merge --delete-branch`: borra la rama remota con `git push origin --delete` y la local solo si ningun worktree la tiene checkouteada, de modo que el merge no falla ni deja viva la rama remota cuando hay un worktree (#2159).
+- `mefisto-bitacora-worktree.sh`: `deliver` ya no reutiliza un PR `MERGED` de la misma rama `docs/bitacora-hasta-<fecha>`; crea un PR nuevo de reentrega, y `prepare` recrea la rama desde `origin/main` si su PR mas reciente ya se mergeo (#2171).
+- La consola `mefisto-divine-wager` vuelve a mostrar al historiador mientras escribe la bitácora: lo sigue por su estado en `$.agent.list()`, porque ahora corre en segundo plano y la llamada `Agent` termina en cuanto arranca.
+
+### Removed
+
+- Se elimina el skill interno `/mefisto-work-status` (fuente y adaptadores generados): la consola `mefisto-divine-wager` y los logs del panel de OpenCode cubren el seguimiento. Se retiran sus sugerencias de `mefisto-tooling`, `mefisto-tooling-verbose` y `mefisto-sequential`, y sus referencias en tests, comentarios, README y ADRs (MEF-ADR-0019, MEF-ADR-0055).
+- Se elimina el skill publicado `/work-status` (`/mefisto:work-status`): los pipelines se siguen en su pane (herdr o tmux) y en el log que imprime el pipeline. El colector `scripts/work-status-collect.sh` se conserva (lo usa `tooling-investigator`). Bump recomendado: `minor`.
+
 ## [0.43.0] - 2026-10-09
 
 ### Added
@@ -3236,7 +3271,8 @@ Y reemplazar referencias en `CLAUDE.md` del proyecto: `/eda-evsourcing-azure-har
 - Los agentes `reviewer` e `implementer` mantienen el placeholder literal `ADR-XXXX` en sus plantillas de reporte (no es un bug; el agente lo sustituye en tiempo de ejecución por el número real del ADR aplicable).
 - Los ejemplos de código en `test-writer.md`, `implementer.md` y `smoke-test-writer.md` conservan nombres concretos de un proyecto consumidor (`Programacion`, `ControlHoras`) anotados en el "Contrato con el consumidor" de cada agente como ejemplos pedagógicos.
 
-[Unreleased]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.43.0...HEAD
+[Unreleased]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.43.1...HEAD
+[0.43.1]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.43.0...v0.43.1
 [0.43.0]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.42.1...v0.43.0
 [0.42.1]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.42.0...v0.42.1
 [0.42.0]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.41.8...v0.42.0
