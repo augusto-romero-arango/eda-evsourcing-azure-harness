@@ -23,6 +23,8 @@
 #   S-7: el marcador canonico .mefisto/pipeline/.plugin-root (issue #2248): la poda
 #        conserva su version en el modo actualizar y en --prune, y el modo actualizar no
 #        lo reescribe; con el marcador ausente el comportamiento no cambia.
+#   S-8: caso ControlAsistencia end-to-end por upgrade.sh (issue #2249): con .previous
+#        viejo (0.44.0), MEFISTO_LOADED_ROOT valida (0.44.1) gana y 0.44.1 no es podable.
 #
 # El script se sourcea (no se ejecuta): scripts/update-plugin.sh solo corre su main()
 # cuando BASH_SOURCE[0] == $0, asi que sourcearlo aqui carga las funciones sin disparar el
@@ -511,6 +513,47 @@ assert_igual "0" "$S7_RC" "S-7: --prune sin canonico: exit 0"
 assert_igual "0.44.1" "$(ls "$S7_MEF" | tr '\n' ' ' | sed 's/ $//')" \
     "S-7: sin canonico se podan 0.43.0 y 0.44.0 como antes"
 rm -rf "$S7_STUB" "$S7_CONSUMER" "$S7_CACHE" "$S7_LOG"
+
+echo ""
+echo "[S-8] upgrade.sh -> update-plugin.sh: la raiz viva gana sobre un .previous viejo (issue #2249)"
+
+# Caso ControlAsistencia: /reload-plugins no dispara SessionStart, asi que .previous sigue en
+# 0.44.0 mientras la sesion carga 0.44.1; la nueva es 0.45.0. End-to-end por upgrade.sh.
+S8_STUB="$(mktemp -d)"; S8_CONSUMER="$(mktemp -d)"; S8_CACHE="$(mktemp -d)"
+S8_MEF="$S8_CACHE/mkt-s8/mefisto"
+for v in 0.43.0 0.44.0 0.44.1 0.45.0; do
+    mkdir -p "$S8_MEF/$v/.claude-plugin"
+    printf '{"name":"mefisto","version":"%s"}' "$v" > "$S8_MEF/$v/.claude-plugin/plugin.json"
+done
+mkdir -p "$S8_CONSUMER/.claude/pipeline"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$S8_STUB/claude"; chmod +x "$S8_STUB/claude"
+printf '%s' "$S8_MEF/0.44.0" > "$S8_CONSUMER/.claude/pipeline/.plugin-root.previous"
+printf '%s' "$S8_MEF/0.45.0" > "$S8_CONSUMER/.claude/pipeline/.plugin-root"
+s8_run() {
+    (
+        cd "$S8_CONSUMER" || exit 1
+        git init -q . 2>/dev/null
+        export PATH="$S8_STUB:$PATH" MEFISTO_CACHE_ROOT="$S8_CACHE" MEFISTO_RUNTIME=claude
+        "$REPO_ROOT/scripts/upgrade.sh" "$@"
+    ) 2>&1
+}
+
+S8_OUT=$(MEFISTO_LOADED_ROOT="$S8_MEF/0.44.1" s8_run); S8_RC=$?
+assert_igual "0" "$S8_RC" "S-8: actualizar con MEFISTO_LOADED_ROOT valida: exit 0"
+assert_contiene "$S8_OUT" "Version cargada en esta sesion: 0.44.1 (fuente: --loaded)" \
+    "S-8: la version cargada sale de la raiz viva, no del .previous"
+assert_igual "  - 0.43.0
+  - 0.44.0" "$(printf '%s\n' "$S8_OUT" | grep '^  - ')" "S-8: 0.44.1 no es podable"
+
+S8_OUT=$(MEFISTO_LOADED_ROOT='${CLAUDE_PLUGIN_ROOT}' s8_run); S8_RC=$?
+assert_contiene "$S8_OUT" "Version cargada en esta sesion: 0.44.0 (fuente: .claude/pipeline/.plugin-root.previous)" \
+    "S-8: raiz sin sustituir se ignora y sigue la cadena previa"
+
+S8_OUT=$(MEFISTO_LOADED_ROOT="$S8_MEF/0.44.1" s8_run --prune); S8_RC=$?
+assert_igual "0" "$S8_RC" "S-8: --prune con MEFISTO_LOADED_ROOT valida: exit 0"
+assert_igual "0.44.1 0.45.0" "$(ls "$S8_MEF" | tr '\n' ' ' | sed 's/ $//')" \
+    "S-8: --prune conserva la version viva 0.44.1"
+rm -rf "$S8_STUB" "$S8_CONSUMER" "$S8_CACHE"
 
 echo ""
 echo "===================================================================="

@@ -138,7 +138,7 @@ EOF
                 while (match(rest, /\{\{mefisto:[^}]*\}\}/)) {
                     directive=substr(rest, RSTART, RLENGTH)
                     if (directive == "{{mefisto:assert-consumer-repo}}") guard=1
-                    else if (directive == "{{mefisto:package-root}}" || directive == "{{mefisto:config-path}}" || directive == "{{mefisto:instructions-path}}" || directive == "{{mefisto:lifecycle-launcher}}") {}
+                    else if (directive == "{{mefisto:package-root}}" || directive == "{{mefisto:config-path}}" || directive == "{{mefisto:instructions-path}}" || directive == "{{mefisto:lifecycle-launcher}}" || directive == "{{mefisto:loaded-root}}") {}
                     else if (directive ~ /^\{\{mefisto:command-doc /) {
                         if (directive !~ /^\{\{mefisto:command-doc [a-z0-9]+(-[a-z0-9]+)*\}\}$/) print rel ": body: linea " line " directiva mefisto mal formada: " directive
                         else {

@@ -173,18 +173,34 @@ cmd_status() {
          peer: {runtime: $prt, state: $ps, version: (if $pv == "" then null else $pv end)}}'
 }
 
+# Version cargada segun MEFISTO_LOADED_ROOT (ruta de la version viva, sustituida por el
+# comando). Valida: ruta absoluta existente, plugin.json con name mefisto y version igual
+# al nombre del directorio. Vacia, sin sustituir o invalida: imprime nada.
+_loaded_from_root() {
+    local root="${MEFISTO_LOADED_ROOT:-}" manifest name ver
+    [ -n "$root" ] || return 0
+    case "$root" in *'${'*|*/..|*/../*) return 0 ;; /*) ;; *) return 0 ;; esac
+    root="${root%/}"
+    manifest="$root/.claude-plugin/plugin.json"
+    [ -d "$root" ] && [ -f "$manifest" ] || return 0
+    command -v jq >/dev/null 2>&1 || return 0
+    name=$(jq -r '.name // empty' "$manifest" 2>/dev/null)
+    ver=$(jq -r '.version // empty' "$manifest" 2>/dev/null)
+    [ "$name" = mefisto ] && [ -n "$ver" ] && [ "$ver" = "$(basename "$root")" ] || return 0
+    printf '%s\n' "$ver"
+}
+
 _update_claude() {
-    local update="$SCRIPT_DIR/update-plugin.sh" args=()
+    local update="$SCRIPT_DIR/update-plugin.sh" args=() loaded
     [ -f "$update" ] || { echo "ERROR: no se hallo update-plugin.sh junto a upgrade.sh." >&2; return 1; }
+    loaded="$LOADED_OVERRIDE"
+    [ -n "$loaded" ] || loaded=$(_loaded_from_root)
     if [ "$MODE" = prune ]; then
-        # .plugin-root no identifica la version cargada tras actualizar (ya apunta a la
-        # nueva): solo se reenvia --loaded explicito; si falta, update-plugin.sh aplica
-        # su propia resolucion (marker .plugin-root.previous y luego inferencia).
         args=(--prune)
-        [ -n "$LOADED_OVERRIDE" ] && args+=(--loaded "$LOADED_OVERRIDE")
     elif [ "$ALIGN_PEER" = true ]; then
         args=(--align-opencode)
     fi
+    [ -z "$loaded" ] || args+=(--loaded "$loaded")
     bash "$update" ${args[@]+"${args[@]}"}
 }
 

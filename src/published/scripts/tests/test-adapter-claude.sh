@@ -47,6 +47,11 @@ bash -n "$ADAPTER" && bash -n "$REPO_ROOT/src/published/scripts/lib/adapter-clau
 [ "$(bash "$ADAPTER" root)" = dist/claude ] && pass 'raiz Claude' || fail 'raiz incorrecta'
 [ "$(bash "$ADAPTER" path src/published/commands/orden.md)" = commands/orden.md ] && pass 'id de comando sin prefijo interno' || fail 'path de comando incorrecto'
 
+mk_lr() { { printf '%s\n' '---' '{"kind":"command","id":"cmd-lr","description":"x"}' '---' '{{mefisto:assert-consumer-repo}}' "MEFISTO_LOADED_ROOT='{{mefisto:loaded-root}}' {{mefisto:run upgrade.sh --prune}}"; } > "$WORK/cmd-lr.md"; }
+mk_lr; lr_c="$(render "$WORK/cmd-lr.md")"
+contains "$lr_c" 'MEFISTO_LOADED_ROOT='"'"'${CLAUDE_PLUGIN_ROOT}'"'"' MEFISTO_RUNTIME=claude' 'loaded-root se renderiza como ${CLAUDE_PLUGIN_ROOT} exacto'
+absent "$lr_c" '{{mefisto:' 'loaded-root queda resuelta'
+
 printf '%s\n' '[render] snapshots y directivas'
 if render "$FIXTURES/command-delegado.md" > "$WORK/command.md" && cmp -s "$FIXTURES/expected-command-delegado.md" "$WORK/command.md"; then pass 'snapshot byte a byte del comando'; else fail 'snapshot byte a byte del comando'; fi
 if render "$FIXTURES/agent-completo.md" > "$WORK/agent.md" && cmp -s "$FIXTURES/expected-agent-completo.md" "$WORK/agent.md"; then pass 'snapshot byte a byte del agente'; else fail 'snapshot byte a byte del agente'; fi
