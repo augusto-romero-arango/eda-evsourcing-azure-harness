@@ -101,7 +101,7 @@ async function refresh($: EngineInterface, isForced: boolean) {
     if (!issues) return
 
     const signature = signatureOf(issues)
-    if (!isForced && signature === (await read($, signatureAtom))) return
+    if (!isForced && pending.size === 0 && signature === (await read($, signatureAtom))) return
 
     const focus = await read($, focusAtom)
     await update($, openAtom, () => briefsOf(issues))
@@ -110,7 +110,7 @@ async function refresh($: EngineInterface, isForced: boolean) {
       if (!focus?.created.includes(a.number)) $.ui.toast(`Nuevo ${a.kind} #${a.number}: ${clip(a.title, 60)}`)
     }
     const [refine, develop] = await Promise.all([runNextOrder($, ['--refinement', '--json']), runNextOrder($, ['--json'])])
-    pending = settlePending(pending, refine.items.map(i => i.number), Date.now())
+    pending = settlePending(pending, refine.error ? null : refine.items.map(i => i.number), Date.now())
     await update($, refineAtom, () => withoutItems(refine, pending.keys()))
     await update($, developAtom, () => develop)
     await update($, pendingAtom, () => pending.size)

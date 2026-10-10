@@ -58,6 +58,7 @@ declare module 'claude-code' {
       develop: BoardList | null
       updatedMs: number
       signature: string
+      pendingCount: number
       known: number[]
     }
   }

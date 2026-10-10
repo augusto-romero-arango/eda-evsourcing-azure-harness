@@ -216,4 +216,6 @@ test('el conjunto pendiente se filtra, se confirma o expira a los 60 s', async (
   expect([...settlePending(pending, [7, 8], 2_000).keys()]).toEqual([7])
   expect(settlePending(pending, [8], 2_000).size).toBe(0)
   expect(settlePending(pending, [7], 1_000 + PENDING_TTL_MS).size).toBe(0)
+  expect([...settlePending(pending, null, 2_000).keys()]).toEqual([7])
+  expect(settlePending(pending, null, 1_000 + PENDING_TTL_MS).size).toBe(0)
 })

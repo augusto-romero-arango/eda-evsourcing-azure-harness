@@ -160,12 +160,13 @@ export function withoutItems(list: BoardList | null, numbers: Iterable<number>):
 
 /**
  * Transiciones pendientes tras un refresco: un issue sale del conjunto cuando la lista fresca ya no lo trae
- * como borrador o cuando vence su plazo. Mapa numero -> instante de vencimiento (ms).
+ * como borrador o cuando vence su plazo. Mapa numero -> instante de vencimiento (ms). `freshDrafts` null (next-order
+ * fallo) no confirma nada: solo vence por plazo.
  */
-export function settlePending(pending: ReadonlyMap<number, number>, freshDrafts: number[], nowMs: number): Map<number, number> {
-  const fresh = new Set(freshDrafts)
+export function settlePending(pending: ReadonlyMap<number, number>, freshDrafts: number[] | null, nowMs: number): Map<number, number> {
+  const fresh = freshDrafts && new Set(freshDrafts)
   const out = new Map<number, number>()
-  for (const [n, untilMs] of pending) if (untilMs > nowMs && fresh.has(n)) out.set(n, untilMs)
+  for (const [n, untilMs] of pending) if (untilMs > nowMs && (!fresh || fresh.has(n))) out.set(n, untilMs)
   return out
 }
 
