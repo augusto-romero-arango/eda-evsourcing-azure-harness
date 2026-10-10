@@ -680,13 +680,24 @@ if [ "$1" = "--batch" ]; then
     preflight_batch_start "${@:2}"
 fi
 
-if [ "${MEFISTO_UI:-}" = "mod" ] && [ "${1:-}" = "--tooling" ]; then
+# Issue #2284: el modo desacoplado tambien se elige por el runtime ya resuelto
+# (MEFISTO_RUNTIME, que el comando antepone siempre): con el runtime claude y
+# sin MEFISTO_UI explicito, la cinta de la propia sesion es el visor y no se
+# abre pane ni sesion tmux. Un MEFISTO_UI explicito (tmux|herdr|mod) siempre
+# gana; el runtime opencode conserva el pane herdr / sesion tmux de siempre.
+uses_detached_ui() {
+    [ "${MEFISTO_UI:-}" = "mod" ] && return 0
+    [ -z "${MEFISTO_UI:-}" ] && [ "${MEFISTO_RUNTIME:-}" = "claude" ] && return 0
+    return 1
+}
+
+if uses_detached_ui && [ "${1:-}" = "--tooling" ]; then
     shift
     cmd_tooling_detached "$@"
     exit 0
 fi
 
-if [ "${MEFISTO_UI:-}" = "mod" ] && [ "${1:-}" = "--batch" ]; then
+if uses_detached_ui && [ "${1:-}" = "--batch" ]; then
     shift
     cmd_batch_detached "$@"
     exit 0

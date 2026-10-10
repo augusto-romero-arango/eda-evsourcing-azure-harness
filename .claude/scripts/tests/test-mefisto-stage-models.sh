@@ -361,6 +361,7 @@ if printf '%s' "$LAST_STDERR" | grep -q "no es valido con --batch"; then pass "m
 # --- mefisto-herdr-pipeline.sh: la otra mitad de CA-3 -----------------------
 
 export HERDR_STUB_LOG="$TMP_DIR/herdr-invocations.log"
+export HERDR_STUB_OWNER_PID=$$
 export HERDR_STUB_COUNTER="$TMP_DIR/herdr-pane-counter"
 HERDR_SCRIPT="$FAKE_MEFISTO/.claude/scripts/mefisto-herdr-pipeline.sh"
 
@@ -379,7 +380,13 @@ case "${1:-} ${2:-}" in
         echo '{"result":{"pane":{"pane_id":"stub"}}}'
         ;;
     "pane process-info")
-        echo '{"result":{"process_info":{"shell_pid":100,"foreground_process_group_id":100}}}'
+        # Issue #2284: el pane que despacha (w1:p0) reporta como shell_pid el
+        # PID del test, ancestro del lanzador, para pasar el guard de pane propio.
+        if [ "${4:-}" = "w1:p0" ] && [ -n "${HERDR_STUB_OWNER_PID:-}" ]; then
+            echo "{\"result\":{\"process_info\":{\"shell_pid\":$HERDR_STUB_OWNER_PID,\"foreground_process_group_id\":$HERDR_STUB_OWNER_PID}}}"
+        else
+            echo '{"result":{"process_info":{"shell_pid":100,"foreground_process_group_id":100}}}'
+        fi
         ;;
     "pane run")
         # Confirmacion de arranque (issue #1563, porte #1571): toca el

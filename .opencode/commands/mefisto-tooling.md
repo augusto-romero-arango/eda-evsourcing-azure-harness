@@ -110,13 +110,15 @@ MEFISTO_RUNTIME=opencode ./.claude/scripts/mefisto-tmux-pipeline.sh --tooling $A
 
 ### 4. Instrucciones de conexion
 
+Seguimiento segun runtime (MEF-ADR-0050, issue #2284): si el runtime activo tiene cinta de sesion (el mod, MEF-ADR-0055), el script corre desacoplado, sin pane ni sesion tmux, y el avance lo sigue la cinta de esta misma sesion; en el resto de runtimes el seguimiento es el pane a la derecha del pane que despacha, con logs y resumen. Un `MEFISTO_UI=tmux|herdr|mod` explicito siempre gana.
+
 Dentro de herdr (`HERDR_ENV=1` en el entorno), el script delega en la interfaz herdr (`mefisto-herdr-pipeline.sh`) y no hay nada que adjuntar: el pipeline queda corriendo en un pane de este mismo workspace con el visor en vivo del agente. En ese caso responde con:
 
 ```
 Pipeline mefisto-tooling corriendo en un pane de este workspace (visor en vivo del agente).
 ```
 
-Si la salida del script dice `sin pane: lo sigue el mod mefisto-divine-wager` (modo `MEFISTO_UI=mod`, MEF-ADR-0055: el mod de esta sesion antepuso ese modo al comando), no hay pane ni sesion que adjuntar. Responde con:
+Si la salida del script dice `sin pane: lo sigue el mod mefisto-divine-wager` (modo desacoplado, MEF-ADR-0055: lo eligio el runtime activo o un `MEFISTO_UI=mod` explicito), no hay pane ni sesion que adjuntar. Responde con:
 
 ```
 Pipeline mefisto-tooling corriendo sin pane: lo sigue el monitor de esta sesion.

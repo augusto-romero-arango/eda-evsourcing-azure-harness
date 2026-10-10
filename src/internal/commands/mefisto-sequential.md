@@ -162,6 +162,16 @@ Luego lanza el motor secuencial dentro de tmux y verifica que el launcher haya t
 Si el launcher aborta, no anuncies que el batch esta corriendo ni muestres instrucciones de
 conexion. Corrige primero el error reportado y relanzalo.
 
+Seguimiento segun runtime (MEF-ADR-0050, issue #2284): si el runtime activo tiene cinta de sesion (el mod, MEF-ADR-0055), el script corre desacoplado, sin pane ni sesion tmux, y el avance lo sigue la cinta de esta misma sesion; en el resto de runtimes el seguimiento es el pane a la derecha del pane que despacha, con logs y resumen. Un `MEFISTO_UI=tmux|herdr|mod` explicito siempre gana.
+
+Si la salida del script dice `sin pane: lo sigue el mod mefisto-divine-wager` (modo desacoplado, MEF-ADR-0055: lo eligio el runtime activo o un `MEFISTO_UI=mod` explicito), no hay pane ni sesion que adjuntar. Responde con:
+
+```
+Batch secuencial mefisto corriendo sin pane: lo sigue el monitor de esta sesion.
+Los issues se procesaran en orden: pipeline -> PR -> merge -> sync verificado -> siguiente.
+Para frenarlo sin violencia: /mefisto-batch-stop (termina el eslabon en curso y aplaza el resto).
+```
+
 Dentro de herdr (`HERDR_ENV=1` en el entorno), el script delega en la interfaz herdr (`mefisto-herdr-pipeline.sh`) y no hay nada que adjuntar: el batch queda corriendo en un pane de este mismo workspace con el visor en vivo, que salta solo de issue en issue. En ese caso responde con:
 
 ```
