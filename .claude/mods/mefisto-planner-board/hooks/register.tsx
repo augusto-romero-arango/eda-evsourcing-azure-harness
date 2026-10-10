@@ -66,6 +66,10 @@ const cardAtom = atom({ plugin: 'mefisto-planner-board', key: 'card' } as const,
 const openAtom = atom({ plugin: 'mefisto-planner-board', key: 'open' } as const, [])
 
 let isInteractive = false
+// La intencion vive en el modulo, no en atoms: /clear abre una sesion nueva con los atoms en blanco, el modulo sigue.
+let isBoardOn = false
+let isTurnedOff = false
+let isRevivePending = false
 let isRefreshing = false
 let settle: { cancel: () => void } | null = null
 let timer: { cancel: () => void } | null = null
@@ -118,6 +122,7 @@ async function loadCard($: EngineInterface, issue: number) {
 }
 
 async function activate($: EngineInterface) {
+  isBoardOn = true
   await update($, activeAtom, () => true)
   timer?.cancel()
   timer = $.clock.every(POLL_MS, () => void refresh($, false))
@@ -125,6 +130,9 @@ async function activate($: EngineInterface) {
 }
 
 async function deactivate($: EngineInterface) {
+  isBoardOn = false
+  isTurnedOff = true
+  isRevivePending = false
   timer?.cancel()
   timer = null
   await update($, activeAtom, () => false)
@@ -137,7 +145,7 @@ const DETECT_EVERY_MS = 3_000
 // asi que se lee primero la linea de comando del proceso de Claude Code (padre del `sh` que corre aqui) y,
 // si no se puede, el inicio del transcript, que solo existe tras el primer mensaje: por eso se reintenta.
 async function detectPlanner($: EngineInterface, triesLeft: number) {
-  if (!isInteractive || (await read($, activeAtom))) return
+  if (!isInteractive || isTurnedOff || (await read($, activeAtom))) return
   const ps = await $.process.run(['sh', '-c', 'ps -o args= -p "$PPID"']).catch(() => ({ exitCode: 1, stdout: '' }))
   const cmdline = ps.exitCode === 0 ? ps.stdout.trim() : ''
   if (/\bclaude\b/.test(cmdline)) {
@@ -158,7 +166,7 @@ async function detectPlanner($: EngineInterface, triesLeft: number) {
 // Marca la sesion como del planner y la activa si ya se sabe que es interactiva. Devuelve si la activo ahora.
 async function claimPlanner($: EngineInterface): Promise<boolean> {
   await update($, plannerAtom, () => true)
-  if (!isInteractive || (await read($, activeAtom))) return false
+  if (!isInteractive || isTurnedOff || (await read($, activeAtom))) return false
   await activate($)
   return true
 }
@@ -305,6 +313,13 @@ export const register: Register = on => {
     return next(e)
   })
 
+  // /clear abre una sesion nueva sin volver a disparar session.start: se anota la reactivacion y la consume el
+  // primer render de la sesion nueva.
+  on('session.end', async ($, e, next) => {
+    if ((e as { reason?: string }).reason === 'clear' && isBoardOn && !isTurnedOff) isRevivePending = true
+    return next(e)
+  }).catch(($, e, next) => next(e))
+
   on('prompt.submit', async ($, e, next) => {
     if (e.origin.kind === 'composer' && !(await read($, activeAtom))) await detectPlanner($, 0)
     if (await read($, activeAtom)) {
@@ -342,6 +357,7 @@ export const register: Register = on => {
       return { text: 'Tablero del planner apagado en esta sesión.' }
     }
     if (arg === 'on' || !(await read($, activeAtom))) {
+      isTurnedOff = false
       await activate($)
       return { text: 'Tablero del planner activo en esta sesión.' }
     }
@@ -359,6 +375,10 @@ export const register: Register = on => {
   })
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
+    if (isRevivePending) {
+      isRevivePending = false
+      if (isInteractive && !isTurnedOff && !(await read($, activeAtom))) await activate($)
+    }
     if (!(await read($, activeAtom)) || e.props.hasSurvey) return next(e)
     const { Box, Text, Button } = $.ui.resolve(e)
     const focus = await read($, focusAtom)

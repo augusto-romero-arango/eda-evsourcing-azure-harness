@@ -23,6 +23,10 @@ Solo se activa en una sesion interactiva cuyo proceso es `claude --agent mefisto
 de comando del proceso, o del transcript como respaldo). Un planner lanzado como subagente o con `-p` no lo ve.
 En otra sesion, `/mefisto-planner-board on` lo enciende a mano.
 
+`/clear` conserva el tablero: reaparece en reposo y recarga las listas sin esperar un mensaje (solo si estaba
+activo; una sesion que no es del planner y no se encendio a mano no lo enciende). `/mefisto-planner-board off`
+dura toda la sesion, tambien tras mensajes y `/clear`, hasta un `/mefisto-planner-board on`.
+
 ## Estados
 
 - **refinar #N**: empieza con un mensaje que dice `refina #N`; termina cuando #N pasa a `estado:listo` o con
