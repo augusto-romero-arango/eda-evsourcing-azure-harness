@@ -4,6 +4,9 @@ import {
   mergeArgsOf,
   mergeOptions,
   mergeToast,
+  openPrArgsOf,
+  openPrOptions,
+  parseOpenPrs,
   parsePrArgs,
   prOfResult,
   resultPrs,
@@ -356,4 +359,33 @@ test('mergeToast: en infra avisa que el issue lo cierra el apply de CI', () => {
   const prs = resultPrs([res(1, 7), res(2, 9, 'infra')])
   expect(mergeToast('7', prs)).toBe('/mefisto:merge 7 en cola')
   expect(mergeToast('7 9', prs)).toContain('apply de CI')
+})
+
+test('parseOpenPrs: borradores y field notes fuera; el mas reciente primero', () => {
+  const raw = JSON.stringify([
+    { number: 5, title: 'A', isDraft: false, headRefName: 'worktree-issue-5-a' },
+    { number: 9, title: 'B', isDraft: false, headRefName: 'docs/bitacora-hasta-2026-10-08' },
+    { number: 8, title: 'Borrador', isDraft: true, headRefName: 'x' },
+    { number: 7, title: 'Nota', isDraft: false, headRefName: 'docs/planner-field-notes-abc' },
+  ])
+  expect(parseOpenPrs(raw)).toEqual([{ number: '9', title: 'B' }, { number: '5', title: 'A' }])
+  expect(parseOpenPrs('no json')).toEqual([])
+  expect(parseOpenPrs('{}')).toEqual([])
+})
+
+test('openPrArgsOf: uno, varios, "Todos" y texto libre; nunca --all', () => {
+  const one = [{ number: '7', title: 'X' }]
+  expect(openPrOptions(one)).toEqual(['#7 X', 'Cancelar'])
+  expect(openPrArgsOf('#7 X', openPrOptions(one), one)).toBe('7')
+  expect(openPrArgsOf('Cancelar', openPrOptions(one), one)).toBe(null)
+
+  const many = [9, 8, 7, 6, 5].map(n => ({ number: String(n), title: `T${n}` }))
+  const options = openPrOptions(many)
+  expect(options).toEqual(['Todos', '#9 T9', '#8 T8', '#7 T7'])
+  expect(openPrArgsOf('Todos', options, many)).toBe('9 8 7 6 5')
+  expect(openPrArgsOf('Todos', options, many)).not.toContain('--all')
+  expect(openPrArgsOf('#9 T9, #7 T7', options, many)).toBe('9 7')
+  expect(openPrArgsOf('#8 T8, 5, 99', options, many)).toBe('8 5')
+  expect(openPrArgsOf('99', options, many)).toBe(null)
+  expect(openPrArgsOf(null, options, many)).toBe(null)
 })

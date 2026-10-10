@@ -580,3 +580,54 @@ export function mergeToast(args: string, prs: ResultPr[]): string {
   const hasInfra = prs.some(p => nums.includes(p.pr) && p.pipeline === 'infra')
   return `/mefisto:merge ${args} en cola${hasInfra ? ' · el issue de infra se cierra cuando termine el apply de CI' : ''}`
 }
+
+// ---- Incremento 6: mergear PRs abiertos desde el reposo (decision 11: referencia de experiencia) ----
+export const FIELD_NOTE_BRANCH_PREFIX = 'docs/planner-field-notes-'
+export const OPEN_PRS_ARGS = ['pr', 'list', '--state', 'open', '--limit', '100', '--json', 'number,title,isDraft,headRefName']
+
+export type OpenPr = { number: string; title: string }
+
+/** PRs abiertos de trabajo: sin borradores ni ramas de field notes; el mas reciente (numero mayor) primero. Vacio si no es JSON. */
+export function parseOpenPrs(raw: string): OpenPr[] {
+  let rows: unknown
+  try {
+    rows = JSON.parse(raw)
+  } catch {
+    return []
+  }
+  if (!Array.isArray(rows)) return []
+  const out: OpenPr[] = []
+  for (const r of rows as Record<string, unknown>[]) {
+    if (!r || typeof r.number !== 'number' || r.isDraft === true) continue
+    if (typeof r.headRefName === 'string' && r.headRefName.startsWith(FIELD_NOTE_BRANCH_PREFIX)) continue
+    out.push({ number: String(r.number), title: typeof r.title === 'string' ? r.title : '' })
+  }
+  return out.sort((a, b) => Number(b.number) - Number(a.number))
+}
+
+const openPrLabel = (p: OpenPr) => `#${p.number} ${clip(p.title, 60)}`.trim()
+
+/** Opciones del dialogo: con un PR, ese y cancelar; con varios, "Todos" y los 3 mas recientes. */
+export function openPrOptions(prs: OpenPr[]): string[] {
+  if (prs.length === 1 && prs[0]) return [openPrLabel(prs[0]), MERGE_CANCEL]
+  return [MERGE_ALL, ...prs.slice(0, MERGE_MAX_OPTIONS).map(openPrLabel)]
+}
+
+/** Argumentos de /mefisto:merge: "Todos" pasa los numeros listados (nunca `--all`); si no, los elegidos y los del texto libre. */
+export function openPrArgsOf(answer: string | null, options: string[], prs: OpenPr[]): string | null {
+  if (answer === null) return null
+  if (prs.length === 1) return answer === options[0] && prs[0] ? prs[0].number : null
+  if (answer.includes(MERGE_ALL)) return prs.map(p => p.number).join(' ')
+  const known = new Set(prs.map(p => p.number))
+  let rest = answer
+  const numbers: string[] = []
+  for (const option of options) {
+    if (option === MERGE_ALL || !rest.includes(option)) continue
+    rest = rest.replace(option, '')
+    const n = /^#(\d+)/.exec(option)?.[1]
+    if (n) numbers.push(n)
+  }
+  numbers.push(...(rest.match(/\d+/g) ?? []))
+  const picked = [...new Set(numbers)].filter(n => known.has(n))
+  return picked.length > 0 ? picked.join(' ') : null
+}

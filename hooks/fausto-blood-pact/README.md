@@ -65,3 +65,10 @@ Con la banda en corridas y al menos un `✓ PR #X`, el pie suma `1 mergear · 2 
 - `/fausto-blood-pact merge [<pr>...]` y `/fausto-blood-pact pr [<pr>]`: lo mismo sin teclas.
 
 Fuera de alcance: mergear PRs que la sesión no vio terminar y resolver comentarios de review.
+
+## Capacidad vigente (incremento 6): mergear PRs abiertos desde el reposo
+
+En reposo (lanzables visibles), si hay PRs abiertos de trabajo, el pie suma `3 PRs N` (`gh pr list --state open`, sin borradores ni ramas `docs/planner-field-notes-*`; se refresca con los listos y tras cada merge). Sin PRs de trabajo el botón no aparece.
+
+- `3`: con un solo PR, `$.ui.ask` con `#N título` y "Cancelar"; con varios, selección múltiple: "Todos" y los 3 más recientes (otros números, en la opción de texto). Ejecuta `/mefisto:merge` con `$.command.run`, anunciado con un toast. "Todos" pasa los números listados, nunca `--all` (mergearía borradores y field notes). Cancelar o no elegir no ejecuta nada.
+- `/fausto-blood-pact prs`: lo mismo sin teclas.
