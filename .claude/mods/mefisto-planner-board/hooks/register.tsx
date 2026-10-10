@@ -316,7 +316,7 @@ export const register: Register = on => {
   // /clear abre una sesion nueva sin volver a disparar session.start: se anota la reactivacion y la consume el
   // primer render de la sesion nueva.
   on('session.end', async ($, e, next) => {
-    if ((e as { reason?: string }).reason === 'clear' && isBoardOn && !isTurnedOff) isRevivePending = true
+    if (e.reason === 'clear' && isBoardOn && !isTurnedOff) isRevivePending = true
     return next(e)
   }).catch(($, e, next) => next(e))
 
