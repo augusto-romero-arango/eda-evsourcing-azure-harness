@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { finishMerge, ghMergeNumbersOf, isGhMergeRun, mergeCounts, mergeHeader, mergeOutcomesOf, mergePromptArgs, mergePrsOf, withMergeOutcomes, agentFlagOf, historianFrom, isAgentActive, isReleasePrompt, isReleaseRun, holdOf, holdText, bitacoraPrompt, changelogOf, fieldNotesIn, releaseArgsOf, releaseOptions, mergeArgsOf, mergeOptions, parseOpenPrs, withoutHeredocs, fmtCost, issueStatsFromHistory, statsPending, fitTitle, summaryTitleWidth, statsTotal, batchFromStatus, batchIssuesOf, batchPr, batchSummary, issueMark, newlyMerged, readyRows, titlesOf, toolingOf, waitingFace, cropGrid, pageOf, parseNextOrder, sequentialOf, finishedFromHistory, mascotPose, parseEvent, usedColumns, relative, pickEventsFile, steps, stampToMs, toolingIssueOf, withModUi } from './logic'
+import { bitacoraPrOf, fieldNoteNamesOf, pendingNotes, processedDirsOf, withProcessedNotes, finishMerge, ghMergeNumbersOf, isGhMergeRun, mergeCounts, mergeHeader, mergeOutcomesOf, mergePromptArgs, mergePrsOf, withMergeOutcomes, agentFlagOf, historianFrom, isAgentActive, isReleasePrompt, isReleaseRun, holdOf, holdText, bitacoraPrompt, changelogOf, fieldNotesIn, releaseArgsOf, releaseOptions, mergeArgsOf, mergeOptions, parseOpenPrs, withoutHeredocs, fmtCost, issueStatsFromHistory, statsPending, fitTitle, summaryTitleWidth, statsTotal, batchFromStatus, batchIssuesOf, batchPr, batchSummary, issueMark, newlyMerged, readyRows, titlesOf, toolingOf, waitingFace, cropGrid, pageOf, parseNextOrder, sequentialOf, finishedFromHistory, mascotPose, parseEvent, usedColumns, relative, pickEventsFile, steps, stampToMs, toolingIssueOf, withModUi } from './logic'
 
 test('detecta el lanzamiento de /mefisto-tooling', async () => {
   expect(toolingIssueOf('MEFISTO_RUNTIME=claude ./.claude/scripts/mefisto-tmux-pipeline.sh --tooling 2059')).toBe('2059')
@@ -259,12 +259,12 @@ test('sigue al historiador por su estado, aunque corra en segundo plano', async 
   expect(isAgentActive('completed')).toBe(false)
   expect(historianFrom(null, false, 5)).toBe(null)
   const writing = historianFrom(null, true, 10)
-  expect(writing).toEqual({ startedMs: 10, finishedMs: null })
+  expect(writing).toEqual({ startedMs: 10, finishedMs: null, notes: [], pr: null })
   expect(historianFrom(writing, true, 20)).toBe(writing)
   const done = historianFrom(writing, false, 30)
-  expect(done).toEqual({ startedMs: 10, finishedMs: 30 })
+  expect(done).toEqual({ startedMs: 10, finishedMs: 30, notes: [], pr: null })
   expect(historianFrom(done, false, 40)).toBe(done)
-  expect(historianFrom(done, true, 50)).toEqual({ startedMs: 50, finishedMs: null })
+  expect(historianFrom(done, true, 50)).toEqual({ startedMs: 50, finishedMs: null, notes: [], pr: null })
 })
 
 test('statsPending pide de nuevo las estadisticas sin titulo', async () => {
@@ -331,4 +331,36 @@ test('la cinta saca los mergeados, marca los fallidos y termina sin pendientes',
   const closed = finishMerge(run, 12)
   expect(closed.prs.map(p => p.estado)).toEqual(['fallido', 'fallido'])
   expect(mergeHeader({ ...run, prs: run.prs.map(p => ({ ...p, estado: 'mergeado' as const })), finishedMs: 1 }, '')).toBe('2 mergeados')
+})
+
+test('la cinta de la bitacora junta las field notes del checkout y las de sus PRs', async () => {
+  const names = fieldNoteNamesOf(
+    ['b.md', 'a.md', 'README.txt'],
+    ['docs/bitacora/field-notes/c.md', 'docs/bitacora/field-notes/a.md', 'docs/bitacora/field-notes/procesadas/z.md', 'otro/x.md'],
+  )
+  expect(names).toEqual(['a.md', 'b.md', 'c.md'])
+  expect(pendingNotes(['a.md'])).toEqual([{ name: 'a.md', estado: 'pendiente' }])
+})
+
+test('una nota pasa a procesada cuando aparece en procesadas/', async () => {
+  const h = { startedMs: 0, finishedMs: null, notes: pendingNotes(['a.md', 'b.md']), pr: null }
+  expect(withProcessedNotes(h, ['z.md'])).toBe(h)
+  const next = withProcessedNotes(h, ['b.md'])
+  expect(next.notes.map(n => n.estado)).toEqual(['pendiente', 'procesada'])
+  expect(withProcessedNotes(next, ['b.md'])).toBe(next)
+  expect(processedDirsOf(['bitacora-2026-10-10', 'otra-cosa'])).toEqual([
+    'docs/bitacora/field-notes/procesadas',
+    '.mefisto/pipeline/summaries/bitacora-2026-10-10/docs/bitacora/field-notes/procesadas',
+  ])
+})
+
+test('detecta el PR de bitacora abierto y descarta los de field notes', async () => {
+  const rows = [
+    { number: 40, title: 'docs: field note', headRefName: 'docs/mefisto-planner-field-note-x', files: [{ path: 'docs/bitacora/field-notes/a.md' }] },
+    { number: 41, title: 'docs(bitacora): entradas', headRefName: 'docs/bitacora-hasta-2026-10-10', files: [{ path: 'docs/bitacora/2026-10-10.md' }, { path: 'docs/bitacora/field-notes/procesadas/a.md' }] },
+    { number: 42, title: 'Mezcla', headRefName: 'x', files: [{ path: 'docs/bitacora/a.md' }, { path: 'README.md' }] },
+  ]
+  expect(bitacoraPrOf(JSON.stringify(rows))).toEqual({ number: 41, title: 'docs(bitacora): entradas' })
+  expect(bitacoraPrOf(JSON.stringify([rows[0]]))).toBe(null)
+  expect(bitacoraPrOf('no json')).toBe(null)
 })

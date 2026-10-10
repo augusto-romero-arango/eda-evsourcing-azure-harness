@@ -1,4 +1,4 @@
-import type { BatchIssue, BatchRun, ChangelogSummary, Historian, Hold, IssueStats, MergePr, MergeRun, OpenPr, BlockedItem, LogLine, RunAgent, PipelineRun, ReadyItem, ReadyList } from '../types'
+import type { BitacoraNote, BitacoraPr, BatchIssue, BatchRun, ChangelogSummary, Historian, Hold, IssueStats, MergePr, MergeRun, OpenPr, BlockedItem, LogLine, RunAgent, PipelineRun, ReadyItem, ReadyList } from '../types'
 
 export const STATE_DIR = '.mefisto/pipeline'
 export const LOG_DIR = `${STATE_DIR}/logs`
@@ -640,7 +640,7 @@ export const isAgentActive = (status: string) => AGENT_ACTIVE.has(status)
  * que en segundo plano vuelve en cuanto arranca. Devuelve `prev` tal cual si nada cambio.
  */
 export function historianFrom(prev: Historian | null, active: boolean, now: number): Historian | null {
-  if (active) return prev && !prev.finishedMs ? prev : { startedMs: now, finishedMs: null }
+  if (active) return prev && !prev.finishedMs ? prev : { startedMs: now, finishedMs: null, notes: [], pr: null }
   return prev && !prev.finishedMs ? { ...prev, finishedMs: now } : prev
 }
 
@@ -721,4 +721,49 @@ export function mergeHeader(run: MergeRun, elapsedText: string): string {
   const c = mergeCounts(run)
   if (!run.finishedMs) return `cosiendo ${c.pending} PR${c.pending === 1 ? '' : 's'} ${elapsedText}`
   return [`${c.merged} mergeado${c.merged === 1 ? '' : 's'}`, c.failed > 0 ? `✗ ${c.failed} fallido${c.failed === 1 ? '' : 's'}` : ''].filter(Boolean).join(' · ')
+}
+
+const FIELD_NOTE_PATH = /^docs\/bitacora\/field-notes\/([^/]+\.md)$/
+
+/**
+ * Las field notes que va a integrar el historiador: las de `docs/bitacora/field-notes/` (sin `procesadas/`, que el
+ * listado no baja) y las de los PRs de field notes sin mergear (rutas de `gh pr view --json files`), sin repetir.
+ */
+export function fieldNoteNamesOf(local: readonly string[], prPaths: readonly string[]): string[] {
+  const fromPrs = prPaths.map(p => FIELD_NOTE_PATH.exec(p)?.[1]).filter((n): n is string => !!n)
+  return [...new Set([...local.filter(n => n.endsWith('.md')), ...fromPrs])].sort()
+}
+
+export const pendingNotes = (names: readonly string[]): BitacoraNote[] => names.map(name => ({ name, estado: 'pendiente' }))
+
+/** Pasa a procesada cada nota que ya aparece en algun `procesadas/`; devuelve `h` tal cual si nada cambio. */
+export function withProcessedNotes<T extends { notes: BitacoraNote[] }>(h: T, processed: readonly string[]): T {
+  const done = new Set(processed)
+  if (!h.notes.some(n => n.estado === 'pendiente' && done.has(n.name))) return h
+  return { ...h, notes: h.notes.map(n => (n.estado === 'pendiente' && done.has(n.name) ? { ...n, estado: 'procesada' } : n)) }
+}
+
+/** Los `procesadas/` donde puede caer una nota: el del checkout y el de cada worktree de mefisto-bitacora-worktree.sh. */
+export function processedDirsOf(summaries: readonly string[]): string[] {
+  return [
+    'docs/bitacora/field-notes/procesadas',
+    ...summaries.filter(n => n.startsWith('bitacora-')).map(n => `.mefisto/pipeline/summaries/${n}/docs/bitacora/field-notes/procesadas`),
+  ]
+}
+
+/**
+ * El PR de bitacora abierto (`gh pr list --json number,title,headRefName,files`): toca solo `docs/bitacora/` y no es
+ * de field notes (rama `-field-note-`, que tambien cae ahi). El mas reciente si hay varios.
+ */
+export function bitacoraPrOf(stdout: string): BitacoraPr | null {
+  try {
+    const rows = JSON.parse(stdout) as { number: number; title: string; headRefName?: string; files?: { path: string }[] }[]
+    const pr = rows
+      .filter(r => !/-field-note-/.test(r.headRefName ?? ''))
+      .filter(r => (r.files ?? []).length > 0 && (r.files ?? []).every(f => f.path.startsWith('docs/bitacora/')))
+      .sort((a, b) => b.number - a.number)[0]
+    return pr ? { number: pr.number, title: pr.title } : null
+  } catch {
+    return null
+  }
 }
