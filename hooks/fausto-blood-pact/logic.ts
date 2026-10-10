@@ -1,4 +1,5 @@
 import type { Role } from '../sprites'
+import { padEnd, reasonOf, typeBadge } from '../logic'
 import type { BoardItem, BoardList, PipelineKind, PipelineResult, PipelineRun } from '../types'
 
 export const NEXT_ORDER_FILE = 'scripts/next-order.sh'
@@ -61,11 +62,24 @@ export function pageOf(page: number, total: number, size: number): { page: numbe
   return { page: Math.min(Math.max(0, page), pages - 1), pages }
 }
 
-/** Linea de una fila: numero de orden, `#issue`, tipo y titulo. */
-export function rowText(item: BoardItem, position: number, numWidth: number, titleMax: number, key: number | null = null): string {
-  const n = `${position}.`.padEnd(numWidth)
-  const k = key === null ? '' : `${key}: `
-  return `${k}${n} #${item.number} [${item.tipo ?? '?'}] ${clip(item.title, titleMax)}`
+/** Partes de una fila como en fausto-board: letra de tipo con color, etiqueta `#N titulo` (sin tecla ni posicion) y `tras #M`. */
+export function rowParts(
+  item: BoardItem,
+  numWidth: number,
+  titleMax: number,
+): { letter: string; color: string; label: string; after: string } {
+  const badge = typeBadge(item.tipo)
+  return {
+    letter: badge.letter,
+    color: badge.color,
+    label: rowText(item, numWidth, titleMax),
+    after: reasonOf(item),
+  }
+}
+
+/** Etiqueta del boton: `#issue titulo`; la tecla la dibuja el boton y el tipo va en su letra. */
+export function rowText(item: BoardItem, numWidth: number, titleMax: number): string {
+  return `${padEnd(`#${item.number}`, numWidth)} ${clip(item.title, titleMax)}`
 }
 
 /** Pie con los issues que no entran al orden; vacio si no hay ninguno. */
