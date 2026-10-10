@@ -23,7 +23,7 @@ export type ReadyList = { items: ReadyItem[]; blocked: BlockedItem[]; cycleCount
 export type BatchIssue = { issue: string; status: string; pr: string | null }
 
 /** Duracion y costo estimado de la corrida de tooling de un issue, del pipeline-history.jsonl. */
-export type IssueStats = { durationMs: number; costUsd: number | null }
+export type IssueStats = { durationMs: number; costUsd: number | null; title: string | null }
 
 /** Un /mefisto-sequential en curso o terminado, leido de pipeline-status-mefisto-batch.json. */
 export type BatchRun = {

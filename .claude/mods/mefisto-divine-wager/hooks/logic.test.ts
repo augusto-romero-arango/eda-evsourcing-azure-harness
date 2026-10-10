@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { agentFlagOf, historianFrom, isAgentActive, isReleasePrompt, isReleaseRun, holdOf, holdText, bitacoraPrompt, changelogOf, fieldNotesIn, releaseArgsOf, releaseOptions, mergeArgsOf, mergeOptions, parseOpenPrs, withoutHeredocs, fmtCost, issueStatsFromHistory, statsTotal, batchFromStatus, batchIssuesOf, batchPr, batchSummary, issueMark, newlyMerged, readyRows, titlesOf, toolingOf, waitingFace, cropGrid, pageOf, parseNextOrder, sequentialOf, finishedFromHistory, mascotPose, parseEvent, usedColumns, relative, pickEventsFile, steps, stampToMs, toolingIssueOf, withModUi } from './logic'
+import { agentFlagOf, historianFrom, isAgentActive, isReleasePrompt, isReleaseRun, holdOf, holdText, bitacoraPrompt, changelogOf, fieldNotesIn, releaseArgsOf, releaseOptions, mergeArgsOf, mergeOptions, parseOpenPrs, withoutHeredocs, fmtCost, issueStatsFromHistory, fitTitle, summaryTitleWidth, statsTotal, batchFromStatus, batchIssuesOf, batchPr, batchSummary, issueMark, newlyMerged, readyRows, titlesOf, toolingOf, waitingFace, cropGrid, pageOf, parseNextOrder, sequentialOf, finishedFromHistory, mascotPose, parseEvent, usedColumns, relative, pickEventsFile, steps, stampToMs, toolingIssueOf, withModUi } from './logic'
 
 test('detecta el lanzamiento de /mefisto-tooling', async () => {
   expect(toolingIssueOf('MEFISTO_RUNTIME=claude ./.claude/scripts/mefisto-tmux-pipeline.sh --tooling 2059')).toBe('2059')
@@ -162,7 +162,7 @@ test('MEFISTO_UI=mod llega al wrapper aunque vaya dentro de un comando compuesto
 test('duracion y costo de cada issue terminado desde el historial', async () => {
   const entry = (issue: string, started: string, finished: string, costs: (number | null)[]) =>
     JSON.stringify({
-      issue, pipeline: 'mefisto-tooling', started, finished,
+      issue, title: `titulo ${issue}`, pipeline: 'mefisto-tooling', started, finished,
       agents: Object.fromEntries(costs.map((c, i) => [`a${i}`, { metrics: { estimated_cost_usd: c } }])),
     })
   const tail = [
@@ -172,11 +172,21 @@ test('duracion y costo de cada issue terminado desde el historial', async () => 
     'no json',
   ].join('\n')
   const stats = issueStatsFromHistory(tail, ['2080', '2081'], stampToMs('20261008-095959'))
-  expect(stats['2080']).toEqual({ durationMs: 300_000, costUsd: 0.35 })
-  expect(stats['2081']).toEqual({ durationMs: 150_000, costUsd: null })
+  expect(stats['2080']).toEqual({ durationMs: 300_000, costUsd: 0.35, title: 'titulo 2080' })
+  expect(stats['2081']).toEqual({ durationMs: 150_000, costUsd: null, title: 'titulo 2081' })
   expect(fmtCost(0.35)).toBe('$0.35')
   expect(fmtCost(null)).toBe('$?')
-  expect(statsTotal(Object.values(stats))).toEqual({ durationMs: 450_000, costUsd: 0.35 })
+  expect(statsTotal(Object.values(stats))).toEqual({ durationMs: 450_000, costUsd: 0.35, title: null })
+})
+
+test('el titulo de la fila del resumen se recorta con elipsis y conserva el ancho', async () => {
+  expect(fitTitle('Mostrar el titulo', 8)).toBe('Mostrar…')
+  expect(fitTitle('corto', 8)).toBe('corto   ')
+  expect(fitTitle(null, 4)).toBe('    ')
+  expect(fitTitle('x', 0)).toBe('')
+  expect(summaryTitleWidth(30)).toBe(0)
+  expect(summaryTitleWidth(40)).toBe(0)
+  expect(summaryTitleWidth(76)).toBe(38)
 })
 
 test('solo cuenta el wrapper que se ejecuta, no el que aparece como texto', async () => {

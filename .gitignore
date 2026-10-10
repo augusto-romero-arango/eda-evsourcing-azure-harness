@@ -22,3 +22,6 @@ pipeline-state/
 
 # Worktrees de sesiones lanzadas con el atajo del adaptador Claude (issue #2108)
 .claude/worktrees/
+
+# Cache local del runner de tests de los mods (no se versiona)
+.claude/mods/*/node_modules/
