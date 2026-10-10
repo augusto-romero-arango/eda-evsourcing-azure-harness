@@ -73,6 +73,7 @@
 # Uso:
 #   scripts/update-plugin.sh [--align-opencode]     # actualiza Claude y, opcionalmente, OpenCode
 #   scripts/update-plugin.sh --prune [--loaded X]   # borra las podables (tras confirmar)
+#   scripts/update-plugin.sh --disable-user         # deshabilita mefisto a nivel usuario (tras confirmar)
 #
 # Exit code: 0 si el modo pedido corrio completo; 1 si el guard cwd != Mefisto aborta,
 # si falta el CLI 'claude', si no hay 'mefisto' en el cache, o si el CLI fallo.
@@ -95,6 +96,33 @@ usage() {
     echo "                     interseccion entre esa lista y las podables recalculadas al borrar." >&2
     echo "  --loaded <version> version que la sesion activa tiene cargada; la poda nunca la borra." >&2
     echo "  --align-opencode alinea OpenCode con el manifiesto de la nueva raiz Claude (sin podar releases OpenCode)." >&2
+    echo "  --disable-user     deshabilita mefisto a nivel usuario (solo tras confirmar); exige que el repo lo" >&2
+    echo "                     habilite en su .claude/settings.json commiteado (MEF-ADR-0053 decision 2)." >&2
+}
+
+# _modo_disable_user: migracion a activacion por repositorio. Nunca deja el repo actual
+# sin Mefisto: se niega si el .claude/settings.json commiteado no lo habilita.
+_modo_disable_user() {
+    local cache_root="${MEFISTO_CACHE_ROOT:-$HOME/.claude/plugins/cache}" dir mkt top
+    command -v claude >/dev/null 2>&1 || { echo "ERROR: el CLI 'claude' no esta en el PATH." >&2; return 1; }
+    dir=$(_marketplace_dir "$(cat "$PLUGIN_ROOT_FILE" 2>/dev/null)" "$cache_root") || {
+        echo "ERROR: no se encontro ningun 'mefisto' en el cache de plugins ($cache_root/*/mefisto)." >&2
+        return 1
+    }
+    mkt=$(basename "$(dirname "$dir")")
+    top=$(git rev-parse --show-toplevel 2>/dev/null) || top=""
+    if ! _activacion_commiteada "$mkt" "$top"; then
+        _reportar_activacion "$mkt" "$top"
+        echo "ERROR: no se deshabilito nada: este repo quedaria sin Mefisto." >&2
+        return 1
+    fi
+    if ! _habilitado_en_usuario "$mkt"; then
+        echo "Mefisto ya esta deshabilitado a nivel usuario; no se modifico nada."
+        return 0
+    fi
+    _deshabilitar_en_usuario "$mkt" || return 1
+    echo "OK: mefisto@$mkt deshabilitado a nivel usuario. Sigue activo en los repos que lo habilitan."
+    echo "Reinicia las sesiones de Claude Code abiertas en otros repos para descargarlo de ellas."
 }
 
 # _alinear_opencode <raiz-claude>
@@ -353,6 +381,11 @@ main() {
     fi
 
     local prune=false align_opencode=false loaded_cli="" only_raw="" only_given=false
+    if [ "${1:-}" = --disable-user ]; then
+        [ "$#" -eq 1 ] || { echo "ERROR: --disable-user no se combina con otros argumentos." >&2; usage; return 1; }
+        _modo_disable_user
+        return $?
+    fi
     while [ "$#" -gt 0 ]; do
         case "$1" in
             --prune) prune=true; shift ;;
@@ -418,7 +451,8 @@ main() {
 
     mefisto_cache_dir=$(_marketplace_dir "$plugin_root_actual" "$cache_root") || {
         echo "ERROR: no se encontro ningun 'mefisto' en el cache de plugins ($cache_root/*/mefisto)." >&2
-        echo "       Verifica que el plugin este instalado (claude plugin install mefisto@<marketplace> --scope user)." >&2
+        echo "       Verifica que el plugin este instalado (claude plugin install mefisto@<marketplace> --scope user" >&2
+        echo "       y luego claude plugin disable mefisto@<marketplace> --scope user: el repo lo habilita)." >&2
         return 1
     }
     marketplace_name=$(basename "$(dirname "$mefisto_cache_dir")")
@@ -611,6 +645,11 @@ main() {
         fi
     fi
     echo ""
+
+    if [ "$prune" = false ]; then
+        _reportar_activacion "$marketplace_name" "${repo_top:-}"
+        echo ""
+    fi
 
     echo "Version destino: $new_version."
     echo "Corre /reload-plugins (o reinicia la sesion) para activar la version $new_version."

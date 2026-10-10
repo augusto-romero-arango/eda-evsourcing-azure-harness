@@ -130,7 +130,18 @@ Si el script termina con `ERROR`, muestra su salida tal cual. Una falla deja las
 
 Muestra sin reinterpretar la salida del script. Reten `Version cargada en esta sesion: <version>` y `Version destino: <version>`. Si el par se alineo, muestra tambien su estado, su version y el diagnostico JSON de identidad entre ambas instalaciones. Nunca afirmes que la sesion viva ya cambio: la version cargada pertenece a esta sesion; la destino esta en disco para la proxima recarga.
 
-### 4. Refrescar agentes herdr
+### 4. Migrar a activacion por repositorio
+
+Mefisto se instala por usuario pero se activa solo en los repos que lo habilitan en su configuracion de proyecto commiteada (MEF-ADR-0053 decision 2). El script reporta el estado en el bloque `Activacion de Mefisto`; muestralo sin reinterpretar.
+
+- Si la salida incluye `MIGRACION PENDIENTE`, pide una unica confirmacion: "Mefisto esta habilitado a nivel usuario y se carga en todos tus repos. ¿Quieres deshabilitarlo a ese nivel para que solo se active en los repos que lo habilitan, como este? [si/no]". Solo si responde exactamente `si`, ejecuta:
+
+  MEFISTO_RUNTIME=claude "${MEFISTO_PACKAGE_ROOT}/scripts/upgrade.sh" --disable-user
+
+  Muestra su salida tal cual. Si declina o no responde, no ejecutes nada.
+- Si la salida incluye `AVISO: este repo no habilita Mefisto`, muestralo y sugiere `/mefisto:onboard`; nunca ofrezcas deshabilitar el nivel usuario en ese caso.
+
+### 5. Refrescar agentes herdr
 
 Solo si `HERDR_ENV=1`, refresca los agentes herdr con la version nueva. Es best-effort: un fallo o salida vacia no debe impedir la poda ni el cierre.
 
@@ -138,13 +149,13 @@ MEFISTO_RUNTIME=claude "${MEFISTO_PACKAGE_ROOT}/scripts/herdr-pipeline.sh" --ref
 
 Reporta la salida sin reinterpretar: por cada linea no vacia `<pane_id> <runtime> <accion>`, muestra una tabla con las columnas `Pane`, `Runtime` y `Accion`. Si no hubo lineas, muestra exactamente: `Sin panes Herdr que refrescar`. No afirmes que la sesion o pane propio cambio. Fuera de herdr (`HERDR_ENV` distinto de `1`), no ejecutes ni menciones este paso.
 
-### 5. Poda opt-in del runtime activo
+### 6. Poda opt-in del runtime activo
 
 La poda aplica solo al runtime activo y solo si el script listo versiones podables. Muestra la lista exacta y pide confirmacion explicita. Si responde exactamente `si`, invoca la poda pasando con `--only` exactamente esa lista (versiones separadas por coma, sin agregar ni quitar ninguna); la poda borra solo la interseccion con las podables recalculadas y reporta aparte las no confirmadas y las que ahora estan protegidas (`--only` solo restringe la poda cuyo listado puede recalcularse entre ambos pasos; donde la lista sale del mismo `--keep`, se ignora). Si la version cargada es conocida, agrega `--loaded <version-cargada>`. Si no confirma, no borres nada. Nunca podes la version cargada ni el par.
 
 MEFISTO_LOADED_ROOT='${CLAUDE_PLUGIN_ROOT}' MEFISTO_RUNTIME=claude "${MEFISTO_PACKAGE_ROOT}/scripts/upgrade.sh" --prune --only <versiones-confirmadas>
 
-### 6. Cerrar con el reload
+### 7. Cerrar con el reload
 
 Independientemente de la poda, termina siempre: "Recarga o reinicia la sesion de tu runtime para activar la version `<version-destino>`. La sesion actual sigue cargando `<version-cargada>` hasta entonces." Si el par se alineo, agrega que reinicie tambien ese runtime. Si el reporte herdr incluyo `omitido:working` u `omitido:blocked`, agrega que esos panes deben recargarse a mano cuando terminen.
 
@@ -153,4 +164,5 @@ Independientemente de la poda, termina siempre: "Recarga o reinicia la sesion de
 - `upgrade.sh` es la autoridad para actualizar, alinear el par, diagnosticar identidad y conservar releases de rollback; no reimplementes esos controles en el comando.
 - Un conflicto nunca autoriza una mutacion automatica.
 - El update no borra nada. La unica operacion destructiva es la poda opt-in del runtime activo; nunca toca la version cargada ni el par.
+- Deshabilitar Mefisto a nivel usuario solo ocurre con `--disable-user`, tras la confirmacion del paso 4; el script se niega si el repo no lo habilita en su configuracion de proyecto commiteada.
 - El refresco de panes herdr es automatico y best-effort; nunca interrumpe un pane ocupado ni el pane propio.
