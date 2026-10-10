@@ -12,6 +12,7 @@ import {
   arrivals,
   clip,
   createdIssueOf,
+  showsDraftList,
   createdText,
   cropGrid,
   isIssueChange,
@@ -265,6 +266,8 @@ async function onBash($: EngineInterface, command: string, output: string) {
     const created = createdIssueOf(output)
     if (created !== null && !focus.created.includes(created)) {
       await update($, focusAtom, f => (f ? { ...f, created: [...f.created, created] } : f))
+      if (focus.created.length === 0) await update($, pageAtom, () => 0)
+      void refresh($, true)
     }
   }
   const listo = issueMarkedListo(command)
@@ -299,8 +302,8 @@ async function toggleList($: EngineInterface, tab: BoardTab) {
 
 // Avanza de pagina y da la vuelta al final.
 async function nextPage($: EngineInterface) {
-  const list = (await read($, tabAtom)) === 'borrador' ? await read($, refineAtom) : await read($, developAtom)
-  const tab = await read($, tabAtom)
+  const tab = showsDraftList(await read($, focusAtom)) ? 'borrador' : await read($, tabAtom)
+  const list = tab === 'borrador' ? await read($, refineAtom) : await read($, developAtom)
   const { page, pages } = pageOf(await read($, pageAtom), list?.items.length ?? 0, pageSizeOf(tab))
   await update($, pageAtom, () => (page + 1) % pages)
 }
@@ -397,13 +400,14 @@ export const register: Register = on => {
     const focus = await read($, focusAtom)
     const isConfirmingClose = await read($, confirmAtom)
     const flash = await read($, flashAtom)
-    const isExpanded = await read($, expandedAtom)
+    const showList = showsDraftList(focus)
+    const isExpanded = (await read($, expandedAtom)) || showList
     const refine = await read($, refineAtom)
     const develop = await read($, developAtom)
     const inner = Math.max(40, (e.props.bodyColumns ?? 80) - 4)
     const count = (l: BoardList | null) => (l ? String(l.items.length) : '…')
     const isUpdating = (await read($, pendingAtom)) > 0
-    const tab = await read($, tabAtom)
+    const tab = showList ? 'borrador' : await read($, tabAtom)
     const suggested = refine?.items[0]?.number ?? null
     const listButtons = (
       <Box gap={2}>
@@ -481,7 +485,7 @@ export const register: Register = on => {
 
     const updatedMs = await read($, updatedAtom)
     let content
-    if (focus) {
+    if (focus && !showList) {
       const minutes = Math.max(0, Math.floor((Date.now() - (focus.startedMs ?? Date.now())) / 60_000))
       const what = focus.kind === 'refinar' ? `Refinando #${focus.issue}` : 'Explorando'
       const ends =

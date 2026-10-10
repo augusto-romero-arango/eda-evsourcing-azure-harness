@@ -3,6 +3,7 @@ import type { BoardList } from './types'
 
 import {
   arrivals,
+  showsDraftList,
   isMefistoManifest,
   isIssueChange,
   createdIssueOf,
@@ -206,4 +207,11 @@ test('el conjunto pendiente filtra el borrador y sale al confirmarse o a los 60 
   expect(expired.pending.size).toBe(0)
   const failed = applyPending({ ...board(), error: 'next-order fallo' }, pending, 1000 + 5_000)
   expect(failed.pending.has(2)).toBe(true)
+})
+
+test('showsDraftList: solo una exploracion con borradores creados muestra la lista', () => {
+  expect(showsDraftList(null)).toBe(false)
+  expect(showsDraftList({ kind: 'explorar', created: [] })).toBe(false)
+  expect(showsDraftList({ kind: 'explorar', created: [12] })).toBe(true)
+  expect(showsDraftList({ kind: 'refinar', created: [12] })).toBe(false)
 })

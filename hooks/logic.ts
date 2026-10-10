@@ -298,3 +298,8 @@ export function isMefistoManifest(raw: string): boolean {
     return false
   }
 }
+
+// Una exploracion que ya creo borradores muestra la lista de borradores como cuerpo de la banda.
+export function showsDraftList(focus: { kind: 'explorar' | 'refinar'; created: number[] } | null | undefined): boolean {
+  return focus?.kind === 'explorar' && focus.created.length > 0
+}
