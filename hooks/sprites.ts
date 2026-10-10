@@ -657,12 +657,12 @@ const SPACE = ' '.codePointAt(0)!
 /**
  * Convierte una cuadrícula en las celdas empacadas que recibe el elemento Raster.
  * Cada celda junta dos píxeles verticales: ▀ con el de arriba como color y el de abajo como fondo.
- * Resultado: columns = WIDTH (18), rows = RASTER_ROWS (6).
+ * Resultado: columns = `width` (WIDTH, 18, o el ancho ya recortado por `cropGrid`), rows = RASTER_ROWS (6).
  */
-export function toRasterCells(grid: Grid): string {
+export function toRasterCells(grid: Grid, width: number = WIDTH): string {
   const numbers: number[] = []
   for (let y = 0; y < HEIGHT; y += 2) {
-    for (let x = 0; x < WIDTH; x++) {
+    for (let x = 0; x < width; x++) {
       const top = colorOf(grid[y]?.[x])
       const bottom = colorOf(grid[y + 1]?.[x])
       if (top !== null && bottom !== null) numbers.push(UPPER, top, bottom)
@@ -703,4 +703,31 @@ export function toSvg(grid: Grid, scale = 6): string {
   const w = WIDTH * scale
   const h = HEIGHT * scale
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${w} ${h}" width="${w}" height="${h}" shape-rendering="crispEdges">${rects.join('')}</svg>`
+}
+
+/** Reloj de arena de la espera: dos cuadros (arena arriba / abajo), 4 columnas por 6 pixeles. */
+const HOURGLASS = [
+  ['YYYY', 'gyyg', '.yg.', 'g..g', 'g..g', 'YYYY'],
+  ['YYYY', 'g..g', '.gg.', 'g..g', 'gyyg', 'YYYY'],
+] as const
+
+/**
+ * Mefisto en espera, sobre la cara 'normal': boca plana corrida y un reloj de arena a la izquierda.
+ * Con `tick` (Claude trabaja) los ojos miran de lado a lado y la arena se voltea en cada tick;
+ * con `tick` null (reposo) mira de frente, quieto, con la arena arriba.
+ */
+export function waitingFace(base: Grid, tick: number | null): Grid {
+  const eyes =
+    tick === null ? ['.....rrEErrEErr.tt', '.....rrEErrEErr..t']
+    : tick % 2 === 0 ? ['.....rEErrEErrr.tt', '.....rEErrEErrr..t']
+    : ['.....rrrEErrEEr.tt', '.....rrrEErrEEr..t']
+  const glass = HOURGLASS[tick !== null && tick % 2 === 1 ? 1 : 0]
+  return base.map((row, y) => {
+    let out = row
+    if (y === 6 || y === 7) out = eyes[y - 6] ?? out
+    if (y === 9) out = '......rrrrMMMr..t.'
+    const g = y >= 6 ? glass[y - 6] : undefined
+    if (g) out = [...out].map((c, x) => (x < g.length && g[x] !== '.' ? g[x] : c)).join('')
+    return out
+  })
 }

@@ -1,7 +1,14 @@
 import { expect, test } from 'claude-code/testing'
 
 import {
+  activeRunOf,
   agentFlagOf,
+  eventsFileOf,
+  eventsLogBase,
+  lastEventOf,
+  poseOfResults,
+  poseOfRun,
+  roleOfAgent,
   agentOf,
   clockOf,
   minutesSince,
@@ -229,4 +236,66 @@ test('lanzar: sin argumento es 1, un numero fuera de los lanzables lo dice', () 
   expect(parseLaunchArg('8', l)).toEqual({ kind: 'issue', issue: 8 })
   expect(parseLaunchArg('99', l).kind).toBe('invalid')
   expect(parseLaunchArg('x', l).kind).toBe('invalid')
+})
+
+test('roleOfAgent mapea el agente del stage al rol', () => {
+  for (const a of ['test-writer', 'smoke-test-writer', 'coverage-gate']) expect(roleOfAgent(a)).toBe('tester')
+  for (const a of ['implementer', 'writer', 'setup', 'scaffold']) expect(roleOfAgent(a)).toBe('desarrollador')
+  for (const a of ['reviewer', 'infra-reviewer']) expect(roleOfAgent(a)).toBe('revisor')
+  expect(roleOfAgent('infra-writer')).toBe('infraestructura')
+})
+
+const runOf = (over: Record<string, unknown> = {}) =>
+  parseStatus('pipeline-status-tdd-7.json', status({ updated: '2026-10-09T10:05:00', ...over }))!
+
+test('activeRunOf elige la activa con updated mas reciente', () => {
+  const a = runOf({ updated: '2026-10-09T10:05:00' })
+  const b = parseStatus('pipeline-status-tooling-8.json', status({ pipeline: 'tooling', issue: 8, updated: '2026-10-09T10:09:00' }))!
+  const done = parseStatus('pipeline-status-tdd-9.json', status({ issue: 9, state: 'failed', updated: '2026-10-09T10:11:00' }))!
+  expect(activeRunOf([a, b, done])?.issue).toBe(8)
+  expect(activeRunOf([done])).toBe(null)
+})
+
+test('ruta del events.jsonl por pipeline y el intento mas alto', () => {
+  expect(eventsLogBase(runOf())).toBe('stage-3-implementer-2026-10-09T10:00:00-issue-7')
+  const tooling = parseStatus('pipeline-status-tooling-8-b.json', status({ pipeline: 'tooling', issue: 8, variant: 'b', stage: '1-writer' }))!
+  expect(eventsLogBase(tooling)).toBe('tooling-stage-1-writer-2026-10-09T10:00:00-issue-8-b')
+  const infra = parseStatus('pipeline-status-infra-9.json', status({ pipeline: 'infra', issue: 9, stage: '1-infra-writer' }))!
+  expect(eventsLogBase(infra)).toBe('iac-stage-1-infra-writer-2026-10-09T10:00:00-issue-9')
+  const base = eventsLogBase(runOf())
+  const names = [`${base}-attempt-1.events.jsonl`, `${base}-attempt-10.events.jsonl`, `${base}-attempt-2.events.jsonl`, `${base}-attempt-3.log`, 'otro.events.jsonl']
+  expect(eventsFileOf(runOf(), names)).toBe(`${base}-attempt-10.events.jsonl`)
+  expect(eventsFileOf(runOf(), ['otro'])).toBe(null)
+})
+
+test('lastEventOf toma el ultimo evento relevante', () => {
+  const tool = '{"type":"tool.started","tool":"Edit"}'
+  const text = '{"type":"message","role":"assistant","text":"hola"}'
+  expect(lastEventOf(`${text}\n${tool}\n{"type":"tool.completed","ok":true}\nbasura\n`)).toEqual({ kind: 'tool', tool: 'Edit' })
+  expect(lastEventOf(`${tool}\n${text}\n`)).toEqual({ kind: 'text', tool: '' })
+  expect(lastEventOf('{"type":"message","role":"user","text":"x"}\n')).toBe(null)
+  expect(lastEventOf('')).toBe(null)
+})
+
+test('poseOfRun sigue el ultimo evento, tambien en hold', () => {
+  const tool = { kind: 'tool', tool: 'Bash' } as const
+  const edit = { kind: 'tool', tool: 'Write' } as const
+  const text = { kind: 'text', tool: '' } as const
+  expect(poseOfRun(runOf(), tool)).toEqual({ role: 'desarrollador', state: 'trabajando' })
+  expect(poseOfRun(runOf(), text)).toEqual({ role: 'desarrollador', state: 'pensando' })
+  expect(poseOfRun(runOf(), null)).toEqual({ role: 'desarrollador', state: 'pensando' })
+  expect(poseOfRun(runOf({ stage: '2-reviewer' }), edit)).toEqual({ role: 'revisor', state: 'corrigiendo' })
+  expect(poseOfRun(runOf({ stage: '2-reviewer' }), tool)).toEqual({ role: 'revisor', state: 'trabajando' })
+  expect(poseOfRun(runOf({ stage: '1-test-writer' }), edit)).toEqual({ role: 'tester', state: 'trabajando' })
+  expect(poseOfRun(runOf({ stage: '1-infra-writer' }), text)).toEqual({ role: 'infraestructura', state: 'desplegando' })
+  expect(poseOfRun(runOf({ state: 'hold' }), tool)).toEqual({ role: 'desarrollador', state: 'trabajando' })
+})
+
+test('poseOfResults: aprobado/error y variantes de infra', () => {
+  const r = (pipeline: 'tdd' | 'infra', ok: boolean) => ({ key: 'k', issue: 1, pipeline, ok, text: '' })
+  expect(poseOfResults([])).toBe(null)
+  expect(poseOfResults([r('tdd', true)])).toEqual({ role: 'revisor', state: 'aprobado' })
+  expect(poseOfResults([r('tdd', false)])).toEqual({ role: 'desarrollador', state: 'error' })
+  expect(poseOfResults([r('infra', true)])).toEqual({ role: 'infraestructura', state: 'arriba' })
+  expect(poseOfResults([r('infra', false)])).toEqual({ role: 'infraestructura', state: 'caido' })
 })
