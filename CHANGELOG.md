@@ -4,6 +4,30 @@ Todo cambio notable a este proyecto se documenta aquí. Sigue [Keep a Changelog]
 
 ## [Unreleased]
 
+## [0.45.0] - 2026-10-10
+
+### Added
+
+- `fausto-blood-pact`: la banda de corridas suma `1 mergear · 2 ver PR` sobre los `✓ PR #X` (confirma y ejecuta `/mefisto:merge`, sin `--all`; cierra la linea sola al quedar `MERGED`) y los comandos `merge` y `pr` (#2198).
+- `fausto-blood-pact`: en reposo, el pie suma `3 PRs N` (PRs abiertos de trabajo, sin borradores ni field notes) que abre un diálogo de selección y ejecuta `/mefisto:merge` con los números elegidos (sin `--all`), y el comando `prs` (#2199).
+- `scripts/batch-pipeline.sh` escribe el estado del lote en `pipeline-status-batch.json` (directorio de estado, tmp + `mv`): `state` (`running|completed|stopped|failed`), `current`, `stop_requested`, `hold_seconds`, `log` e `issues[{issue, status, pr, detail}]` con `status` normalizado (`pendiente|en-curso|mergeado|fallido|aplazado|saltado`). Los saltos por infra, sin tipo o issue no abierto quedan `saltado` con su motivo. Sin `jq` no se escribe y el lote corre igual (#2202).
+- La consola `fausto-blood-pact` sigue un `/mefisto:sequential` como lote: lee `pipeline-status-batch.json` y la banda muestra `sequential N/M`, la cola (`✓ ● ✗ ⏸`), el eslabon en curso con su mascota, `1` detiene tras el actual (senal `pipeline-state/batch-stop`, MEF-ADR-0017), `2` abre el PR, toast por merge, resumen final que `4` cierra y `/fausto-blood-pact detener` (#2203).
+
+### Changed
+
+- Tablero del planner (mod interno): registra en el log de debug cada render de la cabecera y cada `ui.press`, y agrega el subcomando `/mefisto-planner-board cerrar-sesion` (equivale al boton de cierre) para diagnosticar teclas que llegan como texto (#2210).
+- El foco `explorar` de `mefisto-planner-board` muestra la lista de borradores en cuanto se crea el primero (`5`-`9` para refinar, `0` pagina) y refresca la lista al crear cada borrador (#2217).
+- La banda del tablero publicado (`fausto-board`) muestra la lista de borradores cuando una exploración ya creó alguno, con `5`-`9` y paginación, y refresca al instante tras crearlo (#2218).
+- La banda de `mefisto-divine-wager` muestra el titulo de cada issue en el resumen del sequential, recortado con `…` y con las columnas alineadas (#2220).
+- La consola `fausto-blood-pact` muestra el titulo de cada issue en el resumen del lote del sequential, leido de `pipeline-history.jsonl` (solo cuando aparece un issue terminado sin titulo) y recortado al ancho para dejar visibles PR y detalle (#2224).
+
+### Fixed
+
+- `/mefisto:batch-stop` escribe la senal `pipeline-state/batch-stop` en la raiz del checkout principal (via `git rev-parse --git-common-dir`) aunque se invoque desde un worktree, para que el lote realmente se detenga y la senal no frene la proxima corrida del worktree (#2206).
+- `fausto-blood-pact`: las corridas solo toman la banda con al menos una activa; sin activas se ven los listos y los resultados sin ocultar quedan al pie (`4 ocultar`, antes "descartar", que sigue como alias del comando). Los lectores ya no leen la ruta legada `.claude/pipeline/` (#2208).
+- `mefisto-planner-board` quita al instante de la lista de borradores el issue que pasa a `estado:listo` o se cierra (conjunto de transiciones pendientes filtrado en cada refresco, 60 s de plazo, indicador `actualizando…`), en vez de mostrarlo 15-20 s (#2214).
+- El tablero publicado del planner (`fausto-board`) quita al instante de la lista de borradores el issue que pasa a `estado:listo` o se cierra, y lo mantiene oculto en los refrescos siguientes hasta que uno confirme el cambio (o pasen 60 s), con `actualizando…` junto al contador mientras tanto (#2215).
+
 ## [0.44.1] - 2026-10-10
 
 ### Added
@@ -3298,7 +3322,8 @@ Y reemplazar referencias en `CLAUDE.md` del proyecto: `/eda-evsourcing-azure-har
 - Los agentes `reviewer` e `implementer` mantienen el placeholder literal `ADR-XXXX` en sus plantillas de reporte (no es un bug; el agente lo sustituye en tiempo de ejecución por el número real del ADR aplicable).
 - Los ejemplos de código en `test-writer.md`, `implementer.md` y `smoke-test-writer.md` conservan nombres concretos de un proyecto consumidor (`Programacion`, `ControlHoras`) anotados en el "Contrato con el consumidor" de cada agente como ejemplos pedagógicos.
 
-[Unreleased]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.44.1...HEAD
+[Unreleased]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.45.0...HEAD
+[0.45.0]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.44.1...v0.45.0
 [0.44.1]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.44.0...v0.44.1
 [0.44.0]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.43.1...v0.44.0
 [0.43.1]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.43.0...v0.43.1
