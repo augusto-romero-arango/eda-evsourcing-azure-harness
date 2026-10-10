@@ -549,11 +549,23 @@ main() {
     podables=$(printf '%s\n' "$todas" | _podables $protegidas)
 
     echo "Versiones conservadas: $(printf '%s' "$protegidas" | tr '\n' ' ')"
+    # Confirmadas (--only) que el recalculo protege ahora: se informan aunque no quede nada podable.
+    local c ahora_protegidas=""
+    if [ "$prune" = true ]; then
+        for c in "${only_list[@]}"; do
+            if ! printf '%s\n' "$podables" | grep -qxF "$c" && printf '%s\n' "$protegidas" | grep -qxF "$c"; then
+                ahora_protegidas+="$c "
+            fi
+        done
+    fi
     if [ -z "$podables" ]; then
         echo "Cache limpio: no hay versiones podables."
+        if [ -n "$ahora_protegidas" ]; then
+            echo "Confirmadas que ahora estan protegidas (no se borraron): $ahora_protegidas"
+        fi
     elif [ "$prune" = true ]; then
         echo "Borrando del cache solo las versiones confirmadas (--only) que siguen siendo podables..."
-        local v destino c confirmada no_confirmadas="" ahora_protegidas=""
+        local v destino confirmada no_confirmadas=""
         while IFS= read -r v; do
             [ -z "$v" ] && continue
             confirmada=false
@@ -576,13 +588,6 @@ main() {
                 *) echo "  omitida (ruta inesperada): $destino" ;;
             esac
         done <<< "$podables"
-        for c in "${only_list[@]}"; do
-            if ! printf '%s\n' "$podables" | grep -qxF "$c"; then
-                if printf '%s\n' "$protegidas" | grep -qxF "$c"; then
-                    ahora_protegidas+="$c "
-                fi
-            fi
-        done
         if [ -n "$no_confirmadas" ]; then
             echo "Podables NO confirmadas (no se borraron): $(printf '%s' "$no_confirmadas" | tr '\n' ' ')"
         fi

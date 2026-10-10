@@ -596,6 +596,12 @@ S9_OUT=$(s9_run --prune --only 0.43.0,0.44.1 --loaded 0.44.1); S9_RC=$?
 assert_igual "0.44.0 0.44.1" "$(ls "$S9_MEF" | tr '\n' ' ' | sed 's/ $//')" "S-9: no borra la protegida confirmada"
 assert_contiene "$S9_OUT" "Confirmadas que ahora estan protegidas (no se borraron): 0.44.1" "S-9: informa la confirmada protegida"
 
+# Sin podables al borrar: la confirmada protegida igual se informa.
+rm -rf "$S9_MEF"; mkdir -p "$S9_MEF/0.44.1"
+S9_OUT=$(s9_run --prune --only 0.44.1 --loaded 0.44.1); S9_RC=$?
+assert_igual "0.44.1" "$(ls "$S9_MEF" | tr '\n' ' ' | sed 's/ $//')" "S-9: cache limpio no borra la cargada"
+assert_contiene "$S9_OUT" "Confirmadas que ahora estan protegidas (no se borraron): 0.44.1" "S-9: cache limpio informa la confirmada protegida"
+
 # La pista del modo actualizar trae la lista exacta.
 s9_reset
 S9_OUT=$(s9_run --loaded 0.44.1)
