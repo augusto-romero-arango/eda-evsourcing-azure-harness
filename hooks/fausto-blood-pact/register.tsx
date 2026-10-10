@@ -61,9 +61,9 @@ import {
   batchCurrentOf,
   batchDismissKey,
   batchHeader,
+  batchMark,
   batchIssueLine,
   batchPrOf,
-  batchQueueText,
   batchRunOf,
   batchStatusPath,
   batchStopPath,
@@ -232,6 +232,7 @@ async function requestStop($: EngineInterface): Promise<string> {
 
 async function confirmStop($: EngineInterface): Promise<string> {
   const batch = await read($, batchAtom)
+  if (batch && isBatchRunning(batch) && batch.stopRequested) return 'La parada ya esta pedida: termina el issue en curso.'
   if (!batch || !canStopBatch(batch)) return 'No hay un sequential en curso que detener.'
   const answer = await $.ui
     .ask(stopQuestion(batch), { header: 'Detener', options: [BATCH_STOP_ANSWER, BATCH_KEEP_ANSWER] })
@@ -617,7 +618,13 @@ export const register: Register = on => {
               </Text>
               {running ? (
                 <>
-                  <Text wrap="truncate-end">{clip(batchQueueText(batch), body)}</Text>
+                  <Text wrap="truncate-end">
+                    {batch.issues.map((i, n) => (
+                      <Text key={`q-${i.issue}`} dimColor={i.status === 'saltado' || i.status === 'pendiente'}>
+                        {`${n > 0 ? ' · ' : ''}${batchMark(i.status)} #${i.issue}`}
+                      </Text>
+                    ))}
+                  </Text>
                   <Text color="claude" wrap="truncate-end">
                     {clip(batchRun ? runLine(batchRun, Date.now()) : `#${current?.issue ?? batch.current ?? '…'} en curso`, body)}
                   </Text>
