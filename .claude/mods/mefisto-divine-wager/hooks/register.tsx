@@ -899,6 +899,13 @@ export const register: Register = on => {
     return next(e)
   })
 
+  // /clear, /resume y /branch reinician $.state sin volver a disparar session.start; classic.SessionStart si
+  // dispara. detectExecution recarga ahi mismo listos, PRs, field notes y fragmentos de changelog.
+  on('classic.SessionStart', { source: ['clear', 'resume', 'fork'] }, async ($, e, next) => {
+    if (isInteractive) await detectExecution($)
+    return next(e)
+  }).catch(($, e, next) => next(e))
+
   // El cohete del release: en reposo desde que se pide /mefisto-release, despegando mientras corre su script y
   // listo cuando termina el turno que lo ejecuto.
   on('prompt.submit', async ($, e, next) => {
