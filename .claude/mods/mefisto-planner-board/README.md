@@ -69,3 +69,12 @@ arbol y si llego la pulsacion. Mientras tanto, usar `/mefisto-planner-board cerr
 claude plugin validate .claude/mods/mefisto-planner-board
 claude plugin test .claude/mods/mefisto-planner-board
 ```
+
+## Quita optimista al refinar
+
+Cuando el planner pasa #N a `estado:listo` o lo cierra (`gh issue close N`), el tablero lo quita de la lista de
+borradores en el acto, antes de cualquier refresco: "siguiente a refinar", `2 refinar #N` y las teclas `5`-`9`
+apuntan ya a la lista corregida. #N queda como transicion pendiente y todo refresco lo filtra de borradores hasta
+que GitHub confirme el cambio (o pasen 60 s); mientras tanto el contador muestra `actualizando…`. La lista de
+listos no se toca de forma optimista: #N aparece cuando un refresco lo trae, en el orden de `mefisto-next-order.sh`
+(MEF-ADR-0055, decisiones 1, 8 y 11).
