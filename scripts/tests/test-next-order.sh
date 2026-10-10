@@ -887,7 +887,7 @@ else
 fi
 
 OUTPUT=$(run_script)
-if echo "$OUTPUT" | grep -q "^Infra lanzable.*/mefisto:infra #501 #511$" \
+if echo "$OUTPUT" | grep -q "^Infra lanzable.*: /mefisto:infra #501 | /mefisto:infra #511$" \
     && [ "$(echo "$OUTPUT" | tail -2 | head -1)" = "/mefisto:sequential 503 504 505 510 506" ] \
     && [ "$(echo "$OUTPUT" | tail -1)" = "/mefisto:parallel 503 504 510" ]; then
     pass "T: texto con linea infra antes de sequential y parallel despues (default)"
@@ -908,6 +908,20 @@ if [ "$(echo "$OUTPUT" | jq -c '.parallel')" = '{"issues":[520],"launch":null}' 
     pass "T: menos de 2 en el lote -> launch null y sin linea en texto"
 else
     fail "T: caso <2 inesperado: $OUTPUT"
+fi
+
+reset_fixtures
+set_issue_list <<'EOF2'
+[{"number":540,"title":"Solo infra","body":"## Dependencias\n\nNinguna.","labels":[{"name":"tipo:infra"}]}]
+EOF2
+OUTPUT=$(run_script)
+RC=$?
+if [ "$RC" -eq 0 ] && echo "$OUTPUT" | grep -q "^Sin issues para /mefisto:sequential" \
+    && ! echo "$OUTPUT" | grep -q "^/mefisto:sequential" \
+    && [ "$(run_script --json | jq -c '[.launch, .infra]')" = '[null,[540]]' ]; then
+    pass "T: solo infra -> sin linea de sequential copiable, launch null"
+else
+    fail "T: caso solo infra inesperado ($RC): $OUTPUT"
 fi
 
 OUTPUT=$(run_script --parallel-command "" 2>&1)

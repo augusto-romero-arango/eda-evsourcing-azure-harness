@@ -25,7 +25,7 @@ Este comando no acepta argumentos: siempre analiza TODO el universo `estado:list
 
 Doctrina completa del algoritmo (extraccion de dependencias, clasificacion bloqueo externo/ciclo/bloqueo indirecto/lanzable, Kahn con seleccion golosa): cabecera de `scripts/next-order.sh`. No la dupliques aqui.
 
-Reproduce la salida **tal cual**, sin reordenarla, resumirla ni completarla con informacion propia: el reporte de ciclos/bloqueos (si los hay) al tope, la lista numerada de issues lanzables, la linea de infra (`/mefisto:infra #N`, solo si hay `tipo:infra` lanzables: se ofrece desarrollarlos antes, sin exigirlo), la linea `{{mefisto:command sequential}} ...` lista para copiar y, si el script la emite, la linea `{{mefisto:command parallel}} ...` del lote parallel.
+Reproduce la salida **tal cual**, sin reordenarla, resumirla ni completarla con informacion propia: el reporte de ciclos/bloqueos (si los hay) al tope, la lista numerada de issues lanzables, la linea de infra (`/mefisto:infra #N`, una invocacion por issue, solo si hay `tipo:infra` lanzables: se ofrece desarrollarlos antes, sin exigirlo), la linea `{{mefisto:command sequential}} ...` lista para copiar y, si el script la emite, la linea `{{mefisto:command parallel}} ...` del lote parallel.
 
 Como leer el exit code -- el script nunca deja la salida vacia, asi que un exit distinto de `0` no significa "no hay nada que mostrar":
 

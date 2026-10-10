@@ -60,7 +60,9 @@
 #                 de 2 issues. No se analizan archivos.
 #
 # En texto, con 'tipo:infra' lanzables, una linea antes de la de lanzamiento
-# sugiere '/mefisto:infra #N'; con lote parallel de 2+ issues, su linea va
+# sugiere '/mefisto:infra #N' (una invocacion por issue, separadas por ' | ');
+# si todos los lanzables son infra o sin tipo, la linea de sequential se
+# reemplaza por un aviso sin comando. Con lote parallel de 2+ issues, su linea va
 # despues de la de sequential.
 #
 # Cada linea del orden incluye el label 'tipo:' del issue ('N. #123
@@ -553,14 +555,17 @@ if [ "${#ORDER[@]}" -gt 0 ]; then
         echo "Siguiente a refinar: #${NUM[${ORDER[0]}]}"
     else
         if [ -n "$INFRA_NUMS" ]; then
+            # /mefisto:infra recibe un solo issue: una invocacion por numero.
             INFRA_HINT=""
-            for n in $INFRA_NUMS; do INFRA_HINT="$INFRA_HINT #$n"; done
-            echo "Infra lanzable (desarrollala antes, sin exigirlo): /mefisto:infra${INFRA_HINT}"
+            for n in $INFRA_NUMS; do
+                INFRA_HINT="${INFRA_HINT:+$INFRA_HINT | }/mefisto:infra #$n"
+            done
+            echo "Infra lanzable (desarrollala antes, sin exigirlo): ${INFRA_HINT}"
         fi
         if [ -n "$LAUNCH_NUMS" ]; then
             printf '%s\n' "$LAUNCH_COMMAND$LAUNCH_NUMS"
         else
-            printf '%s\n' "$LAUNCH_COMMAND (sin issues lanzables)"
+            echo "Sin issues para $LAUNCH_COMMAND: los lanzables son solo infra o sin tipo."
         fi
         [ -n "$PARALLEL_LINE" ] && printf '%s\n' "$PARALLEL_LINE"
     fi
