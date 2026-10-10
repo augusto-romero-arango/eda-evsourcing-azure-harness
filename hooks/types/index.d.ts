@@ -69,6 +69,7 @@ declare module 'claude-code' {
       signature: string
       known: number[]
       pendingCount: number
+      version: string | null
       pactIsActive: boolean
       pactList: BoardList | null
       pactPage: number
@@ -86,6 +87,7 @@ declare module 'claude-code' {
         issues: { issue: number; status: 'pendiente' | 'en-curso' | 'mergeado' | 'fallido' | 'aplazado' | 'saltado'; pr: string | null; detail: string }[]
       } | null
       pactTick: number
+      pactVersion: string | null
     }
   }
 }
