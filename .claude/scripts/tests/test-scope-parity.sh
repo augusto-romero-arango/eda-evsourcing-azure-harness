@@ -66,7 +66,7 @@ run_hook() {
 }
 
 echo "[fuera] Rutas fuera de scope: hook exit 2 + politica deny"
-for p in "src/Foo.cs" "infra/main.tf" ".github/CODEOWNERS"; do
+for p in "src/Foo.cs" "infra/main.tf" ".github/CODEOWNERS" "LICENSE.txt" "docs2/NOTICE" "sub/LICENSE"; do
     run_hook "$p"
     assert_eq "2" "$HOOK_EXIT" "hook Claude sale 2 para $p"
     case "$HOOK_STDERR" in *"FUERA DE SCOPE"*) pass "aviso presente para $p" ;; *) fail "aviso ausente para $p" ;; esac
@@ -76,7 +76,7 @@ for p in "src/Foo.cs" "infra/main.tf" ".github/CODEOWNERS"; do
 done
 
 echo "[dentro] Rutas en scope: hook exit 0 silencioso + politica allow"
-for p in "commands/x.md" "docs/adr/x.md" "src/internal/scripts/x.sh" "changelog.d/1.changed.md" ".github/workflows/ci.yml" ".github/rulesets/main.json"; do
+for p in "commands/x.md" "docs/adr/x.md" "src/internal/scripts/x.sh" "changelog.d/1.changed.md" ".github/workflows/ci.yml" ".github/rulesets/main.json" "LICENSE" "NOTICE"; do
     run_hook "$p"
     assert_eq "0" "$HOOK_EXIT" "hook Claude sale 0 para $p"
     assert_eq "" "$HOOK_STDERR" "hook silencioso para $p"

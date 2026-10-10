@@ -128,6 +128,8 @@
         { "pattern": ".gitignore", "value": "allow" },
         { "pattern": "AGENTS.md", "value": "allow" },
         { "pattern": "opencode.json", "value": "allow" },
+        { "pattern": "LICENSE", "value": "allow" },
+        { "pattern": "NOTICE", "value": "allow" },
         { "pattern": "changelog.d/**", "value": "allow" },
         { "pattern": ".github/workflows/**", "value": "allow" },
         { "pattern": ".github/rulesets/**", "value": "allow" },

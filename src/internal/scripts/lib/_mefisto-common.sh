@@ -363,7 +363,7 @@ is_path_in_mefisto_scope() {
         .claude/settings.json) return 0 ;;
         .opencode/agents/*|.opencode/commands/*|.opencode/plugins/*|.opencode/skills/*) return 0 ;;
         .mcp.json) return 0 ;;
-        README.md|CHANGELOG.md|CLAUDE.md|.gitignore|AGENTS.md|opencode.json|mefisto-manifest.json) return 0 ;;
+        README.md|CHANGELOG.md|CLAUDE.md|.gitignore|AGENTS.md|opencode.json|LICENSE|NOTICE|mefisto-manifest.json) return 0 ;;
         changelog.d/*) return 0 ;;
         .github/workflows/*|.github/rulesets/*) return 0 ;;
         *) return 1 ;;

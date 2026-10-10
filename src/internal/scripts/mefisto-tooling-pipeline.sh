@@ -1042,7 +1042,8 @@ auto_commit_if_needed() {
     # src/runtime/ y dist/ se registran en #1043 (MEF-ADR-0053). Todas estas
     # entradas respetan la secuencia de MEF-ADR-0019 seccion E; ver
     # is_path_in_mefisto_scope (_mefisto-common.sh) para el detalle.
-    local paths="commands/ agents/ scripts/ hooks/ docs/ .claude-plugin/ .claude/commands/ .claude/agents/ .claude/scripts/ .claude/mods/ .claude/settings.json changelog.d/ src/internal/ src/published/ src/runtime/ dist/ .opencode/agents/ .opencode/commands/ .opencode/plugins/ .opencode/skills/ AGENTS.md opencode.json README.md CHANGELOG.md CLAUDE.md .gitignore"
+    # LICENSE y NOTICE (entradas EXACTAS de la raiz) se registraron en #2230
+    local paths="commands/ agents/ scripts/ hooks/ docs/ .claude-plugin/ .claude/commands/ .claude/agents/ .claude/scripts/ .claude/mods/ .claude/settings.json changelog.d/ src/internal/ src/published/ src/runtime/ dist/ .opencode/agents/ .opencode/commands/ .opencode/plugins/ .opencode/skills/ AGENTS.md opencode.json README.md CHANGELOG.md CLAUDE.md .gitignore LICENSE NOTICE"
 
     if [ -n "$(git -C "$WORKTREE_PATH" status --porcelain -- $paths 2>/dev/null)" ]; then
         log "Haciendo commit automatico (fase $phase)..."
@@ -1200,7 +1201,7 @@ ALCANCE DE ESCRITURA PERMITIDO:
 - .opencode/agents/, .opencode/commands/, .opencode/plugins/, .opencode/skills/  (adaptadores OpenCode, MEF-ADR-0049; solo plural)
 - AGENTS.md, opencode.json  (doctrina canonica neutral y config raiz de OpenCode; entradas EXACTAS de la raiz, MEF-ADR-0049)
 - changelog.d/  (fragmentos de CHANGELOG e indice de ADRs, ver instruccion 5 abajo)
-- README.md, CHANGELOG.md, CLAUDE.md, .gitignore  (gobierno del repo)
+- README.md, CHANGELOG.md, CLAUDE.md, .gitignore, LICENSE, NOTICE  (gobierno del repo)
 
 Si el issue requiere escribir en una ruta o tipo de artefacto que NO esta en el listado anterior, verifica antes la allowlist autoritativa: la funcion is_path_in_mefisto_scope de src/internal/scripts/lib/_mefisto-common.sh, tal como esta en main (.claude/scripts/_mefisto-common.sh es solo el shim que la sourcea). Es la que el gate del pipeline evalua, y el listado de arriba puede quedarse corto frente a ella. Si la ruta tampoco esta ahi, NO intentes crear archivos en ella aunque el issue lo describa: primero hace falta un PR que la registre en los gates de scope/changelog (ver MEF-ADR-0019, seccion E -- registrar una ruta y usarla son dos PRs distintos, el de registro va primero y no crea archivos bajo la ruta que registra). Reporta ese bloqueo en tu resumen de stage 1 para que el PR de registro se abra antes de continuar con este issue.
 
@@ -1247,7 +1248,7 @@ Instrucciones:
     if ! git -C "$WORKTREE_PATH" diff --quiet "$SNAPSHOT_COMMIT" HEAD 2>/dev/null; then
         HAS_COMMITS=true
     fi
-    if [ -n "$(git -C "$WORKTREE_PATH" status --porcelain -- commands/ agents/ scripts/ hooks/ docs/ .claude-plugin/ .claude/commands/ .claude/agents/ .claude/scripts/ .claude/settings.json changelog.d/ src/internal/ src/published/ src/runtime/ dist/ .opencode/agents/ .opencode/commands/ .opencode/plugins/ .opencode/skills/ AGENTS.md opencode.json README.md CHANGELOG.md CLAUDE.md .gitignore 2>/dev/null)" ]; then
+    if [ -n "$(git -C "$WORKTREE_PATH" status --porcelain -- commands/ agents/ scripts/ hooks/ docs/ .claude-plugin/ .claude/commands/ .claude/agents/ .claude/scripts/ .claude/settings.json changelog.d/ src/internal/ src/published/ src/runtime/ dist/ .opencode/agents/ .opencode/commands/ .opencode/plugins/ .opencode/skills/ AGENTS.md opencode.json README.md CHANGELOG.md CLAUDE.md .gitignore LICENSE NOTICE 2>/dev/null)" ]; then
         HAS_UNSTAGED=true
     fi
     if [ "$HAS_COMMITS" = false ] && [ "$HAS_UNSTAGED" = false ]; then
@@ -1310,7 +1311,7 @@ ALCANCE DE ESCRITURA PERMITIDO (igual al del writer):
 commands/, agents/, scripts/, hooks/, docs/, .claude-plugin/,
 .claude/commands/, .claude/agents/, .claude/scripts/, .claude/mods/, .claude/settings.json,
 src/internal/, src/published/, src/runtime/, dist/, .opencode/agents/, .opencode/commands/, .opencode/plugins/, .opencode/skills/,
-AGENTS.md, opencode.json, changelog.d/, README.md, CHANGELOG.md, CLAUDE.md, .gitignore.
+AGENTS.md, opencode.json, changelog.d/, README.md, CHANGELOG.md, CLAUDE.md, .gitignore, LICENSE, NOTICE.
 
 CONTEXTO DE EJECUCION:
 - Modo no-interactivo (print mode). DEBES usar Write/Edit directamente.
