@@ -26,6 +26,7 @@ import {
   issueStatsFromHistory,
   fitTitle,
   summaryTitleWidth,
+  statsPending,
   statsTotal,
   issueMark,
   mascotPose,
@@ -228,15 +229,16 @@ async function watchBatch($: EngineInterface, issues: string[], sinceMs: number)
   await update($, batchAtom, () => batch)
 }
 
-// Duracion y costo de cada terminado: se leen del historial cuando aparece uno que todavia no los tiene, a lo
+// Duracion, costo y titulo de cada terminado: se leen del historial cuando falta alguno o su titulo, a lo
 // sumo cada STATS_EVERY_MS (un fallido antes de escribir su historial no los tendra nunca).
 async function withStats($: EngineInterface, batch: BatchRun): Promise<BatchRun> {
   const stats = batch.stats ?? {}
-  const missing = batch.issues.filter(i => ['done', 'failed'].includes(issueMark(i.status)) && !stats[i.issue])
+  const finished = batch.issues.filter(i => ['done', 'failed'].includes(issueMark(i.status))).map(i => i.issue)
+  const missing = statsPending(finished, stats)
   if (missing.length === 0 || Date.now() - lastStatsReadMs < STATS_EVERY_MS) return batch
   lastStatsReadMs = Date.now()
   const { stdout } = await $.process.run(['tail', '-n', '200', HISTORY]).catch(() => ({ stdout: '' }))
-  return { ...batch, stats: { ...stats, ...issueStatsFromHistory(stdout, missing.map(i => i.issue), batch.startedMs) } }
+  return { ...batch, stats: { ...stats, ...issueStatsFromHistory(stdout, missing, batch.startedMs) } }
 }
 
 async function pollBatch($: EngineInterface) {

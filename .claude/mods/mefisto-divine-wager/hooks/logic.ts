@@ -510,6 +510,11 @@ export function issueStatsFromHistory(tail: string, issues: string[], sinceMs: n
   return out
 }
 
+/** Issues sin estadisticas o con estadisticas sin titulo: un titulo vacio en cache no se corrige solo. */
+export function statsPending(issues: readonly string[], stats: Record<string, IssueStats>): string[] {
+  return issues.filter(issue => !stats[issue] || stats[issue].title === null)
+}
+
 export const fmtCost = (usd: number | null) => (usd === null ? '$?' : `$${usd.toFixed(2)}`)
 
 /** Total de lo terminado: duracion sumada y costo sumado (sin contar los que no lo informan). */
