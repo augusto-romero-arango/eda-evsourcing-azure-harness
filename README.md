@@ -51,7 +51,7 @@ claude plugin disable mefisto@augusto-romero-arango-harness --scope user
 
 En cada repo consumidor, commitea el `.claude/settings.json` con `enabledPlugins` (ver la [guía del consumidor](docs/guia-del-consumidor.md#1-configurar-claudesettingsjson-del-repo-consumidor), paso 1). Los pipelines entregan a sus agentes la raíz de su propia versión, así que los worktrees no dependen de esta instalación.
 
-**OpenCode**: desde Claude Code, `/mefisto:upgrade` proyecta el adaptador; el procedimiento directo está en la [guía del consumidor](docs/guia-del-consumidor.md#opencode-bootstrap-upgrade-y-rollback).
+**OpenCode**: desde Claude Code, `/mefisto:upgrade` instala la release OpenCode por usuario; cada repo consumidor la activa commiteando `.opencode/plugins/mefisto.js`, que `/mefisto:onboard` escribe. El procedimiento directo está en la [guía del consumidor](docs/guia-del-consumidor.md#opencode-bootstrap-upgrade-y-rollback).
 
 ## Primer uso
 

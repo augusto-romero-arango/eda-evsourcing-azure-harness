@@ -38,11 +38,12 @@ make_repo() {
     cat > "$r/.mefisto/harness.config.json" <<'JSON'
 {"projectName":"Diagnostico","namespacePrefix":"Diagnostico.Dominio","solutionFile":"Diagnostico.slnx","githubServicePrincipalName":"ci-diagnostico","domainLabels":["dominio1"],"boundedContext":{"name":"Principal","domains":["dominio1"]},"secrets":[],"tenancy":{"strategy":"mono-tenant-transitorio"},"projections":{"enabled":false}}
 JSON
-    # Activacion por repositorio commiteada (MEF-ADR-0053 decision 2): sin ella, el
-    # baseline bajo claude sumaria un FALTA que opencode no reporta.
+    # Activacion por repositorio commiteada para ambos runtimes (MEF-ADR-0053 decision 2):
+    # sin ella, cada runtime sumaria un FALTA propio y los baselines no serian comparables.
     mkdir -p "$r/.claude"
     printf '{"enabledPlugins":{"mefisto@augusto-romero-arango-harness":true}}\n' > "$r/.claude/settings.json"
-    (cd "$r" && git add .claude/settings.json && git -c user.email=t@t -c user.name=t commit -q -m settings)
+    mkdir -p "$r/.opencode/plugins"; printf '// cargador\n' > "$r/.opencode/plugins/mefisto.js"
+    (cd "$r" && git add .claude/settings.json .opencode && git -c user.email=t@t -c user.name=t commit -q -m settings)
     cat > "$r/AGENTS.md" <<'MD'
 ### Tokens del harness
 
@@ -57,7 +58,7 @@ JSON
 Cita fuentes.
 MD
 }
-diag() { (cd "$1" && CLAUDE_CONFIG_DIR="$TMP/claude-config" MEFISTO_RUNTIME="$2" PATH="$BIN:$PATH" bash "${3:-$REPO_ROOT/scripts}/onboard-diagnose.sh" 2>&1); }
+diag() { (cd "$1" && CLAUDE_CONFIG_DIR="$TMP/claude-config" XDG_CONFIG_HOME="$TMP/xdg" MEFISTO_RUNTIME="$2" PATH="$BIN:$PATH" bash "${3:-$REPO_ROOT/scripts}/onboard-diagnose.sh" 2>&1); }
 faltas() { printf '%s\n' "$1" | sed -n 's/.*| \([0-9]*\) FALTA.*/\1/p'; }
 
 echo "[R-1] diagnostico por runtime"

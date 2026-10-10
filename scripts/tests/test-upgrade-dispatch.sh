@@ -43,7 +43,8 @@ esac
 exit 0
 S
 chmod +x "$STUBS"/*.sh "$BIN/gh" "$BIN/claude" "$LAUNCHER"
-export STUB_LOG="$TMP/log" MEFISTO_OPENCODE_LAUNCHER="$LAUNCHER" PATH="$BIN:$PATH"
+mkdir -p "$TMP/xdg"
+export STUB_LOG="$TMP/log" MEFISTO_OPENCODE_LAUNCHER="$LAUNCHER" PATH="$BIN:$PATH" XDG_CONFIG_HOME="$TMP/xdg"
 run() { : > "$STUB_LOG"; (cd "$CONSUMER" && "$STUBS/upgrade.sh" "$@" 2>&1); }
 log() { cat "$STUB_LOG"; }
 
@@ -73,7 +74,13 @@ echo "$out" | jq -e '.schemaVersion==2 and .runtime=="opencode" and has("install
 echo "[c] opencode: secuencia con la version de gh"
 out=$(MEFISTO_RUNTIME=opencode run)
 seq=$(log | grep '^launcher' | awk '{print $2}' | grep -v projection-status | head -4 | tr '\n' ' ')
-[ "$seq" = "install activate project status " ] && ok "secuencia" || ko "secuencia: $seq"
+[ "$seq" = "install activate status prune " ] && ok "secuencia sin proyeccion global (MEF-ADR-0053)" || ko "secuencia: $seq"
+mkdir -p "$TMP/xdg/opencode"; echo '{}' > "$TMP/xdg/opencode/.mefisto-projection.json"
+MEFISTO_RUNTIME=opencode run >/dev/null
+seq=$(log | grep '^launcher' | awk '{print $2}' | grep -v projection-status | head -4 | tr '\n' ' ')
+[ "$seq" = "install activate project status " ] && ok "con proyeccion global opt-in la refresca" || ko "secuencia con proyeccion: $seq"
+rm -f "$TMP/xdg/opencode/.mefisto-projection.json"
+out=$(MEFISTO_RUNTIME=opencode run)
 has "$(log)" "launcher install 1.1.0" && has "$(log)" "gh release view --repo augusto-romero-arango/eda-evsourcing-azure-harness" && ok "version de gh" || ko "version de gh"
 has "$out" "Version cargada en esta sesion: 1.0.0" && has "$out" "Version destino: 1.1.0" && ok "salida" || ko "salida: $out"
 

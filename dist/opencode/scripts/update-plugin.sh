@@ -209,23 +209,27 @@ _alinear_opencode() {
         }
     fi
 
-    "$launcher" project || { echo "ERROR: la proyeccion OpenCode conflicto o fallo; corrige el conflicto y reintenta." >&2; return 1; }
     "$launcher" status || { echo "ERROR: status OpenCode reporto una instalacion incompleta." >&2; return 1; }
-    if ! projection_result=$("$launcher" projection-status); then
-        echo "ERROR: projection-status OpenCode no confirmo la proyeccion alineada." >&2
-        return 1
+    # La proyeccion global es opt-in (/mefisto:runtimes, MEF-ADR-0053 decision 2): solo se
+    # refresca si ya existe; sin ella, el consumidor activa OpenCode con su cargador.
+    if _proyeccion_global_activa; then
+        "$launcher" project || { echo "ERROR: la proyeccion OpenCode conflicto o fallo; corrige el conflicto y reintenta." >&2; return 1; }
+        if ! projection_result=$("$launcher" projection-status); then
+            echo "ERROR: projection-status OpenCode no confirmo la proyeccion alineada." >&2
+            return 1
+        fi
+        if ! printf '%s\n' "$projection_result" | jq -e --arg version "$version" '
+            (keys | sort) == ["activeVersion", "configRoot", "ledgerRelease", "schemaVersion", "status"] and
+            .schemaVersion == 1 and .status == "enabled" and
+            (.configRoot | type == "string") and
+            .activeVersion == $version and .ledgerRelease == $version
+        ' >/dev/null 2>&1; then
+            echo "ERROR: projection-status OpenCode no reporto enabled para la version $version." >&2
+            return 1
+        fi
+        echo "Estado de proyeccion OpenCode despues de alinear:"
+        printf '%s\n' "$projection_result" | jq .
     fi
-    if ! printf '%s\n' "$projection_result" | jq -e --arg version "$version" '
-        (keys | sort) == ["activeVersion", "configRoot", "ledgerRelease", "schemaVersion", "status"] and
-        .schemaVersion == 1 and .status == "enabled" and
-        (.configRoot | type == "string") and
-        .activeVersion == $version and .ledgerRelease == $version
-    ' >/dev/null 2>&1; then
-        echo "ERROR: projection-status OpenCode no reporto enabled para la version $version." >&2
-        return 1
-    fi
-    echo "Estado de proyeccion OpenCode despues de alinear:"
-    printf '%s\n' "$projection_result" | jq .
     opencode_root=$("$launcher" package-root) || { echo "ERROR: no se pudo resolver la raiz fisica OpenCode activa." >&2; return 1; }
     if [ -z "$opencode_root" ] || [ ! -d "$opencode_root" ] || [ -L "$opencode_root" ]; then
         echo "ERROR: package-root no retorno una raiz fisica OpenCode valida." >&2

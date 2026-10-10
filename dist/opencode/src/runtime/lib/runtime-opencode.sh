@@ -333,6 +333,18 @@ runtime_opencode_build_cmd() {
 
     MEFISTO_RUNTIME_CMD=(opencode run --agent "$agent" --dir "$cwd" --format json --auto)
 
+    # MEF-ADR-0053 decision 2: el agente descubre la superficie de la release que corre
+    # el pipeline (una release tiene forma de directorio de configuracion de OpenCode).
+    # Se omite si el usuario ya fija OPENCODE_CONFIG_DIR (seria reemplazarle su
+    # directorio) o si la proyeccion global opt-in esta activa (cargaria cada plugin
+    # dos veces); en ambos casos el cargador commiteado del worktree lo activa.
+    local package_root="${MEFISTO_AGENT_PACKAGE_ROOT:-}"
+    local ledger="${XDG_CONFIG_HOME:-$HOME/.config}/opencode/.mefisto-projection.json"
+    if [ -n "$package_root" ] && [ -f "$package_root/mefisto-manifest.json" ] && [ -d "$package_root/agents" ] \
+        && [ -z "${OPENCODE_CONFIG_DIR:-}" ] && [ ! -f "$ledger" ]; then
+        MEFISTO_RUNTIME_CMD=(env "OPENCODE_CONFIG_DIR=$package_root" "${MEFISTO_RUNTIME_CMD[@]}")
+    fi
+
     if [ -n "$model" ]; then
         MEFISTO_RUNTIME_CMD+=(-m "$model")
     fi

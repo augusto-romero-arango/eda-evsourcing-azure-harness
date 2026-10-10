@@ -15,8 +15,9 @@
 #                                                 poda (solo tras confirmar en el comando);
 #                                                 --keep aplica a OpenCode; --only (lista confirmada,
 #                                                 obligatoria en Claude) y --loaded a Claude
-#   scripts/upgrade.sh --disable-user             deshabilita Mefisto a nivel usuario en Claude (solo tras
-#                                                 confirmar); exige la activacion commiteada del repo
+#   scripts/upgrade.sh --disable-user             retira Mefisto del nivel que lo carga en todos los repos
+#                                                 (Claude a nivel usuario y la proyeccion global de OpenCode;
+#                                                 solo tras confirmar); exige la activacion commiteada del repo
 #
 # Nunca borra nada fuera de --prune. Refrescar panes, el mensaje de reload y la
 # confirmacion de poda son responsabilidad del comando, no de este script.
@@ -105,6 +106,11 @@ _peer_opencode() {
                 PEER_VERSION=$(printf '%s' "$json" | jq -r '.activeVersion // empty')
                 ;;
         esac
+        # Sin proyeccion global, la adhesion es la release instalada: el consumidor la
+        # activa con su cargador commiteado (MEF-ADR-0053 decision 2).
+        if [ "$PEER_STATE" = disabled ] && [ -n "$PEER_VERSION" ] && "$launcher" status >/dev/null 2>&1; then
+            PEER_STATE=enabled
+        fi
     fi
 }
 
@@ -198,10 +204,6 @@ _update_claude() {
     [ -f "$update" ] || { echo "ERROR: no se hallo update-plugin.sh junto a upgrade.sh." >&2; return 1; }
     loaded="$LOADED_OVERRIDE"
     [ -n "$loaded" ] || loaded=$(_loaded_from_root)
-    if [ "$MODE" = disable-user ]; then
-        bash "$update" --disable-user
-        return $?
-    fi
     if [ "$MODE" = prune ]; then
         args=(--prune)
         [ "$ONLY_GIVEN" = false ] || args+=(--only "$ONLY")
@@ -210,6 +212,31 @@ _update_claude() {
     fi
     [ -z "$loaded" ] || args+=(--loaded "$loaded")
     bash "$update" ${args[@]+"${args[@]}"}
+}
+
+# _disable_user: retira Mefisto del nivel que lo carga en todos los repos, en cada runtime
+# instalado, sin dejar el repo actual sin el: Claude (update-plugin.sh --disable-user, que
+# exige la activacion commiteada) y la proyeccion global de OpenCode (exige el cargador
+# commiteado). Solo se ejecuta tras la confirmacion del comando.
+_disable_user() {
+    local rc=0 top launcher
+    top=$(git rev-parse --show-toplevel 2>/dev/null) || top=""
+    if command -v claude >/dev/null 2>&1 && [ -f "$SCRIPT_DIR/update-plugin.sh" ]; then
+        bash "$SCRIPT_DIR/update-plugin.sh" --disable-user || rc=1
+    fi
+    if _proyeccion_global_activa; then
+        if ! _loader_commiteado "$top"; then
+            _reportar_activacion_opencode "$top"
+            echo "ERROR: no se retiro la proyeccion global de OpenCode: este repo quedaria sin Mefisto." >&2
+            return 1
+        fi
+        launcher=$(_launcher_path)
+        [ -x "$launcher" ] || { echo "ERROR: no hay launcher OpenCode activo para retirar la proyeccion global." >&2; return 1; }
+        "$launcher" deactivate || { echo "ERROR: 'deactivate' de OpenCode fallo." >&2; return 1; }
+        echo "OK: proyeccion global de OpenCode retirada. Mefisto sigue activo en los repos que commitean el cargador."
+        echo "Reinicia las sesiones de OpenCode abiertas en otros repos para descargarlo de ellas."
+    fi
+    return "$rc"
 }
 
 _repo_slug() {
@@ -259,16 +286,19 @@ _update_opencode() {
     echo "Instalando OpenCode v$version con el launcher activo (verifica checksum)..."
     "$launcher" install "$version" || { echo "ERROR: install fallo; las releases existentes se conservan." >&2; return 1; }
     "$launcher" activate "$version" || { echo "ERROR: activate fallo; usa el launcher para rollback." >&2; return 1; }
-    "$launcher" project || { echo "ERROR: project fallo o conflicto; corrige y reintenta." >&2; return 1; }
+    # La proyeccion global es opt-in (/mefisto:runtimes): solo se refresca si ya existe.
+    if _proyeccion_global_activa; then
+        "$launcher" project || { echo "ERROR: project fallo o conflicto; corrige y reintenta." >&2; return 1; }
+        "$launcher" projection-status || { echo "ERROR: projection-status no confirmo la proyeccion." >&2; return 1; }
+    fi
     "$launcher" status || { echo "ERROR: status reporto una instalacion incompleta." >&2; return 1; }
-    "$launcher" projection-status || { echo "ERROR: projection-status no confirmo la proyeccion." >&2; return 1; }
 
     echo ""
     echo "Version destino: $version"
     echo "Versiones OpenCode podables (no se borro nada):"
     # Sin --yes y sin TTY el launcher lista y se niega a borrar: se descarta ese rechazo.
     "$launcher" prune --keep "$KEEP" </dev/null 2>&1 | grep -v '^ERROR:' | sed 's/^/  /' || true
-    echo "Reinicia OpenCode para descubrir la proyeccion actualizada."
+    echo "Reinicia OpenCode para cargar la version $version."
 }
 
 _align_claude() {
@@ -370,16 +400,18 @@ main() {
 
     case "$MODE:$RUNTIME" in
         status:*) cmd_status ;;
-        disable-user:opencode)
-            echo "ERROR: --disable-user aplica a Claude Code; ejecutalo desde una sesion de Claude." >&2
-            return 1 ;;
+        disable-user:*) _disable_user ;;
         prune:opencode) _prune_opencode ;;
         *:opencode)
             TARGET_VERSION=""
             _update_opencode || return 1
             [ "$ALIGN_PEER" = true ] && { _align_claude "$TARGET_VERSION" || return 1; }
+            _reportar_activacion_opencode "$(git rev-parse --show-toplevel 2>/dev/null)"
             return 0 ;;
-        *:claude) _update_claude ;;
+        *:claude)
+            _update_claude || return 1
+            [ "$MODE" = prune ] || _reportar_activacion_opencode "$(git rev-parse --show-toplevel 2>/dev/null)"
+            return 0 ;;
     esac
 }
 

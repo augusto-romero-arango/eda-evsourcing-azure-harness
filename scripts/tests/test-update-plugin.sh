@@ -215,39 +215,54 @@ esac
 EOF
 chmod +x "$ALIGN_STUB/mefisto-opencode"
 
+# Proyeccion global aislada (MEF-ADR-0053 decision 2): sin ledger es la instalacion normal;
+# con ledger, el modo opt-in de /mefisto:runtimes se refresca al alinear.
+ALIGN_XDG="$(mktemp -d)"
 ALIGN_OUTPUT=$( (
     cd "$ALIGN_CONSUMER" || exit 1
     git init -q .
-    export PATH="$ALIGN_STUB:$PATH" MEFISTO_CACHE_ROOT="$ALIGN_CACHE" MEFISTO_OPENCODE_LAUNCHER="$ALIGN_STUB/mefisto-opencode" OPENCODE_LOG OPENCODE_ROOT
+    export PATH="$ALIGN_STUB:$PATH" MEFISTO_CACHE_ROOT="$ALIGN_CACHE" MEFISTO_OPENCODE_LAUNCHER="$ALIGN_STUB/mefisto-opencode" OPENCODE_LOG OPENCODE_ROOT XDG_CONFIG_HOME="$ALIGN_XDG"
     main --align-opencode
 ) 2>&1)
 ALIGN_RC=$?
 assert_igual "0" "$ALIGN_RC" "alinea una instalacion OpenCode existente"
-assert_igual $'status \npackage-root \ninstall 1.2.3\nactivate 1.2.3\nproject \nstatus \nprojection-status \npackage-root ' "$(cat "$OPENCODE_LOG")" \
-    "valida el launcher, instala, activa, proyecta y confirma projection-status con la version del manifiesto"
+assert_igual $'status \npackage-root \ninstall 1.2.3\nactivate 1.2.3\nstatus \npackage-root ' "$(cat "$OPENCODE_LOG")" \
+    "valida el launcher, instala y activa con la version del manifiesto, sin proyectar (no hay proyeccion global)"
 assert_contiene "$ALIGN_OUTPUT" "Release OpenCode activa: 1.2.3 ($OPENCODE_ROOT)" \
     "presenta la version y raiz fisica de la release OpenCode activa"
 assert_contiene "$ALIGN_OUTPUT" '"status": "aligned"' \
     "presenta el diagnostico objetivo de identidad Claude/OpenCode"
+
+# Con la proyeccion global opt-in activa, alinear la refresca y la confirma.
+mkdir -p "$ALIGN_XDG/opencode"; echo '{}' > "$ALIGN_XDG/opencode/.mefisto-projection.json"
+: > "$OPENCODE_LOG"
+ALIGN_OUTPUT=$( (
+    cd "$ALIGN_CONSUMER" || exit 1
+    export PATH="$ALIGN_STUB:$PATH" MEFISTO_CACHE_ROOT="$ALIGN_CACHE" MEFISTO_OPENCODE_LAUNCHER="$ALIGN_STUB/mefisto-opencode" OPENCODE_LOG OPENCODE_ROOT XDG_CONFIG_HOME="$ALIGN_XDG"
+    main --align-opencode
+) 2>&1)
+assert_igual $'status \npackage-root \ninstall 1.2.3\nactivate 1.2.3\nstatus \nproject \nprojection-status \npackage-root ' "$(cat "$OPENCODE_LOG")" \
+    "con proyeccion global activa: la refresca y confirma projection-status"
 assert_contiene "$ALIGN_OUTPUT" '"status": "enabled"' \
     "presenta projection-status enabled despues de alinear"
+rm -f "$ALIGN_XDG/opencode/.mefisto-projection.json"
 
 # Repetir la operacion completa conserva el resultado y vuelve a usar la identidad exacta.
 : > "$OPENCODE_LOG"
 (
     cd "$ALIGN_CONSUMER" || exit 1
-    export PATH="$ALIGN_STUB:$PATH" MEFISTO_CACHE_ROOT="$ALIGN_CACHE" MEFISTO_OPENCODE_LAUNCHER="$ALIGN_STUB/mefisto-opencode" OPENCODE_LOG OPENCODE_ROOT
+    export PATH="$ALIGN_STUB:$PATH" MEFISTO_CACHE_ROOT="$ALIGN_CACHE" MEFISTO_OPENCODE_LAUNCHER="$ALIGN_STUB/mefisto-opencode" OPENCODE_LOG OPENCODE_ROOT XDG_CONFIG_HOME="$ALIGN_XDG"
     main --align-opencode
 ) >/dev/null 2>&1
 assert_igual "0" "$?" "repetir la alineacion es idempotente"
-assert_igual $'status \npackage-root \ninstall 1.2.3\nactivate 1.2.3\nproject \nstatus \nprojection-status \npackage-root ' "$(cat "$OPENCODE_LOG")" \
+assert_igual $'status \npackage-root \ninstall 1.2.3\nactivate 1.2.3\nstatus \npackage-root ' "$(cat "$OPENCODE_LOG")" \
     "la repeticion conserva la secuencia y la version exacta"
 
 # Sin el flag no se invoca ninguna ruta OpenCode; conserva la semantica Claude previa.
 : > "$OPENCODE_LOG"
 (
     cd "$ALIGN_CONSUMER" || exit 1
-    export PATH="$ALIGN_STUB:$PATH" MEFISTO_CACHE_ROOT="$ALIGN_CACHE" MEFISTO_OPENCODE_LAUNCHER="$ALIGN_STUB/mefisto-opencode" OPENCODE_LOG OPENCODE_ROOT
+    export PATH="$ALIGN_STUB:$PATH" MEFISTO_CACHE_ROOT="$ALIGN_CACHE" MEFISTO_OPENCODE_LAUNCHER="$ALIGN_STUB/mefisto-opencode" OPENCODE_LOG OPENCODE_ROOT XDG_CONFIG_HOME="$ALIGN_XDG"
     main
 ) >/dev/null 2>&1
 assert_igual "" "$(cat "$OPENCODE_LOG")" "sin --align-opencode no invoca OpenCode"
@@ -307,7 +322,7 @@ printf '{invalido\n' > "$ALIGN_CLAUDE/mefisto-manifest.json"
 : > "$OPENCODE_LOG"
 (
     cd "$ALIGN_CONSUMER" || exit 1
-    export PATH="$ALIGN_STUB:$PATH" MEFISTO_CACHE_ROOT="$ALIGN_CACHE" MEFISTO_OPENCODE_LAUNCHER="$ALIGN_STUB/mefisto-opencode" OPENCODE_LOG OPENCODE_ROOT
+    export PATH="$ALIGN_STUB:$PATH" MEFISTO_CACHE_ROOT="$ALIGN_CACHE" MEFISTO_OPENCODE_LAUNCHER="$ALIGN_STUB/mefisto-opencode" OPENCODE_LOG OPENCODE_ROOT XDG_CONFIG_HOME="$ALIGN_XDG"
     main --align-opencode
 ) >/dev/null 2>&1
 assert_igual "1" "$?" "un manifiesto Claude invalido falla cerrado"
@@ -317,7 +332,7 @@ assert_igual "" "$(cat "$OPENCODE_LOG")" "el manifiesto Claude invalido no toca 
 jq -n '{schemaVersion:1,runtime:"claude",version:"1.2.3-01",commit:"0123456789abcdef0123456789abcdef01234567"}' > "$ALIGN_CLAUDE/mefisto-manifest.json"
 (
     cd "$ALIGN_CONSUMER" || exit 1
-    export PATH="$ALIGN_STUB:$PATH" MEFISTO_CACHE_ROOT="$ALIGN_CACHE" MEFISTO_OPENCODE_LAUNCHER="$ALIGN_STUB/mefisto-opencode" OPENCODE_LOG OPENCODE_ROOT
+    export PATH="$ALIGN_STUB:$PATH" MEFISTO_CACHE_ROOT="$ALIGN_CACHE" MEFISTO_OPENCODE_LAUNCHER="$ALIGN_STUB/mefisto-opencode" OPENCODE_LOG OPENCODE_ROOT XDG_CONFIG_HOME="$ALIGN_XDG"
     main --align-opencode
 ) >/dev/null 2>&1
 assert_igual "1" "$?" "rechaza un prerelease que no cumple SemVer"
@@ -329,18 +344,20 @@ cat > "$ALIGN_STUB/mefisto-opencode-conflict" <<'EOF'
 case "$1" in project) exit 1 ;; package-root) printf '%s\n' "$OPENCODE_ROOT" ;; *) exit 0 ;; esac
 EOF
 chmod +x "$ALIGN_STUB/mefisto-opencode-conflict"
+mkdir -p "$ALIGN_XDG/opencode"; echo '{}' > "$ALIGN_XDG/opencode/.mefisto-projection.json"
 (
     cd "$ALIGN_CONSUMER" || exit 1
-    export PATH="$ALIGN_STUB:$PATH" MEFISTO_CACHE_ROOT="$ALIGN_CACHE" MEFISTO_OPENCODE_LAUNCHER="$ALIGN_STUB/mefisto-opencode-conflict" OPENCODE_ROOT
+    export PATH="$ALIGN_STUB:$PATH" MEFISTO_CACHE_ROOT="$ALIGN_CACHE" MEFISTO_OPENCODE_LAUNCHER="$ALIGN_STUB/mefisto-opencode-conflict" OPENCODE_ROOT XDG_CONFIG_HOME="$ALIGN_XDG"
     main --align-opencode
 ) >/dev/null 2>&1
 assert_igual "1" "$?" "un conflicto de proyeccion falla cerrado"
+rm -f "$ALIGN_XDG/opencode/.mefisto-projection.json"
 
 # Una identidad OpenCode divergente no se acepta aunque install/activate hayan respondido bien.
 jq '.commit = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"' "$OPENCODE_ROOT/mefisto-manifest.json" > "$OPENCODE_ROOT/manifest.tmp" && mv "$OPENCODE_ROOT/manifest.tmp" "$OPENCODE_ROOT/mefisto-manifest.json"
 (
     cd "$ALIGN_CONSUMER" || exit 1
-    export PATH="$ALIGN_STUB:$PATH" MEFISTO_CACHE_ROOT="$ALIGN_CACHE" MEFISTO_OPENCODE_LAUNCHER="$ALIGN_STUB/mefisto-opencode" OPENCODE_LOG OPENCODE_ROOT
+    export PATH="$ALIGN_STUB:$PATH" MEFISTO_CACHE_ROOT="$ALIGN_CACHE" MEFISTO_OPENCODE_LAUNCHER="$ALIGN_STUB/mefisto-opencode" OPENCODE_LOG OPENCODE_ROOT XDG_CONFIG_HOME="$ALIGN_XDG"
     main --align-opencode
 ) >/dev/null 2>&1
 assert_igual "1" "$?" "un diagnostico divergente no se acepta como aligned"
@@ -399,7 +416,7 @@ run_legacy_upgrade() {
     (
         cd "$ALIGN_CONSUMER" || exit 1
         export PATH="$ALIGN_STUB:$PATH" MEFISTO_CACHE_ROOT="$ALIGN_CACHE"
-        export MEFISTO_OPENCODE_LAUNCHER="$LEGACY_LAUNCHER" OPENCODE_ROOT LEGACY_LOG LEGACY_ACTIVATED
+        export MEFISTO_OPENCODE_LAUNCHER="$LEGACY_LAUNCHER" OPENCODE_ROOT LEGACY_LOG LEGACY_ACTIVATED XDG_CONFIG_HOME="$ALIGN_XDG"
         if [ "$answer" = si ]; then main --align-opencode; else main; fi
     )
 }
@@ -408,7 +425,7 @@ run_legacy_upgrade() {
 LEGACY_OUTPUT=$(run_legacy_upgrade si 2>&1); LEGACY_RC=$?
 assert_igual "0" "$LEGACY_RC" "la confirmacion exacta migra el launcher legado"
 assert_igual "1" "$(grep -c '^install 1.2.3$' "$LEGACY_LOG")" "la confirmacion invoca la alineacion una sola vez"
-assert_contiene "$LEGACY_OUTPUT" '"status": "enabled"' "la migracion termina con projection-status enabled"
+assert_contiene "$LEGACY_OUTPUT" '"status": "aligned"' "la migracion termina con la identidad alineada"
 assert_contiene "$LEGACY_OUTPUT" '"status": "aligned"' "la migracion termina con identidad aligned"
 
 rm -f "$LEGACY_ACTIVATED"
