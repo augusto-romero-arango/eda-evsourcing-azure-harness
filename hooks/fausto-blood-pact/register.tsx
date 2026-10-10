@@ -2,6 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
 import type { BoardList, PipelineResult, PipelineRun } from '../types'
+import type { LaunchKind, LaunchPlan } from './logic'
 import {
   DISMISSED_STORE_KEY,
   HISTORY_FILE,
@@ -9,8 +10,14 @@ import {
   PLANNER_AGENT,
   agentFlagOf,
   agentSettingOf,
+  NEXT_ORDER_ARGS,
+  ROW_KEYS,
+  answerText,
+  parseLaunchArg,
+  planIssue,
+  planLaunch,
   clip,
-  footerOf,
+  footerRestOf,
   isMefistoManifest,
   nextOrderPath,
   RUNS_POLL_MS,
@@ -66,7 +73,7 @@ async function runNextOrder($: EngineInterface): Promise<BoardList> {
   const root = await pluginRoot($)
   if (!root) return parseNextOrder(2, '', 'raiz del plugin desconocida')
   const { exitCode, stdout, stderr } = await $.process
-    .run([nextOrderPath(root), '--json'], { timeoutMs: SCRIPT_TIMEOUT_MS })
+    .run([nextOrderPath(root), ...NEXT_ORDER_ARGS], { timeoutMs: SCRIPT_TIMEOUT_MS })
     .catch(err => ({ exitCode: 2, stdout: '', stderr: String(err) }))
   return parseNextOrder(exitCode, stdout, stderr)
 }
@@ -173,6 +180,30 @@ async function refresh($: EngineInterface) {
   }
 }
 
+// El comando queda escrito sin Enter: la persona lo revisa y lo envia (MEF-ADR-0055 decision 2).
+async function applyPlan($: EngineInterface, plan: LaunchPlan): Promise<boolean> {
+  if (plan.kind === 'none') {
+    $.ui.toast(plan.message)
+    return false
+  }
+  const text = plan.kind === 'fill'
+    ? plan.text
+    : answerText(plan.options, await $.ui.ask(plan.question, plan.options.map(o => o.label)).catch(() => null))
+  if (text === null) return false
+  await $.prompt.fill({ text, mode: 'replace' })
+  return true
+}
+
+async function launchKey($: EngineInterface, kind: LaunchKind) {
+  const list = await read($, listAtom)
+  if (list && !list.error) await applyPlan($, planLaunch(list, kind))
+}
+
+async function launchRow($: EngineInterface, issue: number) {
+  const item = (await read($, listAtom))?.items.find(i => i.number === issue)
+  if (item) await applyPlan($, planIssue(item))
+}
+
 async function activate($: EngineInterface) {
   isWanted = true
   await update($, activeAtom, () => true)
@@ -228,8 +259,8 @@ export const register: Register = on => {
     agentChecksLeft = agent === null ? AGENT_CHECKS : 0
     await $.command.register({
       name: 'fausto-blood-pact',
-      description: 'Consola de Fausto: refresh | on | off | descartar',
-      argumentHint: '[refresh|on|off|descartar]',
+      description: 'Consola de Fausto: refresh | on | off | descartar | lanzar',
+      argumentHint: '[refresh|on|off|descartar|lanzar [sequential|parallel|<n>]]',
       immediate: true,
     })
     if (isWanted) await activate($)
@@ -246,6 +277,15 @@ export const register: Register = on => {
     if (arg === 'descartar') {
       const n = await dismissResults($)
       return { text: n > 0 ? `Resultados descartados: ${n}.` : 'No hay resultados que descartar.' }
+    }
+    if (arg === 'lanzar' || arg.startsWith('lanzar ')) {
+      const list = await read($, listAtom)
+      if (!list || list.error) return { text: 'No hay lista de lanzables.' }
+      const target = parseLaunchArg(arg.slice('lanzar'.length), list)
+      if (target.kind === 'invalid') return { text: target.message }
+      const plan = target.kind === 'launch' ? planLaunch(list, target.launch) : planIssue(list.items.find(i => i.number === target.issue)!)
+      if (plan.kind === 'none') return { text: plan.message }
+      return { text: (await applyPlan($, plan)) ? 'Comando escrito en el prompt.' : 'Sin cambios en el prompt.' }
     }
     if (arg === 'on' || !isWanted) {
       await activate($)
@@ -298,7 +338,7 @@ export const register: Register = on => {
     const { page, pages } = pageOf(await read($, pageAtom), list?.items.length ?? 0, PAGE_ROWS)
     const visible = list?.items.slice(page * PAGE_ROWS, (page + 1) * PAGE_ROWS) ?? []
     const numWidth = String(list?.items.length ?? 0).length + 2
-    const footer = list ? footerOf(list) : ''
+    const footerRest = list ? footerRestOf(list, Boolean(list.launch || list.parallel?.launch)) : ''
     return (
       <Box flexDirection="column" borderStyle="round" borderColor="claude" borderDimColor paddingX={1}>
         <Text bold color="claude">Lanzables{list && !list.error ? ` · ${list.items.length}` : ''}</Text>
@@ -306,15 +346,25 @@ export const register: Register = on => {
         {list?.error && <Text color="error">next-order falló: {clip(list.error, inner - 20)}</Text>}
         {list && !list.error && visible.length === 0 && <Text dimColor>Sin issues lanzables</Text>}
         {visible.map((item, i) => (
-          <Text key={`row-${item.number}`} dimColor={page > 0 || i > 0} wrap="truncate-end">
-            {rowText(item, page * PAGE_ROWS + i + 1, numWidth, Math.max(12, inner - numWidth - 20))}
-          </Text>
+          <Button key={`row-${item.number}`} hotkey={ROW_KEYS[i] as string} plain dimColor={page > 0 || i > 0}
+            label={rowText(item, page * PAGE_ROWS + i + 1, numWidth, Math.max(12, inner - numWidth - 24), Number(ROW_KEYS[i]))}
+            onPress={() => void launchRow($, item.number)} />
         ))}
         {Array.from({ length: Math.max(0, PAGE_ROWS - Math.max(visible.length, 1)) }, (_, i) => (
           <Text key={`blank-${i}`}> </Text>
         ))}
         <Box justifyContent="space-between">
-          <Text dimColor>{footer}</Text>
+          <Box>
+            {list?.launch && (
+              <Button key="pact-sequential" hotkey="1" plain dimColor label="1 sequential"
+                onPress={() => void launchKey($, 'sequential')} />
+            )}
+            {list?.parallel?.launch && (
+              <Button key="pact-parallel" hotkey="2" plain dimColor label={`${list.launch ? ' · ' : ''}2 parallel ${list.parallel.issues.length}`}
+                onPress={() => void launchKey($, 'parallel')} />
+            )}
+            <Text dimColor>{footerRest}</Text>
+          </Box>
           {pages > 1 && (
             <Button key="pact-next-page" hotkey="0" plain dimColor label={`página ${page + 1}/${pages} ▸`}
               onPress={() => void update($, pageAtom, () => (page + 1) % pages)} />

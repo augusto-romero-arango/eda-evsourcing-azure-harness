@@ -13,6 +13,8 @@ type NextOrderJson = {
   blocked?: unknown[]
   cycles?: unknown[]
   launch?: string | null
+  infra?: number[]
+  parallel?: { issues?: number[]; launch?: string | null } | null
 }
 
 function firstLine(text: string): string {
@@ -21,7 +23,7 @@ function firstLine(text: string): string {
 
 /** Exit 0 (hay orden) y 1 (vacio) traen JSON valido; 2 u otro es un fallo. */
 export function parseNextOrder(exitCode: number, stdout: string, stderr: string): BoardList {
-  const failed = (error: string): BoardList => ({ items: [], blockedCount: 0, cycleCount: 0, launch: null, error })
+  const failed = (error: string): BoardList => ({ items: [], blockedCount: 0, cycleCount: 0, launch: null, infra: [], parallel: null, error })
   if (exitCode !== 0 && exitCode !== 1) return failed(firstLine(stderr) || `exit ${exitCode}`)
   let json: NextOrderJson
   try {
@@ -41,6 +43,8 @@ export function parseNextOrder(exitCode: number, stdout: string, stderr: string)
     blockedCount: (json.blocked ?? []).length,
     cycleCount: (json.cycles ?? []).length,
     launch: json.launch ?? null,
+    infra: json.infra ?? [],
+    parallel: json.parallel ? { issues: json.parallel.issues ?? [], launch: json.parallel.launch ?? null } : null,
     error: null,
   }
 }
@@ -57,19 +61,28 @@ export function pageOf(page: number, total: number, size: number): { page: numbe
 }
 
 /** Linea de una fila: numero de orden, `#issue`, tipo y titulo. */
-export function rowText(item: BoardItem, position: number, numWidth: number, titleMax: number): string {
+export function rowText(item: BoardItem, position: number, numWidth: number, titleMax: number, key: number | null = null): string {
   const n = `${position}.`.padEnd(numWidth)
-  return `${n} #${item.number} [${item.tipo ?? '?'}] ${clip(item.title, titleMax)}`
+  const k = key === null ? '' : `${key}: `
+  return `${k}${n} #${item.number} [${item.tipo ?? '?'}] ${clip(item.title, titleMax)}`
 }
 
 /** Pie con los issues que no entran al orden; vacio si no hay ninguno. */
 export function footerOf(list: BoardList): string {
-  return [
+  return [launchKeysText(list), footerRestOf(list, false)].filter(Boolean).join(' · ')
+}
+
+/** Pie sin las teclas `1`/`2` (la consola las pinta como botones): `5-9 uno`, infra y excluidos. */
+export function footerRestOf(list: BoardList, afterButtons: boolean): string {
+  const rest = [
+    list.items.length > 0 ? '5-9 uno' : '',
+    list.infra.length > 0 ? `infra: ${list.infra.map(n => `#${n}`).join(' ')}` : '',
     list.blockedCount > 0 ? `${list.blockedCount} bloqueados` : '',
     list.cycleCount > 0 ? `${list.cycleCount} en ciclo` : '',
   ]
     .filter(Boolean)
     .join(' · ')
+  return rest && afterButtons ? ` · ${rest}` : rest
 }
 
 export function isMefistoManifest(raw: string): boolean {
@@ -279,4 +292,107 @@ export function pruneDismissed(dismissed: string[], repo: string, liveKeys: Read
     const mins = minutesSince(key.split('|')[4] ?? '', nowMs)
     return mins === null || mins * 60_000 < PRUNE_GRACE_MS
   })
+}
+
+// ---- Incremento 3: lanzar trabajo (el comando se escribe en el prompt, nunca se envia) ----
+
+export const SEQUENTIAL_COMMAND = '/mefisto:sequential'
+export const PARALLEL_COMMAND = '/mefisto:parallel'
+export const ROW_KEYS = ['5', '6', '7', '8', '9'] as const
+export const CANCEL = 'Cancelar'
+export const INFRA_FIRST = 'Infra primero'
+export const WITHOUT_INFRA = 'Seguir sin infra'
+export const WITH_MERGE = 'Con merge'
+export const ONLY_PR = 'Solo PR'
+
+export type LaunchKind = 'sequential' | 'parallel'
+export type LaunchOption = { label: string; text: string | null }
+export type LaunchPlan =
+  | { kind: 'fill'; text: string }
+  | { kind: 'ask'; question: string; options: LaunchOption[] }
+  | { kind: 'none'; message: string }
+
+/** Flags de next-order que fijan las lineas de lanzamiento que la consola escribe. */
+export const NEXT_ORDER_ARGS = ['--json', '--launch-command', SEQUENTIAL_COMMAND, '--parallel-command', PARALLEL_COMMAND]
+
+/** La linea de la tecla (`1` sequential, `2` parallel) tal como la entrego next-order; null si no hay. */
+export function launchLineOf(list: BoardList, kind: LaunchKind): string | null {
+  return kind === 'sequential' ? list.launch : (list.parallel?.launch ?? null)
+}
+
+/** Teclas `1`/`2` disponibles: `1 sequential · 2 parallel N`; vacio sin lineas. */
+export function launchKeysText(list: BoardList): string {
+  return [
+    list.launch ? '1 sequential' : '',
+    list.parallel?.launch ? `2 parallel ${list.parallel.issues.length}` : '',
+  ]
+    .filter(Boolean)
+    .join(' · ')
+}
+
+/** `1`/`2`: escribe la linea; con infra lanzable ofrece desarrollarla antes (sin exigirlo). */
+export function planLaunch(list: BoardList, kind: LaunchKind): LaunchPlan {
+  const line = launchLineOf(list, kind)
+  if (!line) return { kind: 'none', message: `No hay linea de ${kind} para lanzar.` }
+  const first = list.infra[0]
+  if (first === undefined) return { kind: 'fill', text: line }
+  return {
+    kind: 'ask',
+    question: `Hay ${list.infra.length} issue(s) de infra lanzables (${list.infra.map(n => `#${n}`).join(' ')}). ¿Desarrollarlos antes?`,
+    options: [
+      { label: INFRA_FIRST, text: `/mefisto:infra ${first}` },
+      { label: WITHOUT_INFRA, text: line },
+      { label: CANCEL, text: null },
+    ],
+  }
+}
+
+/** `5`-`9` y `lanzar <n>`: opciones segun el `tipo` del issue; sin tipo lanzable no hay dialogo. */
+export function planIssue(item: BoardItem): LaunchPlan {
+  const n = item.number
+  const options = (pr: LaunchOption[]): LaunchPlan => ({
+    kind: 'ask',
+    question: `¿Cómo desarrollar #${n}?`,
+    options: [...pr, { label: CANCEL, text: null }],
+  })
+  switch (item.tipo) {
+    case 'feature':
+    case 'refactor':
+    case 'projection':
+      return options([
+        { label: WITH_MERGE, text: `${SEQUENTIAL_COMMAND} ${n}` },
+        { label: ONLY_PR, text: `/mefisto:implement ${n}` },
+      ])
+    case 'tooling':
+      return options([
+        { label: WITH_MERGE, text: `${SEQUENTIAL_COMMAND} ${n}` },
+        { label: ONLY_PR, text: `/mefisto:tooling ${n}` },
+      ])
+    case 'infra':
+      return options([{ label: ONLY_PR, text: `/mefisto:infra ${n}` }])
+    default:
+      return { kind: 'none', message: `#${n} no tiene un tipo lanzable.` }
+  }
+}
+
+/** Texto a escribir segun la respuesta del dialogo: comparacion exacta; cierre o texto libre no escriben nada. */
+export function answerText(options: LaunchOption[], answer: unknown): string | null {
+  if (typeof answer !== 'string') return null
+  return options.find(o => o.label === answer)?.text ?? null
+}
+
+export type LaunchTarget = { kind: 'launch'; launch: LaunchKind } | { kind: 'issue'; issue: number } | { kind: 'invalid'; message: string }
+
+/** Argumento de `/fausto-blood-pact lanzar`: vacio o `sequential` -> 1, `parallel` -> 2, `<n>` -> ese issue si es lanzable. */
+export function parseLaunchArg(arg: string, list: BoardList): LaunchTarget {
+  const a = arg.trim()
+  if (a === '' || a === 'sequential') return { kind: 'launch', launch: 'sequential' }
+  if (a === 'parallel') return { kind: 'launch', launch: 'parallel' }
+  if (/^\d+$/.test(a)) {
+    const n = Number(a)
+    return list.items.some(i => i.number === n)
+      ? { kind: 'issue', issue: n }
+      : { kind: 'invalid', message: `#${n} no está entre los lanzables.` }
+  }
+  return { kind: 'invalid', message: 'Uso: /fausto-blood-pact lanzar [sequential|parallel|<n>]' }
 }
