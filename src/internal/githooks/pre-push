@@ -4,7 +4,8 @@
 # Red de seguridad: un push cuyo destino es refs/heads/main|master no se pierde
 # ni se bloquea a secas; sus commits se empujan a rescate/<fecha>-<sha corto>,
 # se abre un PR contra main y solo el push directo se rechaza (exit 1).
-# Falla cerrada: nunca deja pasar el push a main. Via de escape: git push --no-verify.
+# Falla cerrada: nunca deja pasar el push a main. --no-verify ya no es via de escape:
+# el ruleset 'main' de GitHub (.github/rulesets/main.json) exige PR y rechaza el push.
 # Un hook de git es neutral a runtime (MEF-ADR-0050).
 #
 # stdin: <local ref> <local sha> <remote ref> <remote sha>  (el destino se
@@ -24,7 +25,7 @@ while read -r local_ref local_sha remote_ref remote_sha; do
     esac
     # Borrado remoto de main: no hay commits que rescatar; se rechaza igual.
     if [ "$local_sha" = "$ZERO" ]; then
-        echo "pre-push: borrar '$remote_ref' no esta permitido (usa --no-verify si es intencional)." >&2
+        echo "pre-push: borrar '$remote_ref' no esta permitido (el ruleset 'main' de GitHub tambien lo rechaza)." >&2
         BLOCKED=1
         continue
     fi
