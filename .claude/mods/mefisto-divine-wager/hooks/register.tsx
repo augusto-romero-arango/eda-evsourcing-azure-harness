@@ -62,6 +62,15 @@ import {
   withModUi,
   historianFrom,
   isAgentActive,
+  finishMerge,
+  ghMergeNumbersOf,
+  isGhMergeRun,
+  mergeCounts,
+  mergeHeader,
+  mergeOutcomesOf,
+  mergePromptArgs,
+  mergePrsOf,
+  withMergeOutcomes,
 } from './logic'
 import { DEFAULT_COLOR, HEIGHT, PALETTE, RASTER_ROWS, face, sprite } from './sprites'
 
@@ -83,6 +92,10 @@ const HISTORIAN_DONE_MS = 8_000
 const FIELD_NOTES_DIR = 'docs/bitacora/field-notes'
 const CHANGELOG_DIR = 'changelog.d'
 const SCRIPT_TIMEOUT_MS = 180_000
+// Respaldo del avance de la cinta de merge: el bucle de /mefisto-merge es un solo Bash y su salida llega al final.
+const MERGE_POLL_MS = 5_000
+// Sin ningun `gh pr merge` a la vista, una cinta que pasa este tiempo se cierra al terminar el turno.
+const MERGE_STALE_MS = 10 * 60_000
 
 // Recorte comun a todos los cuadros que usa la consola, calculado una vez: sin margen y sin saltos al alternar.
 const MASCOT_POSES = [
@@ -98,6 +111,8 @@ const MASCOT_POSES = [
   ['release', 'reposo'],
   ['release', 'despegando'],
   ['release', 'listo'],
+  ['merge', 'cosiendo'],
+  ['merge', 'listo'],
 ] as const
 const MASCOT_COLS = usedColumns([
   ...MASCOT_POSES.flatMap(([role, state]) => [sprite(role, state, 0), sprite(role, state, 1)]),
@@ -136,6 +151,7 @@ const changelogAtom = atom({ plugin: 'mefisto-divine-wager', key: 'changelog' } 
 const holdAtom = atom({ plugin: 'mefisto-divine-wager', key: 'hold' } as const, null)
 const historianAtom = atom({ plugin: 'mefisto-divine-wager', key: 'historian' } as const, null)
 const releaseAtom = atom({ plugin: 'mefisto-divine-wager', key: 'release' } as const, null)
+const mergeAtom = atom({ plugin: 'mefisto-divine-wager', key: 'merge' } as const, null)
 
 type Tail = { path: string; stream: AsyncGenerator<unknown, unknown> }
 
@@ -151,6 +167,8 @@ let lastPrCheckMs = 0
 let isLogOpen = false
 let isRefreshingReady = false
 let readyTimer: { cancel: () => void } | null = null
+let lastMergePollMs = 0
+let isMergeSeen = false
 
 async function stopTail() {
   const current = tail
@@ -324,6 +342,7 @@ async function poll($: EngineInterface) {
     await update($, nowAtom, () => Date.now())
     await pollBatch($)
     await pollHistorian($)
+    await pollMerge($)
     const inBatch = (await read($, batchAtom)) !== null
     const prev = await read($, runAtom)
     if (prev?.state === 'completed' && !inBatch) await closeIfMerged($, prev)
@@ -430,6 +449,7 @@ async function merge($: EngineInterface) {
   if (answer !== 'Mergear') return
   $.ui.toast(`/mefisto-merge ${pr} en cola: la corrida se cierra cuando el PR quede mergeado`)
   lastPrCheckMs = 0
+  await startMerge($, pr)
   await $.command.run({ command: 'mefisto-merge', args: pr })
 }
 
@@ -507,7 +527,60 @@ async function chooseMerge($: EngineInterface) {
   const args = answer === null ? null : mergeArgsOf(answer, options)
   if (!args) return
   $.ui.toast(`/mefisto-merge ${args} en cola`)
+  await startMerge($, args)
   await $.command.run({ command: 'mefisto-merge', args })
+}
+
+// La cinta de /mefisto-merge: la lista sale de los argumentos; con --all, de los PRs abiertos al momento.
+async function startMerge($: EngineInterface, args: string) {
+  const current = await read($, mergeAtom)
+  if (current && !current.finishedMs) return
+  let open = (await read($, openPrsAtom)) ?? []
+  if (/(^|\s)--all(\s|$)/.test(args)) {
+    const prs = await $.process
+      .run(['gh', 'pr', 'list', '--state', 'open', '--limit', '100', '--json', 'number,title,isDraft,headRefName'])
+      .catch(() => ({ exitCode: 1, stdout: '' }))
+    open = (prs.exitCode === 0 ? parseOpenPrs(prs.stdout) : null) ?? open
+  }
+  const prs = mergePrsOf(args, open)
+  if (prs.length === 0) return
+  isMergeSeen = false
+  lastMergePollMs = Date.now()
+  await update($, mergeAtom, () => ({ prs, startedMs: Date.now(), finishedMs: null }))
+}
+
+async function settleMerge($: EngineInterface, merged: readonly string[], failed: readonly string[]) {
+  const prev = await read($, mergeAtom)
+  if (!prev || prev.finishedMs) return
+  const next = withMergeOutcomes(prev, merged, failed, Date.now())
+  if (next === prev) return
+  await update($, mergeAtom, () => next)
+  if (next.finishedMs) await endMerge($)
+}
+
+async function endMerge($: EngineInterface) {
+  const run = await read($, mergeAtom)
+  if (!run) return
+  const done = finishMerge(run, Date.now())
+  if (done !== run) await update($, mergeAtom, () => done)
+  $.ui.toast(`merge: ${mergeHeader(done, '')}`)
+  $.clock.after(HISTORIAN_DONE_MS, () => void update($, mergeAtom, m => (m?.finishedMs ? null : m)))
+  void refreshReady($)
+}
+
+// Respaldo: el estado de cada pendiente en GitHub, cada MERGE_POLL_MS.
+async function pollMerge($: EngineInterface) {
+  const run = await read($, mergeAtom)
+  if (!run || run.finishedMs || Date.now() - lastMergePollMs < MERGE_POLL_MS) return
+  lastMergePollMs = Date.now()
+  const pending = run.prs.filter(p => p.estado === 'pendiente').map(p => p.num)
+  const states = await Promise.all(
+    pending.map(n =>
+      $.process.run(['gh', 'pr', 'view', n, '--json', 'state', '-q', '.state']).catch(() => ({ exitCode: 1, stdout: '' })),
+    ),
+  )
+  const merged = pending.filter((_, i) => states[i]?.exitCode === 0 && states[i]?.stdout.trim() === 'MERGED')
+  if (merged.length > 0) await settleMerge($, merged, [])
 }
 
 // Integrar la bitacora: las field notes de main y las que esperan en sus PRs. Elegir en el dialogo es la aprobacion.
@@ -587,6 +660,8 @@ export const register: Register = on => {
   // listo cuando termina el turno que lo ejecuto.
   on('prompt.submit', async ($, e, next) => {
     if (isInteractive && isReleasePrompt(e.text)) await startRelease($)
+    const mergeArgs = isInteractive ? mergePromptArgs(e.text) : null
+    if (mergeArgs) await startMerge($, mergeArgs)
     return next(e)
   })
 
@@ -596,6 +671,13 @@ export const register: Register = on => {
       await update($, releaseAtom, r => (r ? { ...r, phase: 'reposo', finishedMs: Date.now() } : r))
       $.clock.after(HISTORIAN_DONE_MS, () => void update($, releaseAtom, r => (r?.finishedMs ? null : r)))
       void refreshReady($)
+    }
+    // El turno de /mefisto-merge termino: lo que siga pendiente lo descarto el skill o no se llego a mergear.
+    const merge = await read($, mergeAtom)
+    if (merge && !merge.finishedMs && (isMergeSeen || Date.now() - merge.startedMs > MERGE_STALE_MS)) {
+      lastMergePollMs = 0
+      await pollMerge($)
+      await endMerge($)
     }
     return next(e)
   })
@@ -609,6 +691,17 @@ export const register: Register = on => {
       } finally {
         await update($, releaseAtom, r => (r ? { ...r, phase: 'reposo' } : r))
       }
+    }
+    if (isInteractive && isGhMergeRun(e.command)) {
+      const literal = ghMergeNumbersOf(e.command)
+      if (literal.length > 0) await startMerge($, literal.join(' '))
+      isMergeSeen = true
+      const ran = await next(e)
+      if (ran.deny === undefined) {
+        const { merged, failed } = mergeOutcomesOf(e.command, ran.text ?? '', ran.isError === true)
+        await settleMerge($, merged, failed)
+      }
+      return ran
     }
     const batchIssues = isInteractive ? batchIssuesOf(e.command) : null
     if (batchIssues && batchIssues.length > 0) {
@@ -802,8 +895,13 @@ export const register: Register = on => {
       const historian = await read($, historianAtom)
       const tick = e.props.isWorking ? Math.floor((now || Date.now()) / 1000) : null
       const release = await read($, releaseAtom)
-      const frame = (tick ?? 0) % 2 === 0 ? 0 : 1
-      const grid = release
+      // La cinta de merge cose al ritmo del reloj aunque el turno este en un Bash largo.
+      const mergeRun = await read($, mergeAtom)
+      const mergeTick = mergeRun && !mergeRun.finishedMs ? Math.floor((now || Date.now()) / 1000) : tick
+      const frame = (mergeTick ?? 0) % 2 === 0 ? 0 : 1
+      const grid = mergeRun
+        ? cropGrid(sprite('merge', mergeRun.finishedMs ? 'listo' : 'cosiendo', frame), MASCOT_COLS)
+        : release
         ? cropGrid(sprite('release', release.finishedMs ? 'listo' : release.phase, frame), MASCOT_COLS)
         : historian
           ? cropGrid(sprite('historiador', historian.finishedMs ? 'listo' : 'escribiendo', frame), MASCOT_COLS)
@@ -815,6 +913,13 @@ export const register: Register = on => {
         ) : (
           <Box width={MASCOT_WIDTH} />
         )
+      // Los pendientes de la cinta y despues los fallidos, en las mismas filas que la lista de listos.
+      const mergeAll = mergeRun
+        ? [...mergeRun.prs.filter(p => p.estado === 'pendiente'), ...mergeRun.prs.filter(p => p.estado === 'fallido')]
+        : []
+      const mergeRows = mergeAll.length > READY_ROWS ? READY_ROWS - 1 : READY_ROWS
+      const mergeLines = mergeAll.slice(0, mergeRows)
+      const mergeHidden = mergeAll.length - mergeLines.length
       return (
         <Box flexDirection="column" borderStyle="round" borderColor="claude" borderDimColor paddingX={1}>
           <Box justifyContent="space-between">
@@ -831,6 +936,11 @@ export const register: Register = on => {
                 </Text>
               )}
               {release?.finishedMs && <Text color="success"> · release terminado</Text>}
+              {mergeRun && (
+                <Text color={!mergeRun.finishedMs ? 'warning' : mergeCounts(mergeRun).failed > 0 ? 'error' : 'success'}>
+                  {' · '}{mergeHeader(mergeRun, elapsed((mergeRun.finishedMs ?? (now || Date.now())) - mergeRun.startedMs))}
+                </Text>
+              )}
             </Text>
             <Box gap={2}>
               {workPrs > 0 && (
@@ -846,6 +956,18 @@ export const register: Register = on => {
           </Box>
           <Box gap={2} height={RASTER_ROWS + 1} alignItems="flex-start">
             {mascot}
+            {mergeRun ? (
+              <Box flexDirection="column" width={body} marginTop={1}>
+                {mergeLines.map(p => (
+                  <Text key={`merge-${p.num}`} wrap="truncate-end" color={p.estado === 'fallido' ? 'error' : undefined}>
+                    <Text color={p.estado === 'fallido' ? 'error' : 'warning'}>{p.estado === 'fallido' ? '✗' : '●'}</Text>
+                    {` #${p.num}${p.title ? ` ${p.title}` : ''}`}
+                  </Text>
+                ))}
+                {mergeLines.length === 0 && <Text color="success">✓ todos mergeados</Text>}
+                {mergeHidden > 0 && <Text dimColor>+{mergeHidden} más</Text>}
+              </Box>
+            ) : (
             <Box flexDirection="column" width={body} marginTop={1}>
               {!ready && <Text dimColor>cargando…</Text>}
               {ready?.error && <Text color="error">next-order falló: {clip(ready.error, body - 20)}</Text>}
@@ -884,9 +1006,10 @@ export const register: Register = on => {
                 </Box>
               </Box>
             </Box>
+            )}
           </Box>
           {/* La linea de todos los listos crece con la cola: va abajo, a lo ancho, y no empuja los menus fijos. */}
-          {ready?.launch && (
+          {!mergeRun && ready?.launch && (
             <Button key="ready-all" hotkey="1" plain label={clip(ready.launch.replace(/^\/mefisto-/, ''), inner - 3)}
               onPress={() => void fill($, ready.launch ?? '')} />
           )}

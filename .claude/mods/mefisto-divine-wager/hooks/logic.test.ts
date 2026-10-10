@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { agentFlagOf, historianFrom, isAgentActive, isReleasePrompt, isReleaseRun, holdOf, holdText, bitacoraPrompt, changelogOf, fieldNotesIn, releaseArgsOf, releaseOptions, mergeArgsOf, mergeOptions, parseOpenPrs, withoutHeredocs, fmtCost, issueStatsFromHistory, statsPending, fitTitle, summaryTitleWidth, statsTotal, batchFromStatus, batchIssuesOf, batchPr, batchSummary, issueMark, newlyMerged, readyRows, titlesOf, toolingOf, waitingFace, cropGrid, pageOf, parseNextOrder, sequentialOf, finishedFromHistory, mascotPose, parseEvent, usedColumns, relative, pickEventsFile, steps, stampToMs, toolingIssueOf, withModUi } from './logic'
+import { finishMerge, ghMergeNumbersOf, isGhMergeRun, mergeCounts, mergeHeader, mergeOutcomesOf, mergePromptArgs, mergePrsOf, withMergeOutcomes, agentFlagOf, historianFrom, isAgentActive, isReleasePrompt, isReleaseRun, holdOf, holdText, bitacoraPrompt, changelogOf, fieldNotesIn, releaseArgsOf, releaseOptions, mergeArgsOf, mergeOptions, parseOpenPrs, withoutHeredocs, fmtCost, issueStatsFromHistory, statsPending, fitTitle, summaryTitleWidth, statsTotal, batchFromStatus, batchIssuesOf, batchPr, batchSummary, issueMark, newlyMerged, readyRows, titlesOf, toolingOf, waitingFace, cropGrid, pageOf, parseNextOrder, sequentialOf, finishedFromHistory, mascotPose, parseEvent, usedColumns, relative, pickEventsFile, steps, stampToMs, toolingIssueOf, withModUi } from './logic'
 
 test('detecta el lanzamiento de /mefisto-tooling', async () => {
   expect(toolingIssueOf('MEFISTO_RUNTIME=claude ./.claude/scripts/mefisto-tmux-pipeline.sh --tooling 2059')).toBe('2059')
@@ -274,4 +274,61 @@ test('statsPending pide de nuevo las estadisticas sin titulo', async () => {
   }
   expect(statsPending(['1', '2', '3'], stats)).toEqual(['2', '3'])
   expect(statsPending(['1'], stats)).toEqual([])
+})
+
+test('la cinta de merge toma los PRs de los argumentos de /mefisto-merge', async () => {
+  const open = [
+    { number: 30, title: 'Coser la cinta', isFieldNote: false },
+    { number: 29, title: 'docs: field note', isFieldNote: true },
+    { number: 28, title: 'Otro cambio', isFieldNote: false },
+  ]
+  expect(mergePromptArgs('/mefisto-merge 30 28')).toBe('30 28')
+  expect(mergePromptArgs('/mefisto-merge')).toBe('')
+  expect(mergePromptArgs('/mefisto-merges 1')).toBe(null)
+  expect(mergePromptArgs('mergea /mefisto-merge 1')).toBe(null)
+  expect(mergePrsOf('--all', open).map(p => p.num)).toEqual(['30', '28'])
+  expect(mergePrsOf('30 #99 30', open)).toEqual([
+    { num: '30', title: 'Coser la cinta', estado: 'pendiente' },
+    { num: '99', title: '', estado: 'pendiente' },
+  ])
+})
+
+test('detecta gh pr merge solo donde se ejecuta', async () => {
+  expect(ghMergeNumbersOf('gh pr merge 12 --squash && gh pr merge #13 --squash')).toEqual(['12', '13'])
+  expect(ghMergeNumbersOf('for pr in 1 2; do\n    gh pr merge "$pr" --squash || continue\ndone')).toEqual([])
+  expect(isGhMergeRun('for pr in 1 2; do\n    gh pr merge "$pr" --squash || continue\ndone')).toBe(true)
+  expect(isGhMergeRun('echo "gh pr merge 12"')).toBe(false)
+  expect(isGhMergeRun('gh pr view 12')).toBe(false)
+})
+
+test('lee el resultado de cada PR al terminar el Bash', async () => {
+  expect(mergeOutcomesOf('gh pr merge 12 --squash', '', false)).toEqual({ merged: ['12'], failed: [] })
+  expect(mergeOutcomesOf('gh pr merge 12 --squash', 'X Pull request #12 is not mergeable', true)).toEqual({ merged: [], failed: ['12'] })
+  const loop = 'for pr in 1 2 3; do\n    gh pr merge "$pr" --squash || {\n echo "Fallo al mergear #$pr"; continue; }\ndone'
+  const out = 'Mergeando #1...\n✓ Squashed and merged pull request o/r#1 (a)\nMergeando #2...\nFallo al mergear #2\nMergeando #3...'
+  expect(mergeOutcomesOf(loop, out, false)).toEqual({ merged: ['1'], failed: ['2'] })
+})
+
+test('la cinta saca los mergeados, marca los fallidos y termina sin pendientes', async () => {
+  const run = {
+    prs: [
+      { num: '1', title: 'a', estado: 'pendiente' as const },
+      { num: '2', title: 'b', estado: 'pendiente' as const },
+    ],
+    startedMs: 0,
+    finishedMs: null,
+  }
+  expect(withMergeOutcomes(run, [], [], 5)).toBe(run)
+  const half = withMergeOutcomes(run, ['1'], [], 5)
+  expect(mergeCounts(half)).toEqual({ pending: 1, merged: 1, failed: 0 })
+  expect(half.finishedMs).toBe(null)
+  expect(mergeHeader(half, '00:07')).toBe('cosiendo 1 PR 00:07')
+  const done = withMergeOutcomes(half, [], ['2'], 9)
+  expect(done.finishedMs).toBe(9)
+  expect(mergeHeader(done, '')).toBe('1 mergeado · ✗ 1 fallido')
+  expect(withMergeOutcomes(done, ['2'], [], 10).prs[1]?.estado).toBe('mergeado')
+  expect(withMergeOutcomes(half, ['1'], ['1'], 10)).toBe(half)
+  const closed = finishMerge(run, 12)
+  expect(closed.prs.map(p => p.estado)).toEqual(['fallido', 'fallido'])
+  expect(mergeHeader({ ...run, prs: run.prs.map(p => ({ ...p, estado: 'mergeado' as const })), finishedMs: 1 }, '')).toBe('2 mergeados')
 })

@@ -1,4 +1,4 @@
-import type { BatchIssue, BatchRun, ChangelogSummary, Historian, Hold, IssueStats, OpenPr, BlockedItem, LogLine, RunAgent, PipelineRun, ReadyItem, ReadyList } from '../types'
+import type { BatchIssue, BatchRun, ChangelogSummary, Historian, Hold, IssueStats, MergePr, MergeRun, OpenPr, BlockedItem, LogLine, RunAgent, PipelineRun, ReadyItem, ReadyList } from '../types'
 
 export const STATE_DIR = '.mefisto/pipeline'
 export const LOG_DIR = `${STATE_DIR}/logs`
@@ -642,4 +642,83 @@ export const isAgentActive = (status: string) => AGENT_ACTIVE.has(status)
 export function historianFrom(prev: Historian | null, active: boolean, now: number): Historian | null {
   if (active) return prev && !prev.finishedMs ? prev : { startedMs: now, finishedMs: null }
   return prev && !prev.finishedMs ? { ...prev, finishedMs: now } : prev
+}
+
+/** Los argumentos del mensaje que lanza /mefisto-merge (`''` sin argumentos), o null si no es ese comando. */
+export function mergePromptArgs(text: string): string | null {
+  const m = /^\/mefisto-merge(?:\s+([\s\S]*))?$/.exec(text.trim())
+  return m ? (m[1] ?? '').trim() : null
+}
+
+/**
+ * Los PRs que va a coser /mefisto-merge: con --all, los abiertos sin los de field notes (los mismos que cuenta la
+ * tecla 2); si no, los numeros de los argumentos, con el titulo que se conozca de los abiertos.
+ */
+export function mergePrsOf(args: string, open: OpenPr[]): MergePr[] {
+  const pending = (num: string, title: string): MergePr => ({ num, title, estado: 'pendiente' })
+  if (/(^|\s)--all(\s|$)/.test(args)) return open.filter(p => !p.isFieldNote).map(p => pending(String(p.number), p.title))
+  const nums = [...new Set(args.match(/\d+/g) ?? [])]
+  return nums.map(n => pending(n, open.find(p => String(p.number) === n)?.title ?? ''))
+}
+
+const GH_MERGE = new RegExp(`${AT_COMMAND}gh\\s+pr\\s+merge\\s+#?(\\d+)`, 'g')
+
+/** Los PRs que el comando mergea con un numero literal (`gh pr merge 12`); el bucle de /mefisto-merge usa "$pr" y no cuenta. */
+export function ghMergeNumbersOf(command: string): string[] {
+  return [...withoutHeredocs(command).matchAll(GH_MERGE)].map(m => m[1] ?? '').filter(Boolean)
+}
+
+/** El comando corre `gh pr merge`, con numero literal o con variable. */
+export const isGhMergeRun = (command: string) => new RegExp(`${AT_COMMAND}gh\\s+pr\\s+merge\\b`).test(withoutHeredocs(command))
+
+/**
+ * Lo que un Bash termino diciendo de cada PR: el `gh pr merge N` literal sale con exit 0 (mergeado) o no (fallido,
+ * si era el unico del comando); de la salida, el aviso de gh al mergear y el `Fallo al mergear #N` del bucle.
+ */
+export function mergeOutcomesOf(command: string, output: string, isError: boolean): { merged: string[]; failed: string[] } {
+  const failed = new Set([...output.matchAll(/Fallo al mergear #(\d+)/g)].map(m => m[1] ?? ''))
+  const merged = new Set([...output.matchAll(/merged pull request \S*#(\d+)/gi)].map(m => m[1] ?? ''))
+  const literal = ghMergeNumbersOf(command)
+  if (!isError) {
+    for (const n of literal) if (!failed.has(n)) merged.add(n)
+  } else if (literal.length === 1 && literal[0] && !merged.has(literal[0])) {
+    failed.add(literal[0])
+  }
+  for (const n of merged) failed.delete(n)
+  return { merged: [...merged].filter(Boolean), failed: [...failed].filter(Boolean) }
+}
+
+/** Marca los PRs; un mergeado no vuelve atras. Termina la cinta cuando no queda ninguno pendiente. */
+export function withMergeOutcomes(run: MergeRun, merged: readonly string[], failed: readonly string[], now: number): MergeRun {
+  let changed = false
+  const prs = run.prs.map(p => {
+    const estado = merged.includes(p.num) ? 'mergeado' : p.estado === 'pendiente' && failed.includes(p.num) ? 'fallido' : p.estado
+    if (estado === p.estado) return p
+    changed = true
+    return { ...p, estado }
+  })
+  if (!changed) return run
+  const isDone = prs.every(p => p.estado !== 'pendiente')
+  return { ...run, prs, finishedMs: isDone ? (run.finishedMs ?? now) : null }
+}
+
+/** Cierre de la cinta: lo que quedo pendiente cuenta como fallido (el skill lo descarto o no llego a mergearlo). */
+export function finishMerge(run: MergeRun, now: number): MergeRun {
+  if (run.finishedMs) return run
+  return { ...run, prs: run.prs.map(p => (p.estado === 'pendiente' ? { ...p, estado: 'fallido' } : p)), finishedMs: now }
+}
+
+export function mergeCounts(run: MergeRun) {
+  return {
+    pending: run.prs.filter(p => p.estado === 'pendiente').length,
+    merged: run.prs.filter(p => p.estado === 'mergeado').length,
+    failed: run.prs.filter(p => p.estado === 'fallido').length,
+  }
+}
+
+/** La cabecera de la cinta: cosiendo mientras queden pendientes; al terminar, mergeados y fallidos. */
+export function mergeHeader(run: MergeRun, elapsedText: string): string {
+  const c = mergeCounts(run)
+  if (!run.finishedMs) return `cosiendo ${c.pending} PR${c.pending === 1 ? '' : 's'} ${elapsedText}`
+  return [`${c.merged} mergeado${c.merged === 1 ? '' : 's'}`, c.failed > 0 ? `✗ ${c.failed} fallido${c.failed === 1 ? '' : 's'}` : ''].filter(Boolean).join(' · ')
 }
