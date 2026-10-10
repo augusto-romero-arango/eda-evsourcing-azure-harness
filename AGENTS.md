@@ -154,4 +154,4 @@ Workflow típico:
 4. Implementa: `/mefisto-tooling <issue>`. El pipeline crea worktree, ejecuta writer+reviewer, valida scope y abre PR. Para seguir la corrida en vivo con el visor abierto en un tercer pane, usa `/mefisto-tooling-verbose <issue>` en su lugar (delega integramente en `/mefisto-tooling`, solo lanza con `--verbose`).
 5. Revisa: comentarios del PR → `/mefisto-fix-review <pr>`.
 6. Mergea: `/mefisto-merge <pr>` (squash + delete-branch, sin `pr-sync.sh`).
-7. Pon al dia la bitacora: `/mefisto-bitacora` (invoca al agente `mefisto-historiador` y encadena `/mefisto-merge` automaticamente sobre el PR resultante).
+7. Pon al dia la bitacora: `/mefisto-bitacora` (invoca al agente `mefisto-historiador`, verifica el PR resultante y sugiere `/mefisto-merge <N>` o `gh pr close <N>`; no lo mergea).
