@@ -35,7 +35,7 @@ No leas configuracion ajena, providers, modelos, permisos ni auth stores. La uni
 
 MEFISTO_RUNTIME=opencode "${MEFISTO_PACKAGE_ROOT}/scripts/upgrade.sh" --status
 
-Presenta el JSON sin reinterpretarlo. Estados posibles de `peer.state`:
+Presenta el JSON sin reinterpretarlo. `installedVersion` es la version **instalada en disco** (la que cargara la proxima sesion); no es la version cargada en la sesion viva. `--status` es una consulta local: **no informa si existe una version mas nueva publicada**, asi que nunca autoriza concluir que Mefisto esta al dia. Estados posibles de `peer.state`:
 
 - `enabled` o `stale`: el par expresa adhesion valida. `stale` conserva esa adhesion; no es una desactivacion.
 - `disabled`: no hay adhesion del par; incluye primera instalacion, una release instalada sin proyectar y una desactivacion deliberada.
@@ -43,6 +43,8 @@ Presenta el JSON sin reinterpretarlo. Estados posibles de `peer.state`:
 - `conflict`, `operation-in-progress` o `unavailable`: estados seguros no alineables. No los reinterpretes como `legacy` ni como consentimiento.
 
 ### 2. Decidir una sola vez la actualizacion
+
+Cada invocacion ejecuta la actualizacion de este paso **exactamente una vez**, sea cual sea el JSON de `--status` y aunque en esta misma sesion ya se haya corrido otro upgrade. `--status` solo decide si se pasa `--align-peer`. Nunca respondas "ya esta al dia" ni "no hay nada que actualizar" sin la salida del script: esa afirmacion solo puede venir de esa salida.
 
 Decide **antes** de invocar el script, para ejecutarlo una sola vez:
 

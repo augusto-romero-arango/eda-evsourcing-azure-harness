@@ -55,9 +55,9 @@ MEFISTO_RUNTIME=claude run --prune >/dev/null; [ "$(log)" = "update-plugin --pru
 
 echo "[b] --status JSON"
 out=$(MEFISTO_RUNTIME=claude run --status)
-echo "$out" | jq -e '.schemaVersion==1 and .runtime=="claude" and .loadedVersion=="1.0.0" and .peer.runtime=="opencode" and .peer.state=="enabled" and .peer.version=="1.0.0"' >/dev/null && ok "claude" || ko "claude: $out"
+echo "$out" | jq -e '.schemaVersion==2 and .runtime=="claude" and .installedVersion=="1.0.0" and (has("loadedVersion")|not) and .peer.runtime=="opencode" and .peer.state=="enabled" and .peer.version=="1.0.0"' >/dev/null && ok "claude" || ko "claude: $out"
 out=$(MEFISTO_RUNTIME=opencode run --status)
-echo "$out" | jq -e '.schemaVersion==1 and .runtime=="opencode" and .peer.runtime=="claude" and .peer.state=="unavailable" and .peer.version==null' >/dev/null && ok "opencode" || ko "opencode: $out"
+echo "$out" | jq -e '.schemaVersion==2 and .runtime=="opencode" and has("installedVersion") and (has("loadedVersion")|not) and .peer.runtime=="claude" and .peer.state=="unavailable" and .peer.version==null' >/dev/null && ok "opencode" || ko "opencode: $out"
 
 echo "[c] opencode: secuencia con la version de gh"
 out=$(MEFISTO_RUNTIME=opencode run)
