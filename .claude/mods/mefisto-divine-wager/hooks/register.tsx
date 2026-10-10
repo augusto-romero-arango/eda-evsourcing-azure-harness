@@ -98,6 +98,22 @@ const FIELD_NOTES_DIR = 'docs/bitacora/field-notes'
 const SUMMARIES_DIR = '.mefisto/pipeline/summaries'
 const NOTES_POLL_MS = 3_000
 const CHANGELOG_DIR = 'changelog.d'
+
+// Las rutas del mod son relativas a la raiz del repo, no al cwd de la sesion: este cambia con cada `cd` del
+// asistente, y desde otro directorio un script relativo no arranca y $.fs no encuentra el estado del pipeline.
+let repoRootCache: string | null = null
+async function repoRoot($: EngineInterface): Promise<string | null> {
+  if (!repoRootCache) repoRootCache = (await $.session.repo().catch(() => null))?.root ?? null
+  return repoRootCache
+}
+async function inRepo($: EngineInterface, path: string): Promise<string> {
+  const root = await repoRoot($)
+  return root && !path.startsWith('/') ? `${root}/${path}` : path
+}
+async function runInRepo($: EngineInterface, argv: string[], init: { timeoutMs?: number } = {}) {
+  const root = await repoRoot($)
+  return $.process.run(argv, root ? { ...init, cwd: root } : init)
+}
 const SCRIPT_TIMEOUT_MS = 180_000
 // Respaldo del avance de la cinta de merge: el bucle de /mefisto-merge es un solo Bash y su salida llega al final.
 const MERGE_POLL_MS = 5_000
@@ -210,7 +226,8 @@ async function followTail($: EngineInterface, stream: AsyncGenerator<unknown, un
 async function startTail($: EngineInterface, name: string) {
   await stopTail()
   const path = `${LOG_DIR}/${name}`
-  const stream = $.process.spawn({ argv: ['tail', '-n', '40', '-F', path] })
+  const root = await repoRoot($)
+  const stream = $.process.spawn({ argv: ['tail', '-n', '40', '-F', path], ...(root ? { cwd: root } : {}) })
   tail = { path, stream }
   await pushLines($, [{ ts: '', kind: 'start', text: `── ${agentOfEventsFile(name)} ──` }])
   void followTail($, stream, path)
@@ -264,7 +281,7 @@ async function withStats($: EngineInterface, batch: BatchRun): Promise<BatchRun>
   const missing = statsPending(finished, stats)
   if (missing.length === 0 || Date.now() - lastStatsReadMs < STATS_EVERY_MS) return batch
   lastStatsReadMs = Date.now()
-  const { stdout } = await $.process.run(['tail', '-n', '200', HISTORY]).catch(() => ({ stdout: '' }))
+  const { stdout } = await runInRepo($, ['tail', '-n', '200', HISTORY]).catch(() => ({ stdout: '' }))
   return { ...batch, stats: { ...stats, ...issueStatsFromHistory(stdout, missing, batch.startedMs) } }
 }
 
@@ -277,8 +294,8 @@ async function pollBatch($: EngineInterface) {
     return
   }
   let next = batch
-  if (await $.fs.exists(BATCH_STATUS)) next = batchFromStatus(await $.fs.read(BATCH_STATUS).catch(() => ''), batch, batchSinceMs)
-  next = { ...next, stopRequested: next.stopRequested || (await $.fs.exists(BATCH_STOP)) }
+  if (await $.fs.exists(await inRepo($, BATCH_STATUS))) next = batchFromStatus(await $.fs.read(await inRepo($, BATCH_STATUS)).catch(() => ''), batch, batchSinceMs)
+  next = { ...next, stopRequested: next.stopRequested || (await $.fs.exists(await inRepo($, BATCH_STOP))) }
   for (const i of newlyMerged(batch.issues, next.issues)) $.ui.toast(`#${i.issue} mergeado${i.pr ? ` · PR #${i.pr}` : ''}`)
   next = await withStats($, next)
   const settled = next
@@ -297,7 +314,7 @@ async function pollBatch($: EngineInterface) {
 
 // Parada suave: la misma senal que /mefisto-batch-stop. Termina el eslabon en curso (con su merge) y no sigue.
 async function requestStop($: EngineInterface) {
-  await $.fs.write(BATCH_STOP, '')
+  await $.fs.write(await inRepo($, BATCH_STOP), '')
   await update($, batchAtom, b => (b ? { ...b, stopRequested: true } : b))
   $.ui.toast('parada pedida: termina el issue en curso y no arranca los siguientes')
 }
@@ -315,7 +332,7 @@ async function finish($: EngineInterface, run: PipelineRun) {
 }
 
 async function fromHistory($: EngineInterface, prev: PipelineRun): Promise<PipelineRun> {
-  const { stdout } = await $.process.run(['tail', '-n', '50', HISTORY]).catch(() => ({ stdout: '' }))
+  const { stdout } = await runInRepo($, ['tail', '-n', '50', HISTORY]).catch(() => ({ stdout: '' }))
   const done = finishedFromHistory(stdout, prev.issue, Math.min(prev.startedMs, watchSinceMs))
   if (!done) return prev
   const isFailed = done.state === 'failed'
@@ -357,11 +374,11 @@ async function pollHistorian($: EngineInterface) {
 }
 
 async function captureNotes($: EngineInterface) {
-  const local = await $.fs.list(FIELD_NOTES_DIR).catch(() => [])
+  const local = await $.fs.list(await inRepo($, FIELD_NOTES_DIR)).catch(() => [])
   const notePrs = ((await read($, openPrsAtom)) ?? []).filter(p => p.isFieldNote).map(p => String(p.number))
   const files = await Promise.all(
     notePrs.map(n =>
-      $.process.run(['gh', 'pr', 'view', n, '--json', 'files', '-q', '.files[].path']).catch(() => ({ exitCode: 1, stdout: '' })),
+      runInRepo($, ['gh', 'pr', 'view', n, '--json', 'files', '-q', '.files[].path']).catch(() => ({ exitCode: 1, stdout: '' })),
     ),
   )
   const paths = files.flatMap(f => (f.exitCode === 0 ? f.stdout.split('\n').filter(Boolean) : []))
@@ -375,9 +392,9 @@ async function pollNotes($: EngineInterface) {
   const h = await read($, historianAtom)
   if (!h || !h.notes.some(n => n.estado === 'pendiente') || Date.now() - lastNotesPollMs < NOTES_POLL_MS) return
   lastNotesPollMs = Date.now()
-  const summaries = await $.fs.list(SUMMARIES_DIR).catch(() => [])
+  const summaries = await $.fs.list(await inRepo($, SUMMARIES_DIR)).catch(() => [])
   const dirs = processedDirsOf(summaries.filter(n => n.kind === 'dir').map(n => n.name))
-  const listed = await Promise.all(dirs.map(d => $.fs.list(d).catch(() => [])))
+  const listed = await Promise.all(dirs.map(async d => $.fs.list(await inRepo($, d)).catch(() => [])))
   const processed = listed.flat().filter(n => n.kind === 'file').map(n => n.name)
   await update($, historianAtom, cur => (cur ? withProcessedNotes(cur, processed) : cur))
 }
@@ -385,8 +402,7 @@ async function pollNotes($: EngineInterface) {
 // Al terminar, el PR de bitacora que quedo abierto se ofrece para mergear, ver o cerrar. Si no hay (el skill ya lo
 // mergeo), la cinta se limpia sola como antes.
 async function findBitacoraPr($: EngineInterface) {
-  const { exitCode, stdout } = await $.process
-    .run(['gh', 'pr', 'list', '--state', 'open', '--limit', '50', '--json', 'number,title,headRefName,files'])
+  const { exitCode, stdout } = await runInRepo($, ['gh', 'pr', 'list', '--state', 'open', '--limit', '50', '--json', 'number,title,headRefName,files'])
     .catch(() => ({ exitCode: 1, stdout: '' }))
   const pr = exitCode === 0 ? bitacoraPrOf(stdout) : null
   if (pr) {
@@ -401,8 +417,7 @@ async function findBitacoraPr($: EngineInterface) {
 async function checkBitacoraPr($: EngineInterface, pr: number) {
   if (Date.now() - lastBitacoraPrCheckMs < PR_CHECK_MS) return
   lastBitacoraPrCheckMs = Date.now()
-  const { exitCode, stdout } = await $.process
-    .run(['gh', 'pr', 'view', String(pr), '--json', 'state', '-q', '.state'])
+  const { exitCode, stdout } = await runInRepo($, ['gh', 'pr', 'view', String(pr), '--json', 'state', '-q', '.state'])
     .catch(() => ({ exitCode: 1, stdout: '' }))
   if (exitCode === 0 && stdout.trim() !== 'OPEN') await dismissHistorian($)
 }
@@ -422,7 +437,7 @@ async function mergeBitacoraPr($: EngineInterface) {
 
 async function openBitacoraPr($: EngineInterface) {
   const pr = (await read($, historianAtom))?.pr
-  if (pr) await $.process.run(['gh', 'pr', 'view', String(pr.number), '--web']).catch(() => undefined)
+  if (pr) await runInRepo($, ['gh', 'pr', 'view', String(pr.number), '--web']).catch(() => undefined)
 }
 
 async function closeBitacoraPr($: EngineInterface) {
@@ -435,8 +450,7 @@ async function closeBitacoraPr($: EngineInterface) {
     })
     .catch(() => null)
   if (answer !== 'Cerrar PR') return
-  const { exitCode, stderr } = await $.process
-    .run(['gh', 'pr', 'close', String(pr.number), '--delete-branch'])
+  const { exitCode, stderr } = await runInRepo($, ['gh', 'pr', 'close', String(pr.number), '--delete-branch'])
     .catch(err => ({ exitCode: 1, stderr: String(err) }))
   if (exitCode !== 0) {
     $.ui.toast(`no se pudo cerrar el PR #${pr.number}: ${clip(stderr ?? '', 80)}`)
@@ -461,8 +475,8 @@ async function poll($: EngineInterface) {
 
     let next: PipelineRun = prev
     const status = statusPath(prev.issue)
-    if (await $.fs.exists(status)) {
-      const raw = await $.fs.read(status).catch(() => '')
+    if (await $.fs.exists(await inRepo($, status))) {
+      const raw = await $.fs.read(await inRepo($, status)).catch(() => '')
       const parsed = runFromStatus(raw, prev)
       if (parsed && !(parsed.state !== 'running' && parsed.startedMs + 1000 < watchSinceMs)) next = parsed
     } else if (watchSinceMs === 0 || Date.now() - watchSinceMs > STATUS_GRACE_MS || prev.stage !== 'setup') {
@@ -476,7 +490,7 @@ async function poll($: EngineInterface) {
 
     if (next.state === 'running' && Date.now() - lastHoldReadMs >= HOLD_EVERY_MS) {
       lastHoldReadMs = Date.now()
-      const { stdout } = await $.process.run(['tail', '-n', '3', EVENTS_LOG]).catch(() => ({ stdout: '' }))
+      const { stdout } = await runInRepo($, ['tail', '-n', '3', EVENTS_LOG]).catch(() => ({ stdout: '' }))
       const hold = holdOf(stdout)
       await update($, holdAtom, () => hold)
     } else if (next.state !== 'running') {
@@ -484,7 +498,7 @@ async function poll($: EngineInterface) {
     }
 
     if (next.state === 'running') {
-      const entries = await $.fs.list(LOG_DIR).catch(() => [])
+      const entries = await $.fs.list(await inRepo($, LOG_DIR)).catch(() => [])
       const name = pickEventsFile(entries, next.issue, Math.min(next.startedMs, watchSinceMs))
       if (name && name !== next.eventsFile) {
         next = { ...next, eventsFile: name }
@@ -509,8 +523,7 @@ async function closeIfMerged($: EngineInterface, run: PipelineRun) {
   const pr = prNumber(run.pr)
   if (!pr || Date.now() - lastPrCheckMs < PR_CHECK_MS) return
   lastPrCheckMs = Date.now()
-  const { exitCode, stdout } = await $.process
-    .run(['gh', 'pr', 'view', pr, '--json', 'state', '-q', '.state'])
+  const { exitCode, stdout } = await runInRepo($, ['gh', 'pr', 'view', pr, '--json', 'state', '-q', '.state'])
     .catch(() => ({ exitCode: 1, stdout: '' }))
   if (exitCode !== 0 || stdout.trim() !== 'MERGED') return
   await closeRun($)
@@ -547,7 +560,7 @@ async function openPr($: EngineInterface) {
   const run = await read($, runAtom)
   const batch = await read($, batchAtom)
   const pr = batch ? batchPr(batch) : prNumber(run?.pr ?? null)
-  if (pr) await $.process.run(['gh', 'pr', 'view', pr, '--web']).catch(() => undefined)
+  if (pr) await runInRepo($, ['gh', 'pr', 'view', pr, '--web']).catch(() => undefined)
 }
 
 async function merge($: EngineInterface) {
@@ -568,7 +581,7 @@ async function merge($: EngineInterface) {
 // trabajo (su tablero deja los listos en solo lectura). Se lee el --agent de la linea de comando del
 // proceso de Claude Code, padre del `sh` que corre aqui; si no se puede leer, la sesion cuenta como de ejecucion.
 async function detectExecution($: EngineInterface) {
-  const ps = await $.process.run(['sh', '-c', 'ps -o args= -p "$PPID"']).catch(() => ({ exitCode: 1, stdout: '' }))
+  const ps = await runInRepo($, ['sh', '-c', 'ps -o args= -p "$PPID"']).catch(() => ({ exitCode: 1, stdout: '' }))
   const cmdline = ps.exitCode === 0 ? ps.stdout.trim() : ''
   if (agentFlagOf(cmdline) === PLANNER_AGENT) return
   await update($, executionAtom, () => true)
@@ -582,21 +595,18 @@ async function refreshReady($: EngineInterface) {
   isRefreshingReady = true
   try {
     const [order, listos, prs] = await Promise.all([
-      $.process
-        .run([NEXT_ORDER, '--json'], { timeoutMs: SCRIPT_TIMEOUT_MS })
+      runInRepo($, [NEXT_ORDER, '--json'], { timeoutMs: SCRIPT_TIMEOUT_MS })
         .catch(err => ({ exitCode: 2, stdout: '', stderr: String(err) })),
-      $.process
-        .run(['gh', 'issue', 'list', '--state', 'open', '--label', 'estado:listo', '--limit', '200', '--json', 'number,title'])
+      runInRepo($, ['gh', 'issue', 'list', '--state', 'open', '--label', 'estado:listo', '--limit', '200', '--json', 'number,title'])
         .catch(() => ({ exitCode: 1, stdout: '' })),
-      $.process
-        .run(['gh', 'pr', 'list', '--state', 'open', '--limit', '100', '--json', 'number,title,isDraft,headRefName'])
+      runInRepo($, ['gh', 'pr', 'list', '--state', 'open', '--limit', '100', '--json', 'number,title,isDraft,headRefName'])
         .catch(() => ({ exitCode: 1, stdout: '' })),
     ])
     const openPrs = prs.exitCode === 0 ? parseOpenPrs(prs.stdout) : null
     await update($, openPrsAtom, () => openPrs)
-    const notes = await $.fs.list(FIELD_NOTES_DIR).catch(() => null)
+    const notes = await $.fs.list(await inRepo($, FIELD_NOTES_DIR)).catch(() => null)
     await update($, fieldNotesAtom, () => (notes ? fieldNotesIn(notes.filter(n => n.kind === 'file').map(n => n.name)) : null))
-    const fragments = await $.fs.list(CHANGELOG_DIR).catch(() => null)
+    const fragments = await $.fs.list(await inRepo($, CHANGELOG_DIR)).catch(() => null)
     await update($, changelogAtom, () => (fragments ? changelogOf(fragments.filter(n => n.kind === 'file').map(n => n.name)) : null))
     const ready: ReadyList = parseNextOrder(order.exitCode, order.stdout, order.stderr, titlesOf(listos.stdout))
     await update($, readyAtom, () => ready)
@@ -648,8 +658,7 @@ async function startMerge($: EngineInterface, args: string) {
   if (current && !current.finishedMs) return
   let open = (await read($, openPrsAtom)) ?? []
   if (/(^|\s)--all(\s|$)/.test(args)) {
-    const prs = await $.process
-      .run(['gh', 'pr', 'list', '--state', 'open', '--limit', '100', '--json', 'number,title,isDraft,headRefName'])
+    const prs = await runInRepo($, ['gh', 'pr', 'list', '--state', 'open', '--limit', '100', '--json', 'number,title,isDraft,headRefName'])
       .catch(() => ({ exitCode: 1, stdout: '' }))
     open = (prs.exitCode === 0 ? parseOpenPrs(prs.stdout) : null) ?? open
   }
@@ -687,7 +696,7 @@ async function pollMerge($: EngineInterface) {
   const pending = run.prs.filter(p => p.estado === 'pendiente').map(p => p.num)
   const states = await Promise.all(
     pending.map(n =>
-      $.process.run(['gh', 'pr', 'view', n, '--json', 'state', '-q', '.state']).catch(() => ({ exitCode: 1, stdout: '' })),
+      runInRepo($, ['gh', 'pr', 'view', n, '--json', 'state', '-q', '.state']).catch(() => ({ exitCode: 1, stdout: '' })),
     ),
   )
   const merged = pending.filter((_, i) => states[i]?.exitCode === 0 && states[i]?.stdout.trim() === 'MERGED')
