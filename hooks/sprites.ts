@@ -657,12 +657,12 @@ const SPACE = ' '.codePointAt(0)!
 /**
  * Convierte una cuadrícula en las celdas empacadas que recibe el elemento Raster.
  * Cada celda junta dos píxeles verticales: ▀ con el de arriba como color y el de abajo como fondo.
- * Resultado: columns = WIDTH (18), rows = RASTER_ROWS (6).
+ * Resultado: columns = `width` (WIDTH, 18, o el ancho ya recortado por `cropGrid`), rows = RASTER_ROWS (6).
  */
-export function toRasterCells(grid: Grid): string {
+export function toRasterCells(grid: Grid, width: number = WIDTH): string {
   const numbers: number[] = []
   for (let y = 0; y < HEIGHT; y += 2) {
-    for (let x = 0; x < WIDTH; x++) {
+    for (let x = 0; x < width; x++) {
       const top = colorOf(grid[y]?.[x])
       const bottom = colorOf(grid[y + 1]?.[x])
       if (top !== null && bottom !== null) numbers.push(UPPER, top, bottom)
@@ -703,24 +703,6 @@ export function toSvg(grid: Grid, scale = 6): string {
   const w = WIDTH * scale
   const h = HEIGHT * scale
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${w} ${h}" width="${w}" height="${h}" shape-rendering="crispEdges">${rects.join('')}</svg>`
-}
-
-/** Cuadricula recortada a `width` columnas (ya recortada por `cropGrid`) como celdas de Raster; mismo empaque que `toRasterCells`. */
-export function toRasterCellsCropped(grid: Grid, width: number): string {
-  const numbers: number[] = []
-  for (let y = 0; y < HEIGHT; y += 2) {
-    for (let x = 0; x < width; x++) {
-      const top = colorOf(grid[y]?.[x])
-      const bottom = colorOf(grid[y + 1]?.[x])
-      if (top !== null && bottom !== null) numbers.push(UPPER, top, bottom)
-      else if (top !== null) numbers.push(UPPER, top, DEFAULT_COLOR)
-      else if (bottom !== null) numbers.push(LOWER, bottom, DEFAULT_COLOR)
-      else numbers.push(SPACE, DEFAULT_COLOR, DEFAULT_COLOR)
-    }
-  }
-  let bin = ''
-  for (const b of new Uint8Array(Uint32Array.from(numbers).buffer)) bin += String.fromCharCode(b)
-  return btoa(bin)
 }
 
 /** Reloj de arena de la espera: dos cuadros (arena arriba / abajo), 4 columnas por 6 pixeles. */

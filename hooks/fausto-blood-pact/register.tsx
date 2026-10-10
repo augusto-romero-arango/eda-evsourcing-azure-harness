@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import { RASTER_ROWS, ROLES, face, sprite, toRasterCellsCropped, waitingFace } from '../sprites'
+import { RASTER_ROWS, ROLES, face, sprite, toRasterCells, waitingFace } from '../sprites'
 import type { Role } from '../sprites'
 import { cropGrid, usedColumns } from '../logic'
 import type { BoardList, PipelineResult, PipelineRun } from '../types'
@@ -67,7 +67,7 @@ const MASCOT_COLS = usedColumns(MASCOT_GRIDS)
 const MASCOT_WIDTH = MASCOT_COLS.to - MASCOT_COLS.from + 1
 
 const mascotGrid = (pose: MascotPose, frame: 0 | 1) => cropGrid(sprite(pose.role, pose.state, frame), MASCOT_COLS)
-let isWorkingNow = false
+let isAnimating = false
 
 // La intencion on/off y la elegibilidad viven aqui: /clear no dispara session.start y reinicia los atoms.
 let isEligible = false
@@ -259,7 +259,7 @@ async function activate($: EngineInterface) {
   tickTimer?.cancel()
   // La mascota anima solo con corrida activa o con Claude trabajando; en reposo no hay re-render por segundo.
   tickTimer = $.clock.every(1000, () => {
-    if (isWorkingNow || Object.keys(seenRuns).length > 0) void update($, tickAtom, () => Math.floor(Date.now() / 1000))
+    if (isAnimating) void update($, tickAtom, () => Math.floor(Date.now() / 1000))
   })
   void refresh($)
 }
@@ -354,16 +354,17 @@ export const register: Register = on => {
     const runs = await read($, runsAtom)
     const results = await read($, resultsAtom)
     await read($, tickAtom)
-    isWorkingNow = Boolean(e.props.isWorking)
+    const isWorking = Boolean(e.props.isWorking)
     const sec = Math.floor(Date.now() / 1000)
     const active = activeRunOf(runs)
+    isAnimating = isWorking || active !== null
     const pose: MascotPose | null = active ? poseOfRun(active, await read($, lastEventAtom)) : poseOfResults(results)
     const grid = pose
       ? mascotGrid(pose, active ? (sec % 2 === 0 ? 0 : 1) : 0)
-      : cropGrid(waitingFace(face('normal'), isWorkingNow ? sec : null), MASCOT_COLS)
+      : cropGrid(waitingFace(face('normal'), isWorking ? sec : null), MASCOT_COLS)
     const mascot =
       'Raster' in elements ? (
-        <elements.Raster key="mefisto-mascota" columns={MASCOT_WIDTH} rows={RASTER_ROWS} cells={toRasterCellsCropped(grid, MASCOT_WIDTH)} />
+        <elements.Raster key="mefisto-mascota" columns={MASCOT_WIDTH} rows={RASTER_ROWS} cells={toRasterCells(grid, MASCOT_WIDTH)} />
       ) : (
         <Box width={MASCOT_WIDTH} />
       )
@@ -376,9 +377,9 @@ export const register: Register = on => {
       const visible = lines.slice(page * PAGE_ROWS, (page + 1) * PAGE_ROWS)
       return (
         <Box flexDirection="column" borderStyle="round" borderColor="claude" borderDimColor paddingX={1}>
-        <Box gap={2} alignItems="flex-start">
-          {mascot}
-          <Box flexDirection="column" width={body}>
+          <Box gap={2} alignItems="flex-start">
+            {mascot}
+            <Box flexDirection="column" width={body}>
               <Text bold color="claude">Corridas{` · ${runs.length} activas`}</Text>
               {visible.map(l => (
                 <Text key={l.key} color={l.color} wrap="truncate-end">{clip(l.text, body)}</Text>
@@ -398,8 +399,8 @@ export const register: Register = on => {
                     onPress={() => void update($, pageAtom, () => (page + 1) % pages)} />
                 )}
               </Box>
+            </Box>
           </Box>
-        </Box>
         </Box>
       )
     }
