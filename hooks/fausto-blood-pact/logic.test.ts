@@ -20,6 +20,12 @@ import {
   pageOf,
   parseNextOrder,
   rowText,
+  answerText,
+  footerRestOf,
+  launchKeysText,
+  parseLaunchArg,
+  planIssue,
+  planLaunch,
   transcriptPathOf,
 } from './logic'
 
@@ -36,7 +42,7 @@ test('parseNextOrder lee items, bloqueados y ciclos', () => {
   expect(list.items[0]?.number).toBe(7)
   expect(list.blockedCount).toBe(2)
   expect(list.cycleCount).toBe(1)
-  expect(footerOf(list)).toBe('2 bloqueados · 1 en ciclo')
+  expect(footerOf(list)).toBe('1 sequential · 5-9 uno · 2 bloqueados · 1 en ciclo')
 })
 
 test('parseNextOrder con exit 1 y sin items no es error', () => {
@@ -138,4 +144,89 @@ test('started compacto de los pipelines y next_probe en UTC', () => {
   const d = new Date(Date.parse(probe))
   expect(clockOf(probe)).toBe(`${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`)
   expect(clockOf('nada')).toBe('nada')
+})
+
+const board = (over: Record<string, unknown> = {}) =>
+  parseNextOrder(
+    0,
+    JSON.stringify({
+      items: [
+        { number: 7, title: 'A', tipo: 'tooling' },
+        { number: 8, title: 'B', tipo: 'feature' },
+        { number: 9, title: 'C', tipo: 'infra' },
+        { number: 10, title: 'D', tipo: null },
+      ],
+      blocked: [{ number: 1 }],
+      launch: '/mefisto:sequential 7 8',
+      infra: [],
+      parallel: { issues: [7, 8], launch: '/mefisto:parallel 7 8' },
+      ...over,
+    }),
+    '',
+  )
+
+test('parseNextOrder lee infra y parallel', () => {
+  const l = board({ infra: [9] })
+  expect(l.infra).toEqual([9])
+  expect(l.parallel?.launch).toBe('/mefisto:parallel 7 8')
+})
+
+test('1 y 2 escriben la linea de next-order sin infra', () => {
+  expect(planLaunch(board(), 'sequential')).toEqual({ kind: 'fill', text: '/mefisto:sequential 7 8' })
+  expect(planLaunch(board(), 'parallel')).toEqual({ kind: 'fill', text: '/mefisto:parallel 7 8' })
+})
+
+test('linea null: no actua ni se muestra', () => {
+  const l = board({ launch: null, parallel: { issues: [], launch: null } })
+  expect(planLaunch(l, 'sequential').kind).toBe('none')
+  expect(planLaunch(l, 'parallel').kind).toBe('none')
+  expect(launchKeysText(l)).toBe('')
+})
+
+test('con infra, 1 y 2 abren el dialogo previo con tres opciones', () => {
+  const plan = planLaunch(board({ infra: [9, 11] }), 'parallel')
+  if (plan.kind !== 'ask') throw new Error('se esperaba dialogo')
+  expect(plan.options.map(o => o.label)).toEqual(['Infra primero', 'Seguir sin infra', 'Cancelar'])
+  expect(answerText(plan.options, 'Infra primero')).toBe('/mefisto:infra 9')
+  expect(answerText(plan.options, 'Seguir sin infra')).toBe('/mefisto:parallel 7 8')
+  expect(answerText(plan.options, 'Cancelar')).toBe(null)
+})
+
+test('cerrar el dialogo o texto libre no escriben nada', () => {
+  const plan = planLaunch(board({ infra: [9] }), 'sequential')
+  if (plan.kind !== 'ask') throw new Error('se esperaba dialogo')
+  expect(answerText(plan.options, null)).toBe(null)
+  expect(answerText(plan.options, 'infra primero')).toBe(null)
+  expect(answerText(plan.options, 'lo que sea')).toBe(null)
+})
+
+test('tipo -> opciones de un solo issue', () => {
+  const item = (tipo: string | null) => ({ number: 5, title: 't', tipo, after: [], hasDepsSection: true })
+  const texts = (tipo: string | null) => {
+    const p = planIssue(item(tipo))
+    return p.kind === 'ask' ? p.options.map(o => `${o.label}=${o.text}`) : p
+  }
+  for (const t of ['feature', 'refactor', 'projection']) {
+    expect(texts(t)).toEqual(['Con merge=/mefisto:sequential 5', 'Solo PR=/mefisto:implement 5', 'Cancelar=null'])
+  }
+  expect(texts('tooling')).toEqual(['Con merge=/mefisto:sequential 5', 'Solo PR=/mefisto:tooling 5', 'Cancelar=null'])
+  expect(texts('infra')).toEqual(['Solo PR=/mefisto:infra 5', 'Cancelar=null'])
+  expect(planIssue(item(null)).kind).toBe('none')
+  expect(planIssue(item('docs')).kind).toBe('none')
+})
+
+test('pie: teclas, infra y excluidos; filas con prefijo', () => {
+  const l = board({ infra: [9] })
+  expect(footerOf(l)).toBe('1 sequential · 2 parallel 2 · 5-9 uno · infra: #9 · 1 bloqueados')
+  expect(footerRestOf(l, true)).toBe(' · 5-9 uno · infra: #9 · 1 bloqueados')
+  expect(rowText(l.items[0]!, 1, 3, 20, 5)).toBe('5: 1.  #7 [tooling] A')
+})
+
+test('lanzar: sin argumento es 1, un numero fuera de los lanzables lo dice', () => {
+  const l = board()
+  expect(parseLaunchArg('', l)).toEqual({ kind: 'launch', launch: 'sequential' })
+  expect(parseLaunchArg(' parallel', l)).toEqual({ kind: 'launch', launch: 'parallel' })
+  expect(parseLaunchArg('8', l)).toEqual({ kind: 'issue', issue: 8 })
+  expect(parseLaunchArg('99', l).kind).toBe('invalid')
+  expect(parseLaunchArg('x', l).kind).toBe('invalid')
 })

@@ -11,6 +11,10 @@ export type BoardList = {
   blockedCount: number
   cycleCount: number
   launch: string | null
+  /** Numeros de los `tipo:infra` lanzables, en el orden de items. */
+  infra: number[]
+  /** Lote de `/mefisto:parallel` calculado por next-order. */
+  parallel: { issues: number[]; launch: string | null } | null
   error: string | null
 }
 
