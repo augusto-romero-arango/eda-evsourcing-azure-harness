@@ -14,6 +14,22 @@ export type BoardList = {
   error: string | null
 }
 
+export type PipelineKind = 'tdd' | 'tooling' | 'infra'
+
+/** Un `pipeline-status-*.json` ya parseado; lo que la consola muestra de una corrida. */
+export type PipelineRun = {
+  issue: number
+  pipeline: PipelineKind
+  variant: string | null
+  started: string
+  stage: string
+  state: string
+  nextProbe: string | null
+}
+
+/** Una corrida terminada pendiente de descartar: `✗ <stage>` o `✓ PR #X`. */
+export type PipelineResult = { key: string; issue: number; pipeline: PipelineKind; text: string; ok: boolean }
+
 export type BoardTab = 'borrador' | 'listo'
 
 /** Lo que el planner esta haciendo: refinar un borrador o explorar una idea. */
@@ -50,6 +66,8 @@ declare module 'claude-code' {
       pactIsActive: boolean
       pactList: BoardList | null
       pactPage: number
+      pactRuns: PipelineRun[]
+      pactResults: PipelineResult[]
     }
   }
 }
