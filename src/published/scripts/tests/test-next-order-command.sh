@@ -24,8 +24,8 @@ metadata="$(awk 'NR == 1 { next } $0 == "---" { exit } { print }' "$SOURCE")"
 if printf '%s' "$metadata" | jq -e '.kind == "command" and .id == "next-order" and .profile == "fast" and (keys | sort) == ["description", "id", "kind", "profile"]' >/dev/null; then pass 'metadata sin arguments, agent ni capabilities'; else fail 'metadata neutral invalida'; fi
 body="$(awk 'NR == 1 { next } $0 == "---" && !seen { seen=1; next } seen { print }' "$SOURCE")"
 contains "$body" '{{mefisto:assert-consumer-repo}}' 'guard consumidor presente'
-contains "$body" '{{mefisto:run next-order.sh --launch-command "/mefisto:sequential"}}' 'invocacion neutral del script'
-contains "$body" 'modo `oleadas` del agente `planner`' 'remite al planner por id'
+contains "$body" '{{mefisto:run next-order.sh --launch-command "/mefisto:sequential" --parallel-command "/mefisto:parallel"}}' 'invocacion neutral del script'
+contains "$body" 'El lote parallel lo calcula el script' 'delega el lote parallel al script'
 contains "$body" 'ADVERTENCIA' 'conserva la advertencia de universo truncado'
 contains "$body" '$ARGUMENTS' 'avisa que ignora argumentos'
 contains "$body" 'solo lectura' 'regla de solo lectura'
@@ -35,8 +35,8 @@ echo '[salidas] adaptadores y mirror'
 for file in "$CLAUDE" "$OPENCODE"; do [ -f "$file" ] && pass "existe ${file#"$REPO_ROOT/"}" || fail "falta ${file#"$REPO_ROOT/"}"; done
 claude_body="$(< "$CLAUDE")"
 opencode_body="$(< "$OPENCODE")"
-contains "$claude_body" '"${MEFISTO_PACKAGE_ROOT}/scripts/next-order.sh" --launch-command "/mefisto:sequential"' 'Claude invoca next-order.sh'
-contains "$opencode_body" '"${MEFISTO_PACKAGE_ROOT}/scripts/next-order.sh" --launch-command "/mefisto:sequential"' 'OpenCode invoca next-order.sh'
+contains "$claude_body" '"${MEFISTO_PACKAGE_ROOT}/scripts/next-order.sh" --launch-command "/mefisto:sequential" --parallel-command "/mefisto:parallel"' 'Claude invoca next-order.sh'
+contains "$opencode_body" '"${MEFISTO_PACKAGE_ROOT}/scripts/next-order.sh" --launch-command "/mefisto:sequential" --parallel-command "/mefisto:parallel"' 'OpenCode invoca next-order.sh'
 for f in "$claude_body" "$opencode_body"; do
     absent "$f" 'claude --agent' 'sin claude --agent'
     absent "$f" '{{mefisto:' 'sin directivas sin resolver'

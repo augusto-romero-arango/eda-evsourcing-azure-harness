@@ -19,8 +19,17 @@
 # runtime la pasa), y sin el flag cae al default '/mefisto:sequential' -- el
 # unico adaptador publicado hoy.
 #
+# Diferencia 2 con la copia interna (#2190): este lado separa los 'tipo:infra'
+# y los issues sin tipo de las lineas de batch (batch-pipeline.sh y
+# parallel-pipeline.sh los saltan) y calcula un lote para '/mefisto:parallel'
+# (funcion compute_parallel_batch, mas abajo). En Mefisto todo es 'tipo:tooling'
+# y no existe '/mefisto-parallel', asi que esto no se porta a la copia interna.
+# El comando del lote tambien llega por flag (MEF-ADR-0050):
+# '--parallel-command "<texto>"', default '/mefisto:parallel'.
+#
 # Uso:
 #   scripts/next-order.sh [--refinement] [--json] [--launch-command "<texto>"]
+#                         [--parallel-command "<texto>"]
 #   (sin flags: opera sobre TODO el universo 'estado:listo' abierto del repo
 #   consumidor y emite texto)
 #
@@ -38,14 +47,28 @@
 #                 reason: external|indirect), cycles[][] y launch. 'tipo' es el
 #                 label 'tipo:*' sin prefijo, o null. 'launch' es
 #                 '<--launch-command><numeros>' en modo lanzamiento, y null en
-#                 --refinement o sin items.
+#                 --refinement o sin items. 'launch' EXCLUYE los 'tipo:infra' y
+#                 los issues sin tipo (los motores los saltan); 'items[]' los
+#                 sigue listando. 'infra' son los numeros de los 'tipo:infra'
+#                 lanzables, en el orden de items ([] si no hay). 'parallel' es
+#                 { issues, launch } (null en --refinement): el lote para
+#                 /mefisto:parallel, por dependencias declaradas -- entra el
+#                 lanzable sin ninguna dependencia abierta (grado de entrada
+#                 inicial 0 en Kahn), que no es infra ni sin tipo, con a lo sumo
+#                 un 'tipo:projection' (la primera del orden, MEF-ADR-0034);
+#                 'launch' es '<--parallel-command><numeros>', o null con menos
+#                 de 2 issues. No se analizan archivos.
+#
+# En texto, con 'tipo:infra' lanzables, una linea antes de la de lanzamiento
+# sugiere '/mefisto:infra #N'; con lote parallel de 2+ issues, su linea va
+# despues de la de sequential.
 #
 # Cada linea del orden incluye el label 'tipo:' del issue ('N. #123
 # [tipo:feature] Titulo -- tras #A'): el consumidor lo necesita para decidir
 # si un tramo va a /mefisto:sequential o podria ir a /mefisto:parallel en su
-# lugar. Este script NO propone oleadas paralelas -- calcula un unico orden
-# lineal; agrupar issues sin dependencia mutua en oleadas sigue siendo el modo
-# 'oleadas' del planner publicado.
+# lugar. El orden es un unico orden lineal; el lote parallel es solo por
+# dependencias declaradas. El modo 'oleadas' del planner publicado usa otro
+# criterio (matriz de conflictos por archivo) y no se altera.
 #
 # Exit codes:
 #   0 -- hay al menos un issue lanzable (el orden no quedo vacio)
@@ -110,9 +133,10 @@ fi
 unset _REPO_TOP
 
 LAUNCH_COMMAND="/mefisto:sequential"
+PARALLEL_COMMAND="/mefisto:parallel"
 MODE="launch"
 AS_JSON=0
-USAGE='Uso: scripts/next-order.sh [--refinement] [--json] [--launch-command "<texto>"]'
+USAGE='Uso: scripts/next-order.sh [--refinement] [--json] [--launch-command "<texto>"] [--parallel-command "<texto>"]'
 
 while [ "$#" -gt 0 ]; do
     case "$1" in
@@ -130,6 +154,20 @@ while [ "$#" -gt 0 ]; do
                 exit 2
             fi
             LAUNCH_COMMAND="$2"
+            shift 2
+            ;;
+        --parallel-command)
+            if [ "$#" -lt 2 ]; then
+                echo "ERROR: --parallel-command requiere un argumento." >&2
+                echo "$USAGE" >&2
+                exit 2
+            fi
+            if [ -z "$2" ]; then
+                echo "ERROR: --parallel-command no admite texto vacio (la linea del lote quedaria sin comando)." >&2
+                echo "$USAGE" >&2
+                exit 2
+            fi
+            PARALLEL_COMMAND="$2"
             shift 2
             ;;
         *)
@@ -400,10 +438,51 @@ done
 
 # --- Salida ------------------------------------------------------------------
 
+# Los motores (batch-pipeline.sh, parallel-pipeline.sh) saltan 'tipo:infra' y
+# los issues sin tipo: no entran a las lineas de batch. 'items' los conserva.
 LAUNCH_NUMS=""
+INFRA_NUMS=""
 for idx in ${ORDER[@]+"${ORDER[@]}"}; do
-    LAUNCH_NUMS="$LAUNCH_NUMS ${NUM[idx]}"
+    case "${TIPO_PLAIN[idx]}" in
+        infra) INFRA_NUMS="$INFRA_NUMS ${NUM[idx]}" ;;
+        "") ;;
+        *) LAUNCH_NUMS="$LAUNCH_NUMS ${NUM[idx]}" ;;
+    esac
 done
+
+# Lote para /mefisto:parallel, solo por dependencias declaradas (#2190). Recibe
+# el grafo ya construido (ORDER, DEPS_IN, TIPO_PLAIN) y no modifica nada: deja
+# los numeros del lote en PARALLEL_NUMS. Entra el lanzable sin aristas
+# intra-universo (DEPS_IN vacio = grado de entrada inicial 0), que no es infra
+# ni sin tipo, con a lo sumo un 'projection' (MEF-ADR-0034: comparten el worker
+# de proyecciones). Orden de items.
+PARALLEL_NUMS=""
+compute_parallel_batch() {
+    local idx has_projection=0 t deps
+    PARALLEL_NUMS=""
+    for idx in ${ORDER[@]+"${ORDER[@]}"}; do
+        deps="${DEPS_IN[idx]}"
+        [ -n "${deps// /}" ] && continue
+        t="${TIPO_PLAIN[idx]}"
+        case "$t" in
+            ""|infra) continue ;;
+            projection)
+                [ "$has_projection" -eq 1 ] && continue
+                has_projection=1
+                ;;
+        esac
+        PARALLEL_NUMS="$PARALLEL_NUMS ${NUM[idx]}"
+    done
+}
+
+PARALLEL_LINE=""
+if [ "$MODE" = "launch" ]; then
+    compute_parallel_batch
+    # shellcheck disable=SC2086
+    [ "$(set -- $PARALLEL_NUMS; echo $#)" -ge 2 ] && PARALLEL_LINE="$PARALLEL_COMMAND$PARALLEL_NUMS"
+else
+    INFRA_NUMS=""
+fi
 
 if [ "$AS_JSON" -eq 1 ]; then
     ITEMS_TSV=""
@@ -419,7 +498,10 @@ if [ "$AS_JSON" -eq 1 ]; then
         --arg items "$ITEMS_TSV" \
         --arg blocked "$BLOCKED_TSV" \
         --arg cycles "$CYCLE_LINES" \
-        --arg launch "$LAUNCH_LINE" '
+        --arg launch "$LAUNCH_LINE" \
+        --arg infra "$INFRA_NUMS" \
+        --arg pnums "$PARALLEL_NUMS" \
+        --arg pline "$PARALLEL_LINE" '
         def lines: split("\n") | map(select(length > 0));
         def nums: split(" ") | map(select(length > 0) | tonumber);
         {
@@ -436,7 +518,12 @@ if [ "$AS_JSON" -eq 1 ]; then
             number: (.[0] | tonumber), by: (.[1] | tonumber), reason: .[2]
           })),
           cycles: ($cycles | lines | map(nums)),
-          launch: (if $launch == "" then null else $launch end)
+          launch: (if $launch == "" then null else $launch end),
+          infra: ($infra | nums),
+          parallel: (if $mode != "launch" then null else {
+            issues: ($pnums | nums),
+            launch: (if $pline == "" then null else $pline end)
+          } end)
         }'
     [ "${#ORDER[@]}" -gt 0 ] && exit 0
     exit 1
@@ -465,7 +552,17 @@ if [ "${#ORDER[@]}" -gt 0 ]; then
     if [ "$MODE" = "refinement" ]; then
         echo "Siguiente a refinar: #${NUM[${ORDER[0]}]}"
     else
-        printf '%s\n' "$LAUNCH_COMMAND$LAUNCH_NUMS"
+        if [ -n "$INFRA_NUMS" ]; then
+            INFRA_HINT=""
+            for n in $INFRA_NUMS; do INFRA_HINT="$INFRA_HINT #$n"; done
+            echo "Infra lanzable (desarrollala antes, sin exigirlo): /mefisto:infra${INFRA_HINT}"
+        fi
+        if [ -n "$LAUNCH_NUMS" ]; then
+            printf '%s\n' "$LAUNCH_COMMAND$LAUNCH_NUMS"
+        else
+            printf '%s\n' "$LAUNCH_COMMAND (sin issues lanzables)"
+        fi
+        [ -n "$PARALLEL_LINE" ] && printf '%s\n' "$PARALLEL_LINE"
     fi
     exit 0
 fi
