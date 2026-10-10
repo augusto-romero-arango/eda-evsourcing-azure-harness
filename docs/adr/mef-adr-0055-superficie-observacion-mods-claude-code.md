@@ -2,7 +2,7 @@
 
 - **Fecha**: 2026-10-08
 - **Estado**: aceptado
-- **Aplica a**: la consola de operacion `mefisto-divine-wager` (lado interno de MEF-ADR-0019) y el tablero del planner en sus dos lados, interno y publicado (decision 8), con los nombres de la decision 9. La consola publicada para el consumidor (nombre reservado en la decision 9) y los issues que genera el reviewer quedan para enmiendas posteriores. Se apoya en MEF-ADR-0049 (adaptadores por runtime) y en MEF-ADR-0050 (neutralidad de toda operacion), y reserva el identificador `0055` (MEF-ADR-0030).
+- **Aplica a**: la consola de operacion `mefisto-divine-wager` (lado interno de MEF-ADR-0019) y el tablero del planner en sus dos lados, interno y publicado (decision 8), con los nombres de la decision 9. La consola publicada `fausto-blood-pact` (decision 10) tambien aplica. Los issues que genera el reviewer y el modo de lanzamiento sin pane en el consumidor quedan para enmiendas posteriores. Se apoya en MEF-ADR-0049 (adaptadores por runtime) y en MEF-ADR-0050 (neutralidad de toda operacion), y reserva el identificador `0055` (MEF-ADR-0030).
 
 ## Contexto
 
@@ -29,8 +29,8 @@ Este ADR fija cuatro cosas: la regla de diseno de los mods del propio Mefisto, s
 
 ### Que queda fuera de este ADR
 
-- Una consola publicada para el consumidor (`/tooling`, `/implement`, `/parallel`, `/infra`, `/sequential`). Del lado publicado solo entra el tablero del planner.
-- La lista de issues que el reviewer crea por reglas violadas, con su accion de cierre. Es exclusiva del lado consumidor (`create_reviewer_tests_review_issue`).
+- La lista de issues que el reviewer crea por reglas violadas, con su accion de cierre. Es exclusiva del lado consumidor (`create_reviewer_tests_review_issue`) y queda fuera hasta su propio incremento.
+- El modo de lanzamiento sin pane en el consumidor: la decision 6 es solo del lado interno y queda fuera hasta su propio incremento.
 - Una superficie equivalente para OpenCode, cuyos plugins de TUI v2 no declaran estabilidad.
 
 ## Decision
@@ -141,7 +141,7 @@ nunca colisionan aunque ambos carguen en el repo de Mefisto.
 | Superficie | Sesion donde aparece | Interno (mod · comando) | Publicado (modulo · comando) |
 |---|---|---|---|
 | Tablero del planner | la del planner | `mefisto-planner-board` · `/mefisto-planner-board` | `fausto-board` en `hooks/` · `/fausto-board` |
-| Consola de operacion | toda sesion interactiva que no es la del planner | `mefisto-divine-wager` · `/mefisto-divine-wager` | `fausto-blood-pact` · `/fausto-blood-pact` (nombre reservado: no existe todavia) |
+| Consola de operacion | toda sesion interactiva que no es la del planner | `mefisto-divine-wager` · `/mefisto-divine-wager` | `fausto-blood-pact` · `/fausto-blood-pact` |
 
 - **El tablero del planner** solo aplica a la sesion del planner: no es un "board" generico. El planner es Fausto
   (su mascota lo dibuja), asi que el publicado es `fausto-board` sin repetir `planner`.
@@ -153,6 +153,17 @@ nunca colisionan aunque ambos carguen en el repo de Mefisto.
 - **El tablero publicado no se registra ni se activa en el repo de Mefisto** (manifiesto `.claude-plugin/plugin.json`
   con `name: mefisto` en la raiz): ahi su `next-order.sh` se niega a correr y el tablero es el interno.
 
+### 10. Consola publicada `fausto-blood-pact`
+
+La consola de operacion del lado publicado se construye por incrementos y se rige por estas reglas:
+
+- **Activacion**: solo en sesiones interactivas del consumidor que no son la del planner (`claude --agent mefisto:planner`). Nunca en el repo de Mefisto ni en sesiones `-p`.
+- **Ubicacion**: modulo propio en `hooks/fausto-blood-pact/`, como segunda entrada de `modules` del `hooks/hooks.json` que genera el adaptador Claude (decision 4).
+- **Decisiones que aplican**: la 1 (lector puro del contrato de estado) y la 2 (las acciones delegan en skills publicados existentes). Opera solo sobre archivos del consumidor (MEF-ADR-0019) y es observacion; la operacion sigue neutral (MEF-ADR-0050).
+- **Independencia**: es independiente de `mefisto-divine-wager`. No comparten codigo ni hay obligacion de sincronizarlos, igual que los dos tableros (decision 8).
+- **Regla incremental**: cada capacidad se construye en su propio issue. Se mergea, se publica y se verifica en un consumidor antes de abrir la siguiente; lo que falle se itera con issues nuevos.
+- **Catalogo de capacidades**: vive en `hooks/fausto-blood-pact/README.md`, no en este ADR, para no enmendarlo en cada incremento.
+
 ## Consecuencias
 
 - La sesion de ejecucion muestra el avance y ofrece el merge sin cambiar de pane, y la fila de herdr baja de tres panes a dos.
@@ -162,6 +173,7 @@ nunca colisionan aunque ambos carguen en el repo de Mefisto.
 
 ## Control de cambios
 
+- 2026-10-09: decision 10 nueva (consola publicada `fausto-blood-pact`: activacion, ubicacion, independencia y regla incremental); "Aplica a" y "Que queda fuera de este ADR" la incluyen; decision 9 retira "nombre reservado: no existe todavia" (issue #2179).
 - 2026-10-09: decision 1, decision 5 y Consecuencias: se retira el skill interno de dashboard como segundo lector de los archivos de estado; sin el mod la observacion es el pane de herdr, la sesion tmux o el panel de logs de OpenCode (issue #2161).
 - 2026-10-09: decision 9 (nombres): nombres desde el *Fausto*; `mefisto-console` pasa a `mefisto-divine-wager`, el tablero publicado `planner-board` pasa a `fausto-board` y se reserva `fausto-blood-pact` para la consola publicada.
 - 2026-10-09: decision 9 (nombres): `mefisto-monitor` pasa a `mefisto-console`, consola de operacion; los tableros del planner registran `/mefisto-planner-board` (interno) y `/planner-board` (publicado) en vez de `/mefisto-board`; el publicado no se activa en el repo de Mefisto.
