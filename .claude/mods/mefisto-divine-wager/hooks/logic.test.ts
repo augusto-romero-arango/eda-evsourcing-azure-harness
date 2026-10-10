@@ -130,6 +130,20 @@ test('detecta el lanzamiento del batch y sus issues en orden', async () => {
   expect(batchIssuesOf('./.claude/scripts/mefisto-tmux-pipeline.sh --tooling 2059')).toBe(null)
 })
 
+test('la redireccion 2>&1 tras el batch no cuenta como issue', async () => {
+  expect(batchIssuesOf('MEFISTO_RUNTIME=claude ./.claude/scripts/mefisto-tmux-pipeline.sh --batch 2260 2267 2>&1 | tail -15')).toEqual(['2260', '2267'])
+  expect(batchIssuesOf('./.claude/scripts/mefisto-tmux-pipeline.sh --batch 8 9; echo fin')).toEqual(['8', '9'])
+  expect(batchIssuesOf('./.claude/scripts/mefisto-tmux-pipeline.sh --batch 8 9 && echo ok')).toEqual(['8', '9'])
+})
+
+test('el estado de un batch arrancado poco antes de que vuelva la llamada no se descarta', async () => {
+  const prev = { issues: [], state: 'running' as const, current: null, stopRequested: false, holdSeconds: 0, startedMs: 0, finishedMs: null, stats: {} }
+  const raw = JSON.stringify({ started: '20261010-143424', state: 'completed', current: null, issues: [{ issue: '2260', status: 'completado (PR #2268 mergeado)', pr: '2268' }] })
+  const launchedMs = stampToMs('20261010-143424') - 5_000
+  expect(batchFromStatus(raw, prev, launchedMs).state).toBe('completed')
+  expect(batchFromStatus(raw, prev, stampToMs('20261010-143424') + 120_000).state).toBe('running')
+})
+
 test('lee el estado del batch e ignora el de un batch anterior', async () => {
   const prev = { issues: [], state: 'running', current: null, stopRequested: false, holdSeconds: 0, startedMs: 0, finishedMs: null, stats: {} } as const
   const raw = JSON.stringify({

@@ -703,17 +703,20 @@ export const register: Register = on => {
       }
       return ran
     }
+    // El instante se toma antes de correr: sin pane, la llamada vuelve cuando el batch ya avanzo (o por
+    // timeout), y un estado publicado antes de esa vuelta se descartaria como de un batch anterior.
+    const launchedMs = Date.now() - 5_000
     const batchIssues = isInteractive ? batchIssuesOf(e.command) : null
     if (batchIssues && batchIssues.length > 0) {
       const ran = await next({ ...e, command: withModUi(e.command) })
-      if (ran.deny === undefined && ran.isError !== true) await watchBatch($, batchIssues, Date.now() - 5_000)
+      if (ran.deny === undefined && ran.isError !== true) await watchBatch($, batchIssues, launchedMs)
       return ran
     }
     const issue = isInteractive ? toolingIssueOf(e.command) : null
     if (!issue) return next(e)
     const ran = await next({ ...e, command: withModUi(e.command) })
     if (ran.deny === undefined && ran.isError !== true) {
-      await watch($, issue, Date.now() - 5_000)
+      await watch($, issue, launchedMs)
     }
     return ran
   })
