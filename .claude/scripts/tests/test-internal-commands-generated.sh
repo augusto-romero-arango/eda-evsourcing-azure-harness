@@ -27,9 +27,10 @@
 #         uno de los cinco comandos (CA-2).
 #   [ca-5] Ninguna fuente cita `CLAUDE.md` como referencia de gobierno: si
 #         aparece, la linea debe describirlo como shim de compatibilidad.
-#   [command-path] mefisto-bitacora encadena mefisto-merge via
+#   [command-path] mefisto-tooling-verbose delega en mefisto-tooling via
 #         `{{mefisto:command-path}}`: cada salida apunta a su propio
-#         directorio de comandos (CA-4).
+#         directorio de comandos (CA-4). mefisto-bitacora ya no lee
+#         mefisto-merge en ninguna salida (issue #2260).
 #   [opencode-cli] Si el CLI `opencode` esta instalado, `opencode debug
 #         config` corrido en la raiz del repo lista los cinco ids bajo
 #         `.command`; si no esta instalado, se omite con aviso (CA-6).
@@ -254,19 +255,26 @@ for id in $COMMAND_IDS $EXEC_COMMAND_IDS mefisto-next-order; do
 done
 
 echo ""
-echo "[command-path] mefisto-bitacora encadena mefisto-merge apuntando al propio directorio de cada runtime (CA-4)"
-claude_bitacora="$REPO_ROOT/.claude/commands/mefisto-bitacora.md"
-opencode_bitacora="$REPO_ROOT/.opencode/commands/mefisto-bitacora.md"
-if grep -qF '.claude/commands/mefisto-merge.md' "$claude_bitacora" 2>/dev/null; then
-    pass "mefisto-bitacora: salida Claude apunta a .claude/commands/mefisto-merge.md"
+echo "[command-path] mefisto-tooling-verbose apunta a mefisto-tooling en el propio directorio de cada runtime (CA-4)"
+claude_verbose="$REPO_ROOT/.claude/commands/mefisto-tooling-verbose.md"
+opencode_verbose="$REPO_ROOT/.opencode/commands/mefisto-tooling-verbose.md"
+if grep -qF '.claude/commands/mefisto-tooling.md' "$claude_verbose" 2>/dev/null; then
+    pass "mefisto-tooling-verbose: salida Claude apunta a .claude/commands/mefisto-tooling.md"
 else
-    fail "mefisto-bitacora: salida Claude NO apunta a .claude/commands/mefisto-merge.md"
+    fail "mefisto-tooling-verbose: salida Claude NO apunta a .claude/commands/mefisto-tooling.md"
 fi
-if grep -qF '.opencode/commands/mefisto-merge.md' "$opencode_bitacora" 2>/dev/null; then
-    pass "mefisto-bitacora: salida OpenCode apunta a .opencode/commands/mefisto-merge.md"
+if grep -qF '.opencode/commands/mefisto-tooling.md' "$opencode_verbose" 2>/dev/null; then
+    pass "mefisto-tooling-verbose: salida OpenCode apunta a .opencode/commands/mefisto-tooling.md"
 else
-    fail "mefisto-bitacora: salida OpenCode NO apunta a .opencode/commands/mefisto-merge.md"
+    fail "mefisto-tooling-verbose: salida OpenCode NO apunta a .opencode/commands/mefisto-tooling.md"
 fi
+for f in "$REPO_ROOT/.claude/commands/mefisto-bitacora.md" "$REPO_ROOT/.opencode/commands/mefisto-bitacora.md"; do
+    if grep -qF 'commands/mefisto-merge.md' "$f" 2>/dev/null; then
+        fail "mefisto-bitacora: ${f#$REPO_ROOT/} todavia lee mefisto-merge (issue #2260)"
+    else
+        pass "mefisto-bitacora: ${f#$REPO_ROOT/} no lee mefisto-merge (issue #2260)"
+    fi
+done
 
 echo ""
 echo "[opencode-cli] 'opencode debug config' lista los diez comandos (se omite si el CLI no esta instalado)"
