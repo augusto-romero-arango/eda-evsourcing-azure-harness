@@ -52,6 +52,12 @@ export type Historian = { startedMs: number; finishedMs: number | null }
 /** Un /mefisto-release en esta sesion: en reposo mientras se prepara, despegando mientras corre su script. */
 export type Release = { phase: 'reposo' | 'despegando'; startedMs: number; finishedMs: number | null }
 
+/** Un PR de la cinta de /mefisto-merge: sale de la lista al quedar mergeado; si su merge falla queda con ✗. */
+export type MergePr = { num: string; title: string; estado: 'pendiente' | 'mergeado' | 'fallido' }
+
+/** Un /mefisto-merge en esta sesion: los PRs que cose y cuando termino. */
+export type MergeRun = { prs: MergePr[]; startedMs: number; finishedMs: number | null }
+
 export type LogKind = 'start' | 'tool' | 'text' | 'fail' | 'done'
 
 export type LogLine = { ts: string; kind: LogKind; text: string }
@@ -72,6 +78,7 @@ declare module 'claude-code' {
       hold: Hold | null
       historian: Historian | null
       release: Release | null
+      merge: MergeRun | null
     }
   }
 }

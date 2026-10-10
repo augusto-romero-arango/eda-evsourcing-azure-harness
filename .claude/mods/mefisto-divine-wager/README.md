@@ -49,6 +49,13 @@ sesiones `-p` no los cargan. Para probar una copia suelta: `claude --plugin-dir 
 - Mientras corre `/mefisto-release` (lanzado con `4` o escrito a mano), la banda muestra un cohete: en reposo sobre
   su plataforma mientras se prepara, despegando con llama mientras corre `mefisto-release.sh`, y `release terminado`
   al cerrar el turno.
+- Mientras corre `/mefisto-merge` (lanzado con `2`, con `1` desde la corrida o escrito a mano), la banda de espera
+  muestra la cinta: el diablito cose con su aguja el hilo de la rama y el de `main`, `cosiendo N PRs MM:SS` y una
+  linea `● #N título` por PR pendiente (con `--all`, los abiertos sin los de field notes). Un PR sale de la lista al
+  quedar mergeado: lo dice la salida del Bash (`gh pr merge N` con exit 0, o el aviso de `gh`) y, como respaldo,
+  `gh pr view N --json state` cada 5 s; si su merge falla queda con `✗`. Al terminar el turno lo que siga pendiente
+  cuenta como fallido, los hilos quedan fundidos y la cabecera dice `N mergeados` (y los fallidos); se limpia sola
+  a los pocos segundos.
 - Si un agente espera por rate limit (la ultima linea de `events.log` es un `[hold]`), la banda de la corrida y la
   del sequential lo dicen: `en espera por RATE_LIMIT · próxima sonda HH:MM · techo HH:MM`.
 - Durante la corrida la misma banda muestra la mascota del agente activo (animada), issue, stage, tiempo, los

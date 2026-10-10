@@ -235,7 +235,7 @@ export const EMOTIONS: Record<Emotion, readonly [Grid, Grid]> = (() => {
   }
 })()
 
-export type Role = 'desarrollador' | 'tester' | 'revisor' | 'planner' | 'infraestructura' | 'historiador' | 'release'
+export type Role = 'desarrollador' | 'tester' | 'revisor' | 'planner' | 'infraestructura' | 'historiador' | 'release' | 'merge'
 
 export interface RoleState {
   /** Cara que usa este estado. */
@@ -689,6 +689,51 @@ export const ROLES: Record<Role, Record<string, RoleState>> = (() => {
     'GGGGG             ',
   ]
 
+  // Merge · la aguja cose el hilo de la rama (azul) y el de main (verde) en uno: la puntada sube y baja mientras
+  // /mefisto-merge trabaja; en listo los hilos quedan fundidos en uno solo, con destellos (mods internos)
+  const merge_cosiendo_A: Grid = [
+    'U V               ',
+    'U V               ',
+    ' UV               ',
+    '  G               ',
+    '  G               ',
+    '  V               ',
+    '  V               ',
+    '  V               ',
+    '  V               ',
+    '  V               ',
+    '  V               ',
+    '                  ',
+  ]
+  const merge_cosiendo_B: Grid = [
+    'U V               ',
+    'U V               ',
+    ' UV               ',
+    '  y               ',
+    '  V               ',
+    '  G               ',
+    '  G               ',
+    '  V               ',
+    '  V               ',
+    '  V               ',
+    '  V               ',
+    '                  ',
+  ]
+  const merge_listo_A: Grid = [
+    'y                 ',
+    '  V               ',
+    '  V               ',
+    '  V               ',
+    '  V               ',
+    ' yVy              ',
+    '  V               ',
+    '  V               ',
+    '  V               ',
+    '  V               ',
+    '  V               ',
+    '                  ',
+  ]
+
   return {
     desarrollador: {
       trabajando: { emotion: 'normal', layers: [desarrollador_trabajando_A, desarrollador_trabajando_B] },
@@ -725,6 +770,10 @@ export const ROLES: Record<Role, Record<string, RoleState>> = (() => {
       reposo: { emotion: 'normal', layers: [release_reposo_A, release_reposo_A] },
       despegando: { emotion: 'sonriente', layers: [release_despegando_A, release_despegando_B] },
       listo: { emotion: 'feliz', layers: [release_reposo_A, release_reposo_A] },
+    },
+    merge: {
+      cosiendo: { emotion: 'concentrado', layers: [merge_cosiendo_A, merge_cosiendo_B] },
+      listo: { emotion: 'sonriente', layers: [merge_listo_A, merge_listo_A] },
     },
   }
 })()
