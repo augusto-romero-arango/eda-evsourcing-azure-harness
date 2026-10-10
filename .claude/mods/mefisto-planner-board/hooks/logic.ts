@@ -141,6 +141,35 @@ export function issueMarkedListo(command: string): number | null {
   return m ? Number(m[1]) : null
 }
 
+/** `gh issue close 801 ...`: el issue que se cierra, o null. */
+export function issueClosed(command: string): number | null {
+  const m = runs(command, String.raw`gh\s+issue\s+close\s+#?(\d+)\b`)
+  return m ? Number(m[1]) : null
+}
+
+/** Tiempo maximo que un issue en transicion se oculta de la lista de borradores. */
+export const PENDING_TTL_MS = 60_000
+
+/** La lista sin los issues dados (quita optimista: nunca reordena, solo saca). */
+export function withoutItems(list: BoardList | null, numbers: Iterable<number>): BoardList | null {
+  if (!list) return list
+  const hidden = new Set(numbers)
+  if (hidden.size === 0) return list
+  return { ...list, items: list.items.filter(i => !hidden.has(i.number)) }
+}
+
+/**
+ * Transiciones pendientes tras un refresco: un issue sale del conjunto cuando la lista fresca ya no lo trae
+ * como borrador o cuando vence su plazo. Mapa numero -> instante de vencimiento (ms). `freshDrafts` null (next-order
+ * fallo) no confirma nada: solo vence por plazo.
+ */
+export function settlePending(pending: ReadonlyMap<number, number>, freshDrafts: number[] | null, nowMs: number): Map<number, number> {
+  const fresh = freshDrafts && new Set(freshDrafts)
+  const out = new Map<number, number>()
+  for (const [n, untilMs] of pending) if (untilMs > nowMs && (!fresh || fresh.has(n))) out.set(n, untilMs)
+  return out
+}
+
 /** El cierre del planner: ejecuta mefisto-field-note.sh (leerlo con git show o grep no cierra nada). */
 export function isPlannerClosing(command: string): boolean {
   return runs(command, String.raw`\S*mefisto-field-note\.sh\b`) !== null

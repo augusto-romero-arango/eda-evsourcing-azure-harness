@@ -16,6 +16,10 @@ import {
   usedColumns,
   isPlannerClosing,
   issueMarkedListo,
+  issueClosed,
+  settlePending,
+  withoutItems,
+  PENDING_TTL_MS,
   agentFlagOf,
   agentSettingOf,
   transcriptPathOf,
@@ -185,4 +189,33 @@ test('la ficha de un borrador creado lleva su tipo', async () => {
   const open = [{ number: 2140, title: 'Mostrar la ficha', labels: ['estado:borrador', 'tipo:tooling'] }]
   expect(createdCardText(2140, open, 60)).toBe('#2140 Mostrar la ficha · tipo:tooling')
   expect(createdCardText(9, open, 60)).toBe('#9')
+})
+
+test('issueClosed extrae el numero de gh issue close', async () => {
+  expect(issueClosed('gh issue close 2214 --reason completed')).toBe(2214)
+  expect(issueClosed('cd /r && gh issue close #801')).toBe(801)
+  expect(issueClosed('git show HEAD:x # gh issue close 5')).toBe(null)
+  expect(issueClosed('gh issue edit 5 --add-label x')).toBe(null)
+})
+
+const draft = (number: number) => ({ number, title: `t${number}`, after: [], hasDepsSection: true })
+const listOf = (...ns: number[]) => ({ items: ns.map(draft), blockedCount: 0, cycleCount: 0, launch: null, error: null })
+
+test('la quita optimista saca el issue sin reordenar y recalcula la pagina visible', async () => {
+  const list = listOf(1, 2, 3, 4, 5, 6)
+  const out = withoutItems(list, [1])
+  expect(out?.items.map(i => i.number)).toEqual([2, 3, 4, 5, 6])
+  expect(pageOf(1, out?.items.length ?? 0, 5)).toEqual({ page: 0, pages: 1 })
+  expect(out?.items.slice(0, 5)[0]?.number).toBe(2)
+  expect(withoutItems(null, [1])).toBe(null)
+  expect(withoutItems(list, [])).toBe(list)
+})
+
+test('el conjunto pendiente se filtra, se confirma o expira a los 60 s', async () => {
+  const pending = new Map([[7, 1_000 + PENDING_TTL_MS]])
+  expect([...settlePending(pending, [7, 8], 2_000).keys()]).toEqual([7])
+  expect(settlePending(pending, [8], 2_000).size).toBe(0)
+  expect(settlePending(pending, [7], 1_000 + PENDING_TTL_MS).size).toBe(0)
+  expect([...settlePending(pending, null, 2_000).keys()]).toEqual([7])
+  expect(settlePending(pending, null, 1_000 + PENDING_TTL_MS).size).toBe(0)
 })

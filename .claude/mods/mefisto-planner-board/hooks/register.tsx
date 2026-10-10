@@ -26,6 +26,10 @@ import {
   mascotPose,
   isPlannerClosing,
   issueMarkedListo,
+  issueClosed,
+  PENDING_TTL_MS,
+  settlePending,
+  withoutItems,
   numberWidth,
   padEnd,
   pageOf,
@@ -65,6 +69,9 @@ const knownAtom = atom({ plugin: 'mefisto-planner-board', key: 'known' } as cons
 const cardAtom = atom({ plugin: 'mefisto-planner-board', key: 'card' } as const, null)
 const openAtom = atom({ plugin: 'mefisto-planner-board', key: 'open' } as const, [])
 
+const pendingAtom = atom({ plugin: 'mefisto-planner-board', key: 'pendingCount' } as const, 0)
+
+let pending = new Map<number, number>()
 let isInteractive = false
 // La intencion vive en el modulo, no en atoms: /clear abre una sesion nueva con los atoms en blanco, el modulo sigue.
 let isBoardOn = false
@@ -94,7 +101,7 @@ async function refresh($: EngineInterface, isForced: boolean) {
     if (!issues) return
 
     const signature = signatureOf(issues)
-    if (!isForced && signature === (await read($, signatureAtom))) return
+    if (!isForced && pending.size === 0 && signature === (await read($, signatureAtom))) return
 
     const focus = await read($, focusAtom)
     await update($, openAtom, () => briefsOf(issues))
@@ -103,8 +110,10 @@ async function refresh($: EngineInterface, isForced: boolean) {
       if (!focus?.created.includes(a.number)) $.ui.toast(`Nuevo ${a.kind} #${a.number}: ${clip(a.title, 60)}`)
     }
     const [refine, develop] = await Promise.all([runNextOrder($, ['--refinement', '--json']), runNextOrder($, ['--json'])])
-    await update($, refineAtom, () => refine)
+    pending = settlePending(pending, refine.error ? null : refine.items.map(i => i.number), Date.now())
+    await update($, refineAtom, () => withoutItems(refine, pending.keys()))
     await update($, developAtom, () => develop)
+    await update($, pendingAtom, () => pending.size)
     await update($, signatureAtom, () => signature)
     await update($, knownAtom, () => issues.map(i => i.number))
     await update($, updatedAtom, () => Date.now())
@@ -133,6 +142,7 @@ async function deactivate($: EngineInterface) {
   isBoardOn = false
   isTurnedOff = true
   isRevivePending = false
+  pending.clear()
   timer?.cancel()
   timer = null
   await update($, activeAtom, () => false)
@@ -249,7 +259,18 @@ function refreshAfterSettle($: EngineInterface) {
   settle = $.clock.after(SETTLE_MS, () => void refresh($, true))
 }
 
+// El issue que sale de borrador se quita de la lista al instante; los refrescos lo siguen filtrando hasta que
+// GitHub confirme el cambio o venza el plazo. La lista de listos no se toca: la trae el siguiente refresco.
+async function markPending($: EngineInterface, issue: number) {
+  pending.set(issue, Date.now() + PENDING_TTL_MS)
+  await update($, refineAtom, list => withoutItems(list, [issue]))
+  await update($, pendingAtom, () => pending.size)
+  $.clock.after(PENDING_TTL_MS + 1_000, () => void refresh($, true))
+}
+
 async function onBash($: EngineInterface, command: string, output: string) {
+  const left = issueMarkedListo(command) ?? issueClosed(command)
+  if (left !== null) await markPending($, left)
   if (isIssueChange(command)) refreshAfterSettle($)
   const focus = await read($, focusAtom)
   if (!focus) return
@@ -412,12 +433,14 @@ export const register: Register = on => {
     const inner = Math.max(40, (e.props.bodyColumns ?? 80) - 4)
     const count = (l: BoardList | null) => (l ? String(l.items.length) : '…')
     const tab = await read($, tabAtom)
+    const pendingCount = await read($, pendingAtom)
     const suggested = refine?.items[0]?.number ?? null
     const listButtons = (
       <Box gap={2}>
         <Button key="list-borrador" hotkey="3" plain variant={isExpanded && tab === 'borrador' ? 'primary' : undefined}
           dimColor={!(isExpanded && tab === 'borrador')} label={`borradores ${count(refine)}`}
           onPress={() => void toggleList($, 'borrador')} />
+        {pendingCount > 0 && <Text dimColor>actualizando…</Text>}
         <Button key="list-listo" hotkey="4" plain variant={isExpanded && tab === 'listo' ? 'primary' : undefined}
           dimColor={!(isExpanded && tab === 'listo')} label={`listos ${count(develop)}`}
           onPress={() => void toggleList($, 'listo')} />
