@@ -20,6 +20,9 @@
 #        el CLI (issue #601): 'claude plugin update mefisto@<marketplace> --scope user',
 #        no 'mefisto' a secas -- el CLI rechaza el nombre sin calificar. Es el unico
 #        bloque que corre main() end-to-end.
+#   S-7: el marcador canonico .mefisto/pipeline/.plugin-root (issue #2248): la poda
+#        conserva su version en el modo actualizar y en --prune, y el modo actualizar no
+#        lo reescribe; con el marcador ausente el comportamiento no cambia.
 #
 # El script se sourcea (no se ejecuta): scripts/update-plugin.sh solo corre su main()
 # cuando BASH_SOURCE[0] == $0, asi que sourcearlo aqui carga las funciones sin disparar el
@@ -461,6 +464,53 @@ assert_contiene "$S6_OUT" "0.20.0" "S-6: el error nombra la version efectiva"
 assert_igual "$S6_CACHE/$S6_MKT/mefisto/0.20.0" "$(cat "$S6_CONSUMER/.claude/pipeline/.plugin-root")" \
     "S-6: .plugin-root apunta a la efectiva, no a la mas nueva del cache"
 rm -rf "$S6_STUB" "$S6_CONSUMER" "$S6_CACHE" "$S6_LOG"
+
+echo ""
+echo "[S-7] marcador canonico .mefisto/pipeline/.plugin-root: se protege y no se reescribe (issue #2248)"
+
+# Caso ControlAsistencia: cache 0.43.0 0.44.0 0.44.1, nueva y cargada 0.44.1, canonico en
+# 0.44.0 (sesion viva sin reiniciar). main() end-to-end, mismas fronteras que S-4.
+S7_STUB="$(mktemp -d)"; S7_CONSUMER="$(mktemp -d)"; S7_CACHE="$(mktemp -d)"; S7_LOG="$(mktemp)"
+S7_MEF="$S7_CACHE/mkt-s7/mefisto"
+mkdir -p "$S7_MEF/0.43.0" "$S7_MEF/0.44.0" "$S7_MEF/0.44.1" \
+         "$S7_CONSUMER/.claude/pipeline" "$S7_CONSUMER/.mefisto/pipeline"
+cat > "$S7_STUB/claude" <<'EOF2'
+#!/usr/bin/env bash
+[ "$1 $2" = "plugin list" ] || echo "$@" >> "$CLAUDE_LOG"
+exit 0
+EOF2
+chmod +x "$S7_STUB/claude"
+printf '%s' "$S7_MEF/0.44.1" > "$S7_CONSUMER/.claude/pipeline/.plugin-root"
+printf '%s' "$S7_MEF/0.44.0" > "$S7_CONSUMER/.mefisto/pipeline/.plugin-root"
+s7_run() {
+    (
+        cd "$S7_CONSUMER" || exit 1
+        git init -q . 2>/dev/null
+        export PATH="$S7_STUB:$PATH" MEFISTO_CACHE_ROOT="$S7_CACHE" CLAUDE_LOG="$S7_LOG"
+        main "$@"
+    ) 2>&1
+}
+
+S7_OUT=$(s7_run); S7_RC=$?
+assert_igual "0" "$S7_RC" "S-7: modo actualizar con canonico 0.44.0: exit 0"
+assert_igual "  - 0.43.0" "$(printf '%s\n' "$S7_OUT" | grep '^  - ')" \
+    "S-7: modo actualizar lista como podable solo 0.43.0"
+assert_igual "$S7_MEF/0.44.0" "$(cat "$S7_CONSUMER/.mefisto/pipeline/.plugin-root")" \
+    "S-7: modo actualizar no reescribe el marcador canonico"
+
+S7_OUT=$(s7_run --prune --loaded 0.44.1); S7_RC=$?
+assert_igual "0" "$S7_RC" "S-7: --prune con canonico 0.44.0: exit 0"
+assert_igual "0.44.0 0.44.1" "$(ls "$S7_MEF" | tr '\n' ' ' | sed 's/ $//')" \
+    "S-7: --prune borra solo 0.43.0 y conserva la version del canonico"
+
+# Canonico ausente: el comportamiento previo no cambia (0.44.0 vuelve a ser podable).
+mkdir -p "$S7_MEF/0.43.0"
+rm -f "$S7_CONSUMER/.mefisto/pipeline/.plugin-root" "$S7_CONSUMER/.claude/pipeline/.plugin-root.previous"
+S7_OUT=$(s7_run --prune --loaded 0.44.1); S7_RC=$?
+assert_igual "0" "$S7_RC" "S-7: --prune sin canonico: exit 0"
+assert_igual "0.44.1" "$(ls "$S7_MEF" | tr '\n' ' ' | sed 's/ $//')" \
+    "S-7: sin canonico se podan 0.43.0 y 0.44.0 como antes"
+rm -rf "$S7_STUB" "$S7_CONSUMER" "$S7_CACHE" "$S7_LOG"
 
 echo ""
 echo "===================================================================="
