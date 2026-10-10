@@ -1,7 +1,6 @@
 import type { BoardItem, BoardList } from '../types'
 
 export const NEXT_ORDER_FILE = 'scripts/next-order.sh'
-export const PACT_COMMAND = 'fausto-blood-pact'
 export const PLANNER_AGENT = 'mefisto:planner'
 export const PAGE_ROWS = 5
 

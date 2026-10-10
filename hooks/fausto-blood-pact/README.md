@@ -1,6 +1,6 @@
 # fausto-blood-pact
 
-Consola de operación publicada de Mefisto (MEF-ADR-0055). Módulo del plugin, cargado desde `hooks/hooks.json` junto al tablero `fausto-board`.
+Consola de operación publicada de Mefisto (MEF-ADR-0055). Módulo del plugin independiente del tablero `fausto-board`: Claude Code carga un solo módulo por plugin, así que `hooks/hooks.json` apunta a `hooks/index.tsx`, que solo compone ambos `register`.
 
 ## Activación
 
@@ -11,6 +11,8 @@ Se activa sola en una sesión **interactiva** del proyecto consumidor. No se act
 - el repo de Mefisto (manifiesto `name: mefisto`).
 
 Comandos: `/fausto-blood-pact on` | `off` | `refresh`. `on`/`off` sobreviven a `/clear`.
+
+Si al arrancar no se puede leer la línea de comando de Claude Code y el transcript aún no existe, la consola arranca y reintenta la detección del planner en cada refresco; si resulta ser el planner, se apaga.
 
 ## Capacidad vigente (incremento 1)
 

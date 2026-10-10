@@ -60,12 +60,12 @@ jq -n \
     --arg append_file_change "$append_file_change" \
     --arg append_dotnet_test "$append_dotnet_test" \
     --arg append_terraform "$append_terraform" \
-    '{hooks: {SessionStart: [{hooks: [{type: "command", command: $record_active_release}, {type: "command", command: $append_session}]}], Stop: [{hooks: [{type: "command", command: $append_session_model}, {type: "command", command: $remind_field_notes}]}], PostToolUse: [{matcher: "Write|Edit", hooks: [{type: "command", command: $append_file_change}]}, {matcher: "Bash", hooks: [{type: "command", command: $append_dotnet_test}, {type: "command", command: $append_terraform}]}]}, modules: ["./register.tsx", "./fausto-blood-pact/register.tsx"]}' > "$STAGE" || usage_error "no se pudo renderizar hooks/hooks.json"
+    '{hooks: {SessionStart: [{hooks: [{type: "command", command: $record_active_release}, {type: "command", command: $append_session}]}], Stop: [{hooks: [{type: "command", command: $append_session_model}, {type: "command", command: $remind_field_notes}]}], PostToolUse: [{matcher: "Write|Edit", hooks: [{type: "command", command: $append_file_change}]}, {matcher: "Bash", hooks: [{type: "command", command: $append_dotnet_test}, {type: "command", command: $append_terraform}]}]}, modules: ["./index.tsx"]}' > "$STAGE" || usage_error "no se pudo renderizar hooks/hooks.json"
 
 # JSON y topologia se validan antes de que una salida existente pueda reemplazarse.
 jq -e '
   (. | keys) == ["hooks", "modules"] and
-  .modules == ["./register.tsx", "./fausto-blood-pact/register.tsx"] and
+  .modules == ["./index.tsx"] and
   (.hooks | keys | sort) == ["PostToolUse", "SessionStart", "Stop"] and
   (.hooks.SessionStart | type == "array" and length == 1) and
   (.hooks.SessionStart[0] | keys == ["hooks"] and (.hooks | type == "array" and length == 2)) and

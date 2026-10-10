@@ -3,7 +3,6 @@ import type { EngineInterface, Register } from 'claude-code'
 
 import type { BoardList } from '../types'
 import {
-  PACT_COMMAND,
   PAGE_ROWS,
   PLANNER_AGENT,
   agentFlagOf,
@@ -30,6 +29,9 @@ let isEligible = false
 let isWanted = true
 let isRefreshing = false
 let timer: { cancel: () => void } | null = null
+// Si al arrancar no se pudo saber el agente (sin linea de comando y sin transcript aun), se reintenta en cada refresh.
+let agentChecksLeft = 0
+const AGENT_CHECKS = 20
 
 async function pluginRoot($: EngineInterface): Promise<string | null> {
   const own = $.plugin.root
@@ -53,6 +55,17 @@ async function refresh($: EngineInterface) {
   if (isRefreshing || !isEligible || !isWanted) return
   isRefreshing = true
   try {
+    if (agentChecksLeft > 0) {
+      agentChecksLeft -= 1
+      const agent = await plannerSession($)
+      if (agent !== null) agentChecksLeft = 0
+      if (agent === true) {
+        isEligible = false
+        await deactivate($)
+        isWanted = true
+        return
+      }
+    }
     const list = await runNextOrder($)
     await update($, listAtom, () => list)
   } finally {
@@ -83,27 +96,31 @@ async function isMefistoRepo($: EngineInterface): Promise<boolean> {
 }
 
 // Agente principal de la sesion: primero la linea de comando de Claude Code, luego el transcript si ya existe.
-async function isPlannerSession($: EngineInterface): Promise<boolean> {
+async function plannerSession($: EngineInterface): Promise<boolean | null> {
   const ps = await $.process.run(['sh', '-c', 'ps -o args= -p "$PPID"']).catch(() => ({ exitCode: 1, stdout: '' }))
   const cmdline = ps.exitCode === 0 ? ps.stdout.trim() : ''
   if (/\bclaude\b/.test(cmdline)) return agentFlagOf(cmdline) === PLANNER_AGENT
   const home = (await $.env.get('CLAUDE_CONFIG_DIR')) ?? `${(await $.env.get('HOME')) ?? ''}/.claude`
   const path = transcriptPathOf(home, await $.session.cwd(), await $.session.id())
   const { stdout } = await $.process.run(['head', '-c', '200000', path]).catch(() => ({ stdout: '' }))
-  return agentSettingOf(stdout) === PLANNER_AGENT
+  const agent = agentSettingOf(stdout)
+  return agent === null ? null : agent === PLANNER_AGENT
 }
 
 export const register: Register = on => {
-  on('session.start', async ($, e, next) => {
+  // Con matcher: el engine admite un solo session.start sin matcher por plugin (el del tablero), y asi `-p` ni lo dispara.
+  on('session.start', { isInteractive: true }, async ($, e, next) => {
     isEligible = false
-    if (!e.isInteractive || (await isMefistoRepo($)) || (await isPlannerSession($))) {
+    const agent = (await isMefistoRepo($)) ? true : await plannerSession($)
+    if (agent === true) {
       await deactivate($)
       isWanted = true
       return next(e)
     }
     isEligible = true
+    agentChecksLeft = agent === null ? AGENT_CHECKS : 0
     await $.command.register({
-      name: PACT_COMMAND,
+      name: 'fausto-blood-pact',
       description: 'Consola de Fausto: refresh | on | off',
       argumentHint: '[refresh|on|off]',
       immediate: true,
@@ -112,7 +129,7 @@ export const register: Register = on => {
     return next(e)
   })
 
-  on('command.run', { command: PACT_COMMAND }, async ($, e) => {
+  on('command.run', { command: 'fausto-blood-pact' }, async ($, e) => {
     const arg = e.args.trim()
     if (!isEligible) return { text: 'La consola no aplica en esta sesión.' }
     if (arg === 'off') {
