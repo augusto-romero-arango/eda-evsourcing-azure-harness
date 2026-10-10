@@ -81,6 +81,7 @@ import {
 import type { ResultPr } from './logic'
 
 const POLL_MS = 60_000
+const STATE_DIR = '.mefisto/pipeline'
 const SCRIPT_TIMEOUT_MS = 180_000
 
 const activeAtom = atom({ plugin: 'mefisto', key: 'pactIsActive' } as const, false)
@@ -154,59 +155,47 @@ async function saveDismissed($: EngineInterface, keys: string[]) {
   await $.store.set(DISMISSED_STORE_KEY, keys).catch(() => undefined)
 }
 
-// Lector puro: solo lee `.mefisto/pipeline/` del checkout principal .
+// Lector puro: solo lee `.mefisto/pipeline/` del checkout principal; la ruta legada se ignora (MEF-ADR-0053).
 async function readRuns($: EngineInterface): Promise<PipelineRun[]> {
   const cwd = await $.session.cwd()
   const common = await $.process.run(['git', 'rev-parse', '--git-common-dir']).catch(() => ({ exitCode: 1, stdout: '' }))
   const dir = stateDirOf(common.exitCode === 0 ? common.stdout.trim() : '.git', cwd)
   runsRepo = repoRootOf(dir)
-  const found = new Map<string, PipelineRun>()
-  for (const base of [dir]) {
-    const ls = await $.process.run(['ls', base]).catch(() => ({ exitCode: 1, stdout: '' }))
-    if (ls.exitCode !== 0) continue
-    for (const name of ls.stdout.split('\n')) {
-      const file = name.trim()
-      if (!file.startsWith('pipeline-status-')) continue
-      const raw = await $.fs.read(`${base}/${file}`).catch(() => '')
-      const run = typeof raw === 'string' ? parseStatus(file, raw) : null
-      if (run && !found.has(file)) found.set(file, run)
-    }
+  const ls = await $.process.run(['ls', dir]).catch(() => ({ exitCode: 1, stdout: '' }))
+  if (ls.exitCode !== 0) return []
+  const runs: PipelineRun[] = []
+  for (const name of ls.stdout.split('\n')) {
+    const file = name.trim()
+    if (!file.startsWith('pipeline-status-')) continue
+    const raw = await $.fs.read(`${dir}/${file}`).catch(() => '')
+    const run = typeof raw === 'string' ? parseStatus(file, raw) : null
+    if (run) runs.push(run)
   }
-  return [...found.values()]
+  return runs
 }
 
 // Ultimo evento del ultimo intento del agente activo; lector puro de `<estado>/logs/*.events.jsonl`.
 async function readLastEvent($: EngineInterface, run: PipelineRun | null): Promise<LastEvent | null> {
   if (!run) return null
-  for (const base of [`${runsRepo}/.mefisto/pipeline`]) {
-    const dir = `${base}/${LOGS_DIR}`
-    const ls = await $.process.run(['ls', dir]).catch(() => ({ exitCode: 1, stdout: '' }))
-    if (ls.exitCode !== 0) continue
-    const file = eventsFileOf(run, ls.stdout.split('\n'))
-    if (!file) continue
-    const tail = await $.process.run(['tail', '-c', '65536', `${dir}/${file}`]).catch(() => ({ exitCode: 1, stdout: '' }))
-    return tail.exitCode === 0 ? lastEventOf(tail.stdout) : null
-  }
-  return null
+  const dir = `${runsRepo}/${STATE_DIR}/${LOGS_DIR}`
+  const ls = await $.process.run(['ls', dir]).catch(() => ({ exitCode: 1, stdout: '' }))
+  if (ls.exitCode !== 0) return null
+  const file = eventsFileOf(run, ls.stdout.split('\n'))
+  if (!file) return null
+  const tail = await $.process.run(['tail', '-c', '65536', `${dir}/${file}`]).catch(() => ({ exitCode: 1, stdout: '' }))
+  return tail.exitCode === 0 ? lastEventOf(tail.stdout) : null
 }
 
 // Solo `.mefisto/pipeline/` (MEF-ADR-0053): la ruta legada ya no la escribe ningun pipeline.
 async function readHistory($: EngineInterface): Promise<string> {
-  for (const base of ['.mefisto/pipeline']) {
-    const raw = await $.fs.read(`${runsRepo}/${base}/${HISTORY_FILE}`).catch(() => '')
-    if (typeof raw === 'string' && raw !== '') return raw
-  }
-  return ''
+  const raw = await $.fs.read(`${runsRepo}/${STATE_DIR}/${HISTORY_FILE}`).catch(() => '')
+  return typeof raw === 'string' ? raw : ''
 }
 
 // Lector puro del status del lote (#2202); un lote terminado y cerrado (clave repo + `started` en el store) no se muestra.
 async function readBatch($: EngineInterface): Promise<BatchStatus | null> {
-  for (const base of ['.mefisto/pipeline']) {
-    const raw = await $.fs.read(batchStatusPath(`${runsRepo}/${base}`)).catch(() => '')
-    const batch = typeof raw === 'string' && raw !== '' ? parseBatchStatus(raw) : null
-    if (batch) return batch
-  }
-  return null
+  const raw = await $.fs.read(batchStatusPath(`${runsRepo}/${STATE_DIR}`)).catch(() => '')
+  return typeof raw === 'string' && raw !== '' ? parseBatchStatus(raw) : null
 }
 
 async function refreshBatch($: EngineInterface) {
