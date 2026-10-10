@@ -49,6 +49,7 @@
 #
 #   [R]       --json: esquema, campo tipo, launch y exit codes (#2079).
 #   [S]       --refinement (texto y combinado con --json) (#2079).
+#   [T]       infra/sin tipo fuera de launch, lote parallel y --parallel-command (#2190).
 #
 # Uso: scripts/tests/test-next-order.sh
 # Exit code: 0 si todos los checks pasan, 1 si alguno falla.
@@ -749,13 +750,13 @@ else
     fail "R: tipo inesperado: $OUTPUT"
 fi
 if echo "$OUTPUT" | jq -e '.blocked==[{"number":604,"by":900,"reason":"external"}] and .cycles==[]
-    and .launch=="/mefisto:sequential 601 602 603"' >/dev/null; then
+    and .launch=="/mefisto:sequential 601 602"' >/dev/null; then
     pass "R: blocked, cycles y launch por defecto"
 else
     fail "R: blocked/launch inesperado: $OUTPUT"
 fi
 OUTPUT=$(run_script --json --launch-command "/otro:cmd")
-if echo "$OUTPUT" | jq -e '.launch=="/otro:cmd 601 602 603"' >/dev/null; then
+if echo "$OUTPUT" | jq -e '.launch=="/otro:cmd 601 602"' >/dev/null; then
     pass "R: launch respeta --launch-command"
 else
     fail "R: launch no respeto --launch-command: $OUTPUT"
@@ -849,6 +850,100 @@ if [ "$RC" -eq 1 ] && echo "$OUTPUT" | grep -q "#710 bloqueado por #901: fuera d
     pass "S: sin borradores refinables -> exit 1 y linea explicita"
 else
     fail "S: caso sin refinables inesperado ($RC): $OUTPUT"
+fi
+
+# -------- Bloque T: infra/sin tipo fuera de launch y lote parallel (#2190) --------
+
+echo ""
+echo "[T] infra y sin tipo fuera de launch; lote parallel; --parallel-command"
+
+reset_fixtures
+set_issue_list <<'EOF'
+[
+  {"number":501,"title":"Infra","body":"## Dependencias\n\nNinguna.","labels":[{"name":"tipo:infra"}]},
+  {"number":502,"title":"Sin tipo","body":"## Dependencias\n\nNinguna.","labels":[]},
+  {"number":503,"title":"Feat","body":"## Dependencias\n\nNinguna.","labels":[{"name":"tipo:feature"}]},
+  {"number":504,"title":"Proj A","body":"## Dependencias\n\nNinguna.","labels":[{"name":"tipo:projection"}]},
+  {"number":505,"title":"Proj B","body":"## Dependencias\n\nNinguna.","labels":[{"name":"tipo:projection"}]},
+  {"number":506,"title":"Dep abierta","body":"## Dependencias\n\nDepende de #510","labels":[{"name":"tipo:tooling"}]},
+  {"number":510,"title":"Base","body":"## Dependencias\n\nNinguna.","labels":[{"name":"tipo:tooling"}]},
+  {"number":511,"title":"Infra 2","body":"## Dependencias\n\nNinguna.","labels":[{"name":"tipo:infra"}]}
+]
+EOF
+OUTPUT=$(run_script --json --parallel-command "/x:par")
+RC=$?
+if [ "$RC" -eq 0 ] \
+    && [ "$(echo "$OUTPUT" | jq -c '.launch')" = '"/mefisto:sequential 503 504 505 510 506"' ] \
+    && [ "$(echo "$OUTPUT" | jq -c '.infra')" = '[501,511]' ] \
+    && [ "$(echo "$OUTPUT" | jq -c '[.items[].number]')" = '[501,502,503,504,505,510,506,511]' ]; then
+    pass "T: launch sin infra ni sin tipo; items intacto; infra[] en orden"
+else
+    fail "T: launch/infra/items inesperados ($RC): $OUTPUT"
+fi
+if [ "$(echo "$OUTPUT" | jq -c '.parallel')" = '{"issues":[503,504,510],"launch":"/x:par 503 504 510"}' ]; then
+    pass "T: lote excluye dependiente (506), segunda projection (505), infra y sin tipo; --parallel-command aplicado"
+else
+    fail "T: parallel inesperado: $(echo "$OUTPUT" | jq -c '.parallel')"
+fi
+
+OUTPUT=$(run_script)
+if echo "$OUTPUT" | grep -q "^Infra lanzable.*: /mefisto:infra #501 | /mefisto:infra #511$" \
+    && [ "$(echo "$OUTPUT" | tail -2 | head -1)" = "/mefisto:sequential 503 504 505 510 506" ] \
+    && [ "$(echo "$OUTPUT" | tail -1)" = "/mefisto:parallel 503 504 510" ]; then
+    pass "T: texto con linea infra antes de sequential y parallel despues (default)"
+else
+    fail "T: texto inesperado: $OUTPUT"
+fi
+
+reset_fixtures
+set_issue_list <<'EOF'
+[
+  {"number":520,"title":"Solo","body":"## Dependencias\n\nNinguna.","labels":[{"name":"tipo:feature"}]},
+  {"number":521,"title":"Tras","body":"## Dependencias\n\nDepende de #520","labels":[{"name":"tipo:feature"}]}
+]
+EOF
+OUTPUT=$(run_script --json)
+if [ "$(echo "$OUTPUT" | jq -c '.parallel')" = '{"issues":[520],"launch":null}' ] && [ "$(echo "$OUTPUT" | jq -c '.infra')" = '[]' ] \
+    && ! run_script | grep -q "^/mefisto:parallel"; then
+    pass "T: menos de 2 en el lote -> launch null y sin linea en texto"
+else
+    fail "T: caso <2 inesperado: $OUTPUT"
+fi
+
+reset_fixtures
+set_issue_list <<'EOF2'
+[{"number":540,"title":"Solo infra","body":"## Dependencias\n\nNinguna.","labels":[{"name":"tipo:infra"}]}]
+EOF2
+OUTPUT=$(run_script)
+RC=$?
+if [ "$RC" -eq 0 ] && echo "$OUTPUT" | grep -q "^Sin issues para /mefisto:sequential" \
+    && ! echo "$OUTPUT" | grep -q "^/mefisto:sequential" \
+    && [ "$(run_script --json | jq -c '[.launch, .infra]')" = '[null,[540]]' ]; then
+    pass "T: solo infra -> sin linea de sequential copiable, launch null"
+else
+    fail "T: caso solo infra inesperado ($RC): $OUTPUT"
+fi
+
+OUTPUT=$(run_script --parallel-command "" 2>&1)
+RC=$?
+if [ "$RC" -eq 2 ]; then pass "T: --parallel-command vacio -> exit 2"; else fail "T: --parallel-command vacio dio $RC"; fi
+OUTPUT=$(run_script --parallel-command 2>&1)
+RC=$?
+if [ "$RC" -eq 2 ]; then pass "T: --parallel-command sin argumento -> exit 2"; else fail "T: --parallel-command sin argumento dio $RC"; fi
+
+reset_fixtures
+set_borrador_list <<'EOF'
+[{"number":530,"title":"Borr","body":"","labels":[{"name":"tipo:infra"}]},{"number":531,"title":"Borr2","body":"","labels":[{"name":"tipo:feature"}]}]
+EOF
+set_listo_list <<'EOF'
+[]
+EOF
+OUTPUT=$(run_script --refinement --json)
+if [ "$(echo "$OUTPUT" | jq -c '[.infra, .parallel, .launch]')" = '[[],null,null]' ] \
+    && [ "$(echo "$OUTPUT" | jq -c '[.items[].number]')" = '[530,531]' ]; then
+    pass "T: --refinement sin cambios (infra [], parallel null, items completos)"
+else
+    fail "T: --refinement inesperado: $OUTPUT"
 fi
 
 # -------- Resumen --------
