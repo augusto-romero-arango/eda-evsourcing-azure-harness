@@ -500,7 +500,7 @@ assert_igual "  - 0.43.0" "$(printf '%s\n' "$S7_OUT" | grep '^  - ')" \
 assert_igual "$S7_MEF/0.44.0" "$(cat "$S7_CONSUMER/.mefisto/pipeline/.plugin-root")" \
     "S-7: modo actualizar no reescribe el marcador canonico"
 
-S7_OUT=$(s7_run --prune --loaded 0.44.1); S7_RC=$?
+S7_OUT=$(s7_run --prune --only 0.43.0 --loaded 0.44.1); S7_RC=$?
 assert_igual "0" "$S7_RC" "S-7: --prune con canonico 0.44.0: exit 0"
 assert_igual "0.44.0 0.44.1" "$(ls "$S7_MEF" | tr '\n' ' ' | sed 's/ $//')" \
     "S-7: --prune borra solo 0.43.0 y conserva la version del canonico"
@@ -508,7 +508,7 @@ assert_igual "0.44.0 0.44.1" "$(ls "$S7_MEF" | tr '\n' ' ' | sed 's/ $//')" \
 # Canonico ausente: el comportamiento previo no cambia (0.44.0 vuelve a ser podable).
 mkdir -p "$S7_MEF/0.43.0"
 rm -f "$S7_CONSUMER/.mefisto/pipeline/.plugin-root" "$S7_CONSUMER/.claude/pipeline/.plugin-root.previous"
-S7_OUT=$(s7_run --prune --loaded 0.44.1); S7_RC=$?
+S7_OUT=$(s7_run --prune --only 0.43.0,0.44.0 --loaded 0.44.1); S7_RC=$?
 assert_igual "0" "$S7_RC" "S-7: --prune sin canonico: exit 0"
 assert_igual "0.44.1" "$(ls "$S7_MEF" | tr '\n' ' ' | sed 's/ $//')" \
     "S-7: sin canonico se podan 0.43.0 y 0.44.0 como antes"
@@ -549,11 +549,64 @@ S8_OUT=$(MEFISTO_LOADED_ROOT='${CLAUDE_PLUGIN_ROOT}' s8_run); S8_RC=$?
 assert_contiene "$S8_OUT" "Version cargada en esta sesion: 0.44.0 (fuente: .claude/pipeline/.plugin-root.previous)" \
     "S-8: raiz sin sustituir se ignora y sigue la cadena previa"
 
-S8_OUT=$(MEFISTO_LOADED_ROOT="$S8_MEF/0.44.1" s8_run --prune); S8_RC=$?
+S8_OUT=$(MEFISTO_LOADED_ROOT="$S8_MEF/0.44.1" s8_run --prune --only 0.43.0,0.44.0); S8_RC=$?
 assert_igual "0" "$S8_RC" "S-8: --prune con MEFISTO_LOADED_ROOT valida: exit 0"
 assert_igual "0.44.1 0.45.0" "$(ls "$S8_MEF" | tr '\n' ' ' | sed 's/ $//')" \
     "S-8: --prune conserva la version viva 0.44.1"
 rm -rf "$S8_STUB" "$S8_CONSUMER" "$S8_CACHE"
+
+echo ""
+echo "[S-9] --prune exige --only y borra solo lo confirmado (issue #2250)"
+
+S9_STUB="$(mktemp -d)"; S9_CONSUMER="$(mktemp -d)"; S9_CACHE="$(mktemp -d)"
+S9_MEF="$S9_CACHE/mkt-s9/mefisto"
+s9_reset() {
+    rm -rf "$S9_MEF"
+    for v in 0.43.0 0.44.0 0.44.1; do mkdir -p "$S9_MEF/$v"; done
+}
+mkdir -p "$S9_CONSUMER/.claude/pipeline"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$S9_STUB/claude"; chmod +x "$S9_STUB/claude"
+printf '%s' "$S9_MEF/0.44.1" > "$S9_CONSUMER/.claude/pipeline/.plugin-root"
+s9_run() {
+    (
+        cd "$S9_CONSUMER" || exit 1
+        git init -q . 2>/dev/null
+        export PATH="$S9_STUB:$PATH" MEFISTO_CACHE_ROOT="$S9_CACHE"
+        main "$@"
+    ) 2>&1
+}
+
+s9_reset
+for bad in "--prune --loaded 0.44.1" "--prune --only  --loaded 0.44.1" "--prune --only , --loaded 0.44.1" "--prune --only 0.43.0,abc --loaded 0.44.1" "--prune --only ../0.43.0 --loaded 0.44.1"; do
+    # shellcheck disable=SC2086
+    S9_OUT=$(s9_run $bad); S9_RC=$?
+    assert_igual "1" "$S9_RC" "S-9: '$bad' aborta"
+    assert_igual "0.43.0 0.44.0 0.44.1" "$(ls "$S9_MEF" | tr '\n' ' ' | sed 's/ $//')" "S-9: '$bad' no borra nada"
+done
+
+# Caso ControlAsistencia: confirmada 0.43.0; 0.44.0 queda podable pero no confirmada.
+S9_OUT=$(s9_run --prune --only 0.43.0 --loaded 0.44.1); S9_RC=$?
+assert_igual "0" "$S9_RC" "S-9: --only 0.43.0: exit 0"
+assert_igual "0.44.0 0.44.1" "$(ls "$S9_MEF" | tr '\n' ' ' | sed 's/ $//')" "S-9: borra solo 0.43.0"
+assert_contiene "$S9_OUT" "Podables NO confirmadas (no se borraron): 0.44.0" "S-9: informa 0.44.0 como no confirmada"
+
+# Confirmada que ahora esta protegida (la cargada): no se borra y se informa.
+s9_reset
+S9_OUT=$(s9_run --prune --only 0.43.0,0.44.1 --loaded 0.44.1); S9_RC=$?
+assert_igual "0.44.0 0.44.1" "$(ls "$S9_MEF" | tr '\n' ' ' | sed 's/ $//')" "S-9: no borra la protegida confirmada"
+assert_contiene "$S9_OUT" "Confirmadas que ahora estan protegidas (no se borraron): 0.44.1" "S-9: informa la confirmada protegida"
+
+# Sin podables al borrar: la confirmada protegida igual se informa.
+rm -rf "$S9_MEF"; mkdir -p "$S9_MEF/0.44.1"
+S9_OUT=$(s9_run --prune --only 0.44.1 --loaded 0.44.1); S9_RC=$?
+assert_igual "0.44.1" "$(ls "$S9_MEF" | tr '\n' ' ' | sed 's/ $//')" "S-9: cache limpio no borra la cargada"
+assert_contiene "$S9_OUT" "Confirmadas que ahora estan protegidas (no se borraron): 0.44.1" "S-9: cache limpio informa la confirmada protegida"
+
+# La pista del modo actualizar trae la lista exacta.
+s9_reset
+S9_OUT=$(s9_run --loaded 0.44.1)
+assert_contiene "$S9_OUT" "--prune --only 0.43.0,0.44.0 --loaded 0.44.1" "S-9: la pista incluye --only con la lista exacta"
+rm -rf "$S9_STUB" "$S9_CONSUMER" "$S9_CACHE"
 
 echo ""
 echo "===================================================================="

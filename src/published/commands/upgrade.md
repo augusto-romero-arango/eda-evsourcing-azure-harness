@@ -65,9 +65,9 @@ Reporta la salida sin reinterpretar: por cada linea no vacia `<pane_id> <runtime
 
 ### 5. Poda opt-in del runtime activo
 
-La poda aplica solo al runtime activo y solo si el script listo versiones podables. Muestra la lista exacta y pide confirmacion explicita. Si responde exactamente `si`, invoca la poda; si la version cargada es conocida, agrega `--loaded <version-cargada>`. Si no confirma, no borres nada. Nunca podes la version cargada ni el par.
+La poda aplica solo al runtime activo y solo si el script listo versiones podables. Muestra la lista exacta y pide confirmacion explicita. Si responde exactamente `si`, invoca la poda pasando con `--only` exactamente esa lista (versiones separadas por coma, sin agregar ni quitar ninguna); la poda borra solo la interseccion con las podables recalculadas y reporta aparte las no confirmadas y las que ahora estan protegidas (`--only` solo restringe la poda cuyo listado puede recalcularse entre ambos pasos; donde la lista sale del mismo `--keep`, se ignora). Si la version cargada es conocida, agrega `--loaded <version-cargada>`. Si no confirma, no borres nada. Nunca podes la version cargada ni el par.
 
-MEFISTO_LOADED_ROOT='{{mefisto:loaded-root}}' {{mefisto:run upgrade.sh --prune}}
+MEFISTO_LOADED_ROOT='{{mefisto:loaded-root}}' {{mefisto:run upgrade.sh --prune --only <versiones-confirmadas>}}
 
 ### 6. Cerrar con el reload
 

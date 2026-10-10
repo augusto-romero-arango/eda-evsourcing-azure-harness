@@ -11,9 +11,10 @@
 #                                                 instalada en disco y el estado del par; es local,
 #                                                 no informa si hay una version mas nueva publicada
 #   scripts/upgrade.sh [--align-peer]             actualiza (y alinea el par si se pide)
-#   scripts/upgrade.sh --prune [--keep <n>] [--loaded <v>]
+#   scripts/upgrade.sh --prune [--keep <n>] [--only <v>[,<v>...]] [--loaded <v>]
 #                                                 poda (solo tras confirmar en el comando);
-#                                                 --keep aplica a OpenCode, --loaded a Claude
+#                                                 --keep aplica a OpenCode; --only (lista confirmada,
+#                                                 obligatoria en Claude) y --loaded a Claude
 #
 # Nunca borra nada fuera de --prune. Refrescar panes, el mensaje de reload y la
 # confirmacion de poda son responsabilidad del comando, no de este script.
@@ -27,7 +28,7 @@ DEFAULT_REPO_SLUG="augusto-romero-arango/eda-evsourcing-azure-harness"
 LEGACY_USAGE='ERROR: uso: mefisto-opencode install <semver> | activate <semver> | prune [--keep <n>] [--yes] | project | deactivate | status | diagnose | package-root'
 
 usage() {
-    echo "Uso: $0 --status | [--align-peer] | --prune [--keep <n>] [--loaded <version>]" >&2
+    echo "Uso: $0 --status | [--align-peer] | --prune [--keep <n>] [--only <v>[,<v>...]] [--loaded <version>]" >&2
 }
 
 _guard_consumidor() {
@@ -197,6 +198,7 @@ _update_claude() {
     [ -n "$loaded" ] || loaded=$(_loaded_from_root)
     if [ "$MODE" = prune ]; then
         args=(--prune)
+        [ "$ONLY_GIVEN" = false ] || args+=(--only "$ONLY")
     elif [ "$ALIGN_PEER" = true ]; then
         args=(--align-opencode)
     fi
@@ -324,7 +326,7 @@ _align_claude() {
 }
 
 main() {
-    MODE=update; ALIGN_PEER=false; KEEP=2; LOADED_OVERRIDE=""
+    MODE=update; ALIGN_PEER=false; KEEP=2; LOADED_OVERRIDE=""; ONLY=""; ONLY_GIVEN=false
     while [ "$#" -gt 0 ]; do
         case "$1" in
             --status) MODE=status; shift ;;
@@ -338,6 +340,9 @@ main() {
             --loaded)
                 [ "$#" -ge 2 ] && [ -n "$2" ] || { echo "ERROR: --loaded requiere una version." >&2; return 1; }
                 LOADED_OVERRIDE="$2"; shift 2 ;;
+            --only)
+                [ "$#" -ge 2 ] || { echo "ERROR: --only requiere una lista de versiones." >&2; return 1; }
+                ONLY="$2"; ONLY_GIVEN=true; shift 2 ;;
             -h|--help) usage; return 0 ;;
             *) echo "ERROR: argumento desconocido '$1'" >&2; usage; return 1 ;;
         esac
