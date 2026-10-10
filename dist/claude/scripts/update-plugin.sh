@@ -263,7 +263,9 @@ _versiones_del_cache() {
     ls -d "${1%/}"/*/ 2>/dev/null | xargs -n1 basename 2>/dev/null | sort -V
 }
 
-# _protegidas <version_nueva> <version_cargada|""> <version_en_plugin_root|"">
+# _protegidas <version_nueva> <version_cargada|""> <version_en_plugin_root|"" > [<version_canonica|"">]
+#   <version_canonica>: version a la que apunta .mefisto/pipeline/.plugin-root (marcador
+#   canonico de la sesion viva); se conserva para no dejarlo apuntando a un directorio borrado.
 #   stdin: todas las versiones del cache, una por linea (orden ascendente)
 #   stdout: las versiones que la poda debe conservar, una por linea, sin duplicados
 #
@@ -271,12 +273,12 @@ _versiones_del_cache() {
 # que la sesion cargo en el caso normal, y protegerla de mas es preferible a borrar la
 # que la sesion esta ejecutando.
 _protegidas() {
-    local nueva="$1" cargada="$2" en_root="$3" todas
+    local nueva="$1" cargada="$2" en_root="$3" canonica="${4:-}" todas
     todas=$(cat)
     if [ -z "$cargada" ]; then
         cargada=$(printf '%s\n' "$todas" | grep -v '^$' | grep -vxF "$nueva" | tail -1)
     fi
-    printf '%s\n%s\n%s\n' "$nueva" "$cargada" "$en_root" | grep -v '^$' | sort -u
+    printf '%s\n%s\n%s\n%s\n' "$nueva" "$cargada" "$en_root" "$canonica" | grep -v '^$' | sort -u
 }
 
 # _podables <protegida> [<protegida> ...]
@@ -494,7 +496,10 @@ main() {
     # --- Poda del cache, conservando {version nueva, version cargada} (CA-4) ----------
     local todas protegidas podables
     todas=$(_versiones_del_cache "$mefisto_cache_dir")
-    protegidas=$(printf '%s\n' "$todas" | _protegidas "$new_version" "$loaded_version" "$(_version_de_ruta "$plugin_root_actual")")
+    local canonica_actual canonica_version=""
+    canonica_actual=$(cat ".mefisto/pipeline/.plugin-root" 2>/dev/null) || true
+    [ -n "$canonica_actual" ] && canonica_version=$(_version_de_ruta "$canonica_actual")
+    protegidas=$(printf '%s\n' "$todas" | _protegidas "$new_version" "$loaded_version" "$(_version_de_ruta "$plugin_root_actual")" "$canonica_version")
     # shellcheck disable=SC2086  # $protegidas son versiones sin espacios: se quieren como argumentos separados
     podables=$(printf '%s\n' "$todas" | _podables $protegidas)
 

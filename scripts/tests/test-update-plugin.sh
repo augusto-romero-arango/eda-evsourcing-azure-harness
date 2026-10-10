@@ -79,6 +79,15 @@ assert_igual "0.18.0 0.19.0 " "$salida" "sin version cargada conocida protege la
 salida=$(printf '%s\n' "$TODAS" | _protegidas "0.19.0" "0.17.0" "0.18.0" | tr '\n' ' ')
 assert_igual "0.17.0 0.18.0 0.19.0 " "$salida" "protege la union {nueva, cargada, .plugin-root}"
 
+# Caso ControlAsistencia (#2248): canonico apunta a 0.44.0, nueva y cargada 0.44.1.
+CA_TODAS=$'0.43.0\n0.44.0\n0.44.1'
+salida=$(printf '%s\n' "$CA_TODAS" | _protegidas "0.44.1" "0.44.1" "0.44.1" "0.44.0" | tr '\n' ' ')
+assert_igual "0.44.0 0.44.1 " "$salida" "protege la version del marcador canonico (0.44.0)"
+salida=$(printf '%s\n' "$CA_TODAS" | _podables $(printf '%s\n' "$CA_TODAS" | _protegidas "0.44.1" "0.44.1" "0.44.1" "0.44.0") | tr '\n' ' ')
+assert_igual "0.43.0 " "$salida" "con canonico 0.44.0 solo 0.43.0 es podable"
+salida=$(printf '%s\n' "$CA_TODAS" | _podables $(printf '%s\n' "$CA_TODAS" | _protegidas "0.44.1" "0.44.1" "0.44.1" "") | tr '\n' ' ')
+assert_igual "0.43.0 0.44.0 " "$salida" "canonico ausente: comportamiento sin cambio"
+
 echo ""
 echo "[S-2] _podables(): diferencia de conjuntos, y nunca la version cargada"
 
