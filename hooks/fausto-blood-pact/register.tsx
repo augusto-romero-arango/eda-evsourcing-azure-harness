@@ -65,6 +65,7 @@ import {
   batchHeader,
   batchMark,
   batchIssueLine,
+  batchTitleOf,
   batchPrOf,
   batchRunOf,
   batchStatusPath,
@@ -124,6 +125,9 @@ let carriedResults: PipelineResult[] = []
 let runsRepo = ''
 // Ultimo estado del lote leido: base para anunciar con un toast cada issue que pasa a `mergeado`.
 let lastBatchIssues: BatchStatus['issues'] | null = null
+// Titulos del lote en curso (del historial, leido solo cuando aparece un issue terminado sin titulo); se reinician al cambiar el `started` del lote.
+let batchTitles: Record<number, string> = {}
+let batchTitlesFor = ''
 // Si al arrancar no se pudo saber el agente (sin linea de comando y sin transcript aun), se reintenta en cada refresh.
 let agentChecksLeft = 0
 const AGENT_CHECKS = 20
@@ -207,6 +211,19 @@ async function refreshBatch($: EngineInterface) {
   }
   for (const i of newlyMerged(lastBatchIssues, batch.issues)) $.ui.toast(`#${i.issue} mergeado${i.pr ? ` · PR #${i.pr}` : ''}`)
   lastBatchIssues = batch.issues
+  if (batchTitlesFor !== batch.started) {
+    batchTitles = {}
+    batchTitlesFor = batch.started
+  }
+  const finished = (i: BatchStatus['issues'][number]) => i.status !== 'pendiente' && i.status !== 'en-curso'
+  if (batch.issues.some(i => finished(i) && batchTitles[i.issue] === undefined)) {
+    const entries = parseHistory(await readHistory($))
+    for (const i of batch.issues) {
+      if (!finished(i) || batchTitles[i.issue] !== undefined) continue
+      const t = batchTitleOf(entries, i.issue, batch.started)
+      batchTitles[i.issue] = t ?? ''
+    }
+  }
   const closed = !isBatchRunning(batch) && (await readDismissed($)).includes(batchDismissKey(runsRepo, batch))
   await update($, batchAtom, () => (closed ? null : batch))
 }
@@ -595,7 +612,7 @@ export const register: Register = on => {
       const pr = batchPrOf(batch)
       const current = batchCurrentOf(batch)
       const others = otherRunsText(runsOutsideBatch(batch, runs).length)
-      const queue = batch.issues.map(i => ({ key: `b-${i.issue}`, text: batchIssueLine(i), dim: i.status === 'saltado' || i.status === 'pendiente' }))
+      const queue = batch.issues.map(i => ({ key: `b-${i.issue}`, text: batchIssueLine(i, batchTitles[i.issue], body), dim: i.status === 'saltado' || i.status === 'pendiente' }))
       const { page, pages } = pageOf(await read($, pageAtom), queue.length, PAGE_ROWS)
       const visible = running ? [] : queue.slice(page * PAGE_ROWS, (page + 1) * PAGE_ROWS)
       const headColor = batch.state === 'failed' ? 'error' : batch.state === 'stopped' || batch.stopRequested ? 'warning' : 'claude'

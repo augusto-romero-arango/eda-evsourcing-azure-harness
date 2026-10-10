@@ -1,6 +1,8 @@
 import { expect, test } from 'claude-code/testing'
 
 import {
+  batchIssueLine,
+  batchTitleOf,
   bandViewOf,
   resultsFooterText,
   mergeArgsOf,
@@ -521,4 +523,28 @@ test('resultsFooterText: formato, recorte al ancho y +N', () => {
   expect(resultsFooterText(res, 200)).toBe('resultados: ✓#7 PR #55 · ✗#413 2-infra-reviewer · ✗#99 setup')
   expect(resultsFooterText(res, 45)).toBe('resultados: ✓#7 PR #55 +2')
   expect(resultsFooterText(res, 45).length).toBeLessThanOrEqual(45)
+})
+
+const hist = (issue: string, started: string, title?: string) => ({ issue, pipeline: 'tdd', variant: null, started, pr: null, title })
+
+test('batchTitleOf toma la entrada mas reciente dentro de la ventana del lote', () => {
+  const entries = [hist('7', '20260101-000000', 'viejo'), hist('7', '20260102-100000', 'a'), hist('7', '20260102-110000', 'b')]
+  expect(batchTitleOf(entries, 7, '20260102-090000')).toBe('b')
+})
+
+test('batchTitleOf ignora entradas anteriores al lote y issues ausentes', () => {
+  const entries = [hist('7', '20260101-000000', 'viejo')]
+  expect(batchTitleOf(entries, 7, '20260102-090000')).toBeNull()
+  expect(batchTitleOf(entries, 8, '20260101-000000')).toBeNull()
+})
+
+test('batchIssueLine muestra el titulo y lo recorta para dejar PR y detalle', () => {
+  const i = { issue: 12, status: 'mergeado' as const, pr: '30', detail: 'ok' }
+  const full = batchIssueLine(i, 'Mostrar el titulo del issue')
+  expect(full).toContain('#12  Mostrar el titulo del issue  · PR #30 · ok')
+  const short = batchIssueLine(i, 'Mostrar el titulo del issue', 30)
+  expect(short).toContain('…')
+  expect(short.endsWith('· PR #30 · ok')).toBe(true)
+  expect(short.length).toBeLessThanOrEqual(30)
+  expect(batchIssueLine(i)).toBe(batchIssueLine(i, ''))
 })

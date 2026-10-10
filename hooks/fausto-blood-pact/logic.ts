@@ -213,7 +213,7 @@ export function runKey(repo: string, run: PipelineRun): string {
 /** Clave de descarte (repo + pipeline + issue + variante + started). */
 export const dismissKey = runKey
 
-export type HistoryEntry = { issue: string; pipeline: string; variant: string | null; started: string; pr: string | null }
+export type HistoryEntry = { issue: string; pipeline: string; variant: string | null; started: string; pr: string | null; title?: string }
 
 export function parseHistory(raw: string): HistoryEntry[] {
   const out: HistoryEntry[] = []
@@ -227,6 +227,7 @@ export function parseHistory(raw: string): HistoryEntry[] {
         variant: typeof j.variant === 'string' ? j.variant : null,
         started: String(j.started ?? ''),
         pr: typeof j.pr === 'string' || typeof j.pr === 'number' ? String(j.pr) : null,
+        title: typeof j.title === 'string' ? j.title : '',
       })
     } catch {
       continue
@@ -810,9 +811,24 @@ export function batchSummaryText(b: BatchStatus): string {
     .join(' · ')
 }
 
-/** Una linea por issue del resumen: marca, issue, PR y motivo. */
-export function batchIssueLine(i: BatchIssue): string {
-  return `${batchMark(i.status)} #${i.issue}${i.pr ? ` · PR #${i.pr}` : ''}${i.detail ? ` · ${i.detail}` : ''}`
+/** Titulo de la entrada mas reciente del issue con `started` igual o posterior al del lote (mismo formato `YYYYMMDD-HHMMSS`); null si no hay. */
+export function batchTitleOf(entries: readonly HistoryEntry[], issue: number, batchStarted: string): string | null {
+  for (let i = entries.length - 1; i >= 0; i -= 1) {
+    const e = entries[i] as HistoryEntry
+    if (e.issue === String(issue) && e.started >= batchStarted && e.title) return e.title
+  }
+  return null
+}
+
+/** Una linea por issue del resumen: marca, issue, titulo (recortado al ancho `max` para dejar PR y detalle visibles), PR y motivo. */
+export function batchIssueLine(i: BatchIssue, title?: string | null, max?: number): string {
+  const head = `${batchMark(i.status)} #${i.issue}`
+  const tail = `${i.pr ? ` · PR #${i.pr}` : ''}${i.detail ? ` · ${i.detail}` : ''}`
+  const t = (title ?? '').trim()
+  if (t === '') return `${head}${tail}`
+  const room = max === undefined ? t.length : max - head.length - tail.length - 4
+  if (room < 2) return `${head}${tail}`
+  return `${head}  ${clip(t, room)}  ${tail.replace(/^ /, '')}`.trimEnd()
 }
 
 /** Issues que pasaron a `mergeado` entre dos lecturas; con `prev` vacio no hay toasts (el primer vistazo no anuncia). */
