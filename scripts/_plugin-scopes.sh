@@ -63,3 +63,96 @@ _actualizar_scopes() {
         fi
     done < <(_scopes_aplicables "$@")
 }
+
+# --- Activacion por repositorio (MEF-ADR-0053 decision 2, issue #2261) ---------------
+# Los archivos de mefisto se instalan a scope user pero quedan deshabilitados a ese
+# nivel; cada consumidor lo habilita en su .claude/settings.json commiteado (proyecto >
+# usuario). 'claude plugin install --scope user' reescribe el nivel usuario a true
+# (verificado en 2.1.296), por eso todo install va seguido de _deshabilitar_en_usuario.
+
+# _settings_usuario: ruta del settings.json de usuario de Claude Code.
+_settings_usuario() {
+    printf '%s\n' "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json"
+}
+
+# _habilitado_en_usuario <marketplace>: 0 si el nivel usuario no lo deshabilita con un
+# false explicito (sin la clave, Claude Code lo trata como habilitado).
+_habilitado_en_usuario() {
+    local f
+    f=$(_settings_usuario)
+    [ -f "$f" ] || return 0
+    command -v jq >/dev/null 2>&1 || return 0
+    # Sin '//': jq trata false como ausente y lo reemplazaria por el default.
+    [ "$(jq -r --arg id "mefisto@$1" '(.enabledPlugins // {})[$id] == false' "$f" 2>/dev/null)" != "true" ]
+}
+
+# _activacion_commiteada <marketplace> <toplevel>: 0 si el .claude/settings.json de HEAD
+# en <toplevel> habilita mefisto@<marketplace>. Se lee lo commiteado, no el disco: los
+# worktrees de pipeline nacen de origin/main y un cambio sin commitear no viaja.
+_activacion_commiteada() {
+    local mkt="$1" top="$2" contenido
+    [ -n "$top" ] || return 1
+    command -v jq >/dev/null 2>&1 || return 1
+    contenido=$(git -C "$top" show HEAD:.claude/settings.json 2>/dev/null) || return 1
+    [ "$(printf '%s' "$contenido" | jq -r --arg id "mefisto@$mkt" '.enabledPlugins[$id] // false' 2>/dev/null)" = "true" ]
+}
+
+# _deshabilitar_en_usuario <marketplace>: deja enabledPlugins en false a nivel usuario.
+_deshabilitar_en_usuario() {
+    claude plugin disable "mefisto@$1" --scope user >/dev/null 2>&1 || {
+        echo "ERROR: 'claude plugin disable mefisto@$1 --scope user' fallo." >&2
+        return 1
+    }
+    if _habilitado_en_usuario "$1"; then
+        echo "ERROR: mefisto@$1 sigue habilitado a nivel usuario en $(_settings_usuario)." >&2
+        return 1
+    fi
+}
+
+# _reportar_activacion <marketplace> <toplevel>: diagnostico legible de la activacion.
+# Imprime 'MIGRACION PENDIENTE' cuando el repo ya habilita mefisto y el nivel usuario
+# todavia lo carga en todos los repos; el comando decide con el usuario si migra.
+_reportar_activacion() {
+    local mkt="$1" top="$2" repo=no usuario=deshabilitado
+    _activacion_commiteada "$mkt" "$top" && repo=si
+    _habilitado_en_usuario "$mkt" && usuario=habilitado
+    echo "Activacion de Mefisto:"
+    echo "  Este repo lo habilita en .claude/settings.json commiteado: $repo"
+    echo "  Nivel usuario ($(_settings_usuario)): $usuario"
+    if [ "$repo" = si ] && [ "$usuario" = habilitado ]; then
+        echo "MIGRACION PENDIENTE: Mefisto se carga en todos tus repos. Deshabilitarlo a nivel usuario"
+        echo "  lo deja activo solo en los repos que lo habilitan, como este."
+    elif [ "$repo" = no ]; then
+        echo "AVISO: este repo no habilita Mefisto en un .claude/settings.json commiteado."
+        echo "  Agrega \"enabledPlugins\": {\"mefisto@$mkt\": true} (o corre /mefisto:onboard) y commitealo;"
+        echo "  sin eso, Mefisto no se cargara aqui cuando lo deshabilites a nivel usuario."
+    fi
+}
+
+# _mefisto_marketplace <raiz-del-paquete>: nombre del marketplace que provee mefisto.
+# Del cache (<cache>/<mkt>/mefisto/<version>) si la raiz vive ahi; si no, el que apunta
+# al repo de Mefisto en known_marketplaces.json; por ultimo el nombre publicado.
+_mefisto_marketplace() {
+    local root="${1%/}" padre known
+    padre=$(dirname "$root")
+    if [ "$(basename "$padre")" = mefisto ] && [ "$(basename "$(dirname "$(dirname "$padre")")")" = cache ]; then
+        basename "$(dirname "$padre")"
+        return 0
+    fi
+    known="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/plugins/known_marketplaces.json"
+    if [ -f "$known" ] && command -v jq >/dev/null 2>&1; then
+        jq -r 'to_entries[] | select(.value.source.repo == "augusto-romero-arango/eda-evsourcing-azure-harness") | .key' "$known" 2>/dev/null | head -1 | grep . && return 0
+    fi
+    echo augusto-romero-arango-harness
+}
+
+# _fuente_marketplace <marketplace>: objeto JSON 'source' del marketplace para
+# extraKnownMarketplaces (de known_marketplaces.json; si no, el repo publicado).
+_fuente_marketplace() {
+    local known="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/plugins/known_marketplaces.json" src=""
+    if [ -f "$known" ] && command -v jq >/dev/null 2>&1; then
+        src=$(jq -c --arg m "$1" '.[$m].source // empty | select(.source == "github" or .source == "git")' "$known" 2>/dev/null)
+    fi
+    [ -n "$src" ] || src='{"source":"github","repo":"augusto-romero-arango/eda-evsourcing-azure-harness"}'
+    printf '%s\n' "$src"
+}

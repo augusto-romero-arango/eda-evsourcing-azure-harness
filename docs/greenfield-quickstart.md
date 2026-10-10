@@ -15,7 +15,7 @@ El modelo completo (con un tercer matiz de cadencia dentro del rol admin/infra) 
 
 | # | Paso | Lo corre | En una frase |
 |---|---|---|---|
-| 1 | Instalar el plugin a scope `user` | Dev | `claude plugin install mefisto@... --scope user` — scope `project` rompe los pipelines porque corren en un worktree hermano del repo. |
+| 1 | Instalar el plugin por usuario y habilitarlo en el repo | Dev | `claude plugin install mefisto@... --scope user` + `claude plugin disable ... --scope user`, y `.claude/settings.json` commiteado con `enabledPlugins` — Mefisto solo se carga en los repos que lo habilitan. |
 | 2 | Crear `.claude/harness.config.json` + tokens en `CLAUDE.md` | Dev | Declara proyecto, dominios, Bounded Context; sin esto ningún skill sabe dónde está parado. |
 | 3 | Provisionar labels de GitHub | Dev | `setup-github-labels.sh` (o `/onboard` con confirmación) — solo necesita `gh auth login`, nada de Azure. |
 | 4 | Crear el backend del tfstate | **Admin/infra** | `bootstrap-backend.sh` — Resource Group, Storage Account y container donde vive el estado de Terraform. Privilegiado, una sola vez. |

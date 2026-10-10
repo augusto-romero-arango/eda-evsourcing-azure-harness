@@ -131,19 +131,24 @@ Crea (o extiende) `.claude/settings.json` en la raíz del repo consumidor con tr
 ```
 
 - **`extraKnownMarketplaces`** registra el marketplace que aloja a Mefisto (el repo de GitHub). El esquema del bloque `source` usa la clave `source` (no `type`) con valor `"github"` — ver issue #75.
-- **`enabledPlugins`** habilita el plugin de forma **reproducible y commiteable**: al estar en el `settings.json` versionado, cualquiera que clone el repo arranca con Mefisto ya habilitado. La clave es `<plugin.name>@<marketplace.name>` = `mefisto@augusto-romero-arango-harness` (verificado contra `.claude-plugin/plugin.json` y `.claude-plugin/marketplace.json`). El `/plugin install` interactivo del paso 2 habilita el plugin en tu instalación local pero **no deja artefacto en el repo**, así que sin esta clave la habilitación no es reproducible.
+- **`enabledPlugins`** es **lo que activa Mefisto en este repo**: Mefisto se instala por usuario pero deshabilitado a ese nivel, y la precedencia proyecto > usuario de Claude Code lo habilita solo donde este archivo lo declara (MEF-ADR-0053, decisión 2). Al estar en el `settings.json` versionado, cualquiera que clone el repo arranca con Mefisto habilitado, y los worktrees de pipeline (que nacen de `origin/main`) también. Por eso debe quedar **commiteado**: un `settings.local.json` no viaja. La clave es `<plugin.name>@<marketplace.name>` = `mefisto@augusto-romero-arango-harness` (verificado contra `.claude-plugin/plugin.json` y `.claude-plugin/marketplace.json`). El `/plugin install` interactivo del paso 2 habilita el plugin en tu instalación local pero **no deja artefacto en el repo**, así que sin esta clave la habilitación no es reproducible.
 - **`permissions`** es un **punto de partida ajustable** (sintaxis `Bash(<cmd>:*)` de Claude Code; ver la [doc de settings](https://code.claude.com/docs/en/settings)). El `allow` evita la fricción de aprobar uno a uno los `dotnet`/`git`/`gh`/`terraform`/`az` que disparan los pipelines; el `deny` es una red de seguridad contra comandos destructivos (`terraform destroy`, `az group delete`, `git push --force`). Endurécelo o relájalo según la política de tu equipo — el `deny` tiene prioridad sobre el `allow`.
 
-### 2. Instalar el plugin (desde Claude Code)
+### 2. Instalar el plugin una vez por usuario, deshabilitado
+
+Registra el marketplace desde una sesión de Claude Code y, desde una terminal, instala y deshabilita a nivel usuario (el flag `--scope` solo existe en el CLI):
 
 ```
 /plugin marketplace add augusto-romero-arango-harness
-/plugin install mefisto@augusto-romero-arango-harness
+claude plugin install mefisto@augusto-romero-arango-harness --scope user
+claude plugin disable mefisto@augusto-romero-arango-harness --scope user
 ```
 
-> El `/plugin install` interactivo no deja rastro en el repo; el bloque `enabledPlugins` del paso 1 es lo que hace la habilitación reproducible y commiteable. Si declaraste `enabledPlugins`, este paso sigue siendo útil la primera vez para que Claude Code descargue el plugin al cache local.
+> **Por qué instalado pero deshabilitado.** La instalación descarga Mefisto una sola vez a tu máquina, y `/mefisto:upgrade` la actualiza para todos tus repos. Deshabilitarlo a nivel usuario evita que se cargue en repos que no lo usan: un repo ajeno no recibe comandos, agentes, hooks ni la carpeta `.mefisto/`. El `.claude/settings.json` commiteado del paso 1 lo vuelve a habilitar solo en el consumidor. `claude plugin install` reescribe el nivel usuario a habilitado, por eso el `disable` va siempre después; `claude plugin update` lo conserva deshabilitado.
 
-> **Si vas a correr los pipelines (`/infra`, `/implement`, `/scaffold`), instala a scope `user`**, no `project`: `claude plugin install mefisto@augusto-romero-arango-harness --scope user`. Esos pipelines invocan a sus agentes dentro de un git worktree hermano del repo consumidor (`${REPO_ROOT}/../<rama>`), que un scope `project` no carga. Ver "Primeros pasos con el harness (greenfield)", paso 1, para el porqué detallado.
+> **Los pipelines no dependen de este paso.** `/infra`, `/implement`, `/scaffold` y los demás corren sus agentes en un git worktree hermano del repo (`${REPO_ROOT}/../<rama>`) y les entregan con `--plugin-dir` la raíz de la versión que ejecuta el pipeline. El agente carga esa versión exacta aunque Mefisto no esté habilitado ni registrado para la ruta del worktree.
+
+> **Si ya tenías Mefisto habilitado a nivel usuario**, corre `/mefisto:upgrade` en un repo consumidor: detecta la migración pendiente y, con tu confirmación, lo deshabilita a ese nivel. Se niega si el repo no lo habilita en su `.claude/settings.json` commiteado, para no dejarlo sin Mefisto.
 
 ### 3. Configurar el consumidor
 
@@ -312,23 +317,9 @@ Esta es la ruta de arranque para un proyecto **nuevo** (sin código ni infraestr
 
 > **¿Prefieres la versión corta primero?** [`docs/greenfield-quickstart.md`](greenfield-quickstart.md) narra este mismo camino en 10 pasos y el modelo de dos roles (admin/infra vs dev ongoing) — léelo si quieres el mapa antes del detalle exhaustivo de abajo.
 
-### 1. Habilitar el plugin **a scope user** y verificar
+### 1. Habilitar el plugin en el repo y verificar
 
-Registra el marketplace e instala el plugin (sección Instalación, pasos 1-2), pero **instálalo a scope `user`, no a scope `project`** (es requisito para que los pipelines funcionen — ver el recuadro "Por qué scope `user`" al final de este paso).
-
-Registra el marketplace desde una sesión de Claude Code:
-
-```
-/plugin marketplace add augusto-romero-arango-harness
-```
-
-E **instala con `--scope user`** desde una terminal en la raíz del repo consumidor (el flag `--scope` solo existe en el CLI; el slash `/plugin install` no lo acepta). Verificado contra Claude Code 2.1.x:
-
-```bash
-claude plugin install mefisto@augusto-romero-arango-harness --scope user
-```
-
-> Si prefieres el flujo interactivo (`/plugin install mefisto@augusto-romero-arango-harness` dentro de la sesión), elige **user** cuando te pregunte por el scope. El comando de terminal de arriba lo fija explícito y es el camino verificado en campo.
+Commitea el `.claude/settings.json` con `extraKnownMarketplaces` y `enabledPlugins` (sección Instalación, paso 1) e instala Mefisto una vez por usuario, deshabilitado (paso 2). Reinicia la sesión de Claude Code en la raíz del repo consumidor para que lo cargue.
 
 Comprueba que el plugin cargó (mismo criterio que "Verificar instalación", paso 4 de la sección Instalación):
 
@@ -336,9 +327,9 @@ Comprueba que el plugin cargó (mismo criterio que "Verificar instalación", pas
 /plugin list
 ```
 
-`mefisto@augusto-romero-arango-harness` debe aparecer instalado, y `/help` debe listar los skills `/mefisto:*`. En este punto greenfield aún no hay pipelines, así que no hay estado de pipelines que mostrar: eso es esperable y no indica un fallo de instalación.
+`mefisto@augusto-romero-arango-harness` debe aparecer habilitado en este repo, y `/help` debe listar los skills `/mefisto:*`. En un repo ajeno debe aparecer deshabilitado. En este punto greenfield aún no hay pipelines, así que no hay estado de pipelines que mostrar: eso es esperable y no indica un fallo de instalación.
 
-> **Por qué scope `user` y no `project` (requisito para los pipelines).** Los pipelines (`/infra`, `/implement`, `/scaffold`) **no** corren sus agentes dentro de tu repo: crean un **git worktree** en `${REPO_ROOT}/../<rama>` —un directorio **hermano del repo consumidor, fuera de él**— e invocan cada agente ahí con `claude -p ... --agent <nombre> ...` (ver `scripts/iac-pipeline.sh`, `scripts/tdd-pipeline.sh` y `scripts/scaffold-pipeline.sh`, que comparten el patrón `WORKTREE_PATH="${REPO_ROOT}/../${BRANCH_NAME}"`). Con el plugin a **scope `project`**, Claude Code solo lo carga para el path del repo consumidor; ese worktree hermano queda fuera de alcance, el agente no se encuentra y el pipeline aborta con `agent '<nombre>' not found`. El **scope `user`** carga el plugin para todos los paths de tu usuario —incluido el worktree—, por eso es **requisito antes del paso 5 (Bootstrap de infraestructura / `/infra`)**, el primer paso de esta guía que dispara un pipeline. En Claude Code 2.1.x `--scope user` es además el default de `claude plugin install`; declararlo explícito evita que un flujo interactivo previo lo haya dejado a scope `project` (la causa raíz del fallo en el primer greenfield real del harness).
+> **Los worktrees de los pipelines.** Los pipelines (`/infra`, `/implement`, `/scaffold`) corren sus agentes en un **git worktree** hermano del repo (`${REPO_ROOT}/../<rama>`) con `claude -p ... --agent <nombre> --plugin-dir <raíz>`, donde `<raíz>` es la versión de Mefisto que ejecuta el pipeline. Por eso el agente se encuentra aunque Mefisto no esté habilitado ni registrado para esa ruta. Antes de esa entrega, un plugin sin cargar en el worktree abortaba con `agent '<nombre>' not found`.
 
 ### 2. Crear `.mefisto/harness.config.json`
 

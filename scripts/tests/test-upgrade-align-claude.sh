@@ -58,6 +58,7 @@ case "$1 $2" in
         v=$(cat "$state" 2>/dev/null || echo "${STUB_CLAUDE_BEFORE:-1.0.0}")
         printf 'Installed plugins:\n\n  > mefisto@mkt-x\n    Version: %s\n    Scope: user\n' "$v" ;;
     "plugin update"|"plugin install") printf '%s' "${STUB_CLAUDE_AFTER:-1.1.0}" > "$state" ;;
+    "plugin disable") printf '{"enabledPlugins":{"%s":false}}\n' "$3" > "$CLAUDE_CONFIG_DIR/settings.json" ;;
     "plugin marketplace")
         if [ "$3" = list ]; then printf '  > mkt-x\n    Source: GitHub (augusto-romero-arango/eda-evsourcing-azure-harness)\n'; fi ;;
 esac
@@ -67,6 +68,8 @@ chmod +x "$BIN/gh" "$BIN/claude" "$LAUNCHER"
 for t in bash env git jq dirname basename cat sed awk grep head uname mktemp seq rm cp ls tr; do
     p=$(command -v "$t") && ln -sf "$p" "$NOCLAUDE/$t"
 done
+mkdir -p "$TMP/claude-config"
+export CLAUDE_CONFIG_DIR="$TMP/claude-config"
 export STUB_TMP="$TMP" STUB_LOG="$TMP/log" MEFISTO_OPENCODE_LAUNCHER="$LAUNCHER" MEFISTO_CACHE_ROOT="$CACHE" MEFISTO_RUNTIME=opencode
 run() { : > "$STUB_LOG"; rm -f "$TMP/claude-version"; (cd "$CONSUMER" && PATH="$BIN:$PATH" "$STUBS/upgrade.sh" "$@" 2>&1); }
 log() { cat "$STUB_LOG"; }
@@ -93,6 +96,8 @@ has "$out" '"status":"aligned"' && ok "identidad alineada (JSON)" || ko "identid
 echo "[c] disabled con CLI: install"
 out=$(STUB_CLAUDE_MODE=disabled run --align-peer)
 has "$(log)" "claude plugin install mefisto@mkt-x --scope user" && ok "install" || ko "install: $(log)"
+has "$(log)" "claude plugin disable mefisto@mkt-x --scope user" && ok "deshabilita a nivel usuario tras install (MEF-ADR-0053)" || ko "disable: $(log)"
+has "$out" "Activacion de Mefisto:" && ok "reporta la activacion por repositorio" || ko "reporte: $out"
 has "$(log)" "claude plugin update" && ko "no debia hacer update" || ok "sin update"
 
 echo "[d] unavailable: sin mutacion"

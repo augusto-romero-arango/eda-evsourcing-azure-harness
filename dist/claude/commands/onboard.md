@@ -90,7 +90,7 @@ Antes de continuar, aborta si existe `src/internal/scripts/generate-internal-ada
 
 `/mefisto:onboard` es el primer corte del onboarding automatizado (el "doctor" diagnostico). Reporta, sin tocar nada:
 
-1. **Configuracion** (`.mefisto/harness.config.json`, con fallback legacy de solo lectura): existencia, parseo con `jq`, campos requeridos (`projectName`, `namespacePrefix`, `solutionFile`, `boundedContext`) y formato de `terraformStateStorage`. La validacion la hace `load_harness_config` del plugin, que es la **unica fuente de verdad** de las reglas del tfstate (`^[a-z0-9]{3,24}$`) y del BC (`name` 1-63 chars; `domains` subconjunto de `domainLabels`). Incluye además la **versión mínima exigida por el adaptador Claude** (MEF-ADR-0055): 2.1.287, la que publicó los mods que declara `hooks/hooks.json`. Reporta `OK` si la versión instalada la cumple, `FALTA` si es menor (con la acción de actualizar) y `NO VERIFICADO` si no se puede leer la versión; bajo cualquier otro runtime es informativa (`INFO`), MEF-ADR-0050/0053.
+1. **Configuracion** (`.mefisto/harness.config.json`, con fallback legacy de solo lectura): existencia, parseo con `jq`, campos requeridos (`projectName`, `namespacePrefix`, `solutionFile`, `boundedContext`) y formato de `terraformStateStorage`. La validacion la hace `load_harness_config` del plugin, que es la **unica fuente de verdad** de las reglas del tfstate (`^[a-z0-9]{3,24}$`) y del BC (`name` 1-63 chars; `domains` subconjunto de `domainLabels`). Incluye además la **versión mínima exigida por el adaptador Claude** (MEF-ADR-0055): 2.1.287, la que publicó los mods que declara `hooks/hooks.json`. Reporta `OK` si la versión instalada la cumple, `FALTA` si es menor (con la acción de actualizar) y `NO VERIFICADO` si no se puede leer la versión; bajo cualquier otro runtime es informativa (`INFO`), MEF-ADR-0050/0053. Bajo el adaptador Claude reporta también la **activación por repositorio** (MEF-ADR-0053 decisión 2): `OK` si la configuración de proyecto commiteada habilita Mefisto, `FALTA` si no (con la provisión opt-in del paso 8), y una fila `INFO` si Mefisto sigue habilitado a nivel usuario (se carga en todos los repos; `/mefisto:upgrade` ofrece deshabilitarlo a ese nivel).
 2. **Directivas canónicas del consumidor** (MEF-ADR-0049/0050/0053): comprueba independientemente que `AGENTS.md` tenga las secciones obligatorias "Tokens del harness" y "Verificación de fuentes", con los 5 tokens dentro de la primera (`RootNamespace`, `SolutionFile`, `ProjectDisplayName`, `BoundedContext`, `BoundedContextDomains`), y, según el runtime, el puente `CLAUDE.md`. `AGENTS.md` es la fuente canónica para todos los runtimes; `CLAUDE.md` con una línea independiente exacta `@AGENTS.md` es un **requisito del adaptador Claude** (el diagnóstico lo reporta `FALTA` solo bajo ese runtime) y **informativo bajo OpenCode**, donde no bloquea (MEF-ADR-0050/0053). Si conserva cualquiera de las dos secciones contractuales, reporta `FALTA` y pide limpiarlas manualmente, sin tocar el archivo. Un `CLAUDE.md` legacy legible sigue visible como fallback de migración, pero bajo el adaptador Claude nunca deja el proyecto canónicamente listo. Un archivo existente no legible reporta `NO VERIFICADO`.
 3. **Estructura de carpetas esperada** (contrato del harness, punto 3): reporta de forma **informativa** (no bloqueante) la presencia de `src/`, `tests/` e `infra/environments/`. No la marca como `FALTA` cuando falta: un greenfield legitimo aun no tiene estas carpetas antes del primer `/mefisto:scaffold` o `/mefisto:infra-base`, y tratarla como bloqueante daria un falso negativo.
 4. **Labels de GitHub** (MEF-ADR-0007): que existan `tipo:*`, `estado:borrador`, `estado:listo`, `dom:<x>` por cada `domainLabels`, mas `bug` y `bloqueado`.
@@ -240,9 +240,28 @@ Ejecuta sus pre-condiciones (token `projections.enabled`, cwd de consumidor) y s
 
 4. **Reporta el resultado al usuario** tal como lo reporto `/mefisto:scaffold-projections` (su seccion "3. Tras terminar", incluida la cadena de issues relacionados que recuerda: `domain-scaffolder` para registrar el store de cada dominio, y los modulos Terraform del Container App si `/mefisto:infra-base` no corrio todavia con el token habilitado). Si `/mefisto:scaffold-projections` aborto (p. ej. el token resulto deshabilitado entre el diagnostico y este paso), propala su mensaje sin reinterpretarlo.
 
+### 8. Activación opt-in de Mefisto en este repo
+
+Aplica este paso **solo si** la sección de activación por repositorio reportó `FALTA` (solo ocurre bajo el adaptador Claude). Mefisto se instala por usuario pero se activa solo en los repos que lo habilitan en su configuración de proyecto commiteada (MEF-ADR-0053 decisión 2); los worktrees de pipeline nacen de `origin/main`, así que el archivo debe quedar commiteado.
+
+1. Previsualiza el cambio:
+
+```bash
+MEFISTO_RUNTIME=claude "${MEFISTO_PACKAGE_ROOT}/scripts/onboard-activate-repo.sh" --preview
+```
+
+2. Muestra el plan y pregunta si desea aplicarlo. Sin un `si` explícito, no escribas nada.
+3. Solo tras el `si`:
+
+```bash
+MEFISTO_RUNTIME=claude "${MEFISTO_PACKAGE_ROOT}/scripts/onboard-activate-repo.sh" --apply
+```
+
+4. Recuerda que debe commitear el archivo que el script nombra y llevarlo a `main`. El script solo fusiona las claves de habilitación; no toca el resto ni commitea.
+
 ## Reglas
 
-- **Diagnostico de solo lectura por defecto.** El diagnostico (pasos 1-2) no ejecuta `gh label create`, `az ... create`, ni escribe archivos o recursos. Las **unicas** acciones de escritura permitidas son las **provisiones opt-in** -- migrar directivas (paso 3), labels (paso 4, el script borra los labels default de GitHub), CI hacia Azure (paso 5, el script crea app de Entra, role assignments y federated credential OIDC), la estrategia de tenancy (paso 6, escribe `tenancy.strategy` en el config declarado) y encadenar `/mefisto:scaffold-projections` (paso 7, genera el worker de proyecciones invocando al agente `projections-scaffolder`) -- y solo tras la confirmacion explicita del usuario **para cada una**: nunca las ejecutes sin un "si". Sin confirmacion, una corrida de `/mefisto:onboard` no crea, borra, escribe, genera ni provisiona nada.
+- **Diagnostico de solo lectura por defecto.** El diagnostico (pasos 1-2) no ejecuta `gh label create`, `az ... create`, ni escribe archivos o recursos. Las **unicas** acciones de escritura permitidas son las **provisiones opt-in** -- migrar directivas (paso 3), labels (paso 4, el script borra los labels default de GitHub), CI hacia Azure (paso 5, el script crea app de Entra, role assignments y federated credential OIDC), la estrategia de tenancy (paso 6, escribe `tenancy.strategy` en el config declarado) encadenar `/mefisto:scaffold-projections` (paso 7, genera el worker de proyecciones invocando al agente `projections-scaffolder`) y habilitar Mefisto en la configuración de proyecto (paso 8) -- y solo tras la confirmacion explicita del usuario **para cada una**: nunca las ejecutes sin un "si". Sin confirmacion, una corrida de `/mefisto:onboard` no crea, borra, escribe, genera ni provisiona nada.
 - **No abortes ante un fallo parcial.** Cada seccion del diagnostico es independiente: si `gh` o `az` no estan disponibles, reporta `NO VERIFICADO` y continua con el resto.
 - **No dupliques la validacion del config.** El formato de `terraformStateStorage` y los campos requeridos los valida `load_harness_config` (issue #78); este skill solo reporta su resultado.
 - **La estructura de carpetas es informativa, nunca `FALTA`.** Un greenfield legitimo aun no tiene `src/`, `tests/` ni `infra/environments/` antes del primer `/mefisto:scaffold` o `/mefisto:infra-base`; marcarla como bloqueante daria un falso negativo (issue #212).

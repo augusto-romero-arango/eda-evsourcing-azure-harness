@@ -79,7 +79,7 @@ assert_contains "$content" '`conflict` / `operation-in-progress` / `unavailable`
 assert_contains "$content" 'Nunca pases `--align-peer`.' 'estados fail-closed no habilitan alineacion'
 
 echo '[Herdr] refresh automatico desde la release destino'
-refresh_section=$(printf '%s\n' "$content" | awk '/^### 4\. Refrescar agentes herdr/{capture=1} /^### 5\./{capture=0} capture')
+refresh_section=$(printf '%s\n' "$content" | awk '/^### 5\. Refrescar agentes herdr/{capture=1} /^### 6\./{capture=0} capture')
 assert_contains "$refresh_section" 'Solo si `HERDR_ENV=1`' 'el refresh solo se ejecuta dentro de Herdr'
 assert_contains "$refresh_section" 'herdr-pipeline.sh" --refresh-agents' 'invoca el refresh desde la release destino'
 assert_contains "$refresh_section" 'best-effort' 'tolera fallos del refresh'

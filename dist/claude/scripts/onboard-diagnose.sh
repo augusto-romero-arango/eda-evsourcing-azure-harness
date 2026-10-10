@@ -12,7 +12,8 @@
 # nunca pasa por esa sustitucion: commands/onboard.md solo lo invoca por ruta.
 #
 # Reporta, sin tocar nada, el checklist de 9 secciones de /onboard: config
-# (con la version minima de Claude Code, MEF-ADR-0055, como fila 1b),
+# (con la version minima de Claude Code, MEF-ADR-0055, como fila 1b, y la
+# activacion de Mefisto en el .claude/settings.json commiteado, MEF-ADR-0053, como 1c),
 # directivas canónicas en AGENTS.md y su puente CLAUDE.md, estructura de carpetas, labels de GitHub,
 # CI hacia Azure, secretos que alimentan la siembra en Key Vault, el registro
 # secrets[], la bifurcacion de dos caminos de auth (tenancy.strategy) y el
@@ -145,6 +146,40 @@ _check_claude_version() {
     return 0
 }
 
+# _check_claude_activation [runtime] [toplevel]
+# Mefisto se instala a scope user deshabilitado y cada consumidor lo habilita en su
+# .claude/settings.json commiteado (MEF-ADR-0053 decision 2). Deja
+# CLAUDE_ACTIVATION_STATE/_DETAIL y CLAUDE_USER_LEVEL_DETAIL (vacio si no aplica).
+_check_claude_activation() {
+    local runtime="${1:-claude}" top="${2:-}" mkt
+    CLAUDE_USER_LEVEL_DETAIL=""
+    if [ "$runtime" != "claude" ]; then
+        CLAUDE_ACTIVATION_STATE="INFO"
+        CLAUDE_ACTIVATION_DETAIL="activacion por .claude/settings.json: no aplica bajo el runtime $runtime"
+        return 0
+    fi
+    [ -n "$top" ] || top=$(git rev-parse --show-toplevel 2>/dev/null)
+    if ! command -v jq >/dev/null 2>&1; then
+        CLAUDE_ACTIVATION_STATE="NV"
+        CLAUDE_ACTIVATION_DETAIL="no se pudo leer .claude/settings.json (falta jq)"
+        return 0
+    fi
+    # shellcheck disable=SC1091
+    source "$SCRIPT_DIR/_plugin-scopes.sh"
+    mkt=$(_mefisto_marketplace "$PLUGIN_ROOT")
+    if _activacion_commiteada "$mkt" "$top"; then
+        CLAUDE_ACTIVATION_STATE="OK"
+        CLAUDE_ACTIVATION_DETAIL=".claude/settings.json commiteado habilita mefisto@$mkt (repo y worktrees)"
+    else
+        CLAUDE_ACTIVATION_STATE="FALTA"
+        CLAUDE_ACTIVATION_DETAIL=".claude/settings.json commiteado no habilita mefisto@$mkt: sin el, Mefisto no se carga en este repo cuando esta deshabilitado a nivel usuario"
+    fi
+    if _habilitado_en_usuario "$mkt"; then
+        CLAUDE_USER_LEVEL_DETAIL="mefisto@$mkt esta habilitado a nivel usuario: se carga en todos tus repos; /mefisto:upgrade ofrece deshabilitarlo a ese nivel"
+    fi
+    return 0
+}
+
 # _check_consumer_directives [agents_md] [claude_md] [runtime]
 # El puente CLAUDE.md solo es requerido bajo el runtime "claude"; con cualquier
 # otro es informativo (estado INFO, nunca FALTA/NV) segun MEF-ADR-0050/0053.
@@ -258,6 +293,7 @@ main() {
     PA_CLAUDE_NV=0
     PA_CLAUDE_OPTIONAL=0
     PA_CLAUDE_LEGACY_INFO=0
+    PA_CLAUDE_ACTIVATION_FALTA=0
     PA_LABELS_FALTA=0
     PA_CI_FALTA=0
     PA_INFRA_BASE_MISSING=0
@@ -338,6 +374,20 @@ main() {
     row "$CLAUDE_VERSION_STATE" "$CLAUDE_VERSION_DETAIL"
     if [ "$CLAUDE_VERSION_STATE" = "FALTA" ]; then
         ACTIONS="${ACTIONS}  - Actualiza Claude Code a ${CLAUDE_MIN_VERSION} o superior (\`claude update\`).
+"
+    fi
+
+    # --- 1c. Activacion de Mefisto en Claude Code (MEF-ADR-0053 decision 2) ---
+    echo ""
+    echo "Activacion de Mefisto en Claude Code (por repositorio):"
+    _check_claude_activation "$ONBOARD_RUNTIME"
+    row "$CLAUDE_ACTIVATION_STATE" "$CLAUDE_ACTIVATION_DETAIL"
+    if [ -n "$CLAUDE_USER_LEVEL_DETAIL" ]; then
+        row INFO "$CLAUDE_USER_LEVEL_DETAIL"
+    fi
+    if [ "$CLAUDE_ACTIVATION_STATE" = "FALTA" ]; then
+        PA_CLAUDE_ACTIVATION_FALTA=1
+        ACTIONS="${ACTIONS}  - Habilita Mefisto en este repo: \"$PLUGIN_SCRIPTS/onboard-activate-repo.sh\" --apply (o confirma el paso opt-in) y commitea .claude/settings.json.
 "
     fi
 
@@ -636,6 +686,11 @@ main() {
             echo "     te ofrece este mismo /onboard."
         fi
     else
+        if [ "$PA_CLAUDE_ACTIVATION_FALTA" -eq 1 ]; then
+            PA_STEP=$((PA_STEP + 1))
+            echo "  $PA_STEP. Habilita Mefisto en este repo: \"$PLUGIN_SCRIPTS/onboard-activate-repo.sh\" --apply"
+            echo "     (o confirma el paso opt-in) y commitea .claude/settings.json."
+        fi
         if [ "$PA_AGENTS_FALTA" -eq 1 ]; then
             PA_STEP=$((PA_STEP + 1))
             echo "  $PA_STEP. Completa AGENTS.md como fuente canónica: las secciones \"Tokens del harness\" y \"Verificación de fuentes\" (detalle arriba)."

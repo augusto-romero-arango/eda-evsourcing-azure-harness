@@ -41,12 +41,15 @@ Claude Code y OpenCode, ambos con adaptador en el repo y sin privilegiar a uno (
 
 ## Instalación rápida
 
-**Claude Code** (>= 2.1.287): dentro de la sesión registra el marketplace y, desde una terminal en la raíz del repo consumidor, instala a scope `user` (los pipelines corren en worktrees hermanos que un scope `project` no carga):
+**Claude Code** (>= 2.1.287): Mefisto se instala una vez por usuario **deshabilitado**, y solo se activa en los repos que lo habilitan en su `.claude/settings.json` commiteado. Así no se carga en repos que no lo usan ([MEF-ADR-0053](docs/adr/mef-adr-0053-distribucion-multi-runtime-consumidores.md), decisión 2). Registra el marketplace dentro de la sesión y, desde una terminal, instálalo y deshabilítalo a nivel usuario:
 
 ```
 /plugin marketplace add augusto-romero-arango-harness
 claude plugin install mefisto@augusto-romero-arango-harness --scope user
+claude plugin disable mefisto@augusto-romero-arango-harness --scope user
 ```
+
+En cada repo consumidor, commitea el `.claude/settings.json` con `enabledPlugins` (ver la [guía del consumidor](docs/guia-del-consumidor.md#1-configurar-claudesettingsjson-del-repo-consumidor), paso 1). Los pipelines entregan a sus agentes la raíz de su propia versión, así que los worktrees no dependen de esta instalación.
 
 **OpenCode**: desde Claude Code, `/mefisto:upgrade` proyecta el adaptador; el procedimiento directo está en la [guía del consumidor](docs/guia-del-consumidor.md#opencode-bootstrap-upgrade-y-rollback).
 

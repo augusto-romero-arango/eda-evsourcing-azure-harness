@@ -15,6 +15,8 @@
 #                                                 poda (solo tras confirmar en el comando);
 #                                                 --keep aplica a OpenCode; --only (lista confirmada,
 #                                                 obligatoria en Claude) y --loaded a Claude
+#   scripts/upgrade.sh --disable-user             deshabilita Mefisto a nivel usuario en Claude (solo tras
+#                                                 confirmar); exige la activacion commiteada del repo
 #
 # Nunca borra nada fuera de --prune. Refrescar panes, el mensaje de reload y la
 # confirmacion de poda son responsabilidad del comando, no de este script.
@@ -28,7 +30,7 @@ DEFAULT_REPO_SLUG="augusto-romero-arango/eda-evsourcing-azure-harness"
 LEGACY_USAGE='ERROR: uso: mefisto-opencode install <semver> | activate <semver> | prune [--keep <n>] [--yes] | project | deactivate | status | diagnose | package-root'
 
 usage() {
-    echo "Uso: $0 --status | [--align-peer] | --prune [--keep <n>] [--only <v>[,<v>...]] [--loaded <version>]" >&2
+    echo "Uso: $0 --status | [--align-peer] | --prune [--keep <n>] [--only <v>[,<v>...]] [--loaded <version>] | --disable-user" >&2
 }
 
 _guard_consumidor() {
@@ -196,6 +198,10 @@ _update_claude() {
     [ -f "$update" ] || { echo "ERROR: no se hallo update-plugin.sh junto a upgrade.sh." >&2; return 1; }
     loaded="$LOADED_OVERRIDE"
     [ -n "$loaded" ] || loaded=$(_loaded_from_root)
+    if [ "$MODE" = disable-user ]; then
+        bash "$update" --disable-user
+        return $?
+    fi
     if [ "$MODE" = prune ]; then
         args=(--prune)
         [ "$ONLY_GIVEN" = false ] || args+=(--only "$ONLY")
@@ -287,6 +293,10 @@ _align_claude() {
             echo "Instalando mefisto@$mkt en Claude (scope user)..."
             claude plugin marketplace update "$mkt" || { echo "ERROR: 'claude plugin marketplace update $mkt' fallo." >&2; return 1; }
             claude plugin install "mefisto@$mkt" --scope user || { echo "ERROR: 'claude plugin install mefisto@$mkt' fallo." >&2; return 1; }
+            # install deja el nivel usuario en true: Mefisto se activa por repo (MEF-ADR-0053 decision 2).
+            _deshabilitar_en_usuario "$mkt" || return 1
+            top=$(git rev-parse --show-toplevel 2>/dev/null) || top=""
+            _reportar_activacion "$mkt" "$top"
             ;;
         enabled)
             mkt="$PEER_MKT"
@@ -332,6 +342,7 @@ main() {
             --status) MODE=status; shift ;;
             --align-peer) ALIGN_PEER=true; shift ;;
             --prune) MODE=prune; shift ;;
+            --disable-user) MODE=disable-user; shift ;;
             --keep)
                 if [ "$#" -lt 2 ] || ! [[ "$2" =~ ^[0-9]+$ ]]; then
                     echo "ERROR: --keep requiere un entero." >&2; usage; return 1
@@ -347,6 +358,9 @@ main() {
             *) echo "ERROR: argumento desconocido '$1'" >&2; usage; return 1 ;;
         esac
     done
+    if [ "$MODE" = disable-user ] && [ "$ALIGN_PEER" = true ]; then
+        echo "ERROR: --align-peer no se combina con --disable-user." >&2; usage; return 1
+    fi
     if [ "$MODE" = prune ] && [ "$ALIGN_PEER" = true ]; then
         echo "ERROR: --align-peer no se combina con --prune." >&2; usage; return 1
     fi
@@ -356,6 +370,9 @@ main() {
 
     case "$MODE:$RUNTIME" in
         status:*) cmd_status ;;
+        disable-user:opencode)
+            echo "ERROR: --disable-user aplica a Claude Code; ejecutalo desde una sesion de Claude." >&2
+            return 1 ;;
         prune:opencode) _prune_opencode ;;
         *:opencode)
             TARGET_VERSION=""
