@@ -1,83 +1,78 @@
-# mefisto
+<p align="center">
+  <img src="docs/assets/mefisto-banner.svg" alt="Mefisto" width="100%">
+</p>
 
-> Repositorio: `eda-evsourcing-azure-harness` · Nombre del plugin: `mefisto`
+<p align="center">
+  <a href="https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/releases"><img alt="Última release" src="https://img.shields.io/github/v/release/augusto-romero-arango/eda-evsourcing-azure-harness"></a>
+  <a href="LICENSE"><img alt="Licencia" src="https://img.shields.io/github/license/augusto-romero-arango/eda-evsourcing-azure-harness"></a>
+</p>
 
-Plugin de [Claude Code](https://code.claude.com/docs/en/plugins) que provee un harness opinionado para construir aplicaciones .NET 10 serverless en Azure con Event Driven Architecture y Event Sourcing.
+# Mefisto
 
-> Estado: **v0.1.0 (internal alpha)** — extraído del proyecto Bitakora.ControlAsistencia el 2026-05-15. La API del harness puede cambiar entre versiones menores hasta `v1.0.0`.
+Mefisto es un harness opinionado para agentes de código que orquesta el desarrollo asistido de aplicaciones .NET 10 serverless en Azure con Event Driven Architecture y Event Sourcing.
 
 ## El nombre
 
-`mefisto` es un guiño a Mefistófeles, el espíritu de *Fausto* de Goethe. La analogía es simple: quien invoca el harness encarna a Fausto — fija la intención y firma el pacto —; el plugin, como Mefisto, ejecuta esa voluntad bajo las reglas del marco (EDA, Event Sourcing, Azure Functions, TDD).
+Un guiño a Mefistófeles, el espíritu de *Fausto* de Goethe: quien invoca el harness encarna a Fausto, fija la intención y firma el pacto; el plugin, como Mefisto, la ejecuta bajo las reglas del marco (EDA, Event Sourcing, TDD). *Fausto decide, Mefisto ejecuta* ([MEF-ADR-0055](docs/adr/mef-adr-0055-superficie-observacion-mods-claude-code.md)).
 
-> «Ich will mich hier zu deinem Dienst verbinden,
-> auf deinen Wink nicht rasten und nicht ruhn».
->
-> — Mefistófeles, *Fausto* I, escena «Studierzimmer», vv. 1656-1657
->
-> *«Aquí me ataré a tu servicio, a tu menor seña no descansaré ni cesaré».*
+## Por qué
 
-## Qué incluye
+Los agentes de código improvisan arquitectura: cada sesión reinventa convenciones, tests y pipelines. Mefisto fija el marco una sola vez (ADRs, skills, agentes y pipelines) para equipos que construyen sistemas .NET sobre Azure con Event Sourcing y quieren que el agente trabaje dentro de esas reglas, de la idea al PR.
 
-- **Skills** (slash commands): `/onboard`, `/upgrade`, `/runtimes`, `/implement`, `/tooling`, `/infra`, `/infra-base`, `/scaffold`, `/scaffold-projections`, `/scaffold-mcp`, `/seed-secret`, `/install-workos`, `/install-apim`, `/install-auth`, `/parallel`, `/batch-stop`, `/next-order`, `/sequential`, `/bug`, `/draft`, `/fix-review`, `/health-check`, `/eraser-diagram`, `/merge`, `/bitacora`, `/purge-store`.
-- **Agentes** especializados: `planner`, `test-writer`, `implementer`, `projection-test-writer`, `projection-implementer`, `projections-scaffolder`, `reviewer`, `smoke-test-writer`, `domain-scaffolder`, `infra-base-scaffolder`, `apim-gateway-scaffolder`, `workos-identity-scaffolder`, `historiador`, `infra-writer`, `infra-reviewer`, `infra-bootstrap`, `pr-sync`, `bug-investigator`, `tooling-investigator`.
-- **Pipelines bash** que orquestan el ciclo TDD, IaC y tooling sobre `tmux` y `git worktree`.
-- **ADRs** del marco arquitectónico (prefijo `MEF-ADR-`, ver [índice temático](docs/adr/INDICE-TEMATICO.md)).
-- **Hooks** para logging del pipeline.
-- Un **servidor MCP bundleado**: `microsoft-learn` (endpoint remoto oficial `https://learn.microsoft.com/api/mcp`, HTTP sin autenticación). En Claude Code se declara en `.mcp.json`; en OpenCode se proyecta globalmente como plugin local, sin modificar `opencode.json`. Terraform permanece externo: su instalación y los permisos por artefacto no forman parte de este bundle (la traducción de permisos OpenCode llega en #1145). Discovery certificado; invocación real no certificada — ver el veredicto de [`docs/testing/opencode-consumer-cutover.md`](docs/testing/opencode-consumer-cutover.md#veredicto-final-del-corte-vertical-1066).
+## Características
 
-## Soporte OpenCode: alcance certificado
+- **Skills** (slash commands) para onboarding, scaffolding de dominios, ciclo TDD, infraestructura, auth, merge y bitácora.
+- **Agentes** especializados: planner, escritores de tests, implementadores, revisores y scaffolders.
+- **Pipelines bash** sobre `tmux` y `git worktree`, con ejecución paralela y secuencial.
+- **ADRs** del marco (prefijo `MEF-ADR-`) como fuente de verdad arquitectónica.
+- **Servidor MCP** bundleado de Microsoft Learn para verificar documentación oficial.
 
-Movida a [docs/guia-del-consumidor.md](docs/guia-del-consumidor.md#soporte-opencode-alcance-certificado).
+## Stack del marco
 
-## Stack supuesto en el consumidor
+.NET 10 · Azure Functions (isolated worker) · PostgreSQL + Marten · Wolverine · Azure Service Bus · Terraform · GitHub Actions.
 
-Movida a [docs/guia-del-consumidor.md](docs/guia-del-consumidor.md#stack-supuesto-en-el-consumidor).
+## Runtimes soportados
 
-## Instalación
+Claude Code y OpenCode, ambos con adaptador en el repo y sin privilegiar a uno ([MEF-ADR-0049](docs/adr/mef-adr-0049-arquitectura-neutral-runtime-proveedor.md)).
 
-Movida a [docs/guia-del-consumidor.md](docs/guia-del-consumidor.md#instalación).
+## Requisitos
 
-## Primeros pasos con el harness (greenfield)
+`bash` 3.2+, `jq`, `gh` autenticado, `git` 2.x con worktrees, `dotnet` 10.x, `terraform` 1.6+ y `tmux` (pipelines paralelos).
 
-Movida a [docs/guia-del-consumidor.md](docs/guia-del-consumidor.md#primeros-pasos-con-el-harness-greenfield).
+## Instalación rápida
 
-## Uso
+**Claude Code** (>= 2.1.287): dentro de la sesión registra el marketplace y, desde una terminal en la raíz del repo consumidor, instala a scope `user` (los pipelines corren en worktrees hermanos que un scope `project` no carga):
 
-Movida a [docs/guia-del-consumidor.md](docs/guia-del-consumidor.md#uso).
+```
+/plugin marketplace add augusto-romero-arango-harness
+claude plugin install mefisto@augusto-romero-arango-harness --scope user
+```
 
-## Estructura del plugin
+**OpenCode**: desde Claude Code, `/mefisto:upgrade` proyecta el adaptador; el procedimiento directo está en la [guía del consumidor](docs/guia-del-consumidor.md#opencode-bootstrap-upgrade-y-rollback).
 
-Movida a [docs/desarrollo-del-plugin.md](docs/desarrollo-del-plugin.md#estructura-del-plugin).
+## Primer uso
 
-## Desarrollo del propio plugin
+1. Ejecuta `/mefisto:onboard` para diagnosticar config, labels y CI del repo.
+2. Captura una idea con `/mefisto:draft`, refínala hasta `estado:listo` y córrela con `/mefisto:implement <issue>`: del issue al PR.
 
-Movida a [docs/desarrollo-del-plugin.md](docs/desarrollo-del-plugin.md#desarrollo-del-propio-plugin).
+## Documentación
 
-## Migración para consumidores existentes
+- [Guía del consumidor](docs/guia-del-consumidor.md)
+- [Migración y versionado](docs/migracion-y-versionado.md)
+- [Desarrollo del plugin](docs/desarrollo-del-plugin.md)
+- [Quickstart greenfield](docs/greenfield-quickstart.md)
+- [ADRs e índice temático](docs/adr/INDICE-TEMATICO.md)
 
-Movida a [docs/migracion-y-versionado.md](docs/migracion-y-versionado.md#migración-para-consumidores-existentes).
+## Contribuir
 
-## Compatibilidad y versionado
-
-Movida a [docs/migracion-y-versionado.md](docs/migracion-y-versionado.md#compatibilidad-y-versionado).
-
-## Actualizar a una versión nueva
-
-Movida a [docs/migracion-y-versionado.md](docs/migracion-y-versionado.md#actualizar-a-una-versión-nueva).
-
-## Requisitos del entorno
-
-- `bash` 3.2+ (compatible con macOS nativo)
-- `jq` (parser JSON, usado por `_pipeline-common.sh`)
-- `gh` CLI autenticado
-- `dotnet` 10.x
-- `terraform` 1.6+
-- `tmux` (para pipelines paralelos)
-- `git` 2.x con soporte de worktrees
+El trabajo sobre el propio plugin nace como issue: `/mefisto-plan` captura y refina, el pipeline interno implementa en una rama propia (nunca contra `main`) y se entrega por Pull Request con `Closes #<n>`. Cada cambio notable se anota como fragmento en `changelog.d/`, sin editar `CHANGELOG.md`. Detalle en [Desarrollo del plugin](docs/desarrollo-del-plugin.md).
 
 ## Licencia
 
 Apache-2.0. Ver [`LICENSE`](LICENSE) y [`NOTICE`](NOTICE).
 
-Se permite uso, modificacion y uso comercial conservando los avisos de licencia y atribucion.
+Se permite uso, modificación y uso comercial conservando los avisos de licencia y atribución.
+
+## Autor
+
+Augusto Romero Arango · [@augusto-romero-arango](https://github.com/augusto-romero-arango)
