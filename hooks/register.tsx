@@ -265,8 +265,8 @@ async function onBash($: EngineInterface, command: string, output: string) {
   if (isIssueCreate(command)) {
     const created = createdIssueOf(output)
     if (created !== null && !focus.created.includes(created)) {
+      if (focus.kind === 'explorar' && focus.created.length === 0) await update($, pageAtom, () => 0)
       await update($, focusAtom, f => (f ? { ...f, created: [...f.created, created] } : f))
-      if (focus.created.length === 0) await update($, pageAtom, () => 0)
       void refresh($, true)
     }
   }
