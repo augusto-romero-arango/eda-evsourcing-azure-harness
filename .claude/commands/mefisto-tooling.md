@@ -120,7 +120,7 @@ Dentro de herdr (`HERDR_ENV=1` en el entorno), el script delega en la interfaz h
 Pipeline mefisto-tooling corriendo en un pane de este workspace (visor en vivo del agente).
 ```
 
-Si la salida del script dice `sin pane: lo sigue el mod mefisto-divine-wager` (modo `MEFISTO_UI=mod`, MEF-ADR-0055: el mod de esta sesion antepuso ese modo al comando), no hay pane ni sesion que adjuntar. Responde con:
+Si la salida del script dice `sin pane: lo sigue el mod mefisto-divine-wager` (modo desacoplado, MEF-ADR-0055: lo eligio el runtime activo o un `MEFISTO_UI=mod` explicito), no hay pane ni sesion que adjuntar. Responde con:
 
 ```
 Pipeline mefisto-tooling corriendo sin pane: lo sigue el monitor de esta sesion.

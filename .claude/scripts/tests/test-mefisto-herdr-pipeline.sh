@@ -1037,6 +1037,15 @@ echo "----------------------------------------"
 WRAPPER="$FAKE_MEFISTO/src/internal/scripts/mefisto-tmux-pipeline.sh"
 cp "$REPO_ROOT/src/internal/scripts/mefisto-tmux-pipeline.sh" "$WRAPPER"
 chmod +x "$WRAPPER"
+WRAPPER_BIN="$TMP_DIR/wrapper-bin"
+mkdir -p "$WRAPPER_BIN"
+cat > "$WRAPPER_BIN/tmux" <<'STUB'
+#!/usr/bin/env bash
+echo "tmux $*" >> "$HERDR_STUB_LOG"
+[ "${1:-}" = "has-session" ] && exit 1
+exit 0
+STUB
+chmod +x "$WRAPPER_BIN/tmux"
 run_wrapper() {
     : > "$HERDR_STUB_LOG"; echo 0 > "$HERDR_STUB_COUNTER"
     (
@@ -1044,7 +1053,7 @@ run_wrapper() {
         env -u MEFISTO_UI -u MEFISTO_RUNTIME \
             -u MEFISTO_STATE_DIR -u MEFISTO_LEGACY_STATE_DIR \
             -u MEFISTO_REPO_ROOT -u MEFISTO_PROJECT_NAME -u MEFISTO_REPO_SLUG \
-            PATH="$FAKE_BIN:/usr/bin:/bin" \
+            PATH="$WRAPPER_BIN:$FAKE_BIN:/usr/bin:/bin" \
             HERDR_ENV=1 HERDR_PANE_ID="w1:p0" HERDR_WORKSPACE_ID="w1" \
             HERDR_STUB_LOG="$HERDR_STUB_LOG" HERDR_STUB_COUNTER="$HERDR_STUB_COUNTER" \
             HERDR_STUB_OWNER_PID="${HERDR_STUB_OWNER_PID-$$}" \
@@ -1054,6 +1063,7 @@ run_wrapper() {
     LAST_STDERR=$(cat "$TMP_DIR/stderr")
 }
 no_pane_calls() { ! grep -qE "pane (split|run|close)" "$HERDR_STUB_LOG"; }
+no_tmux_session() { ! grep -qF "tmux new-session" "$HERDR_STUB_LOG"; }
 
 echo ""
 echo "[34] CA-1 (#2284): runtime claude sin MEFISTO_UI corre desacoplado"
@@ -1061,6 +1071,7 @@ for mode in "--tooling 2284" "--batch 2284 2285"; do
     # shellcheck disable=SC2086
     run_wrapper MEFISTO_RUNTIME=claude "$WRAPPER" $mode
     if no_pane_calls; then pass "$mode: cero herdr pane split|run|close"; else fail "$mode abrio pane -- log: $(cat "$HERDR_STUB_LOG")"; fi
+    if no_tmux_session; then pass "$mode: cero tmux new-session"; else fail "$mode abrio sesion tmux -- log: $(cat "$HERDR_STUB_LOG")"; fi
 done
 
 echo ""
@@ -1069,9 +1080,11 @@ run_wrapper MEFISTO_RUNTIME=opencode "$WRAPPER" --tooling 2284
 if grep -qF "pane split --pane w1:p0 --direction right" "$HERDR_STUB_LOG"; then pass "split a la derecha de w1:p0"; else fail "sin split esperado -- log: $(cat "$HERDR_STUB_LOG")"; fi
 
 echo ""
-echo "[36] CA-3 (#2284): MEFISTO_UI=herdr explicito se respeta aunque el runtime sea claude"
+echo "[36] CA-3 (#2284): MEFISTO_UI=herdr|tmux explicito se respeta aunque el runtime sea claude"
 run_wrapper MEFISTO_RUNTIME=claude MEFISTO_UI=herdr "$WRAPPER" --tooling 2284
 if grep -qE "pane (split|run)" "$HERDR_STUB_LOG"; then pass "MEFISTO_UI=herdr gana"; else fail "no uso herdr -- log: $(cat "$HERDR_STUB_LOG") err: $LAST_STDERR"; fi
+run_wrapper MEFISTO_RUNTIME=claude MEFISTO_UI=tmux "$WRAPPER" --tooling 2284
+if grep -qF "tmux new-session" "$HERDR_STUB_LOG" && no_pane_calls; then pass "MEFISTO_UI=tmux gana"; else fail "no uso tmux -- log: $(cat "$HERDR_STUB_LOG") err: $LAST_STDERR"; fi
 
 echo ""
 echo "[37] CA-4 (#2284): pane heredado/ajeno aborta sin tocar panes"
