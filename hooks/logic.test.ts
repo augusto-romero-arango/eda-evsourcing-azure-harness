@@ -1,4 +1,5 @@
 import { expect, test } from 'claude-code/testing'
+import type { BoardList } from './types'
 
 import {
   arrivals,
@@ -180,7 +181,9 @@ test('reconoce el cierre de un issue', async () => {
 })
 
 const item = (number: number) => ({ number, title: `T${number}`, tipo: null, after: [], hasDepsSection: true })
-const board = (...numbers: number[]) => ({ items: numbers.map(item), blockedCount: 0, cycleCount: 0, launch: null, error: null })
+const board = (...numbers: number[]): BoardList => ({
+  items: numbers.map(item), blockedCount: 0, cycleCount: 0, launch: null, infra: [], parallel: null, error: null,
+})
 
 test('la quita optimista saca el item y recalcula los indices de la pagina visible', async () => {
   const list = dropIssue(board(1, 2, 3, 4, 5, 6, 7), 2)
@@ -201,4 +204,6 @@ test('el conjunto pendiente filtra el borrador y sale al confirmarse o a los 60 
   const expired = applyPending(board(1, 2, 3), pending, 1000 + PENDING_TTL_MS)
   expect(expired.list.items.map(i => i.number)).toEqual([1, 2, 3])
   expect(expired.pending.size).toBe(0)
+  const failed = applyPending({ ...board(), error: 'next-order fallo' }, pending, 1000 + 5_000)
+  expect(failed.pending.has(2)).toBe(true)
 })

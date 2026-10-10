@@ -62,6 +62,7 @@ const frameAtom = atom({ plugin: 'mefisto', key: 'frame' } as const, 0)
 const stepsAtom = atom({ plugin: 'mefisto', key: 'stepsInTurn' } as const, 0)
 const workingAtom = atom({ plugin: 'mefisto', key: 'isWorking' } as const, false)
 const knownAtom = atom({ plugin: 'mefisto', key: 'known' } as const, [])
+const pendingAtom = atom({ plugin: 'mefisto', key: 'pendingCount' } as const, 0)
 
 let isInteractive = false
 let pending: Pending = new Map()
@@ -101,7 +102,7 @@ async function refresh($: EngineInterface, isForced: boolean) {
     if (!issues) return
 
     const signature = signatureOf(issues)
-    if (!isForced && signature === (await read($, signatureAtom))) return
+    if (!isForced && pending.size === 0 && signature === (await read($, signatureAtom))) return
 
     const focus = await read($, focusAtom)
     for (const a of arrivals(issues, await read($, knownAtom))) {
@@ -111,6 +112,7 @@ async function refresh($: EngineInterface, isForced: boolean) {
     const applied = applyPending(refine, pending, Date.now())
     pending = applied.pending
     await update($, refineAtom, () => applied.list)
+    await update($, pendingAtom, () => pending.size)
     await update($, developAtom, () => develop)
     await update($, signatureAtom, () => signature)
     await update($, knownAtom, () => issues.map(i => i.number))
@@ -128,6 +130,8 @@ async function activate($: EngineInterface) {
 }
 
 async function deactivate($: EngineInterface) {
+  pending = new Map()
+  await update($, pendingAtom, () => 0)
   timer?.cancel()
   timer = null
   await update($, activeAtom, () => false)
@@ -247,6 +251,7 @@ function refreshAfterSettle($: EngineInterface) {
 async function hideFromDrafts($: EngineInterface, issue: number) {
   pending = addPending(pending, issue, Date.now())
   await update($, refineAtom, list => dropIssue(list, issue))
+  await update($, pendingAtom, () => pending.size)
 }
 
 async function onBash($: EngineInterface, command: string, output: string) {
@@ -397,7 +402,7 @@ export const register: Register = on => {
     const develop = await read($, developAtom)
     const inner = Math.max(40, (e.props.bodyColumns ?? 80) - 4)
     const count = (l: BoardList | null) => (l ? String(l.items.length) : '…')
-    const isUpdating = pending.size > 0
+    const isUpdating = (await read($, pendingAtom)) > 0
     const tab = await read($, tabAtom)
     const suggested = refine?.items[0]?.number ?? null
     const listButtons = (

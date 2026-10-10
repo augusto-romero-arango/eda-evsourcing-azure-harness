@@ -185,12 +185,13 @@ export function dropIssue(list: BoardList | null, issue: number): BoardList | nu
 /**
  * Aplica las transiciones pendientes a una lista recien refrescada: filtra los pendientes vigentes y devuelve
  * las que siguen pendientes (salen si el refresco ya no los trae como borrador, o al pasar PENDING_TTL_MS).
+ * Una lista con error de next-order no confirma nada: sus pendientes solo vencen por plazo.
  */
 export function applyPending(list: BoardList, pending: Pending, nowMs: number): { list: BoardList; pending: Pending } {
   const present = new Set(list.items.map(i => i.number))
   const kept = new Map<number, number>()
   for (const [n, since] of pending) {
-    if (nowMs - since < PENDING_TTL_MS && present.has(n)) kept.set(n, since)
+    if (nowMs - since < PENDING_TTL_MS && (list.error !== null || present.has(n))) kept.set(n, since)
   }
   const items = kept.size > 0 ? list.items.filter(i => !kept.has(i.number)) : list.items
   return { list: items === list.items ? list : { ...list, items }, pending: kept }
