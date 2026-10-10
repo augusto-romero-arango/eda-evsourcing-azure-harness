@@ -3,7 +3,7 @@ import type { EngineInterface, Register } from 'claude-code'
 
 import { RASTER_ROWS, ROLES, face, sprite, toRasterCells, waitingFace } from '../sprites'
 import type { Role } from '../sprites'
-import { cropGrid, numberWidth, usedColumns } from '../logic'
+import { cropGrid, numberWidth, padEnd, reasonOf, usedColumns } from '../logic'
 import type { BoardList, PipelineResult, PipelineRun } from '../types'
 import type { BatchStatus, LastEvent, LaunchKind, LaunchPlan, MascotPose, OpenPr } from './logic'
 import {
@@ -725,7 +725,7 @@ export const register: Register = on => {
     const { page, pages } = pageOf(await read($, pageAtom), list?.items.length ?? 0, PAGE_ROWS)
     const visible = list?.items.slice(page * PAGE_ROWS, (page + 1) * PAGE_ROWS) ?? []
     const numWidth = numberWidth(visible)
-    const afterWidth = Math.min(16, Math.max(0, ...visible.map(i => rowParts(i, numWidth, 0).after.length)))
+    const afterWidth = Math.min(16, Math.max(0, ...visible.map(i => reasonOf(i).length)))
     const titleWidth = Math.max(12, body - 3 - 2 - numWidth - 1 - (afterWidth > 0 ? afterWidth + 2 : 0))
     const footerRest = list ? footerRestOf(list, Boolean(list.launch || list.parallel?.launch) || openPrs.length > 0) : ''
     return (
@@ -743,7 +743,7 @@ export const register: Register = on => {
                 <Box key={`row-${item.number}`}>
                   <Text color={row.color}>{`${row.letter} `}</Text>
                   <Button hotkey={ROW_KEYS[i] as string} plain dimColor={page > 0 || i > 0}
-                    label={row.label}
+                    label={afterWidth > 0 ? padEnd(row.label, numWidth + 1 + titleWidth) : row.label}
                     onPress={() => void launchRow($, item.number)} />
                   <Text dimColor>{row.after ? `  ${clip(row.after, afterWidth)}` : ''}</Text>
                 </Box>
