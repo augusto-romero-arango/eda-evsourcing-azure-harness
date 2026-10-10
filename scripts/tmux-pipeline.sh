@@ -135,6 +135,58 @@ should_delegate_to_herdr() {
     return 0
 }
 
+# uses_detached_ui
+#
+# Issue #2285 (contraparte de #2284): el modo desacoplado se elige por el
+# runtime ya resuelto (MEFISTO_RUNTIME, que el comando antepone siempre). Con el
+# runtime claude y sin MEFISTO_UI explicito, la cinta de la propia sesion
+# (fausto-blood-pact, MEF-ADR-0055) es el visor: no se abre pane ni sesion
+# tmux. MEFISTO_UI=mod tambien lo pide; un MEFISTO_UI=tmux|herdr explicito
+# siempre gana, y el runtime opencode conserva el pane herdr / sesion tmux.
+uses_detached_ui() {
+    [ "${MEFISTO_UI:-}" = "mod" ] && return 0
+    [ -z "${MEFISTO_UI:-}" ] && [ "${MEFISTO_RUNTIME:-}" = "claude" ] && return 0
+    return 1
+}
+
+# launch_detached <nombre-log> <script> <args...>
+#
+# Lanza el sub-pipeline con nohup, sin sesion tmux ni pane herdr, con el mismo
+# string de comando que el pane re-parsea y sin las variables HERDR_* (para que
+# el sub-pipeline no abra panes por su cuenta). Status y log quedan bajo el
+# estado del proyecto, donde la consola fausto-blood-pact ya los sigue.
+launch_detached() {
+    local name="$1" script="$2"
+    shift 2
+    ensure_events_log
+    local logs_dir report_log
+    logs_dir="$(mefisto_state_path "logs")"
+    mkdir -p "$logs_dir"
+    report_log="$logs_dir/$name-run-$(date +%Y%m%d-%H%M%S).report.log"
+
+    local env_unset=(-u HERDR_ENV -u MEFISTO_UI)
+    local v
+    while IFS='=' read -r v _; do
+        case "$v" in
+            HERDR_*) env_unset+=(-u "$v") ;;
+        esac
+    done < <(env)
+
+    (cd "$PROJECT_ROOT" && nohup env "${env_unset[@]}" bash -c \
+        "MEFISTO_RUNTIME=$(printf '%q' "$RESOLVED_RUNTIME") $CAFF '$script' $*" \
+        >"$report_log" 2>&1 </dev/null &)
+
+    success "Pipeline $name iniciado (sin pane: lo sigue la consola de Fausto, fausto-blood-pact)"
+    log "Log: $report_log"
+}
+
+# delegate_deferred_herdr: ejecuta la delegacion a herdr que main() difirio
+# (solo los modos de --parallel, que no tienen variante desacoplada).
+delegate_deferred_herdr() {
+    [ -n "${DEFERRED_HERDR:-}" ] || return 0
+    exec "$SCRIPT_DIR/herdr-pipeline.sh" "${DEFERRED_HERDR_ARGS[@]}"
+}
+
 # Asegurar que events.log existe para que tail no falle
 ensure_events_log() {
     touch "$(mefisto_state_path 'events.log')"
@@ -327,6 +379,10 @@ cmd_single() {
 
     local pipeline_name
     pipeline_name=$(basename "$resolved" .sh)
+    if uses_detached_ui; then
+        launch_detached "$pipeline_name-issue-$issue" "$resolved" "$issue $extra_args"
+        return 0
+    fi
     local session
     session=$(safe_session_name "$pipeline_name-$issue")
     [ -n "$variant_label" ] && session=$(safe_session_name "$pipeline_name-$issue-$variant_label")
@@ -390,6 +446,16 @@ cmd_batch() {
     local issues_str="${issues[*]}"
     local pipeline_flag=""
     [ -n "$pipeline_override" ] && pipeline_flag="--pipeline $pipeline_override"
+    if uses_detached_ui; then
+        # Los issues viajan dentro del string de `bash -c`: solo numeros.
+        local n
+        for n in "${issues[@]}"; do
+            [[ "$n" =~ ^[0-9]+$ ]] || abort "Issue invalido para --batch: '$n' (solo numeros)."
+        done
+        [[ -z "$pipeline_override" || "$pipeline_override" =~ ^[a-z-]+$ ]] || abort "Valor invalido para --pipeline: '$pipeline_override'."
+        launch_detached "batch" "$SCRIPT_DIR/batch-pipeline.sh" "$pipeline_flag $issues_str"
+        return 0
+    fi
 
     check_tmux
     ensure_events_log
@@ -563,6 +629,11 @@ cmd_tooling() {
     session=$(safe_session_name "tooling-$issue")
     [ -n "$variant_label" ] && session=$(safe_session_name "tooling-$issue-$variant_label")
 
+    if uses_detached_ui; then
+        launch_detached "tooling-issue-$issue" "$SCRIPT_DIR/tooling-pipeline.sh" "$issue $extra_args"
+        return 0
+    fi
+
     check_tmux
     ensure_events_log
 
@@ -595,6 +666,11 @@ cmd_infra() {
     local extra_args="${2:-}"
     local session
     session=$(safe_session_name "infra-$issue")
+
+    if uses_detached_ui; then
+        launch_detached "infra-issue-$issue" "$SCRIPT_DIR/iac-pipeline.sh" "$issue $extra_args"
+        return 0
+    fi
 
     check_tmux
     ensure_events_log
@@ -656,14 +732,19 @@ cmd_scaffold() {
     local session
     session=$(safe_session_name "scaffold-$domain")
 
+    local pipeline_args=""
+    [ -n "$issue" ] && pipeline_args="$issue "
+    pipeline_args="${pipeline_args}--domain $domain"
+
+    if uses_detached_ui; then
+        launch_detached "scaffold-$domain" "$SCRIPT_DIR/scaffold-pipeline.sh" "$pipeline_args"
+        return 0
+    fi
+
     check_tmux
     ensure_events_log
 
     handle_session_conflict "$session"
-
-    local pipeline_args=""
-    [ -n "$issue" ] && pipeline_args="$issue "
-    pipeline_args="${pipeline_args}--domain $domain"
 
     log "Creando sesion tmux '$session' para scaffold del dominio '$domain'..."
 
@@ -825,8 +906,17 @@ main() {
     # con equivalente se despachan a la interfaz herdr (pane de ejecucion en
     # el workspace actual, sin sesion tmux); fuera de herdr, o para
     # --attach, todo sigue igual que siempre.
+    # Issue #2285: con el modo desacoplado (uses_detached_ui) la delegacion se
+    # difiere: solo --parallel (un pane por issue, por diseno) la ejecuta, tras
+    # parsear; el resto de los modos corre sin pane.
+    DEFERRED_HERDR=""
+    DEFERRED_HERDR_ARGS=("$@")
     if should_delegate_to_herdr "$@"; then
-        exec "$SCRIPT_DIR/herdr-pipeline.sh" "$@"
+        if uses_detached_ui; then
+            DEFERRED_HERDR=1
+        else
+            exec "$SCRIPT_DIR/herdr-pipeline.sh" "$@"
+        fi
     fi
 
     # Pre-parsear --scaffold-domain, --pipeline, --from-stage y --if-exists
@@ -1018,6 +1108,7 @@ main() {
             [ -n "$from_stage_extra" ] && abort "--from-stage no es valido con --parallel (seria ambiguo sobre varios issues). Usalo con un unico issue: tmux-pipeline.sh <issue> --from-stage N"
             [ -n "$models_extra" ] && abort "--models no es valido con --parallel (seria ambiguo sobre varios issues). Usalo con un unico issue: tmux-pipeline.sh --tooling <issue> --models 'agente=modelo'"
             [ -n "$variant_extra" ] && abort "--variant no es valido con --parallel (seria ambiguo sobre varios issues). Usalo con un unico issue: tmux-pipeline.sh --tooling <issue> --variant <label>"
+            delegate_deferred_herdr
             # Pasar --pipeline al cmd_parallel si se proporciono
             if [ -n "$pipeline_override" ]; then
                 cmd_parallel --pipeline "$pipeline_override" "$@"
@@ -1034,6 +1125,7 @@ main() {
                 [ -n "$models_extra" ] && abort "--models no es valido con multiples issues (se interpretaria como --parallel). Usa: tmux-pipeline.sh --tooling <issue> --models 'agente=modelo'"
                 [ -n "$variant_extra" ] && abort "--variant no es valido con multiples issues (se interpretaria como --parallel). Usa: tmux-pipeline.sh --tooling <issue> --variant <label>"
                 warn "Multiples issues sin modo especificado. Usando --parallel."
+                delegate_deferred_herdr
                 if [ -n "$pipeline_override" ]; then
                     cmd_parallel --pipeline "$pipeline_override" "$@"
                 else

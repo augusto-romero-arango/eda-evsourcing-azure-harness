@@ -125,7 +125,7 @@ Muestra la informacion validada del issue y ejecuta exactamente:
 MEFISTO_RUNTIME=claude "${MEFISTO_PACKAGE_ROOT}/scripts/tmux-pipeline.sh" --tooling $ARGUMENTS
 ```
 
-Dentro de Herdr, informa que el pipeline queda corriendo en un pane de este workspace con el visor en vivo. Fuera de Herdr, informa que fue lanzado en una sesion tmux y que el nombre usa `tooling-ISSUE_NUM`, con el sufijo de variante cuando aplique.
+Seguimiento por runtime: Cuando el runtime activo trae su propia cinta de seguimiento (la consola `fausto-blood-pact`) y el usuario no fijo la interfaz, el wrapper no abre pane ni sesion tmux: corre desacoplado, imprime la ruta del log y el avance lo sigue esa consola desde esta misma sesion. En el resto de los runtimes (MEF-ADR-0050): dentro de Herdr, informa que el pipeline queda corriendo en un pane de este workspace con el visor en vivo. Fuera de Herdr, informa que fue lanzado en una sesion tmux y que el nombre usa `tooling-ISSUE_NUM`, con el sufijo de variante cuando aplique.
 
 ## Reglas
 
