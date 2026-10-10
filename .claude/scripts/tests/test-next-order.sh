@@ -585,17 +585,34 @@ EOF
 OUTPUT=$(run_script --refinement)
 RC=$?
 if [ "$RC" -eq 0 ] \
-    && echo "$OUTPUT" | grep -q "^1\. #601 Base borrador -- sin dependencias abiertas$" \
-    && echo "$OUTPUT" | grep -q "^2\. #602 Sobre la base -- tras #601$" \
-    && echo "$OUTPUT" | grep -q "^3\. #603 Idea suelta -- sin dependencias abiertas$"; then
-    pass "O: orden de refinamiento 601, 602 (tras #601), 603"
-    if echo "$OUTPUT" | tail -1 | grep -q "^Siguiente a refinar: #601$"; then
+    && echo "$OUTPUT" | grep -q "^2\. #601 Base borrador -- sin dependencias abiertas$" \
+    && echo "$OUTPUT" | grep -q "^3\. #602 Sobre la base -- tras #601$" \
+    && echo "$OUTPUT" | grep -q "^1\. #603 Idea suelta -- sin dependencias abiertas$"; then
+    pass "O: orden de refinamiento 603, 601, 602 (tras #601)"
+    if echo "$OUTPUT" | tail -1 | grep -q "^Siguiente a refinar: #603$"; then
         pass "O: la ultima linea sugiere el siguiente a refinar, no un /mefisto-sequential"
     else
         fail "O: ultima linea inesperada: $(echo "$OUTPUT" | tail -1)"
     fi
 else
     fail "O: orden inesperado (exit $RC): $OUTPUT"
+fi
+
+reset_fixtures
+set_issue_list <<'EOF'
+[
+  {"number":10,"title":"Antiguo","body":"## Dependencias\n\nNinguna."},
+  {"number":20,"title":"Medio","body":"## Dependencias\n\nNinguna."},
+  {"number":30,"title":"Reciente tras 10","body":"## Dependencias\n\nDepende de #10"}
+]
+EOF
+: > "$FAKE_DATA/listo_nums"
+OUTPUT=$(run_script --refinement)
+ORDER_NUMS=$(echo "$OUTPUT" | grep -oE '^[0-9]+\. #[0-9]+' | grep -oE '#[0-9]+' | tr '\n' ' ')
+if [ "$ORDER_NUMS" = "#20 #10 #30 " ] && [ "$(echo "$OUTPUT" | tail -1)" = "Siguiente a refinar: #20" ]; then
+    pass "O: desempate por mayor numero, la dependencia manda (#20, #10, #30)"
+else
+    fail "O: orden mayor-primero inesperado ('$ORDER_NUMS'): $OUTPUT"
 fi
 
 # -------- Bloque P: --refinement, dependencia listo satisfecha y abierta sin estado --------
