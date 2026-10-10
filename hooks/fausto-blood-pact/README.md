@@ -42,3 +42,15 @@ Con la lista de listos visible y el prompt vacío (con la banda mostrando corrid
 - `/fausto-blood-pact lanzar [sequential|parallel|<n>]`: lo mismo sin teclas; sin argumento equivale a `1`.
 
 Fuera de alcance: lanzar sin pasar por el prompt y mergear PRs.
+
+## Capacidad vigente (incremento 4): la mascota
+
+A la izquierda de la banda, Mefisto (rojo, de `hooks/sprites.ts`; código propio, nada se importa de `.claude/mods/`) dibujado con `Raster`, recortado a un ancho común a todos sus cuadros para que no salte. Las filas de listos y corridas descuentan esa columna. Si el engine no ofrece `Raster`, queda el hueco y la banda sigue.
+
+- **Reposo** (listos, sin corridas): de frente y quieto.
+- **Claude trabaja en la sesión**: mira de lado a lado y voltea un reloj de arena a un cuadro por segundo (`waitingFace`).
+- **Con corridas**: la mascota de la corrida activa con `updated` más reciente. Rol por agente del `stage`: `test-writer`/`smoke-test-writer`/`coverage-gate` -> tester; `implementer`/`writer`/`setup`/`scaffold` -> desarrollador; `reviewer`/`infra-reviewer` -> revisor; `infra-writer` -> infraestructura.
+- **Pose** por el último evento del último intento (`.mefisto/pipeline/logs/<prefijo>stage-<stage>-<started>-issue-<n>[-<variante>]-attempt-<k>.events.jsonl`; prefijo `""` en tdd, `tooling-`, `iac-`): `tool.started` -> trabajando (desplegando en infra); `message` del assistant o sin eventos -> pensando; edición (`Edit`/`Write`/`MultiEdit`) del revisor -> corrigiendo. En `hold` rige la misma regla.
+- **Solo resultados**: `✓` -> revisor aprobado (infra: arriba); `✗` -> desarrollador error (infra: caído).
+
+Anima solo mientras hay corrida activa o Claude trabaja. Es lectura pura de status y `events.jsonl`. Fuera de alcance: las últimas líneas del agente bajo la mascota.

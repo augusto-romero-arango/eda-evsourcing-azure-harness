@@ -1,9 +1,18 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
+import { RASTER_ROWS, ROLES, face, sprite, toRasterCellsCropped, waitingFace } from '../sprites'
+import type { Role } from '../sprites'
+import { cropGrid, usedColumns } from '../logic'
 import type { BoardList, PipelineResult, PipelineRun } from '../types'
-import type { LaunchKind, LaunchPlan } from './logic'
+import type { LastEvent, LaunchKind, LaunchPlan, MascotPose } from './logic'
 import {
+  LOGS_DIR,
+  activeRunOf,
+  eventsFileOf,
+  lastEventOf,
+  poseOfResults,
+  poseOfRun,
   DISMISSED_STORE_KEY,
   HISTORY_FILE,
   PAGE_ROWS,
@@ -44,6 +53,21 @@ const listAtom = atom({ plugin: 'mefisto', key: 'pactList' } as const, null)
 const pageAtom = atom({ plugin: 'mefisto', key: 'pactPage' } as const, 0)
 const runsAtom = atom({ plugin: 'mefisto', key: 'pactRuns' } as const, [] as PipelineRun[])
 const resultsAtom = atom({ plugin: 'mefisto', key: 'pactResults' } as const, [] as PipelineResult[])
+const lastEventAtom = atom({ plugin: 'mefisto', key: 'pactLastEvent' } as const, null as LastEvent | null)
+const tickAtom = atom({ plugin: 'mefisto', key: 'pactTick' } as const, 0)
+
+// Columnas comunes a todos los cuadros de la mascota: el recorte no cambia al alternar poses.
+const MASCOT_GRIDS = [
+  ...(Object.keys(ROLES) as Role[])
+    .filter(role => role !== 'planner')
+    .flatMap(role => Object.keys(ROLES[role]).flatMap(state => [sprite(role, state, 0), sprite(role, state, 1)])),
+  ...[null, 0, 1].map(tick => waitingFace(face('normal'), tick)),
+]
+const MASCOT_COLS = usedColumns(MASCOT_GRIDS)
+const MASCOT_WIDTH = MASCOT_COLS.to - MASCOT_COLS.from + 1
+
+const mascotGrid = (pose: MascotPose, frame: 0 | 1) => cropGrid(sprite(pose.role, pose.state, frame), MASCOT_COLS)
+let isWorkingNow = false
 
 // La intencion on/off y la elegibilidad viven aqui: /clear no dispara session.start y reinicia los atoms.
 let isEligible = false
@@ -51,6 +75,7 @@ let isWanted = true
 let isRefreshing = false
 let timer: { cancel: () => void } | null = null
 let runsTimer: { cancel: () => void } | null = null
+let tickTimer: { cancel: () => void } | null = null
 let isRefreshingRuns = false
 // Corridas que esta sesion vio activas y resultados `✓` ya derivados; viven aqui porque /clear reinicia los atoms.
 let seenRuns: Record<string, PipelineRun> = {}
@@ -108,6 +133,21 @@ async function readRuns($: EngineInterface): Promise<PipelineRun[]> {
   return [...found.values()]
 }
 
+// Ultimo evento del ultimo intento del agente activo; lector puro de `<estado>/logs/*.events.jsonl`.
+async function readLastEvent($: EngineInterface, run: PipelineRun | null): Promise<LastEvent | null> {
+  if (!run) return null
+  for (const base of [`${runsRepo}/.mefisto/pipeline`, `${runsRepo}/.claude/pipeline`]) {
+    const dir = `${base}/${LOGS_DIR}`
+    const ls = await $.process.run(['ls', dir]).catch(() => ({ exitCode: 1, stdout: '' }))
+    if (ls.exitCode !== 0) continue
+    const file = eventsFileOf(run, ls.stdout.split('\n'))
+    if (!file) continue
+    const tail = await $.process.run(['tail', '-c', '65536', `${dir}/${file}`]).catch(() => ({ exitCode: 1, stdout: '' }))
+    return tail.exitCode === 0 ? lastEventOf(tail.stdout) : null
+  }
+  return null
+}
+
 // `.mefisto/pipeline/` primero; `.claude/pipeline/` solo como respaldo de lectura (MEF-ADR-0053).
 async function readHistory($: EngineInterface): Promise<string> {
   for (const base of ['.mefisto/pipeline', '.claude/pipeline']) {
@@ -138,6 +178,8 @@ async function refreshRuns($: EngineInterface) {
     const live = new Set(statuses.map(s => dismissKey(runsRepo, s)))
     const pruned = pruneDismissed(dismissed, runsRepo, live, Date.now())
     if (pruned.length !== dismissed.length) await saveDismissed($, pruned)
+    const last = await readLastEvent($, activeRunOf(view.runs))
+    await update($, lastEventAtom, () => last)
     await update($, runsAtom, () => view.runs)
     await update($, resultsAtom, () => view.results)
   } finally {
@@ -214,6 +256,11 @@ async function activate($: EngineInterface) {
   runsTimer = $.clock.every(RUNS_POLL_MS, () => {
     if (Object.keys(seenRuns).length > 0) void refreshRuns($)
   })
+  tickTimer?.cancel()
+  // La mascota anima solo con corrida activa o con Claude trabajando; en reposo no hay re-render por segundo.
+  tickTimer = $.clock.every(1000, () => {
+    if (isWorkingNow || Object.keys(seenRuns).length > 0) void update($, tickAtom, () => Math.floor(Date.now() / 1000))
+  })
   void refresh($)
 }
 
@@ -223,6 +270,8 @@ async function deactivate($: EngineInterface) {
   timer = null
   runsTimer?.cancel()
   runsTimer = null
+  tickTimer?.cancel()
+  tickTimer = null
   await update($, activeAtom, () => false)
 }
 
@@ -298,10 +347,26 @@ export const register: Register = on => {
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     if (!isEligible || !isWanted || e.props.hasSurvey) return next(e)
     if (!(await read($, activeAtom))) await activate($)
-    const { Box, Text, Button } = $.ui.resolve(e)
+    const elements = $.ui.resolve(e)
+    const { Box, Text, Button } = elements
     const inner = Math.max(40, (e.props.bodyColumns ?? 80) - 4)
+    const body = Math.max(30, inner - MASCOT_WIDTH - 2)
     const runs = await read($, runsAtom)
     const results = await read($, resultsAtom)
+    await read($, tickAtom)
+    isWorkingNow = Boolean(e.props.isWorking)
+    const sec = Math.floor(Date.now() / 1000)
+    const active = activeRunOf(runs)
+    const pose: MascotPose | null = active ? poseOfRun(active, await read($, lastEventAtom)) : poseOfResults(results)
+    const grid = pose
+      ? mascotGrid(pose, active ? (sec % 2 === 0 ? 0 : 1) : 0)
+      : cropGrid(waitingFace(face('normal'), isWorkingNow ? sec : null), MASCOT_COLS)
+    const mascot =
+      'Raster' in elements ? (
+        <elements.Raster key="mefisto-mascota" columns={MASCOT_WIDTH} rows={RASTER_ROWS} cells={toRasterCellsCropped(grid, MASCOT_WIDTH)} />
+      ) : (
+        <Box width={MASCOT_WIDTH} />
+      )
     const lines = [
       ...runs.map(r => ({ key: `run-${r.pipeline}-${r.issue}-${r.variant ?? ''}`, text: runLine(r, Date.now()), color: undefined as string | undefined })),
       ...results.map(r => ({ key: `res-${r.key}`, text: resultLine(r), color: r.ok ? 'success' : 'error' })),
@@ -311,25 +376,30 @@ export const register: Register = on => {
       const visible = lines.slice(page * PAGE_ROWS, (page + 1) * PAGE_ROWS)
       return (
         <Box flexDirection="column" borderStyle="round" borderColor="claude" borderDimColor paddingX={1}>
-          <Text bold color="claude">Corridas{` · ${runs.length} activas`}</Text>
-          {visible.map(l => (
-            <Text key={l.key} color={l.color} wrap="truncate-end">{clip(l.text, inner)}</Text>
-          ))}
-          {Array.from({ length: Math.max(0, PAGE_ROWS - visible.length) }, (_, i) => (
-            <Text key={`blank-${i}`}> </Text>
-          ))}
-          <Box justifyContent="space-between">
-            {results.length > 0 ? (
-              <Button key="pact-dismiss" hotkey="4" plain dimColor label="descartar resultados"
-                onPress={() => void dismissResults($)} />
-            ) : (
-              <Text dimColor> </Text>
-            )}
-            {pages > 1 && (
-              <Button key="pact-next-page" hotkey="0" plain dimColor label={`página ${page + 1}/${pages} ▸`}
-                onPress={() => void update($, pageAtom, () => (page + 1) % pages)} />
-            )}
+        <Box gap={2} alignItems="flex-start">
+          {mascot}
+          <Box flexDirection="column" width={body}>
+              <Text bold color="claude">Corridas{` · ${runs.length} activas`}</Text>
+              {visible.map(l => (
+                <Text key={l.key} color={l.color} wrap="truncate-end">{clip(l.text, body)}</Text>
+              ))}
+              {Array.from({ length: Math.max(0, PAGE_ROWS - visible.length) }, (_, i) => (
+                <Text key={`blank-${i}`}> </Text>
+              ))}
+              <Box justifyContent="space-between">
+                {results.length > 0 ? (
+                  <Button key="pact-dismiss" hotkey="4" plain dimColor label="descartar resultados"
+                    onPress={() => void dismissResults($)} />
+                ) : (
+                  <Text dimColor> </Text>
+                )}
+                {pages > 1 && (
+                  <Button key="pact-next-page" hotkey="0" plain dimColor label={`página ${page + 1}/${pages} ▸`}
+                    onPress={() => void update($, pageAtom, () => (page + 1) % pages)} />
+                )}
+              </Box>
           </Box>
+        </Box>
         </Box>
       )
     }
@@ -341,34 +411,39 @@ export const register: Register = on => {
     const footerRest = list ? footerRestOf(list, Boolean(list.launch || list.parallel?.launch)) : ''
     return (
       <Box flexDirection="column" borderStyle="round" borderColor="claude" borderDimColor paddingX={1}>
-        <Text bold color="claude">Lanzables{list && !list.error ? ` · ${list.items.length}` : ''}</Text>
-        {!list && <Text dimColor>cargando…</Text>}
-        {list?.error && <Text color="error">next-order falló: {clip(list.error, inner - 20)}</Text>}
-        {list && !list.error && visible.length === 0 && <Text dimColor>Sin issues lanzables</Text>}
-        {visible.map((item, i) => (
-          <Button key={`row-${item.number}`} hotkey={ROW_KEYS[i] as string} plain dimColor={page > 0 || i > 0}
-            label={rowText(item, page * PAGE_ROWS + i + 1, numWidth, Math.max(12, inner - numWidth - 24), Number(ROW_KEYS[i]))}
-            onPress={() => void launchRow($, item.number)} />
-        ))}
-        {Array.from({ length: Math.max(0, PAGE_ROWS - Math.max(visible.length, 1)) }, (_, i) => (
-          <Text key={`blank-${i}`}> </Text>
-        ))}
-        <Box justifyContent="space-between">
-          <Box>
-            {list?.launch && (
-              <Button key="pact-sequential" hotkey="1" plain dimColor label="1 sequential"
-                onPress={() => void launchKey($, 'sequential')} />
-            )}
-            {list?.parallel?.launch && (
-              <Button key="pact-parallel" hotkey="2" plain dimColor label={`${list.launch ? ' · ' : ''}2 parallel ${list.parallel.issues.length}`}
-                onPress={() => void launchKey($, 'parallel')} />
-            )}
-            <Text dimColor>{footerRest}</Text>
+        <Box gap={2} alignItems="flex-start">
+          {mascot}
+          <Box flexDirection="column" width={body}>
+            <Text bold color="claude">Lanzables{list && !list.error ? ` · ${list.items.length}` : ''}</Text>
+            {!list && <Text dimColor>cargando…</Text>}
+            {list?.error && <Text color="error">next-order falló: {clip(list.error, body - 20)}</Text>}
+            {list && !list.error && visible.length === 0 && <Text dimColor>Sin issues lanzables</Text>}
+            {visible.map((item, i) => (
+              <Button key={`row-${item.number}`} hotkey={ROW_KEYS[i] as string} plain dimColor={page > 0 || i > 0}
+                label={rowText(item, page * PAGE_ROWS + i + 1, numWidth, Math.max(12, body - numWidth - 24), Number(ROW_KEYS[i]))}
+                onPress={() => void launchRow($, item.number)} />
+            ))}
+            {Array.from({ length: Math.max(0, PAGE_ROWS - Math.max(visible.length, 1)) }, (_, i) => (
+              <Text key={`blank-${i}`}> </Text>
+            ))}
+            <Box justifyContent="space-between">
+              <Box>
+                {list?.launch && (
+                  <Button key="pact-sequential" hotkey="1" plain dimColor label="1 sequential"
+                    onPress={() => void launchKey($, 'sequential')} />
+                )}
+                {list?.parallel?.launch && (
+                  <Button key="pact-parallel" hotkey="2" plain dimColor label={`${list.launch ? ' · ' : ''}2 parallel ${list.parallel.issues.length}`}
+                    onPress={() => void launchKey($, 'parallel')} />
+                )}
+                <Text dimColor>{footerRest}</Text>
+              </Box>
+              {pages > 1 && (
+                <Button key="pact-next-page" hotkey="0" plain dimColor label={`página ${page + 1}/${pages} ▸`}
+                  onPress={() => void update($, pageAtom, () => (page + 1) % pages)} />
+              )}
+            </Box>
           </Box>
-          {pages > 1 && (
-            <Button key="pact-next-page" hotkey="0" plain dimColor label={`página ${page + 1}/${pages} ▸`}
-              onPress={() => void update($, pageAtom, () => (page + 1) % pages)} />
-          )}
         </Box>
       </Box>
     )

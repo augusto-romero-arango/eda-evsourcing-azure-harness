@@ -26,6 +26,7 @@ export type PipelineRun = {
   pipeline: PipelineKind
   variant: string | null
   started: string
+  updated: string
   stage: string
   state: string
   nextProbe: string | null
@@ -72,6 +73,8 @@ declare module 'claude-code' {
       pactPage: number
       pactRuns: PipelineRun[]
       pactResults: PipelineResult[]
+      pactLastEvent: { kind: 'tool' | 'text'; tool: string } | null
+      pactTick: number
     }
   }
 }

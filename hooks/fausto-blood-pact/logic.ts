@@ -1,3 +1,4 @@
+import type { Role } from '../sprites'
 import type { BoardItem, BoardList, PipelineKind, PipelineResult, PipelineRun } from '../types'
 
 export const NEXT_ORDER_FILE = 'scripts/next-order.sh'
@@ -143,6 +144,7 @@ type StatusJson = {
   pipeline?: string
   variant?: string | null
   started?: string
+  updated?: string
   stage?: string
   state?: string
   hold?: { next_probe?: string | null } | null
@@ -165,6 +167,7 @@ export function parseStatus(fileName: string, raw: string): PipelineRun | null {
     pipeline: m[1] as PipelineKind,
     variant: json.variant ?? m[3] ?? null,
     started: json.started ?? '',
+    updated: json.updated ?? '',
     stage: json.stage ?? '',
     state: json.state ?? '',
     nextProbe: json.hold?.next_probe ?? null,
@@ -395,4 +398,105 @@ export function parseLaunchArg(arg: string, list: BoardList): LaunchTarget {
       : { kind: 'invalid', message: `#${n} no está entre los lanzables.` }
   }
   return { kind: 'invalid', message: 'Uso: /fausto-blood-pact lanzar [sequential|parallel|<n>]' }
+}
+
+// ---- Incremento 4: la mascota (MEF-ADR-0055 decision 10/11; lector puro: pose del status y de los events.jsonl) ----
+
+export type MascotPose = { role: Role; state: string }
+export type LastEvent = { kind: 'tool' | 'text'; tool: string }
+
+/** Rol de la mascota segun el agente del stage; sin agente conocido, desarrollador. */
+export function roleOfAgent(agent: string): Role {
+  switch (agent) {
+    case 'test-writer':
+    case 'smoke-test-writer':
+    case 'coverage-gate':
+      return 'tester'
+    case 'reviewer':
+    case 'infra-reviewer':
+      return 'revisor'
+    case 'infra-writer':
+      return 'infraestructura'
+    default:
+      return 'desarrollador'
+  }
+}
+
+/** La corrida activa con `updated` mas reciente (a igualdad, la de `started` mas reciente); null sin corridas activas. */
+export function activeRunOf(runs: readonly PipelineRun[]): PipelineRun | null {
+  let best: PipelineRun | null = null
+  for (const r of runs) {
+    if (!isActive(r)) continue
+    if (!best || r.updated.localeCompare(best.updated) > 0 || (r.updated === best.updated && r.started.localeCompare(best.started) > 0)) best = r
+  }
+  return best
+}
+
+export const LOGS_DIR = 'logs'
+
+/** Prefijo del `log_base` por pipeline: "" en tdd, `tooling-` e `iac-`. */
+export function logPrefixOf(pipeline: PipelineKind): string {
+  return pipeline === 'tooling' ? 'tooling-' : pipeline === 'infra' ? 'iac-' : ''
+}
+
+/** `<prefijo>stage-<stage>-<started>-issue-<n>[-<variante>]`: lo que precede a `-attempt-<k>.events.jsonl`. */
+export function eventsLogBase(run: PipelineRun): string {
+  return `${logPrefixOf(run.pipeline)}stage-${run.stage}-${run.started}-issue-${run.issue}${run.variant ? `-${run.variant}` : ''}`
+}
+
+/** Nombre del `events.jsonl` del intento mas alto de la corrida entre los nombres del directorio de logs; null si no hay. */
+export function eventsFileOf(run: PipelineRun, names: readonly string[]): string | null {
+  const base = `${eventsLogBase(run)}-attempt-`
+  let best: string | null = null
+  let bestAttempt = -1
+  for (const raw of names) {
+    const name = raw.trim()
+    if (!name.startsWith(base)) continue
+    const m = /^(\d+)\.events\.jsonl$/.exec(name.slice(base.length))
+    if (!m) continue
+    const attempt = Number(m[1])
+    if (attempt > bestAttempt) {
+      bestAttempt = attempt
+      best = name
+    }
+  }
+  return best
+}
+
+/** Ultimo evento relevante del `events.jsonl` (run-events v1): `tool.started` o `message` del assistant con texto; null si no hay. */
+export function lastEventOf(raw: string): LastEvent | null {
+  const lines = raw.split('\n')
+  for (let i = lines.length - 1; i >= 0; i -= 1) {
+    const line = (lines[i] ?? '').trim()
+    if (line === '') continue
+    let ev: Record<string, unknown>
+    try {
+      ev = JSON.parse(line) as Record<string, unknown>
+    } catch {
+      continue
+    }
+    if (ev.type === 'tool.started') return { kind: 'tool', tool: typeof ev.tool === 'string' ? ev.tool : '' }
+    if (ev.type === 'message' && ev.role === 'assistant' && typeof ev.text === 'string' && ev.text.trim() !== '') return { kind: 'text', tool: '' }
+  }
+  return null
+}
+
+const EDIT_TOOLS = /^(Edit|Write|MultiEdit|NotebookEdit)$/
+
+/** Pose de la corrida activa: herramienta trabaja (o despliega), texto o sin eventos piensa, edicion del revisor corrige. */
+export function poseOfRun(run: PipelineRun, last: LastEvent | null): MascotPose {
+  const role = roleOfAgent(agentOf(run.stage))
+  if (role === 'infraestructura') return { role, state: 'desplegando' }
+  if (last?.kind !== 'tool') return { role, state: 'pensando' }
+  if (role === 'revisor' && EDIT_TOOLS.test(last.tool)) return { role, state: 'corrigiendo' }
+  return { role, state: 'trabajando' }
+}
+
+/** Pose con solo resultados: `✓` revisor aprobado (infra arriba), `✗` desarrollador error (infra caido); null sin resultados. */
+export function poseOfResults(results: readonly PipelineResult[]): MascotPose | null {
+  const r = results[results.length - 1]
+  if (!r) return null
+  const isInfra = r.pipeline === 'infra'
+  if (r.ok) return isInfra ? { role: 'infraestructura', state: 'arriba' } : { role: 'revisor', state: 'aprobado' }
+  return isInfra ? { role: 'infraestructura', state: 'caido' } : { role: 'desarrollador', state: 'error' }
 }
