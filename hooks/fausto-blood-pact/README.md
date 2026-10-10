@@ -10,7 +10,7 @@ Se activa sola en una sesión **interactiva** del proyecto consumidor. No se act
 - una sesión no interactiva (`-p`),
 - el repo de Mefisto (manifiesto `name: mefisto`).
 
-Comandos: `/fausto-blood-pact on` | `off` | `refresh` | `ocultar`. `on`/`off` sobreviven a `/clear`.
+Comandos: `/fausto-blood-pact on` | `off` | `refresh` | `ocultar`. `on`/`off` sobreviven a `/clear`: un hook `classic.SessionStart` (`source` `clear`, `resume` o `fork`) reactiva la banda si la consola es elegible y no está apagada, porque `/clear` reinicia el estado sin disparar `session.start`. El render no escribe estado (el engine lo rechaza); `session.start` pide `ui.invalidate('ui.render')` tras activar para que la banda aparezca sola al arrancar.
 
 Si al arrancar no se puede leer la línea de comando de Claude Code y el transcript aún no existe, la consola arranca y reintenta la detección del planner en cada refresco; si resulta ser el planner, se apaga.
 

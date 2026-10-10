@@ -537,8 +537,18 @@ export const register: Register = on => {
       immediate: true,
     })
     if (isWanted) await activate($)
+    await $.ui.invalidate('ui.render')
     return next(e)
   })
+
+  // /clear, /resume y /branch reinician $.state sin disparar session.start; classic.SessionStart si dispara.
+  on('classic.SessionStart', { source: ['clear', 'resume', 'fork'] }, async ($, e, next) => {
+    if (isEligible && isWanted) {
+      await activate($)
+      await $.ui.invalidate('ui.render')
+    }
+    return next(e)
+  }).catch(($, e, next) => next(e))
 
   on('command.run', { command: 'fausto-blood-pact' }, async ($, e) => {
     const arg = e.args.trim()
@@ -589,8 +599,8 @@ export const register: Register = on => {
   })
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
-    if (!isEligible || !isWanted || e.props.hasSurvey) return next(e)
-    if (!(await read($, activeAtom))) await activate($)
+    const isActive = await read($, activeAtom)
+    if (!isEligible || !isWanted || !isActive || e.props.hasSurvey) return next(e)
     const elements = $.ui.resolve(e)
     const { Box, Text, Button } = elements
     const inner = Math.max(40, (e.props.bodyColumns ?? 80) - 4)
