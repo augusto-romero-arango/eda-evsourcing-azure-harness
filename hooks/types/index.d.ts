@@ -74,6 +74,7 @@ declare module 'claude-code' {
       pactRuns: PipelineRun[]
       pactResults: PipelineResult[]
       pactLastEvent: { kind: 'tool' | 'text'; tool: string } | null
+      pactOpenPrs: { number: string; title: string }[]
       pactTick: number
     }
   }

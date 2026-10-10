@@ -5,7 +5,7 @@ import { RASTER_ROWS, ROLES, face, sprite, toRasterCells, waitingFace } from '..
 import type { Role } from '../sprites'
 import { cropGrid, usedColumns } from '../logic'
 import type { BoardList, PipelineResult, PipelineRun } from '../types'
-import type { LastEvent, LaunchKind, LaunchPlan, MascotPose } from './logic'
+import type { LastEvent, LaunchKind, LaunchPlan, MascotPose, OpenPr } from './logic'
 import {
   LOGS_DIR,
   activeRunOf,
@@ -47,6 +47,10 @@ import {
   mergeArgsOf,
   mergeOptions,
   mergeToast,
+  OPEN_PRS_ARGS,
+  openPrArgsOf,
+  openPrOptions,
+  parseOpenPrs,
   parsePrArgs,
   resultPrs,
   viewOptions,
@@ -63,6 +67,7 @@ const pageAtom = atom({ plugin: 'mefisto', key: 'pactPage' } as const, 0)
 const runsAtom = atom({ plugin: 'mefisto', key: 'pactRuns' } as const, [] as PipelineRun[])
 const resultsAtom = atom({ plugin: 'mefisto', key: 'pactResults' } as const, [] as PipelineResult[])
 const lastEventAtom = atom({ plugin: 'mefisto', key: 'pactLastEvent' } as const, null as LastEvent | null)
+const openPrsAtom = atom({ plugin: 'mefisto', key: 'pactOpenPrs' } as const, [] as OpenPr[])
 const tickAtom = atom({ plugin: 'mefisto', key: 'pactTick' } as const, 0)
 
 // Columnas comunes a todos los cuadros de la mascota: el recorte no cambia al alternar poses.
@@ -87,6 +92,7 @@ let runsTimer: { cancel: () => void } | null = null
 let tickTimer: { cancel: () => void } | null = null
 let prTimer: { cancel: () => void } | null = null
 let isCheckingPrs = false
+let isRefreshingOpenPrs = false
 let isRefreshingRuns = false
 // Corridas que esta sesion vio activas y resultados `✓` ya derivados; viven aqui porque /clear reinicia los atoms.
 let seenRuns: Record<string, PipelineRun> = {}
@@ -231,6 +237,7 @@ async function closeMergedPrs($: EngineInterface) {
     carriedResults = carriedResults.filter(r => !gone.has(r.key))
     await update($, resultsAtom, rs => rs.filter(r => !gone.has(r.key)))
     await update($, pageAtom, () => 0)
+    void refreshOpenPrs($)
     for (const p of merged) {
       $.ui.toast(`PR #${p.pr} mergeado${p.pipeline === 'infra' ? ' · el issue se cierra cuando termine el apply de CI' : ''}`)
     }
@@ -255,6 +262,38 @@ async function mergePrs($: EngineInterface, preset: string[] | null = null): Pro
   if (!args) return 'Merge cancelado.'
   $.ui.toast(mergeToast(args, prs))
   await $.command.run({ command: 'mefisto:merge', args })
+  void refreshOpenPrs($)
+  return `/mefisto:merge ${args} en cola.`
+}
+
+async function refreshOpenPrs($: EngineInterface) {
+  if (isRefreshingOpenPrs || !isEligible || !isWanted) return
+  isRefreshingOpenPrs = true
+  try {
+    const { exitCode, stdout } = await $.process.run(['gh', ...OPEN_PRS_ARGS]).catch(() => ({ exitCode: 1, stdout: '' }))
+    if (exitCode === 0) await update($, openPrsAtom, () => parseOpenPrs(stdout))
+  } finally {
+    isRefreshingOpenPrs = false
+  }
+}
+
+// Reposo: la lista es de PRs abiertos de trabajo; "Todos" pasa sus numeros, nunca `--all`.
+async function mergeOpenPrs($: EngineInterface): Promise<string> {
+  await refreshOpenPrs($)
+  const prs = await read($, openPrsAtom)
+  if (prs.length === 0) return 'No hay PRs abiertos de trabajo.'
+  const options = openPrOptions(prs)
+  const answer = await $.ui
+    .ask(
+      prs.length === 1 ? `¿Mergear el PR #${prs[0]!.number}?` : `¿Qué mergear? ${prs.length} PRs${prs.length > 3 ? ' (otros números: escríbelos en la opción de texto)' : ''}`,
+      prs.length === 1 ? options : { header: 'Merge', options, multiSelect: true as const },
+    )
+    .catch(() => null)
+  const args = openPrArgsOf(typeof answer === 'string' ? answer : null, options, prs)
+  if (!args) return 'Merge cancelado.'
+  $.ui.toast(`/mefisto:merge ${args} en cola`)
+  await $.command.run({ command: 'mefisto:merge', args })
+  void refreshOpenPrs($)
   return `/mefisto:merge ${args} en cola.`
 }
 
@@ -291,6 +330,7 @@ async function refresh($: EngineInterface) {
       }
     }
     await refreshRuns($)
+    await refreshOpenPrs($)
     const list = await runNextOrder($)
     await update($, listAtom, () => list)
   } finally {
@@ -388,8 +428,8 @@ export const register: Register = on => {
     agentChecksLeft = agent === null ? AGENT_CHECKS : 0
     await $.command.register({
       name: 'fausto-blood-pact',
-      description: 'Consola de Fausto: refresh | on | off | descartar | lanzar | merge | pr',
-      argumentHint: '[refresh|on|off|descartar|lanzar [sequential|parallel|<n>]|merge [<pr>...]|pr [<pr>]]',
+      description: 'Consola de Fausto: refresh | on | off | descartar | lanzar | merge | prs | pr',
+      argumentHint: '[refresh|on|off|descartar|lanzar [sequential|parallel|<n>]|merge [<pr>...]|prs|pr [<pr>]]',
       immediate: true,
     })
     if (isWanted) await activate($)
@@ -414,6 +454,7 @@ export const register: Register = on => {
       if (prs.length === 0) return { text: `Sin ✓ con PR para: ${invalid.join(' ')}.` }
       return { text: await mergePrs($, prs) }
     }
+    if (arg === 'prs') return { text: await mergeOpenPrs($) }
     if (arg === 'pr' || arg.startsWith('pr ')) {
       const given = arg.slice('pr'.length).trim()
       if (given === '') return { text: await viewPr($) }
@@ -446,6 +487,7 @@ export const register: Register = on => {
     const body = Math.max(30, inner - MASCOT_WIDTH - 2)
     const runs = await read($, runsAtom)
     const results = await read($, resultsAtom)
+    const openPrs = await read($, openPrsAtom)
     await read($, tickAtom)
     const isWorking = Boolean(e.props.isWorking)
     const sec = Math.floor(Date.now() / 1000)
@@ -513,7 +555,7 @@ export const register: Register = on => {
     const { page, pages } = pageOf(await read($, pageAtom), list?.items.length ?? 0, PAGE_ROWS)
     const visible = list?.items.slice(page * PAGE_ROWS, (page + 1) * PAGE_ROWS) ?? []
     const numWidth = String(list?.items.length ?? 0).length + 2
-    const footerRest = list ? footerRestOf(list, Boolean(list.launch || list.parallel?.launch)) : ''
+    const footerRest = list ? footerRestOf(list, Boolean(list.launch || list.parallel?.launch) || openPrs.length > 0) : ''
     return (
       <Box flexDirection="column" borderStyle="round" borderColor="claude" borderDimColor paddingX={1}>
         <Box gap={2} alignItems="flex-start">
@@ -540,6 +582,11 @@ export const register: Register = on => {
                 {list?.parallel?.launch && (
                   <Button key="pact-parallel" hotkey="2" plain dimColor label={`${list.launch ? ' · ' : ''}2 parallel ${list.parallel.issues.length}`}
                     onPress={() => void launchKey($, 'parallel')} />
+                )}
+                {openPrs.length > 0 && (
+                  <Button key="pact-open-prs" hotkey="3" plain dimColor
+                    label={`${list?.launch || list?.parallel?.launch ? ' · ' : ''}3 PRs ${openPrs.length}`}
+                    onPress={() => void mergeOpenPrs($)} />
                 )}
                 <Text dimColor>{footerRest}</Text>
               </Box>
