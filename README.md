@@ -632,4 +632,6 @@ Revisa el `CHANGELOG.md` para notas de migración antes de actualizar entre majo
 
 ## Licencia
 
-PROPRIETARY (uso interno).
+Apache-2.0. Ver [`LICENSE`](LICENSE) y [`NOTICE`](NOTICE).
+
+Se permite uso, modificacion y uso comercial conservando los avisos de licencia y atribucion.
