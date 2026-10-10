@@ -54,6 +54,7 @@
     ]
   },
   "modules": [
-    "./register.tsx"
+    "./register.tsx",
+    "./fausto-blood-pact/register.tsx"
   ]
 }
