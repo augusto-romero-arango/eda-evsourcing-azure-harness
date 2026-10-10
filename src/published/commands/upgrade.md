@@ -22,7 +22,7 @@ No leas configuracion ajena, providers, modelos, permisos ni auth stores. La uni
 Presenta el JSON sin reinterpretarlo. `installedVersion` es la version **instalada en disco** (la que cargara la proxima sesion); no es la version cargada en la sesion viva. `--status` es una consulta local: **no informa si existe una version mas nueva publicada**, asi que nunca autoriza concluir que Mefisto esta al dia. Estados posibles de `peer.state`:
 
 - `enabled` o `stale`: el par expresa adhesion valida. `stale` conserva esa adhesion; no es una desactivacion.
-- `disabled`: no hay adhesion del par; incluye primera instalacion, una release instalada sin proyectar y una desactivacion deliberada.
+- `disabled`: no hay adhesion del par; incluye primera instalacion y una desactivacion deliberada. Una release instalada cuenta como adhesion aunque no este proyectada globalmente: cada repo la activa con sus archivos commiteados.
 - `legacy`: el launcher del par responde con un uso anterior al contrato de estado. Su presencia no prueba adhesion previa.
 - `conflict`, `operation-in-progress` o `unavailable`: estados seguros no alineables. No los reinterpretes como `legacy` ni como consentimiento.
 
@@ -57,14 +57,14 @@ Muestra sin reinterpretar la salida del script. Reten `Version cargada en esta s
 
 ### 4. Migrar a activacion por repositorio
 
-Mefisto se instala por usuario pero se activa solo en los repos que lo habilitan en su configuracion de proyecto commiteada (MEF-ADR-0053 decision 2). El script reporta el estado en el bloque `Activacion de Mefisto`; muestralo sin reinterpretar.
+Mefisto se instala por usuario pero se activa solo en los repos que lo habilitan con archivos de proyecto commiteados (MEF-ADR-0053 decision 2). El script reporta el estado de cada runtime en los bloques `Activacion de Mefisto`; muestralos sin reinterpretar.
 
-- Si la salida incluye `MIGRACION PENDIENTE`, pide una unica confirmacion: "Mefisto esta habilitado a nivel usuario y se carga en todos tus repos. ¿Quieres deshabilitarlo a ese nivel para que solo se active en los repos que lo habilitan, como este? [si/no]". Solo si responde exactamente `si`, ejecuta:
+- Si la salida incluye `MIGRACION PENDIENTE` (en uno o en ambos runtimes), pide una unica confirmacion: "Mefisto todavia se carga en todos tus repos. ¿Quieres retirarlo de ese nivel para que solo se active en los repos que lo habilitan, como este? [si/no]". Solo si responde exactamente `si`, ejecuta:
 
   {{mefisto:run upgrade.sh --disable-user}}
 
   Muestra su salida tal cual. Si declina o no responde, no ejecutes nada.
-- Si la salida incluye `AVISO: este repo no habilita Mefisto`, muestralo y sugiere `/mefisto:onboard`; nunca ofrezcas deshabilitar el nivel usuario en ese caso.
+- Si la salida incluye `AVISO: este repo no`, muestralo y sugiere `{{mefisto:command onboard}}`; nunca ofrezcas retirar el nivel global en ese caso.
 
 ### 5. Refrescar agentes herdr
 
@@ -89,5 +89,5 @@ Independientemente de la poda, termina siempre: "Recarga o reinicia la sesion de
 - `upgrade.sh` es la autoridad para actualizar, alinear el par, diagnosticar identidad y conservar releases de rollback; no reimplementes esos controles en el comando.
 - Un conflicto nunca autoriza una mutacion automatica.
 - El update no borra nada. La unica operacion destructiva es la poda opt-in del runtime activo; nunca toca la version cargada ni el par.
-- Deshabilitar Mefisto a nivel usuario solo ocurre con `--disable-user`, tras la confirmacion del paso 4; el script se niega si el repo no lo habilita en su configuracion de proyecto commiteada.
+- Retirar Mefisto del nivel global solo ocurre con `--disable-user`, tras la confirmacion del paso 4; el script se niega en cada runtime cuyo repo no lo activa con archivos commiteados.
 - El refresco de panes herdr es automatico y best-effort; nunca interrumpe un pane ocupado ni el pane propio.

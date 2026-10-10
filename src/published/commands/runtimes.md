@@ -11,6 +11,8 @@
 
 Administra el lifecycle de las **proyecciones** de adaptadores ya instalados. Comunicate en **espanol**. No instala, actualiza ni selecciona releases; para esos cambios usa `/mefisto:upgrade`.
 
+La proyeccion global es **opt-in y no es necesaria** para usar Mefisto: cada repositorio consumidor lo activa con sus archivos de proyecto commiteados, que `{{mefisto:command onboard}}` provisiona (MEF-ADR-0053 decision 2). Proyectarlo carga Mefisto en **todas** las sesiones del runtime, incluidos los repos que no lo usan; mientras la proyeccion exista, la activacion por repositorio se inhibe para no cargar la superficie dos veces. Antes de confirmar `enable opencode`, advierte ese efecto.
+
 ## Entrada
 
 Los argumentos de la invocacion estan en: `$ARGUMENTS`.

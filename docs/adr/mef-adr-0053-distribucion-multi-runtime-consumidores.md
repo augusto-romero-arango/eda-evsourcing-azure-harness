@@ -43,7 +43,7 @@ la raiz de la release que los esta ejecutando.
 | | Archivos (por usuario, inertes) | Activacion (por repositorio, commiteada) | Agentes de pipeline |
 |---|---|---|---|
 | Claude Code | instalacion de marketplace a scope `user`, **deshabilitada** a nivel usuario (`enabledPlugins` en `false` en `~/.claude/settings.json`) | `.claude/settings.json` con `extraKnownMarketplaces` y `enabledPlugins` en `true`; la precedencia proyecto > usuario la habilita solo ahi | `--plugin-dir <raiz>` |
-| OpenCode | release inmutable bajo la raiz de datos de Mefisto (tabla siguiente) | cargador commiteado en `.opencode/plugins/` que registra la superficie de la release activa | `OPENCODE_CONFIG_DIR=<raiz>` |
+| OpenCode | release inmutable bajo la raiz de datos de Mefisto (tabla siguiente) | cargador commiteado en `.opencode/plugins/mefisto.js` que registra la superficie de la release activa | `OPENCODE_CONFIG_DIR=<raiz>` |
 
 `<raiz>` es la raiz fisica de la release que contiene el pipeline en curso
 (`MEFISTO_AGENT_PACKAGE_ROOT`, exportada por `scripts/_pipeline-common.sh`). Asi
@@ -86,10 +86,24 @@ Si `XDG_DATA_HOME` esta definido en macOS, tambien prevalece sobre el fallback. 
 
 Cada release tiene la forma de un directorio de configuracion de OpenCode
 (`{commands,agents,skills,plugins}`), por eso sirve directamente como
-`OPENCODE_CONFIG_DIR`. Mefisto no escribe en la configuracion global de OpenCode
-(`$OPENCODE_CONFIG_DIR` o `${XDG_CONFIG_HOME:-$HOME/.config}/opencode`, tambien
-en macOS) ni en `opencode.json`: conserva providers, modelos, permisos y `mcp`
-del usuario. Los secrets/auth stores del runtime quedan fuera de estas rutas y de
+`OPENCODE_CONFIG_DIR`. El cargador de proyecto (`src/published/opencode/mefisto-loader.js`,
+commiteado por el consumidor como `.opencode/plugins/mefisto.js`) lee los agentes y
+comandos de `active` -- su frontmatter es JSON por linea --, los registra con el hook
+`config` en la misma forma que produce OpenCode al leer `<config>/agents/*.md`
+(incluida la traduccion de `tools` a `permission`), agrega `active/skills` a
+`skills.paths` e importa los plugins de la release. Se inhibe cuando
+`OPENCODE_CONFIG_DIR` ya apunta a una release o cuando existe la proyeccion global, y
+ante cualquier fallo no aporta nada en vez de romper el arranque. El adaptador de
+pipelines tampoco inyecta `OPENCODE_CONFIG_DIR` si el usuario ya lo define o si la
+proyeccion global existe; en esos casos el cargador del worktree activa Mefisto.
+
+La proyeccion global por enlaces a `active` (`project`/`deactivate`,
+`/mefisto:runtimes`) se conserva como modo **opt-in** que carga Mefisto en todas las
+sesiones de OpenCode; `/mefisto:upgrade` solo la refresca si ya existe y ofrece
+retirarla cuando el repo commitea el cargador. Fuera de ese modo, Mefisto no escribe
+en la configuracion global de OpenCode (`$OPENCODE_CONFIG_DIR` o
+`${XDG_CONFIG_HOME:-$HOME/.config}/opencode`, tambien en macOS), y en ningun caso en
+`opencode.json`: conserva providers, modelos, permisos y `mcp` del usuario. Los secrets/auth stores del runtime quedan fuera de estas rutas y de
 toda inspeccion de Mefisto, conforme a MEF-ADR-0025.
 
 ### 3. Un release, dos adaptadores y diagnostico de deriva (CA-3, enmendado por #1126)
@@ -262,3 +276,4 @@ Git ni permite comprobar la relacion padre/tag.
 - 2026-09-08: enmienda la decision 4 (issue #1099). Autoriza exclusivamente a `record-active-release` del adaptador publicado Claude a mantener temporalmente el mirror `.claude/pipeline/.plugin-root` y limpiar `.plugin-root.previous`, siempre junto a la escritura canonica primaria; reserva su retiro a un issue posterior con inventario verificable de lectores legacy eliminado.
 - 2026-09-08: enmienda la decision 3 (issue #1126). Define `commit` como el commit fuente de `origin/main` capturado antes de la preparacion mecanica, no como el commit etiquetado; exige que el commit squash del tag tenga ese SHA como padre unico, limita su delta a metadata mecanica y fija manifests comparables sin diagnostico externo. Descarta SHA autorreferencial, solo SemVer, cache, Git o red del consumidor y hash de contenido renombrado como commit. Follow-ups separados: #1135 (registro de raiz transitoria), #1131 (manifiesto Claude), #1134 (alineacion OpenCode), #1132 (release) y la futura raiz Claude autocontenida.
 - 2026-10-10: enmienda la decision 2 (issue #2261). Separa archivos por usuario de activacion por repositorio: Claude queda instalado a scope `user` pero deshabilitado a ese nivel y se habilita en el `.claude/settings.json` commiteado del consumidor; OpenCode deja la proyeccion global en `<config>` y se activa con un cargador de proyecto; los agentes de pipeline reciben la raiz de su release (`--plugin-dir` / `OPENCODE_CONFIG_DIR`). Evidencia verificada contra Claude Code 2.1.296 y OpenCode 1.18.34.
+- 2026-10-10: completa la enmienda de la decision 2 (issue #2261) para OpenCode: fija el cargador de proyecto, sus condiciones de inhibicion y la proyeccion global como modo opt-in que `/mefisto:upgrade` solo refresca si existe. Verificado contra OpenCode 1.18.34: con el cargador, los 22 agentes resueltos y los 26 comandos coinciden con los de `OPENCODE_CONFIG_DIR=<release>`, salvo el orden no determinista de las reglas de Skills.

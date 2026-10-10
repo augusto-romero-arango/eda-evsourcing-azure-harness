@@ -404,6 +404,53 @@ else
     fail "A-14: refresh interactivo OpenCode inesperado: '$REFRESH_OUTPUT'"
 fi
 
+# --- Raiz de la release del pipeline (MEF-ADR-0053 decision 2) ---
+
+RELEASE_OK="$TMP/release-opencode"
+mkdir -p "$RELEASE_OK/agents"
+printf '{"runtime":"opencode"}' > "$RELEASE_OK/mefisto-manifest.json"
+XDG_SANDBOX="$TMP/xdg-a15"
+mkdir -p "$XDG_SANDBOX/opencode"
+
+build_with_root() {
+    MEFISTO_RUNTIME_CMD=()
+    ( unset OPENCODE_CONFIG_DIR
+      export XDG_CONFIG_HOME="$XDG_SANDBOX" MEFISTO_AGENT_PACKAGE_ROOT="$1"
+      [ -n "${2:-}" ] && export OPENCODE_CONFIG_DIR="$2"
+      runtime_opencode_build_cmd "writer" "$TMP" "$PROMPT_PLAIN" "" "" >/dev/null
+      printf '%s\n' "${MEFISTO_RUNTIME_CMD[@]}" )
+}
+
+ARGV="$(build_with_root "$RELEASE_OK")"
+if [ "$(printf '%s\n' "$ARGV" | sed -n '1p')" = "env" ] && [ "$(printf '%s\n' "$ARGV" | sed -n '2p')" = "OPENCODE_CONFIG_DIR=$RELEASE_OK" ] \
+    && [ "$(printf '%s\n' "$ARGV" | sed -n '3p')" = "opencode" ]; then
+    pass "A-15: release valida -> env OPENCODE_CONFIG_DIR=<raiz> opencode run ..."
+else
+    fail "A-15: argv inesperado: $(printf '%s' "$ARGV" | tr '\n' ' ')"
+fi
+
+ARGV="$(build_with_root "$TMP")"
+[ "$(printf '%s\n' "$ARGV" | sed -n '1p')" = "opencode" ] \
+    && pass "A-16: raiz sin manifiesto de release -> sin OPENCODE_CONFIG_DIR" \
+    || fail "A-16: inyecto OPENCODE_CONFIG_DIR con una raiz que no es release: $(printf '%s' "$ARGV" | tr '\n' ' ')"
+
+ARGV="$(build_with_root "$RELEASE_OK" "/ruta/del/usuario")"
+[ "$(printf '%s\n' "$ARGV" | sed -n '1p')" = "opencode" ] \
+    && pass "A-17: OPENCODE_CONFIG_DIR del usuario se respeta -> sin reemplazo" \
+    || fail "A-17: reemplazo el OPENCODE_CONFIG_DIR del usuario: $(printf '%s' "$ARGV" | tr '\n' ' ')"
+
+printf '{}' > "$XDG_SANDBOX/opencode/.mefisto-projection.json"
+ARGV="$(build_with_root "$RELEASE_OK")"
+[ "$(printf '%s\n' "$ARGV" | sed -n '1p')" = "opencode" ] \
+    && pass "A-18: proyeccion global activa -> sin OPENCODE_CONFIG_DIR (evita plugins duplicados)" \
+    || fail "A-18: inyecto con la proyeccion global activa: $(printf '%s' "$ARGV" | tr '\n' ' ')"
+rm -f "$XDG_SANDBOX/opencode/.mefisto-projection.json"
+
+ARGV="$( MEFISTO_RUNTIME_CMD=(); ( unset MEFISTO_AGENT_PACKAGE_ROOT; runtime_opencode_build_cmd "writer" "$TMP" "$PROMPT_PLAIN" "" "" >/dev/null; printf '%s\n' "${MEFISTO_RUNTIME_CMD[@]}" ) )"
+[ "$(printf '%s\n' "$ARGV" | sed -n '1p')" = "opencode" ] \
+    && pass "A-19: sin MEFISTO_AGENT_PACKAGE_ROOT (pipelines internos) -> sin OPENCODE_CONFIG_DIR" \
+    || fail "A-19: inyecto sin raiz: $(printf '%s' "$ARGV" | tr '\n' ' ')"
+
 # ============================================================================
 echo ""
 echo "[B] CA-2: mapeo de eventos (text->message, tool_use->tool.started+tool.completed, tipos ignorados)"

@@ -13,7 +13,7 @@
 #
 # Reporta, sin tocar nada, el checklist de 9 secciones de /onboard: config
 # (con la version minima de Claude Code, MEF-ADR-0055, como fila 1b, y la
-# activacion de Mefisto en el .claude/settings.json commiteado, MEF-ADR-0053, como 1c),
+# activacion de Mefisto por repositorio, MEF-ADR-0053, como 1c),
 # directivas canónicas en AGENTS.md y su puente CLAUDE.md, estructura de carpetas, labels de GitHub,
 # CI hacia Azure, secretos que alimentan la siembra en Key Vault, el registro
 # secrets[], la bifurcacion de dos caminos de auth (tenancy.strategy) y el
@@ -146,36 +146,50 @@ _check_claude_version() {
     return 0
 }
 
-# _check_claude_activation [runtime] [toplevel]
-# Mefisto se instala a scope user deshabilitado y cada consumidor lo habilita en su
-# .claude/settings.json commiteado (MEF-ADR-0053 decision 2). Deja
-# CLAUDE_ACTIVATION_STATE/_DETAIL y CLAUDE_USER_LEVEL_DETAIL (vacio si no aplica).
-_check_claude_activation() {
+# _check_repo_activation [runtime] [toplevel]
+# Mefisto se instala por usuario e inerte y cada consumidor lo activa con archivos
+# commiteados (MEF-ADR-0053 decision 2): .claude/settings.json bajo claude y el cargador
+# .opencode/plugins/mefisto.js bajo opencode. Deja REPO_ACTIVATION_STATE/_DETAIL y
+# USER_LEVEL_DETAIL (vacio si Mefisto no se carga ya en todos los repos).
+_check_repo_activation() {
     local runtime="${1:-claude}" top="${2:-}" mkt
-    CLAUDE_USER_LEVEL_DETAIL=""
-    if [ "$runtime" != "claude" ]; then
-        CLAUDE_ACTIVATION_STATE="INFO"
-        CLAUDE_ACTIVATION_DETAIL="activacion por .claude/settings.json: no aplica bajo el runtime $runtime"
-        return 0
-    fi
+    USER_LEVEL_DETAIL=""
     [ -n "$top" ] || top=$(git rev-parse --show-toplevel 2>/dev/null)
-    if ! command -v jq >/dev/null 2>&1; then
-        CLAUDE_ACTIVATION_STATE="NV"
-        CLAUDE_ACTIVATION_DETAIL="no se pudo leer .claude/settings.json (falta jq)"
-        return 0
-    fi
     # shellcheck disable=SC1091
     source "$SCRIPT_DIR/_plugin-scopes.sh"
+    if [ "$runtime" = "opencode" ]; then
+        if _loader_commiteado "$top"; then
+            REPO_ACTIVATION_STATE="OK"
+            REPO_ACTIVATION_DETAIL=".opencode/plugins/mefisto.js commiteado activa Mefisto (repo y worktrees)"
+        else
+            REPO_ACTIVATION_STATE="FALTA"
+            REPO_ACTIVATION_DETAIL=".opencode/plugins/mefisto.js no esta commiteado: sin el, Mefisto no se carga en este repo sin la proyeccion global"
+        fi
+        if _proyeccion_global_activa; then
+            USER_LEVEL_DETAIL="la proyeccion global de Mefisto en OpenCode esta activa: se carga en todos tus repos; /mefisto:upgrade ofrece retirarla"
+        fi
+        return 0
+    fi
+    if [ "$runtime" != "claude" ]; then
+        REPO_ACTIVATION_STATE="INFO"
+        REPO_ACTIVATION_DETAIL="activacion por repositorio: sin verificacion para el runtime $runtime"
+        return 0
+    fi
+    if ! command -v jq >/dev/null 2>&1; then
+        REPO_ACTIVATION_STATE="NV"
+        REPO_ACTIVATION_DETAIL="no se pudo leer .claude/settings.json (falta jq)"
+        return 0
+    fi
     mkt=$(_mefisto_marketplace "$PLUGIN_ROOT")
     if _activacion_commiteada "$mkt" "$top"; then
-        CLAUDE_ACTIVATION_STATE="OK"
-        CLAUDE_ACTIVATION_DETAIL=".claude/settings.json commiteado habilita mefisto@$mkt (repo y worktrees)"
+        REPO_ACTIVATION_STATE="OK"
+        REPO_ACTIVATION_DETAIL=".claude/settings.json commiteado habilita mefisto@$mkt (repo y worktrees)"
     else
-        CLAUDE_ACTIVATION_STATE="FALTA"
-        CLAUDE_ACTIVATION_DETAIL=".claude/settings.json commiteado no habilita mefisto@$mkt: sin el, Mefisto no se carga en este repo cuando esta deshabilitado a nivel usuario"
+        REPO_ACTIVATION_STATE="FALTA"
+        REPO_ACTIVATION_DETAIL=".claude/settings.json commiteado no habilita mefisto@$mkt: sin el, Mefisto no se carga en este repo cuando esta deshabilitado a nivel usuario"
     fi
     if _habilitado_en_usuario "$mkt"; then
-        CLAUDE_USER_LEVEL_DETAIL="mefisto@$mkt esta habilitado a nivel usuario: se carga en todos tus repos; /mefisto:upgrade ofrece deshabilitarlo a ese nivel"
+        USER_LEVEL_DETAIL="mefisto@$mkt esta habilitado a nivel usuario: se carga en todos tus repos; /mefisto:upgrade ofrece deshabilitarlo a ese nivel"
     fi
     return 0
 }
@@ -293,7 +307,7 @@ main() {
     PA_CLAUDE_NV=0
     PA_CLAUDE_OPTIONAL=0
     PA_CLAUDE_LEGACY_INFO=0
-    PA_CLAUDE_ACTIVATION_FALTA=0
+    PA_REPO_ACTIVATION_FALTA=0
     PA_LABELS_FALTA=0
     PA_CI_FALTA=0
     PA_INFRA_BASE_MISSING=0
@@ -379,15 +393,15 @@ main() {
 
     # --- 1c. Activacion de Mefisto en Claude Code (MEF-ADR-0053 decision 2) ---
     echo ""
-    echo "Activacion de Mefisto en Claude Code (por repositorio):"
-    _check_claude_activation "$ONBOARD_RUNTIME"
-    row "$CLAUDE_ACTIVATION_STATE" "$CLAUDE_ACTIVATION_DETAIL"
-    if [ -n "$CLAUDE_USER_LEVEL_DETAIL" ]; then
-        row INFO "$CLAUDE_USER_LEVEL_DETAIL"
+    echo "Activacion de Mefisto (por repositorio):"
+    _check_repo_activation "$ONBOARD_RUNTIME"
+    row "$REPO_ACTIVATION_STATE" "$REPO_ACTIVATION_DETAIL"
+    if [ -n "$USER_LEVEL_DETAIL" ]; then
+        row INFO "$USER_LEVEL_DETAIL"
     fi
-    if [ "$CLAUDE_ACTIVATION_STATE" = "FALTA" ]; then
-        PA_CLAUDE_ACTIVATION_FALTA=1
-        ACTIONS="${ACTIONS}  - Habilita Mefisto en este repo: \"$PLUGIN_SCRIPTS/onboard-activate-repo.sh\" --apply (o confirma el paso opt-in) y commitea .claude/settings.json.
+    if [ "$REPO_ACTIVATION_STATE" = "FALTA" ]; then
+        PA_REPO_ACTIVATION_FALTA=1
+        ACTIONS="${ACTIONS}  - Habilita Mefisto en este repo: \"$PLUGIN_SCRIPTS/onboard-activate-repo.sh\" --apply (o confirma el paso opt-in) y commitea los archivos que escribe.
 "
     fi
 
@@ -686,10 +700,10 @@ main() {
             echo "     te ofrece este mismo /onboard."
         fi
     else
-        if [ "$PA_CLAUDE_ACTIVATION_FALTA" -eq 1 ]; then
+        if [ "$PA_REPO_ACTIVATION_FALTA" -eq 1 ]; then
             PA_STEP=$((PA_STEP + 1))
             echo "  $PA_STEP. Habilita Mefisto en este repo: \"$PLUGIN_SCRIPTS/onboard-activate-repo.sh\" --apply"
-            echo "     (o confirma el paso opt-in) y commitea .claude/settings.json."
+            echo "     (o confirma el paso opt-in) y commitea los archivos que escribe."
         fi
         if [ "$PA_AGENTS_FALTA" -eq 1 ]; then
             PA_STEP=$((PA_STEP + 1))

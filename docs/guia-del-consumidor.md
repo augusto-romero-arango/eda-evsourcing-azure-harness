@@ -34,7 +34,9 @@ Si tu proyecto no encaja con este stack, este harness no es para ti.
 
 ### OpenCode: bootstrap, upgrade y rollback
 
-**Camino recomendado desde Claude Code:** ejecuta `/mefisto:upgrade`. Actualiza Claude y consulta el estado estructurado de la proyeccion OpenCode sin leer `opencode.json`, providers, modelos ni credenciales. Si OpenCode ya estaba habilitado (incluso si esta `stale`), alinea, activa y reproyecta automaticamente la misma release; si esta deshabilitado, pide una unica confirmacion para bootstrap o reactivacion. Si se declina, conserva el modo solo Claude: no crea ni reproyecta OpenCode. Un conflicto se informa y nunca se repara automaticamente. El resultado separa la version cargada por la sesion, la destino en disco y la identidad verificable de ambas distribuciones; luego requiere `/reload-plugins` o reiniciar la sesion.
+**Activación por repositorio.** La release OpenCode se instala una vez por usuario y queda inerte. Cada consumidor la activa commiteando el cargador `.opencode/plugins/mefisto.js`, que `/mefisto:onboard` escribe junto con el `.claude/settings.json` (MEF-ADR-0053, decisión 2). El cargador registra los agentes, comandos, Skills, MCP y hooks de la release activa sin copiarlos al repo, así que actualizar Mefisto no exige tocar el consumidor. En un repo sin cargador, OpenCode no recibe nada de Mefisto. Los agentes de pipeline no dependen del cargador: reciben la release con `OPENCODE_CONFIG_DIR`.
+
+**Camino recomendado desde Claude Code:** ejecuta `/mefisto:upgrade`. Actualiza Claude y consulta el estado de la release OpenCode sin leer `opencode.json`, providers, modelos ni credenciales. Si ya hay una release OpenCode instalada, alinea y activa automaticamente la misma version; si no la hay, pide una unica confirmacion para el bootstrap. Si se declina, conserva el modo solo Claude: no instala OpenCode. Un conflicto se informa y nunca se repara automaticamente. El resultado separa la version cargada por la sesion, la destino en disco y la identidad verificable de ambas distribuciones; luego requiere `/reload-plugins` o reiniciar la sesion.
 
 El procedimiento directo siguiente queda como **recuperacion avanzada** cuando no puedes iniciar Claude Code o necesitas reparar manualmente una instalacion OpenCode conflictiva.
 
@@ -61,9 +63,7 @@ Tras el bootstrap, el único punto de entrada es
 `<raíz-de-datos>/mefisto/active/bin/mefisto-opencode`. El instalador instalado
 descarga y vuelve a verificar ambos assets antes de extraer; dos activaciones
 concurrentes se serializan con un lock bajo esa misma raíz. No crea enlaces en el
-`PATH`, no lee auth stores ni modifica `opencode.json`: el proyector global crea
-solo enlaces de Mefisto y conserva proveedores, modelos, permisos y MCP del
-usuario. Si un proceso termina forzosamente y deja
+`PATH`, no lee auth stores ni modifica `opencode.json`. Si un proceso termina forzosamente y deja
 `.activation.lock`, verifica que no haya otra instalación en curso y elimina solo
 ese directorio de lock antes de reintentar.
 
@@ -71,8 +71,8 @@ ese directorio de lock antes de reintentar.
 M="${XDG_DATA_HOME:-$HOME/.local/share}/mefisto/active/bin/mefisto-opencode" # Linux/XDG
 "$M" install <semver>    # upgrade verificando el tag v<semver>
 "$M" activate <semver>   # rollback a una release ya instalada
-"$M" project             # proyecta comandos/agentes/Skills/plugins de active
-"$M" deactivate          # retira solo los enlaces creados por Mefisto
+"$M" project             # opt-in: proyeccion global (carga Mefisto en TODOS los repos)
+"$M" deactivate          # retira la proyeccion global (solo los enlaces de Mefisto)
 "$M" status              # runtime, versión, tag, commit y diagnóstico
 "$M" prune --keep 2      # previsualiza y pide confirmar la poda de releases inactivas
 ```
@@ -86,6 +86,8 @@ Las entradas que no son releases válidas se informan y se conservan.
 
 En macOS sin `XDG_DATA_HOME`, sustituye `M` por
 `"$HOME/Library/Application Support/mefisto/active/bin/mefisto-opencode"`.
+
+**Proyección global (opt-in, no recomendada).** `project` (o `/mefisto:runtimes enable opencode`) enlaza la release en la configuración global de OpenCode y carga Mefisto en todas las sesiones, incluidos los repos que no lo usan. Mientras exista, el cargador de cada repo se inhibe para no cargar la superficie dos veces. Si la tenías activa de una versión anterior, `/mefisto:upgrade` en un repo con el cargador commiteado ofrece retirarla.
 
 La configuración global de OpenCode es `$OPENCODE_CONFIG_DIR` si está definido;
 si no, `${XDG_CONFIG_HOME:-$HOME/.config}/opencode`, también en macOS. `project`

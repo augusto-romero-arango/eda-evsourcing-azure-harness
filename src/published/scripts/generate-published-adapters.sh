@@ -79,6 +79,7 @@ TOOLING_CLOSURE_ASSETS=(
     'scripts/onboard-diagnose.sh|0755'
     'scripts/onboard-migrate-directives.sh|0755'
     'scripts/onboard-activate-repo.sh|0755'
+    'src/published/opencode/mefisto-loader.js|0644'
     'scripts/_plugin-scopes.sh|0644'
     'scripts/update-plugin.sh|0755'
     'scripts/upgrade.sh|0755'
