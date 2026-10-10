@@ -27,11 +27,11 @@ La senal es cooperativa: solo la consulta un orquestador que **mantiene una cola
 Criterio: el proceso real de `batch-pipeline.sh` o `parallel-pipeline.sh` -- ni la sesion tmux ni un log activo distinguen una corrida activa de una ya terminada sin volver a parsear su contenido.
 
 ```bash
-git rev-parse --show-toplevel >/dev/null 2>&1 || { echo "ERROR: no estas en un repositorio git"; exit 1; }
-case "$(git rev-parse --git-common-dir 2>/dev/null)" in
-    "")  REPO_ROOT=$(git rev-parse --show-toplevel) ;;
-    /*)  REPO_ROOT=$(dirname "$(git rev-parse --git-common-dir)") ;;
-    *)   REPO_ROOT=$(cd "$(git rev-parse --show-toplevel)/$(dirname "$(git rev-parse --git-common-dir)")" && pwd) ;;
+REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || { echo "ERROR: no estas en un repositorio git"; exit 1; }
+case "$(git -C "$REPO_ROOT" rev-parse --git-common-dir 2>/dev/null)" in
+    "")  ;;
+    /*)  REPO_ROOT=$(dirname "$(git -C "$REPO_ROOT" rev-parse --git-common-dir)") ;;
+    *)   REPO_ROOT=$(cd "$REPO_ROOT/$(dirname "$(git -C "$REPO_ROOT" rev-parse --git-common-dir)")" 2>/dev/null && pwd) || REPO_ROOT=$(git rev-parse --show-toplevel) ;;
 esac
 pgrep -f "[s]cripts/batch-pipeline\.sh" >/dev/null 2>&1 || pgrep -f "[s]cripts/parallel-pipeline\.sh" >/dev/null 2>&1
 ```
