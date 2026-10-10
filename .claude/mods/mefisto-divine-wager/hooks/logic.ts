@@ -37,7 +37,8 @@ export function toolingIssueOf(command: string): string | null {
   return LAUNCH.exec(withoutHeredocs(command))?.[1] ?? null
 }
 
-const BATCH_LAUNCH = new RegExp(`${AT_COMMAND}${WRAPPER}\\s+--batch((?:\\s+#?\\d+)+)`)
+// Cada issue es un argumento completo: el `2` de un `2>&1` posterior no es un issue.
+const BATCH_LAUNCH = new RegExp(`${AT_COMMAND}${WRAPPER}\\s+--batch((?:\\s+#?\\d+(?=\\s|$|[;&|)]))+)`)
 
 /** Los issues de un `mefisto-tmux-pipeline.sh --batch N M ...` (lo que corre /mefisto-sequential), en orden. */
 export function batchIssuesOf(command: string): string[] | null {
