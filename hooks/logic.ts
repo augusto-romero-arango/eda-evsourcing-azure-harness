@@ -303,3 +303,21 @@ export function isMefistoManifest(raw: string): boolean {
 export function showsDraftList(focus: { kind: 'explorar' | 'refinar'; created: number[] } | null | undefined): boolean {
   return focus?.kind === 'explorar' && focus.created.length > 0
 }
+
+const SEMVER = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/
+
+function semverOf(raw: string | null | undefined): string | null {
+  if (typeof raw !== 'string') return null
+  try {
+    const version = (JSON.parse(raw) as { version?: unknown }).version
+    return typeof version === 'string' && SEMVER.test(version) ? version : null
+  } catch {
+    return null
+  }
+}
+
+/** `v<version>` del release cargado: la de `mefisto-manifest.json` si es SemVer valida, si no la de `plugin.json`, si no `null`. */
+export function versionLabel(manifestRaw: string | null | undefined, pluginRaw: string | null | undefined): string | null {
+  const version = semverOf(manifestRaw) ?? semverOf(pluginRaw)
+  return version === null ? null : `v${version}`
+}

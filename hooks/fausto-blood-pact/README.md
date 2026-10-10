@@ -53,6 +53,8 @@ A la izquierda de la banda, Mefisto (rojo, de `hooks/sprites.ts`; código propio
 - **Pose** por el último evento del último intento (`.mefisto/pipeline/logs/<prefijo>stage-<stage>-<started>-issue-<n>[-<variante>]-attempt-<k>.events.jsonl`; prefijo `""` en tdd, `tooling-`, `iac-`): `tool.started` -> trabajando (desplegando en infra); `message` del assistant o sin eventos -> pensando; edición (`Edit`/`Write`/`MultiEdit`) del revisor -> corrigiendo. En `hold` rige la misma regla.
 - **Solo resultados**: `✓` -> revisor aprobado (infra: arriba); `✗` -> desarrollador error (infra: caído).
 
+Bajo la mascota, centrada y atenuada, va la versión del release cargado (`v0.46.0`), igual que en `fausto-board`: sale de `mefisto-manifest.json` en la raíz del plugin y, si falta o no es SemVer válida, de `.claude-plugin/plugin.json`; se lee al activar y en `refresh`, y si ninguna se lee no se muestra nada (la banda no cambia de alto).
+
 Anima solo mientras hay corrida activa o Claude trabaja. Es lectura pura de status y `events.jsonl`. Fuera de alcance: las últimas líneas del agente bajo la mascota.
 
 ## Capacidad vigente (incremento 5): mergear el PR de una corrida terminada

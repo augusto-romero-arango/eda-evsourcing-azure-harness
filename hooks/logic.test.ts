@@ -5,6 +5,7 @@ import {
   arrivals,
   showsDraftList,
   isMefistoManifest,
+  versionLabel,
   isIssueChange,
   createdIssueOf,
   isIssueCreate,
@@ -214,4 +215,14 @@ test('showsDraftList: solo una exploracion con borradores creados muestra la lis
   expect(showsDraftList({ kind: 'explorar', created: [] })).toBe(false)
   expect(showsDraftList({ kind: 'explorar', created: [12] })).toBe(true)
   expect(showsDraftList({ kind: 'refinar', created: [12] })).toBe(false)
+})
+
+test('versionLabel: manifest valido, fallback a plugin.json y null si ninguno sirve', () => {
+  const manifest = JSON.stringify({ version: '0.46.0' })
+  const plugin = JSON.stringify({ version: '0.45.1' })
+  expect(versionLabel(manifest, plugin)).toBe('v0.46.0')
+  expect(versionLabel(JSON.stringify({ version: 'latest' }), plugin)).toBe('v0.45.1')
+  expect(versionLabel('no es json', plugin)).toBe('v0.45.1')
+  expect(versionLabel(null, null)).toBe(null)
+  expect(versionLabel('{}', '{"version": 3}')).toBe(null)
 })
