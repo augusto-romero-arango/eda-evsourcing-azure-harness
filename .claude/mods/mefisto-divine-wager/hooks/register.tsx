@@ -62,6 +62,11 @@ import {
   withModUi,
   historianFrom,
   isAgentActive,
+  bitacoraPrOf,
+  fieldNoteNamesOf,
+  pendingNotes,
+  processedDirsOf,
+  withProcessedNotes,
   finishMerge,
   ghMergeNumbersOf,
   isGhMergeRun,
@@ -90,6 +95,8 @@ const HISTORIAN = 'mefisto-historiador'
 // Tras terminar, el historiador queda en pose de listo este tiempo antes de volver a la espera.
 const HISTORIAN_DONE_MS = 8_000
 const FIELD_NOTES_DIR = 'docs/bitacora/field-notes'
+const SUMMARIES_DIR = '.mefisto/pipeline/summaries'
+const NOTES_POLL_MS = 3_000
 const CHANGELOG_DIR = 'changelog.d'
 const SCRIPT_TIMEOUT_MS = 180_000
 // Respaldo del avance de la cinta de merge: el bucle de /mefisto-merge es un solo Bash y su salida llega al final.
@@ -169,6 +176,8 @@ let isRefreshingReady = false
 let readyTimer: { cancel: () => void } | null = null
 let lastMergePollMs = 0
 let isMergeSeen = false
+let lastNotesPollMs = 0
+let lastBitacoraPrCheckMs = 0
 
 async function stopTail() {
   const current = tail
@@ -321,18 +330,120 @@ async function fromHistory($: EngineInterface, prev: PipelineRun): Promise<Pipel
   }
 }
 
-// Mientras /mefisto-bitacora corre al historiador, la banda de espera lo muestra escribiendo.
+// Mientras /mefisto-bitacora corre al historiador, la banda de espera lo muestra escribiendo y lleva la cinta de
+// sus field notes: pendientes hasta que aparecen en algun procesadas/.
 async function pollHistorian($: EngineInterface) {
   if (!isInteractive) return
   const agents = await $.agent.list().catch(() => [])
   const active = agents.some(a => a.type === HISTORIAN && isAgentActive(a.status))
   const prev = await read($, historianAtom)
   const next = historianFrom(prev, active, Date.now())
-  if (next === prev) return
-  await update($, historianAtom, () => next)
-  if (!next?.finishedMs) return
-  $.clock.after(HISTORIAN_DONE_MS, () => void update($, historianAtom, h => (h?.finishedMs ? null : h)))
+  if (next !== prev) {
+    await update($, historianAtom, () => next)
+    if (next && !next.finishedMs) {
+      void captureNotes($)
+      return
+    }
+    if (next?.finishedMs) {
+      lastNotesPollMs = 0
+      await pollNotes($)
+      await findBitacoraPr($)
+      void refreshReady($)
+    }
+    return
+  }
+  if (next && !next.finishedMs) await pollNotes($)
+  if (next?.pr) await checkBitacoraPr($, next.pr.number)
+}
+
+async function captureNotes($: EngineInterface) {
+  const local = await $.fs.list(FIELD_NOTES_DIR).catch(() => [])
+  const notePrs = ((await read($, openPrsAtom)) ?? []).filter(p => p.isFieldNote).map(p => String(p.number))
+  const files = await Promise.all(
+    notePrs.map(n =>
+      $.process.run(['gh', 'pr', 'view', n, '--json', 'files', '-q', '.files[].path']).catch(() => ({ exitCode: 1, stdout: '' })),
+    ),
+  )
+  const paths = files.flatMap(f => (f.exitCode === 0 ? f.stdout.split('\n').filter(Boolean) : []))
+  const names = fieldNoteNamesOf(local.filter(n => n.kind === 'file').map(n => n.name), paths)
+  await update($, historianAtom, h => (h && h.notes.length === 0 ? { ...h, notes: pendingNotes(names) } : h))
+  lastNotesPollMs = 0
+  await pollNotes($)
+}
+
+async function pollNotes($: EngineInterface) {
+  const h = await read($, historianAtom)
+  if (!h || !h.notes.some(n => n.estado === 'pendiente') || Date.now() - lastNotesPollMs < NOTES_POLL_MS) return
+  lastNotesPollMs = Date.now()
+  const summaries = await $.fs.list(SUMMARIES_DIR).catch(() => [])
+  const dirs = processedDirsOf(summaries.filter(n => n.kind === 'dir').map(n => n.name))
+  const listed = await Promise.all(dirs.map(d => $.fs.list(d).catch(() => [])))
+  const processed = listed.flat().filter(n => n.kind === 'file').map(n => n.name)
+  await update($, historianAtom, cur => (cur ? withProcessedNotes(cur, processed) : cur))
+}
+
+// Al terminar, el PR de bitacora que quedo abierto se ofrece para mergear, ver o cerrar. Si no hay (el skill ya lo
+// mergeo), la cinta se limpia sola como antes.
+async function findBitacoraPr($: EngineInterface) {
+  const { exitCode, stdout } = await $.process
+    .run(['gh', 'pr', 'list', '--state', 'open', '--limit', '50', '--json', 'number,title,headRefName,files'])
+    .catch(() => ({ exitCode: 1, stdout: '' }))
+  const pr = exitCode === 0 ? bitacoraPrOf(stdout) : null
+  if (pr) {
+    lastBitacoraPrCheckMs = Date.now()
+    await update($, historianAtom, h => (h ? { ...h, pr } : h))
+    return
+  }
+  $.clock.after(HISTORIAN_DONE_MS, () => void update($, historianAtom, h => (h?.finishedMs && !h.pr ? null : h)))
+}
+
+// El PR ofrecido sigue abierto: si se mergeo o cerro por fuera (el skill, GitHub), la cinta se va.
+async function checkBitacoraPr($: EngineInterface, pr: number) {
+  if (Date.now() - lastBitacoraPrCheckMs < PR_CHECK_MS) return
+  lastBitacoraPrCheckMs = Date.now()
+  const { exitCode, stdout } = await $.process
+    .run(['gh', 'pr', 'view', String(pr), '--json', 'state', '-q', '.state'])
+    .catch(() => ({ exitCode: 1, stdout: '' }))
+  if (exitCode === 0 && stdout.trim() !== 'OPEN') await dismissHistorian($)
+}
+
+async function dismissHistorian($: EngineInterface) {
+  await update($, historianAtom, () => null)
   void refreshReady($)
+}
+
+async function mergeBitacoraPr($: EngineInterface) {
+  const pr = (await read($, historianAtom))?.pr
+  if (!pr) return
+  await dismissHistorian($)
+  await startMerge($, String(pr.number))
+  await $.command.run({ command: 'mefisto-merge', args: String(pr.number) })
+}
+
+async function openBitacoraPr($: EngineInterface) {
+  const pr = (await read($, historianAtom))?.pr
+  if (pr) await $.process.run(['gh', 'pr', 'view', String(pr.number), '--web']).catch(() => undefined)
+}
+
+async function closeBitacoraPr($: EngineInterface) {
+  const pr = (await read($, historianAtom))?.pr
+  if (!pr) return
+  const answer = await $.ui
+    .ask(`¿Cerrar el PR #${pr.number} de la bitácora sin mergear y borrar su rama?`, {
+      header: 'Cerrar PR',
+      options: ['Cerrar PR', 'Cancelar'],
+    })
+    .catch(() => null)
+  if (answer !== 'Cerrar PR') return
+  const { exitCode, stderr } = await $.process
+    .run(['gh', 'pr', 'close', String(pr.number), '--delete-branch'])
+    .catch(err => ({ exitCode: 1, stderr: String(err) }))
+  if (exitCode !== 0) {
+    $.ui.toast(`no se pudo cerrar el PR #${pr.number}: ${clip(stderr ?? '', 80)}`)
+    return
+  }
+  $.ui.toast(`PR #${pr.number} cerrado`)
+  await dismissHistorian($)
 }
 
 async function poll($: EngineInterface) {
@@ -920,6 +1031,14 @@ export const register: Register = on => {
       const mergeRows = mergeAll.length > READY_ROWS ? READY_ROWS - 1 : READY_ROWS
       const mergeLines = mergeAll.slice(0, mergeRows)
       const mergeHidden = mergeAll.length - mergeLines.length
+      // La cinta de la bitacora: pendientes primero y despues las procesadas, en las mismas filas.
+      const notes = historian ? [...historian.notes.filter(n => n.estado === 'pendiente'), ...historian.notes.filter(n => n.estado === 'procesada')] : []
+      const noteSlots = READY_ROWS - (historian?.pr ? 1 : 0)
+      const noteRows = notes.length > noteSlots ? noteSlots - 1 : noteSlots
+      const noteLines = notes.slice(0, noteRows)
+      const notesHidden = notes.length - noteLines.length
+      const notesDone = historian ? historian.notes.filter(n => n.estado === 'procesada').length : 0
+      const bitacoraPr = !mergeRun ? (historian?.pr ?? null) : null
       return (
         <Box flexDirection="column" borderStyle="round" borderColor="claude" borderDimColor paddingX={1}>
           <Box justifyContent="space-between">
@@ -927,9 +1046,15 @@ export const register: Register = on => {
               <Text color="claude">mefisto</Text>
               <Text dimColor> · listos {ready ? readyRows(ready).length : '…'}</Text>
               {historian && !historian.finishedMs && (
-                <Text color="warning"> · historiador escribiendo la bitácora {elapsed((now || Date.now()) - historian.startedMs)}</Text>
+                <Text color="warning">
+                  {' · historiador escribiendo la bitácora '}
+                  {historian.notes.length > 0 ? `${notesDone}/${historian.notes.length} ` : ''}
+                  {elapsed((now || Date.now()) - historian.startedMs)}
+                </Text>
               )}
-              {historian?.finishedMs && <Text color="success"> · bitácora escrita</Text>}
+              {historian?.finishedMs && (
+                <Text color="success"> · bitácora escrita{historian.pr ? ` · PR #${historian.pr.number}` : ''}</Text>
+              )}
               {release && !release.finishedMs && (
                 <Text color="warning">
                   {release.phase === 'despegando' ? ' · release despegando' : ' · release en preparación'} {elapsed((now || Date.now()) - release.startedMs)}
@@ -942,17 +1067,25 @@ export const register: Register = on => {
                 </Text>
               )}
             </Text>
+            {bitacoraPr ? (
+              <Box gap={2}>
+                <Button key="bitacora-merge" hotkey="1" plain variant="primary" label="mergear" onPress={() => void mergeBitacoraPr($)} />
+                <Button key="bitacora-web" hotkey="2" plain label="ver PR" onPress={() => void openBitacoraPr($)} />
+                <Button key="bitacora-close" hotkey="3" plain label="cerrar PR" onPress={() => void closeBitacoraPr($)} />
+              </Box>
+            ) : (
             <Box gap={2}>
               {workPrs > 0 && (
                 <Button key="merge-prs" hotkey="2" plain label={`PRs ${workPrs}`} onPress={() => void chooseMerge($)} />
               )}
-              {pendingNotes > 0 && (
+              {pendingNotes > 0 && !historian && (
                 <Button key="bitacora" hotkey="3" plain label={`bitácora ${pendingNotes}`} onPress={() => void chooseBitacora($)} />
               )}
               {changelog && changelog.issues > 0 && (
                 <Button key="release" hotkey="4" plain label={`release ${changelog.issues}`} onPress={() => void chooseRelease($)} />
               )}
             </Box>
+            )}
           </Box>
           <Box gap={2} height={RASTER_ROWS + 1} alignItems="flex-start">
             {mascot}
@@ -966,6 +1099,18 @@ export const register: Register = on => {
                 ))}
                 {mergeLines.length === 0 && <Text color="success">✓ todos mergeados</Text>}
                 {mergeHidden > 0 && <Text dimColor>+{mergeHidden} más</Text>}
+              </Box>
+            ) : historian ? (
+              <Box flexDirection="column" width={body} marginTop={1}>
+                {historian.pr && <Text wrap="truncate-end">PR #{historian.pr.number} {historian.pr.title}</Text>}
+                {noteLines.map(n => (
+                  <Text key={`nota-${n.name}`} wrap="truncate-end" dimColor={n.estado === 'procesada'}>
+                    <Text color={n.estado === 'procesada' ? 'success' : 'warning'}>{n.estado === 'procesada' ? '✓' : '●'}</Text>
+                    {` ${n.name.replace(/\.md$/, '')}`}
+                  </Text>
+                ))}
+                {historian.notes.length === 0 && <Text dimColor>leyendo las field notes…</Text>}
+                {notesHidden > 0 && <Text dimColor>+{notesHidden} más</Text>}
               </Box>
             ) : (
             <Box flexDirection="column" width={body} marginTop={1}>
@@ -1009,7 +1154,7 @@ export const register: Register = on => {
             )}
           </Box>
           {/* La linea de todos los listos crece con la cola: va abajo, a lo ancho, y no empuja los menus fijos. */}
-          {!mergeRun && ready?.launch && (
+          {!mergeRun && !bitacoraPr && ready?.launch && (
             <Button key="ready-all" hotkey="1" plain label={clip(ready.launch.replace(/^\/mefisto-/, ''), inner - 3)}
               onPress={() => void fill($, ready.launch ?? '')} />
           )}
