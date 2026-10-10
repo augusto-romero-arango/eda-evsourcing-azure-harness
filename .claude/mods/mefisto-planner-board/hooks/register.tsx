@@ -295,8 +295,12 @@ async function nextPage($: EngineInterface) {
 
 // Rastro para diagnosticar teclas que llegan como texto (#2210): el log de debug dice si el boton estaba en el
 // arbol de la banda y si la pulsacion llego al mod.
-async function debugLog($: EngineInterface, text: string) {
-  await Promise.resolve($.ui.log(`[mefisto-planner-board] ${text}`, { to: 'debug' })).catch(() => undefined)
+async function debugLog($: EngineInterface, text: () => string) {
+  try {
+    await $.ui.log(`[mefisto-planner-board] ${text()}`, { to: 'debug' })
+  } catch {
+    // El rastro nunca debe tumbar el render ni la pulsacion que observa.
+  }
 }
 
 async function fill($: EngineInterface, text: string) {
@@ -385,7 +389,7 @@ export const register: Register = on => {
   })
 
   on('ui.press', async ($, e, next) => {
-    await debugLog($, `ui.press ${JSON.stringify(e)}`)
+    await debugLog($, () => `ui.press ${JSON.stringify(e)}`)
     return next(e)
   }).catch(($, e, next) => next(e))
 
@@ -394,7 +398,11 @@ export const register: Register = on => {
       isRevivePending = false
       if (isInteractive && !isTurnedOff && !(await read($, activeAtom))) await activate($)
     }
-    if (!(await read($, activeAtom)) || e.props.hasSurvey) return next(e)
+    if (!(await read($, activeAtom))) return next(e)
+    if (e.props.hasSurvey) {
+      await debugLog($, () => `render omitido hasSurvey=true isWorking=${!!e.props.isWorking} maxRows=${String(e.props.maxRows)}`)
+      return next(e)
+    }
     const { Box, Text, Button } = $.ui.resolve(e)
     const focus = await read($, focusAtom)
     const flash = await read($, flashAtom)
@@ -458,7 +466,7 @@ export const register: Register = on => {
 
     const body = Math.max(30, inner - MASCOT_WIDTH - 2)
     const hotkeys = focus ? (focus.kind === 'explorar' ? ['1'] : []) : flash && flash.untilMs > Date.now() ? ['3', '4'] : suggested !== null ? ['1', '2', '3', '4'] : ['1', '3', '4']
-    await debugLog($, `render kind=${focus?.kind ?? 'reposo'} hotkeys=[${hotkeys.join(',')}] isWorking=${!!e.props.isWorking} hasSurvey=${!!e.props.hasSurvey} maxRows=${String(e.props.maxRows)}`)
+    await debugLog($, () => `render kind=${focus?.kind ?? 'reposo'} hotkeys=[${hotkeys.join(',')}] isWorking=${!!e.props.isWorking} hasSurvey=${!!e.props.hasSurvey} maxRows=${String(e.props.maxRows)}`)
     const frame = await read($, frameAtom)
     const isWorking = e.props.isWorking || (await read($, workingAtom))
     const state = mascotPose(isWorking, await read($, stepsAtom), !!flash && flash.untilMs > Date.now())
