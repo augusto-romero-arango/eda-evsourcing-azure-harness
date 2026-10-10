@@ -30,7 +30,6 @@ import {
 } from './logic'
 
 const POLL_MS = 60_000
-const STORE_ERROR = 'store no disponible'
 const SCRIPT_TIMEOUT_MS = 180_000
 
 const activeAtom = atom({ plugin: 'mefisto', key: 'pactIsActive' } as const, false)
@@ -72,16 +71,13 @@ async function runNextOrder($: EngineInterface): Promise<BoardList> {
   return parseNextOrder(exitCode, stdout, stderr)
 }
 
-type Store = { get: (k: string) => Promise<unknown>; set: (k: string, v: unknown) => Promise<unknown> }
-const storeOf = ($: EngineInterface) => ($ as unknown as { store?: Store }).store
-
 async function readDismissed($: EngineInterface): Promise<string[]> {
-  const raw = await storeOf($)?.get(DISMISSED_STORE_KEY).catch(() => null)
+  const raw = await $.store.get(DISMISSED_STORE_KEY).catch(() => null)
   return Array.isArray(raw) ? raw.filter((k): k is string => typeof k === 'string') : []
 }
 
 async function saveDismissed($: EngineInterface, keys: string[]) {
-  await storeOf($)?.set(DISMISSED_STORE_KEY, keys).catch(() => STORE_ERROR)
+  await $.store.set(DISMISSED_STORE_KEY, keys).catch(() => undefined)
 }
 
 // Lector puro: solo lee `.mefisto/pipeline/` del checkout principal (con `.claude/pipeline/` de respaldo).
@@ -105,6 +101,15 @@ async function readRuns($: EngineInterface): Promise<PipelineRun[]> {
   return [...found.values()]
 }
 
+// `.mefisto/pipeline/` primero; `.claude/pipeline/` solo como respaldo de lectura (MEF-ADR-0053).
+async function readHistory($: EngineInterface): Promise<string> {
+  for (const base of ['.mefisto/pipeline', '.claude/pipeline']) {
+    const raw = await $.fs.read(`${runsRepo}/${base}/${HISTORY_FILE}`).catch(() => '')
+    if (typeof raw === 'string' && raw !== '') return raw
+  }
+  return ''
+}
+
 async function refreshRuns($: EngineInterface) {
   if (isRefreshingRuns || !isEligible || !isWanted) return
   isRefreshingRuns = true
@@ -112,7 +117,7 @@ async function refreshRuns($: EngineInterface) {
     const statuses = await readRuns($)
     const dismissed = await readDismissed($)
     const wasSeen = seenRuns
-    const historyRaw = await $.fs.read(`${runsRepo}/.mefisto/pipeline/${HISTORY_FILE}`).catch(() => '')
+    const historyRaw = await readHistory($)
     const view = reconcile(
       runsRepo,
       statuses,
@@ -174,7 +179,10 @@ async function activate($: EngineInterface) {
   timer?.cancel()
   timer = $.clock.every(POLL_MS, () => void refresh($))
   runsTimer?.cancel()
-  runsTimer = $.clock.every(RUNS_POLL_MS, () => void refreshRuns($))
+  // Ritmo rapido solo con corridas activas; sin ellas, `refresh` las relee al ritmo de los listos (CA-5).
+  runsTimer = $.clock.every(RUNS_POLL_MS, () => {
+    if (Object.keys(seenRuns).length > 0) void refreshRuns($)
+  })
   void refresh($)
 }
 

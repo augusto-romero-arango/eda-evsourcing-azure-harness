@@ -3,6 +3,8 @@ import { expect, test } from 'claude-code/testing'
 import {
   agentFlagOf,
   agentOf,
+  clockOf,
+  minutesSince,
   agentSettingOf,
   dismissKey,
   parseHistory,
@@ -128,4 +130,12 @@ test('pruneDismissed poda solo claves viejas del repo sin status vivo', () => {
 test('stateDirOf resuelve el checkout principal aunque sea un worktree', () => {
   expect(stateDirOf('/repo/.git', '/repo/.mefisto/worktrees/x')).toBe('/repo/.mefisto/pipeline')
   expect(stateDirOf('.git', '/repo/')).toBe('/repo/.mefisto/pipeline')
+})
+
+test('started compacto de los pipelines y next_probe en UTC', () => {
+  expect(minutesSince('20261009-100000', NOW)).toBe(12)
+  const probe = '2026-10-09T15:45:00Z'
+  const d = new Date(Date.parse(probe))
+  expect(clockOf(probe)).toBe(`${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`)
+  expect(clockOf('nada')).toBe('nada')
 })

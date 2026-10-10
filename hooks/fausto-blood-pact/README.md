@@ -22,7 +22,6 @@ Es solo lectura: no hay teclas ni botones que lancen trabajo, y el orden se lee 
 
 Estado en `PluginState['mefisto']` con claves de prefijo `pact` (`pactIsActive`, `pactList`, `pactPage`) para no chocar con `fausto-board`.
 
-
 ## Capacidad vigente (incremento 2): seguir corridas
 
 Mientras haya una corrida activa o un resultado sin descartar, la banda muestra solo las corridas del repo (todas, no solo las lanzadas por la sesión), una línea por corrida; al descartar la última vuelven los listos.
@@ -30,4 +29,4 @@ Mientras haya una corrida activa o un resultado sin descartar, la banda muestra 
 - Lee `pipeline-status-{tdd,tooling,infra}-<n>[-<variante>].json` del checkout principal (`git rev-parse --git-common-dir`, aunque la sesión esté en un worktree). `running`: `#N pipeline agente Mm`; `hold`: `rate limit · sonda HH:MM`.
 - Resultados: `✗ <stage>` para `failed`/`blocked`/`gaps`; `✓ PR #X` cuando desaparece el status de una corrida que la sesión vio activa (PR leído de `pipeline-history.jsonl`).
 - Descartar: tecla `4` o `/fausto-blood-pact descartar`. No toca `.mefisto/pipeline/`: se guarda en `$.store` con clave repo + pipeline + issue + variante + `started`, y no reaparece en otros panes ni sesiones. Las claves de status inexistente y de más de un día se podan.
-- Alto fijo de 5 filas, paginado con `0`. Las corridas se refrescan cada 5 s; los listos, cada minuto.
+- Alto fijo de 5 filas, paginado con `0`. Con alguna corrida activa se refrescan cada 5 s; sin corridas activas, al ritmo de los listos (cada minuto).

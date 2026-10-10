@@ -167,13 +167,15 @@ export function agentOf(stage: string): string {
   return m ? (m[1] as string) : stage
 }
 
-/** Hora local HH:MM de un timestamp ISO; el texto original si no se puede leer. */
+/** Hora local HH:MM de un timestamp ISO (`next_probe` viaja en UTC con `Z`); el texto original si no se puede leer. */
 export function clockOf(iso: string): string {
-  const m = /T(\d{2}):(\d{2})/.exec(iso)
-  return m ? `${m[1]}:${m[2]}` : iso
+  const ms = Date.parse(iso)
+  if (Number.isNaN(ms)) return iso
+  const d = new Date(ms)
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
 }
 
-/** Minutos enteros desde `started` (ISO, hora local) hasta `nowMs`; null si no parsea. */
+/** Minutos enteros desde `started` (`YYYYMMDD-HHMMSS` de los pipelines o ISO, hora local) hasta `nowMs`; null si no parsea. */
 export function minutesSince(started: string, nowMs: number): number | null {
   const ms = Date.parse(/^\d{8}-\d{6}$/.test(started)
     ? `${started.slice(0, 4)}-${started.slice(4, 6)}-${started.slice(6, 8)}T${started.slice(9, 11)}:${started.slice(11, 13)}:${started.slice(13, 15)}`
