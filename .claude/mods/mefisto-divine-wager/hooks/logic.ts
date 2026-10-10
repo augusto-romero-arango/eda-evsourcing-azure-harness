@@ -1,4 +1,4 @@
-import type { BitacoraNote, BitacoraPr, BatchIssue, BatchRun, ChangelogSummary, Historian, Hold, IssueStats, MergePr, MergeRun, OpenPr, BlockedItem, LogLine, RunAgent, PipelineRun, ReadyItem, ReadyList } from '../types'
+import type { BitacoraNote, BitacoraPr, BatchIssue, BatchRun, ChangelogSummary, Historian, Hold, IssueStats, MergePr, MergeRun, OpenPr, BlockedItem, LogLine, Release, ReleaseIssue, ReleaseStep, RunAgent, PipelineRun, ReadyItem, ReadyList } from '../types'
 
 export const STATE_DIR = '.mefisto/pipeline'
 export const LOG_DIR = `${STATE_DIR}/logs`
@@ -603,6 +603,107 @@ export function releaseArgsOf(answer: string): string | null {
   const bump = /\b(major|minor|patch)\b/.exec(answer)?.[1]
   if (!bump) return null
   return answer.includes('--prepare-only') ? `${bump} --prepare-only` : bump
+}
+
+export const RELEASE_STEPS: readonly ReleaseStep[] = ['rama', 'consolidar', 'pr', 'merge', 'tag', 'release']
+const RELEASE_STEP_LABEL: Record<ReleaseStep, string> = {
+  rama: 'rama', consolidar: 'consolidar', pr: 'PR', merge: 'merge', tag: 'tag', release: 'GitHub Release',
+}
+const KEEP_CATEGORIES = ['added', 'changed', 'fixed', 'removed']
+
+/** El bump y el modo de un /mefisto-release o de su script, leidos de sus argumentos. Sin bump es la fase publish. */
+export function releaseInvocationOf(text: string): { bump: 'major' | 'minor' | 'patch' | null; prepareOnly: boolean } {
+  const args = withoutHeredocs(text).replace(/^[\s\S]*?(?:\/mefisto-release|mefisto-release\.sh)\b/, '')
+  const bump = /^[^;&|\n]*?\b(major|minor|patch)\b/.exec(args)?.[1] as 'major' | 'minor' | 'patch' | undefined
+  return { bump: bump ?? null, prepareOnly: /^[^;&|\n]*--prepare-only\b/.test(args) }
+}
+
+/** Mismo calculo que bump_version de mefisto-release.sh. */
+export function bumpVersion(current: string, part: 'major' | 'minor' | 'patch'): string | null {
+  const m = /^(\d+)\.(\d+)\.(\d+)$/.exec(current.trim())
+  if (!m) return null
+  const [major, minor, patch] = [Number(m[1]), Number(m[2]), Number(m[3])]
+  if (part === 'major') return `${major + 1}.0.0`
+  if (part === 'minor') return `${major}.${minor + 1}.0`
+  return `${major}.${minor}.${patch + 1}`
+}
+
+/** Nombres de mefisto-release.sh: RELEASE_BRANCH="release/${NEW_TAG}" y NEW_TAG="v${NEW_VERSION}". */
+export const releaseTagOf = (version: string) => `v${version}`
+export const releaseBranchOf = (version: string) => `release/${releaseTagOf(version)}`
+
+/**
+ * Version destino y fases que recorre la corrida: con bump prepara desde la version de plugin.json; sin bump
+ * plugin.json ya trae la version a publicar y solo quedan tag y release; --prepare-only se detiene en el PR.
+ */
+export function releasePlan(current: string | null, invocation: { bump: 'major' | 'minor' | 'patch' | null; prepareOnly: boolean }) {
+  if (!current) return { version: null, steps: [...RELEASE_STEPS] }
+  if (!invocation.bump) return { version: current.trim(), steps: RELEASE_STEPS.slice(4) }
+  const version = bumpVersion(current, invocation.bump)
+  return { version, steps: invocation.prepareOnly ? RELEASE_STEPS.slice(0, 3) : [...RELEASE_STEPS] }
+}
+
+/** Los issues con fragmentos en changelog.d/ (sin README.md), en orden numerico, con sus categorias Keep a Changelog. */
+export function releaseIssuesOf(names: string[]): ReleaseIssue[] {
+  const by = new Map<string, string[]>()
+  for (const name of names) {
+    const [, issue, category] = /^(\d+)\.([a-z-]+)\.md$/.exec(name) ?? []
+    if (!issue || !category) continue
+    const categories = by.get(issue) ?? []
+    if (KEEP_CATEGORIES.includes(category) && !categories.includes(category)) categories.push(category)
+    by.set(issue, categories)
+  }
+  return [...by.entries()]
+    .sort((a, b) => Number(a[0]) - Number(b[0]))
+    .map(([issue, categories]) => ({ issue, title: '', categories: KEEP_CATEGORIES.filter(c => categories.includes(c)) }))
+}
+
+/** Los fragmentos de la foto ya no estan en la rama de release: la consolidacion los volco a CHANGELOG.md. */
+export function isConsolidated(snapshot: readonly string[], remote: readonly string[]): boolean {
+  return snapshot.length > 0 && snapshot.every(name => !remote.includes(name))
+}
+
+/**
+ * Las fases son monotonas y en orden: observar una implica las anteriores (la rama se borra al mergear, y un
+ * sondeo puede saltarse una fase rapida). Devuelve el mismo objeto si nada avanzo.
+ */
+export function withObservedSteps(release: Release, observed: readonly ReleaseStep[]): Release {
+  const last = Math.max(-1, ...observed.map(step => release.steps.indexOf(step)))
+  const done = release.steps.slice(0, Math.max(last + 1, release.done.length))
+  return done.length === release.done.length ? release : { ...release, done }
+}
+
+/** La fase en curso: la primera de esta corrida que no se observo; null si todas estan hechas. */
+export function currentReleaseStep(release: Release): ReleaseStep | null {
+  return release.steps.find(step => !release.done.includes(step)) ?? null
+}
+
+/** El checklist de fases en una linea: ✓ hechas, ● la en curso, ✗ la que fallo, sin marca las que faltan. */
+export function releaseChecklist(release: Release): { step: ReleaseStep; label: string; mark: '✓' | '●' | '✗' | '·' }[] {
+  const current = release.finishedMs ? null : currentReleaseStep(release)
+  return release.steps.map(step => ({
+    step,
+    label: RELEASE_STEP_LABEL[step],
+    mark: release.done.includes(step) ? '✓' : release.failed === step ? '✗' : step === current ? '●' : '·',
+  }))
+}
+
+/** El encabezado de la cinta: version y estado, o la fase que fallo. */
+export function releaseHeader(release: Release, elapsedText: string): string {
+  const name = release.version ? `release ${releaseTagOf(release.version)}` : 'release'
+  if (release.failed) return `${name} falló en ${RELEASE_STEP_LABEL[release.failed]}`
+  if (release.finishedMs) {
+    const last = release.steps[release.steps.length - 1]
+    if (last === 'pr' && release.pr) return `${name} · PR #${release.pr} listo`
+    return `${name} publicado`
+  }
+  return `${name} ${release.phase === 'despegando' ? 'despegando' : 'en preparación'} ${elapsedText}`.trimEnd()
+}
+
+/** Al terminar el turno: la fase en curso queda con ✗ si la corrida no las completo todas. */
+export function finishRelease(release: Release, nowMs: number): Release {
+  if (release.finishedMs) return release
+  return { ...release, phase: 'reposo', finishedMs: nowMs, failed: currentReleaseStep(release) }
 }
 
 /**

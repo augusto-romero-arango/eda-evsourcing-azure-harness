@@ -53,8 +53,32 @@ sesiones `-p` no los cargan. Para probar una copia suelta: `claude --plugin-dir 
   `2` lo abre en GitHub y `3` lo cierra sin mergear y borra la rama (confirma en el dialogo nativo). Si el PR ya
   no esta abierto (el skill lo mergeo), la cinta se limpia sola a los pocos segundos.
 - Mientras corre `/mefisto-release` (lanzado con `4` o escrito a mano), la banda muestra un cohete: en reposo sobre
-  su plataforma mientras se prepara, despegando con llama mientras corre `mefisto-release.sh`, y `release terminado`
-  al cerrar el turno.
+  su plataforma mientras se prepara y despegando con llama mientras corre `mefisto-release.sh`. Al lado va la cinta
+  del release:
+  - **Encabezado:** `release vX.Y.Z` con la version destino, calculada como `bump_version` del script a partir de
+    `.claude-plugin/plugin.json` y del bump pedido.
+  - **Lista:** la foto de `changelog.d/` (sin `README.md`) al arrancar, agrupada por issue, como
+    `● #N título · added/changed`. Los titulos salen de `gh issue view`, en paralelo.
+  - **Checklist de fases:** en una linea debajo, `rama → consolidar → PR → merge → tag → GitHub Release`.
+    `--prepare-only` se detiene en el PR, y sin bump (la fase publish) solo quedan tag y release.
+
+  Las fases se detectan por sondeo cada 5 s, no por la salida del Bash, que llega entera al terminar:
+
+  | Fase | Se da por hecha cuando |
+  | --- | --- |
+  | rama | `git ls-remote --heads origin release/vX.Y.Z` devuelve la rama |
+  | consolidar | la rama remota ya no tiene esos fragmentos; toda la lista pasa a `✓` |
+  | PR | `gh pr list --head <rama>` encuentra el PR |
+  | merge | ese PR esta `MERGED` |
+  | tag | `git ls-remote --tags origin vX.Y.Z` devuelve el tag |
+  | GitHub Release | `gh release view vX.Y.Z` lo encuentra publicado |
+
+  Una fase observada da por hechas las anteriores: la rama se borra al mergear, y un sondeo puede saltarse una
+  fase rapida. Los nombres de la rama y del tag son los de `RELEASE_BRANCH` y `NEW_TAG` en `mefisto-release.sh`.
+  Al cerrar el turno que corrio el script:
+  - **Exito:** muestra `release vX.Y.Z publicado` (o `PR #N listo` con `--prepare-only`), y `2` abre la GitHub
+    Release o el PR durante dos minutos.
+  - **Fallo:** si faltaron fases, la fase en curso queda con `✗` y el encabezado dice `falló en <fase>`.
 - Mientras corre `/mefisto-merge` (lanzado con `2`, con `1` desde la corrida o escrito a mano), la banda de espera
   muestra la cinta: el hilo de la rama y el de `main` bajan y se cierran como una cremallera, `cosiendo N PRs MM:SS` y una
   linea `● #N título` por PR pendiente (con `--all`, los abiertos sin los de field notes). Un PR sale de la lista al
