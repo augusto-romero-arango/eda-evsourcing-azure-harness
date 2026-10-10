@@ -351,9 +351,10 @@ export function fitTitle(title: string | null | undefined, width: number): strin
   return padEnd(t.length > width ? `${t.slice(0, width - 1)}…` : t, width)
 }
 
-/** Ancho de la columna de titulo del resumen: lo que sobra de la banda tras marca, issue, PR, tiempo y costo. */
+/** Ancho de la columna de titulo del resumen: lo que sobra de la banda tras marca, issue, PR, tiempo y costo; 0 si no cabe un titulo legible. */
 export function summaryTitleWidth(inner: number): number {
-  return Math.max(0, Math.min(60, inner - 38))
+  const w = Math.min(60, inner - 38)
+  return w < 8 ? 0 : w
 }
 
 /** Pagina valida (0-based) para una lista de `total` items; vuelve a 0 si la lista se achico. */

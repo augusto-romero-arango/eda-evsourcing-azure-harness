@@ -767,7 +767,7 @@ export const register: Register = on => {
               })}
               {doneRows.length > 1 && (
                 <Text dimColor wrap="truncate-end">
-                  {`  total ${padEnd(String(doneRows.length), 15 + titleCol)} ${padEnd(elapsed(total.durationMs), 8)} ${fmtCost(total.costUsd)}`}
+                  {`  total ${padEnd(String(doneRows.length), 12 + titleCol)} ${padEnd(elapsed(total.durationMs), 8)} ${fmtCost(total.costUsd)}`}
                 </Text>
               )}
             </Box>

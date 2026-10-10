@@ -185,6 +185,7 @@ test('el titulo de la fila del resumen se recorta con elipsis y conserva el anch
   expect(fitTitle(null, 4)).toBe('    ')
   expect(fitTitle('x', 0)).toBe('')
   expect(summaryTitleWidth(30)).toBe(0)
+  expect(summaryTitleWidth(40)).toBe(0)
   expect(summaryTitleWidth(76)).toBe(38)
 })
 
