@@ -43,7 +43,16 @@ import {
   parseNextOrder,
   rowText,
   transcriptPathOf,
+  PR_CHECK_MS,
+  mergeArgsOf,
+  mergeOptions,
+  mergeToast,
+  parsePrArgs,
+  resultPrs,
+  viewOptions,
+  viewPrOf,
 } from './logic'
+import type { ResultPr } from './logic'
 
 const POLL_MS = 60_000
 const SCRIPT_TIMEOUT_MS = 180_000
@@ -76,6 +85,8 @@ let isRefreshing = false
 let timer: { cancel: () => void } | null = null
 let runsTimer: { cancel: () => void } | null = null
 let tickTimer: { cancel: () => void } | null = null
+let prTimer: { cancel: () => void } | null = null
+let isCheckingPrs = false
 let isRefreshingRuns = false
 // Corridas que esta sesion vio activas y resultados `✓` ya derivados; viven aqui porque /clear reinicia los atoms.
 let seenRuns: Record<string, PipelineRun> = {}
@@ -199,6 +210,71 @@ async function dismissResults($: EngineInterface): Promise<number> {
   return results.length
 }
 
+// Un PR `MERGED` quita su linea sola: se guarda en `$.store` (nunca en archivos de estado) para que no reaparezca.
+async function closeMergedPrs($: EngineInterface) {
+  if (isCheckingPrs || !isEligible || !isWanted) return
+  isCheckingPrs = true
+  try {
+    const results = await read($, resultsAtom)
+    const merged: ResultPr[] = []
+    for (const p of resultPrs(results)) {
+      const { exitCode, stdout } = await $.process
+        .run(['gh', 'pr', 'view', p.pr, '--json', 'state', '-q', '.state'])
+        .catch(() => ({ exitCode: 1, stdout: '' }))
+      if (exitCode === 0 && stdout.trim() === 'MERGED') merged.push(p)
+    }
+    if (merged.length === 0) return
+    const keys = new Set(await readDismissed($))
+    for (const p of merged) keys.add(p.key)
+    await saveDismissed($, [...keys])
+    const gone = new Set(merged.map(p => p.key))
+    carriedResults = carriedResults.filter(r => !gone.has(r.key))
+    await update($, resultsAtom, rs => rs.filter(r => !gone.has(r.key)))
+    await update($, pageAtom, () => 0)
+    for (const p of merged) {
+      $.ui.toast(`PR #${p.pr} mergeado${p.pipeline === 'infra' ? ' · el issue se cierra cuando termine el apply de CI' : ''}`)
+    }
+  } finally {
+    isCheckingPrs = false
+  }
+}
+
+// Mergear: la confirmacion del dialogo es la unica; /mefisto:merge no pide otra. Nunca `--all`.
+async function mergePrs($: EngineInterface, preset: string[] | null = null): Promise<string> {
+  const prs = resultPrs(await read($, resultsAtom))
+  if (prs.length === 0) return 'No hay PRs de corridas terminadas.'
+  const scope = preset ? prs.filter(p => preset.includes(p.pr)) : prs
+  const options = mergeOptions(scope)
+  const answer = await $.ui
+    .ask(
+      scope.length === 1 ? `¿Mergear el PR #${scope[0]!.pr}?` : `¿Qué mergear? ${scope.length} PRs${scope.length > 3 ? ' (otros números: escríbelos en la opción de texto)' : ''}`,
+      scope.length === 1 ? options : { header: 'Merge', options, multiSelect: true as const },
+    )
+    .catch(() => null)
+  const args = mergeArgsOf(answer, options, scope)
+  if (!args) return 'Merge cancelado.'
+  $.ui.toast(mergeToast(args, prs))
+  await $.command.run({ command: 'mefisto:merge', args })
+  return `/mefisto:merge ${args} en cola.`
+}
+
+async function viewPr($: EngineInterface, preset: string | null = null): Promise<string> {
+  const prs = resultPrs(await read($, resultsAtom))
+  if (prs.length === 0) return 'No hay PRs de corridas terminadas.'
+  let pr = preset
+  if (!pr) {
+    if (prs.length === 1) pr = prs[0]!.pr
+    else {
+      const options = viewOptions(prs)
+      const answer = await $.ui.ask('¿Cuál PR ver?', { header: 'PR', options }).catch(() => null)
+      pr = viewPrOf(answer, prs)
+    }
+  }
+  if (!pr) return 'Sin PR elegido.'
+  await $.process.run(['gh', 'pr', 'view', pr, '--web']).catch(() => undefined)
+  return `PR #${pr} abierto en GitHub.`
+}
+
 async function refresh($: EngineInterface) {
   if (isRefreshing || !isEligible || !isWanted) return
   isRefreshing = true
@@ -256,6 +332,8 @@ async function activate($: EngineInterface) {
   runsTimer = $.clock.every(RUNS_POLL_MS, () => {
     if (Object.keys(seenRuns).length > 0) void refreshRuns($)
   })
+  prTimer?.cancel()
+  prTimer = $.clock.every(PR_CHECK_MS, () => void closeMergedPrs($))
   tickTimer?.cancel()
   // La mascota anima solo con corrida activa o con Claude trabajando; en reposo no hay re-render por segundo.
   tickTimer = $.clock.every(1000, () => {
@@ -272,6 +350,8 @@ async function deactivate($: EngineInterface) {
   runsTimer = null
   tickTimer?.cancel()
   tickTimer = null
+  prTimer?.cancel()
+  prTimer = null
   await update($, activeAtom, () => false)
 }
 
@@ -308,8 +388,8 @@ export const register: Register = on => {
     agentChecksLeft = agent === null ? AGENT_CHECKS : 0
     await $.command.register({
       name: 'fausto-blood-pact',
-      description: 'Consola de Fausto: refresh | on | off | descartar | lanzar',
-      argumentHint: '[refresh|on|off|descartar|lanzar [sequential|parallel|<n>]]',
+      description: 'Consola de Fausto: refresh | on | off | descartar | lanzar | merge | pr',
+      argumentHint: '[refresh|on|off|descartar|lanzar [sequential|parallel|<n>]|merge [<pr>...]|pr [<pr>]]',
       immediate: true,
     })
     if (isWanted) await activate($)
@@ -326,6 +406,19 @@ export const register: Register = on => {
     if (arg === 'descartar') {
       const n = await dismissResults($)
       return { text: n > 0 ? `Resultados descartados: ${n}.` : 'No hay resultados que descartar.' }
+    }
+    if (arg === 'merge' || arg.startsWith('merge ')) {
+      const given = arg.slice('merge'.length).trim()
+      if (given === '') return { text: await mergePrs($) }
+      const { prs, invalid } = parsePrArgs(given, resultPrs(await read($, resultsAtom)))
+      if (prs.length === 0) return { text: `Sin ✓ con PR para: ${invalid.join(' ')}.` }
+      return { text: await mergePrs($, prs) }
+    }
+    if (arg === 'pr' || arg.startsWith('pr ')) {
+      const given = arg.slice('pr'.length).trim()
+      if (given === '') return { text: await viewPr($) }
+      const { prs, invalid } = parsePrArgs(given, resultPrs(await read($, resultsAtom)))
+      return { text: prs[0] ? await viewPr($, prs[0]) : `Sin ✓ con PR para: ${invalid.join(' ')}.` }
     }
     if (arg === 'lanzar' || arg.startsWith('lanzar ')) {
       const list = await read($, listAtom)
@@ -368,6 +461,7 @@ export const register: Register = on => {
       ) : (
         <Box width={MASCOT_WIDTH} />
       )
+    const hasPrs = resultPrs(results).length > 0
     const lines = [
       ...runs.map(r => ({ key: `run-${r.pipeline}-${r.issue}-${r.variant ?? ''}`, text: runLine(r, Date.now()), color: undefined as string | undefined })),
       ...results.map(r => ({ key: `res-${r.key}`, text: resultLine(r), color: r.ok ? 'success' : 'error' })),
@@ -389,8 +483,18 @@ export const register: Register = on => {
               ))}
               <Box justifyContent="space-between">
                 {results.length > 0 ? (
-                  <Button key="pact-dismiss" hotkey="4" plain dimColor label="descartar resultados"
-                    onPress={() => void dismissResults($)} />
+                  <Box>
+                    {hasPrs && (
+                      <Button key="pact-merge" hotkey="1" plain dimColor label="1 mergear"
+                        onPress={() => void mergePrs($)} />
+                    )}
+                    {hasPrs && (
+                      <Button key="pact-view-pr" hotkey="2" plain dimColor label=" · 2 ver PR"
+                        onPress={() => void viewPr($)} />
+                    )}
+                    <Button key="pact-dismiss" hotkey="4" plain dimColor label={`${hasPrs ? ' · ' : ''}4 descartar`}
+                      onPress={() => void dismissResults($)} />
+                  </Box>
                 ) : (
                   <Text dimColor> </Text>
                 )}

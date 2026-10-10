@@ -500,3 +500,83 @@ export function poseOfResults(results: readonly PipelineResult[]): MascotPose | 
   if (r.ok) return isInfra ? { role: 'infraestructura', state: 'arriba' } : { role: 'revisor', state: 'aprobado' }
   return isInfra ? { role: 'infraestructura', state: 'caido' } : { role: 'desarrollador', state: 'error' }
 }
+
+// ---- Incremento 5: mergear / ver el PR de una corrida terminada ----
+export const PR_CHECK_MS = 15_000
+export const MERGE_ALL = 'Todos'
+export const MERGE_CANCEL = 'Cancelar'
+const MERGE_MAX_OPTIONS = 3
+
+export type ResultPr = { pr: string; issue: number; pipeline: PipelineKind; key: string }
+
+/** Numero de PR de un resultado `✓ PR #X`; null si es `✗` o `✓ completado`. */
+export function prOfResult(r: PipelineResult): string | null {
+  return r.ok ? (/^✓ PR #(\d+)/.exec(r.text)?.[1] ?? null) : null
+}
+
+/** PRs de los `✓` visibles, sin repetir, del mas reciente (numero mayor) al mas antiguo. */
+export function resultPrs(results: PipelineResult[]): ResultPr[] {
+  const found = new Map<string, ResultPr>()
+  for (const r of results) {
+    const pr = prOfResult(r)
+    if (pr && !found.has(pr)) found.set(pr, { pr, issue: r.issue, pipeline: r.pipeline, key: r.key })
+  }
+  return [...found.values()].sort((a, b) => Number(b.pr) - Number(a.pr))
+}
+
+const prLabel = (p: ResultPr) => `#${p.pr} · #${p.issue} ${p.pipeline}`
+
+/** Opciones del dialogo de merge: con un PR, ese y cancelar; con varios, "Todos" y hasta 3 PRs mas recientes. */
+export function mergeOptions(prs: ResultPr[]): string[] {
+  if (prs.length === 1 && prs[0]) return [`Mergear #${prs[0].pr}`, MERGE_CANCEL]
+  return [MERGE_ALL, ...prs.slice(0, MERGE_MAX_OPTIONS).map(prLabel)]
+}
+
+/** Opciones de "cual PR ver": hasta 3 PRs mas recientes; los demas numeros van en la opcion de texto. */
+export function viewOptions(prs: ResultPr[]): string[] {
+  return prs.slice(0, MERGE_MAX_OPTIONS).map(prLabel)
+}
+
+/**
+ * Argumentos de /mefisto:merge a partir de la respuesta (opciones marcadas unidas por ", " y/o texto libre):
+ * solo numeros de PRs `✓` conocidos, nunca `--all`. Null si no queda ninguno (cancelar o nada elegido).
+ */
+export function mergeArgsOf(answer: string | null, options: string[], prs: ResultPr[]): string | null {
+  if (answer === null) return null
+  const known = new Set(prs.map(p => p.pr))
+  if (prs.length === 1) return answer === options[0] && prs[0] ? prs[0].pr : null
+  if (answer.includes(MERGE_ALL)) return prs.map(p => p.pr).join(' ')
+  let rest = answer
+  const numbers: string[] = []
+  for (const option of options) {
+    if (option === MERGE_ALL || !rest.includes(option)) continue
+    rest = rest.replace(option, '')
+    const n = /^#(\d+)/.exec(option)?.[1]
+    if (n) numbers.push(n)
+  }
+  numbers.push(...(rest.match(/\d+/g) ?? []))
+  const picked = [...new Set(numbers)].filter(n => known.has(n))
+  return picked.length > 0 ? picked.join(' ') : null
+}
+
+/** El PR que eligio la persona para verlo: un numero de la respuesta que sea de un `✓`. */
+export function viewPrOf(answer: string | null, prs: ResultPr[]): string | null {
+  if (answer === null) return null
+  const known = new Set(prs.map(p => p.pr))
+  const n = (/#(\d+)/.exec(answer)?.[1] ?? /\d+/.exec(answer)?.[0]) ?? null
+  return n && known.has(n) ? n : null
+}
+
+/** Numeros de PR de un argumento de comando (`merge 12 13`, `#12`); invalid = los que no son de un `✓`. */
+export function parsePrArgs(arg: string, prs: ResultPr[]): { prs: string[]; invalid: string[] } {
+  const known = new Set(prs.map(p => p.pr))
+  const given = [...new Set((arg.match(/\d+/g) ?? []))]
+  return { prs: given.filter(n => known.has(n)), invalid: given.filter(n => !known.has(n)) }
+}
+
+/** Toast del merge: en infra el issue lo cierra el job `apply` de CI tras el merge (MEF-ADR-0022). */
+export function mergeToast(args: string, prs: ResultPr[]): string {
+  const nums = args.split(' ')
+  const hasInfra = prs.some(p => nums.includes(p.pr) && p.pipeline === 'infra')
+  return `/mefisto:merge ${args} en cola${hasInfra ? ' · el issue de infra se cierra cuando termine el apply de CI' : ''}`
+}

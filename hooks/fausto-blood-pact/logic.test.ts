@@ -1,6 +1,13 @@
 import { expect, test } from 'claude-code/testing'
 
 import {
+  mergeArgsOf,
+  mergeOptions,
+  mergeToast,
+  parsePrArgs,
+  prOfResult,
+  resultPrs,
+  viewPrOf,
   activeRunOf,
   agentFlagOf,
   eventsFileOf,
@@ -298,4 +305,55 @@ test('poseOfResults: aprobado/error y variantes de infra', () => {
   expect(poseOfResults([r('tdd', false)])).toEqual({ role: 'desarrollador', state: 'error' })
   expect(poseOfResults([r('infra', true)])).toEqual({ role: 'infraestructura', state: 'arriba' })
   expect(poseOfResults([r('infra', false)])).toEqual({ role: 'infraestructura', state: 'caido' })
+})
+
+const res = (issue: number, pr: number | null, pipeline: 'tdd' | 'infra' = 'tdd', ok = true) => ({
+  key: `k${issue}`,
+  issue,
+  pipeline,
+  ok,
+  text: ok ? (pr ? `✓ PR #${pr}` : '✓ completado') : '✗ 1-writer',
+})
+
+test('resultPrs: solo ✓ con PR, sin repetir, del mas reciente al mas antiguo', () => {
+  expect(prOfResult(res(1, 7))).toBe('7')
+  expect(prOfResult(res(1, null))).toBe(null)
+  expect(prOfResult(res(1, null, 'tdd', false))).toBe(null)
+  const prs = resultPrs([res(1, 7), res(2, 9), res(3, null), res(4, 5, 'tdd', false), res(5, 7)])
+  expect(prs.map(p => p.pr)).toEqual(['9', '7'])
+})
+
+test('mergeArgsOf: un PR, varios, "Todos" y texto libre; nunca --all', () => {
+  const one = resultPrs([res(1, 7)])
+  expect(mergeOptions(one)).toEqual(['Mergear #7', 'Cancelar'])
+  expect(mergeArgsOf('Mergear #7', mergeOptions(one), one)).toBe('7')
+  expect(mergeArgsOf('Cancelar', mergeOptions(one), one)).toBe(null)
+
+  const many = resultPrs([res(1, 5), res(2, 6), res(3, 7), res(4, 8), res(5, 9)])
+  const options = mergeOptions(many)
+  expect(options).toHaveLength(4)
+  expect(options[0]).toBe('Todos')
+  expect(mergeArgsOf('Todos', options, many)).toBe('9 8 7 6 5')
+  expect(mergeArgsOf(`${options[1]}, ${options[3]}`, options, many)).toBe('9 7')
+  expect(mergeArgsOf('5, 99', options, many)).toBe('5')
+  expect(mergeArgsOf(`${options[2]}, 5`, options, many)).toBe('8 5')
+  expect(mergeArgsOf('99', options, many)).toBe(null)
+  expect(mergeArgsOf('', options, many)).toBe(null)
+  expect(mergeArgsOf(null, options, many)).toBe(null)
+  expect(mergeArgsOf('Todos', options, many)).not.toContain('--all')
+})
+
+test('viewPrOf y parsePrArgs: solo numeros de ✓ conocidos', () => {
+  const prs = resultPrs([res(1, 7), res(2, 9)])
+  expect(viewPrOf('#9 · #2 tdd', prs)).toBe('9')
+  expect(viewPrOf('7', prs)).toBe('7')
+  expect(viewPrOf('55', prs)).toBe(null)
+  expect(viewPrOf(null, prs)).toBe(null)
+  expect(parsePrArgs('7 #9 55 7', prs)).toEqual({ prs: ['7', '9'], invalid: ['55'] })
+})
+
+test('mergeToast: en infra avisa que el issue lo cierra el apply de CI', () => {
+  const prs = resultPrs([res(1, 7), res(2, 9, 'infra')])
+  expect(mergeToast('7', prs)).toBe('/mefisto:merge 7 en cola')
+  expect(mergeToast('7 9', prs)).toContain('apply de CI')
 })
