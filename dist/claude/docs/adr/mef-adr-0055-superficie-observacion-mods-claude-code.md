@@ -158,7 +158,7 @@ nunca colisionan aunque ambos carguen en el repo de Mefisto.
 La consola de operacion del lado publicado se construye por incrementos y se rige por estas reglas:
 
 - **Activacion**: solo en sesiones interactivas del consumidor que no son la del planner (`claude --agent mefisto:planner`). Nunca en el repo de Mefisto ni en sesiones `-p`.
-- **Ubicacion**: modulo propio en `hooks/fausto-blood-pact/`, como segunda entrada de `modules` del `hooks/hooks.json` que genera el adaptador Claude (decision 4).
+- **Ubicacion**: modulo propio en `hooks/fausto-blood-pact/`. Claude Code admite una sola entrada en `modules` por plugin (`claude plugin validate` rechaza una segunda) y un solo `session.start` sin matcher, asi que el `hooks/hooks.json` que genera el adaptador Claude (decision 4) carga el punto de entrada `hooks/index.tsx`, que solo compone el tablero (`hooks/register.tsx`) y la consola; la consola registra su `session.start` con el matcher `{ isInteractive: true }`.
 - **Decisiones que aplican**: la 1 (lector puro del contrato de estado) y la 2 (las acciones delegan en skills publicados existentes). Opera solo sobre archivos del consumidor (MEF-ADR-0019) y es observacion; la operacion sigue neutral (MEF-ADR-0050).
 - **Independencia**: es independiente de `mefisto-divine-wager`. No comparten codigo ni hay obligacion de sincronizarlos, igual que los dos tableros (decision 8).
 - **Regla incremental**: cada capacidad se construye en su propio issue. Se mergea, se publica y se verifica en un consumidor antes de abrir la siguiente; lo que falle se itera con issues nuevos.
@@ -173,6 +173,7 @@ La consola de operacion del lado publicado se construye por incrementos y se rig
 
 ## Control de cambios
 
+- 2026-10-09: decision 10 (ubicacion): la consola no es una segunda entrada de `modules` -- el runtime la rechaza --; un punto de entrada `hooks/index.tsx` compone tablero y consola (issue #2180).
 - 2026-10-09: decision 10 nueva (consola publicada `fausto-blood-pact`: activacion, ubicacion, independencia y regla incremental); "Aplica a" y "Que queda fuera de este ADR" la incluyen; decision 9 retira "nombre reservado: no existe todavia" (issue #2179).
 - 2026-10-09: decision 1, decision 5 y Consecuencias: se retira el skill interno de dashboard como segundo lector de los archivos de estado; sin el mod la observacion es el pane de herdr, la sesion tmux o el panel de logs de OpenCode (issue #2161).
 - 2026-10-09: decision 9 (nombres): nombres desde el *Fausto*; `mefisto-console` pasa a `mefisto-divine-wager`, el tablero publicado `planner-board` pasa a `fausto-board` y se reserva `fausto-blood-pact` para la consola publicada.

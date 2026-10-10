@@ -54,6 +54,6 @@
     ]
   },
   "modules": [
-    "./register.tsx"
+    "./index.tsx"
   ]
 }

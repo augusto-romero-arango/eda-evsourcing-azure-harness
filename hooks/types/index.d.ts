@@ -47,6 +47,9 @@ declare module 'claude-code' {
       updatedMs: number
       signature: string
       known: number[]
+      pactIsActive: boolean
+      pactList: BoardList | null
+      pactPage: number
     }
   }
 }
