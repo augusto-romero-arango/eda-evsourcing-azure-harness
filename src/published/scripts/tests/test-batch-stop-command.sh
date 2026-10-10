@@ -41,6 +41,8 @@ contains "$body" '{{mefisto:command parallel}}' 'referencia neutral a parallel'
 contains "$body" '{{mefisto:command batch-stop}}' 'autoreferencia neutral (confirmacion ya dada)'
 contains "$body" 'pgrep -f "[s]cripts/batch-pipeline\.sh"' 'patron de deteccion sin auto-coincidencia'
 contains "$body" 'pipeline-state/batch-stop' 'ruta de la senal relativa a la raiz del repo'
+contains "$body" 'rev-parse --git-common-dir' 'la raiz de la senal sale de --git-common-dir (#2206)'
+absent "$body" 'REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) ||' 'la fuente ya no escribe la senal en --show-toplevel a secas (#2206)'
 for forbidden in 'Claude' 'OpenCode' '.claude/' '.opencode/' 'cache' 'model:' 'tools:' 'allowed-tools:' 'permission:' '.claude-plugin' 'CLAUDE_' '/mefisto-batch-stop'; do absent "$body" "$forbidden" "fuente no publica token prohibido: $forbidden"; done
 
 echo '[salidas] adaptadores y mirror'
@@ -49,6 +51,8 @@ for label in claude opencode; do
     case "$label" in claude) content="$(< "$CLAUDE")" ;; opencode) content="$(< "$OPENCODE")" ;; esac
     contains "$content" 'pgrep -f "[s]cripts/batch-pipeline\.sh"' "$label conserva el patron de deteccion (CA-5a)"
     contains "$content" 'pipeline-state/batch-stop' "$label conserva la ruta de la senal (CA-5a)"
+    contains "$content" 'rev-parse --git-common-dir' "$label usa --git-common-dir para la raiz de la senal (#2206)"
+    absent "$content" 'REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) ||' "$label ya no escribe la senal en --show-toplevel a secas (#2206)"
     absent_word "$content" kill "$label no invoca kill (CA-5b)"
     absent_word "$content" pkill "$label no invoca pkill (CA-5b)"
     absent_word "$content" rm "$label no invoca rm (CA-5b)"
