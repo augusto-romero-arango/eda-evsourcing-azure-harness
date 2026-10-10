@@ -344,6 +344,18 @@ export function padEnd(text: string, width: number): string {
   return text.length >= width ? text : text + ' '.repeat(width - text.length)
 }
 
+/** Titulo recortado con `…` a `width` columnas y rellenado a ese ancho (vacio si no hay titulo o no hay espacio). */
+export function fitTitle(title: string | null | undefined, width: number): string {
+  if (width <= 0) return ''
+  const t = (title ?? '').trim()
+  return padEnd(t.length > width ? `${t.slice(0, width - 1)}…` : t, width)
+}
+
+/** Ancho de la columna de titulo del resumen: lo que sobra de la banda tras marca, issue, PR, tiempo y costo. */
+export function summaryTitleWidth(inner: number): number {
+  return Math.max(0, Math.min(60, inner - 38))
+}
+
 /** Pagina valida (0-based) para una lista de `total` items; vuelve a 0 si la lista se achico. */
 export function pageOf(page: number, total: number, size: number): { page: number; pages: number } {
   const pages = Math.max(1, Math.ceil(total / size))
@@ -463,6 +475,7 @@ type StatsEntry = {
   pipeline?: string
   started?: string
   finished?: string
+  title?: string
   agents?: Record<string, { metrics?: { estimated_cost_usd?: number | null } }>
 }
 
@@ -487,7 +500,11 @@ export function issueStatsFromHistory(tail: string, issues: string[], sinceMs: n
     const costs = Object.values(h.agents ?? {})
       .map(a => a.metrics?.estimated_cost_usd)
       .filter((c): c is number => typeof c === 'number')
-    out[issue] = { durationMs: Math.max(0, finishedMs - startedMs), costUsd: costs.length > 0 ? costs.reduce((a, b) => a + b, 0) : null }
+    out[issue] = {
+      durationMs: Math.max(0, finishedMs - startedMs),
+      costUsd: costs.length > 0 ? costs.reduce((a, b) => a + b, 0) : null,
+      title: typeof h.title === 'string' && h.title !== '' ? h.title : null,
+    }
   }
   return out
 }
@@ -500,6 +517,7 @@ export function statsTotal(stats: IssueStats[]): IssueStats {
   return {
     durationMs: stats.reduce((a, s) => a + s.durationMs, 0),
     costUsd: costs.length > 0 ? costs.reduce((a, b) => a + b, 0) : null,
+    title: null,
   }
 }
 

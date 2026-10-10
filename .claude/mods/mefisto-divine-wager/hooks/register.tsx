@@ -24,6 +24,8 @@ import {
   finishedFromHistory,
   fmtCost,
   issueStatsFromHistory,
+  fitTitle,
+  summaryTitleWidth,
   statsTotal,
   issueMark,
   mascotPose,
@@ -696,6 +698,8 @@ export const register: Register = on => {
       const failedIssue = batch.issues.find(i => issueMark(i.status) === 'failed')
       const doneRows = batch.issues.filter(i => ['done', 'failed'].includes(issueMark(i.status)))
       const stats = batch.stats ?? {}
+      const titleW = summaryTitleWidth(inner)
+      const titleCol = titleW > 0 ? titleW + 1 : 0
       const total = statsTotal(doneRows.map(i => stats[i.issue]).filter(st => st !== undefined))
       return (
         <Box flexDirection="column" borderStyle="round" borderColor="claude" borderDimColor paddingX={1}>
@@ -756,14 +760,14 @@ export const register: Register = on => {
                 const m = issueMark(i.status)
                 return (
                   <Text wrap="truncate-end" color={markColor(m)}>
-                    {`${markText(m)} ${padEnd(`#${i.issue}`, 7)} ${padEnd(i.pr ? `PR #${i.pr}` : 'sin PR', 10)} `}
+                    {`${markText(m)} ${padEnd(`#${i.issue}`, 7)} ${titleW > 0 ? `${fitTitle(st?.title, titleW)} ` : ''}${padEnd(i.pr ? `PR #${i.pr}` : 'sin PR', 10)} `}
                     <Text dimColor>{st ? `${padEnd(elapsed(st.durationMs), 8)} ${fmtCost(st.costUsd)}` : '…'}</Text>
                   </Text>
                 )
               })}
               {doneRows.length > 1 && (
                 <Text dimColor wrap="truncate-end">
-                  {`  total ${padEnd(String(doneRows.length), 15)} ${padEnd(elapsed(total.durationMs), 8)} ${fmtCost(total.costUsd)}`}
+                  {`  total ${padEnd(String(doneRows.length), 15 + titleCol)} ${padEnd(elapsed(total.durationMs), 8)} ${fmtCost(total.costUsd)}`}
                 </Text>
               )}
             </Box>
