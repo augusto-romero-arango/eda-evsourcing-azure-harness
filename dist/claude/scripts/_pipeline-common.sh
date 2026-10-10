@@ -251,7 +251,7 @@ load_harness_config() {
         echo "      \"domains\": [${example_domains}]" >&2
         echo "    }" >&2
         echo "  Los dominios deben ser un subconjunto de tus domainLabels existentes." >&2
-        echo "  Ver /onboard para diagnostico o README seccion 'Migracion para consumidores existentes'." >&2
+        echo "  Ver /onboard para diagnostico o docs/migracion-y-versionado.md seccion 'Migracion para consumidores existentes'." >&2
         return 1
     fi
 

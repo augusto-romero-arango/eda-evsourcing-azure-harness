@@ -1,6 +1,6 @@
 # Quickstart greenfield: arrancar Mefisto en un proyecto nuevo
 
-Esto es lo que le contarías a un compañero que acaba de clonar un repo vacío y quiere adoptar Mefisto: qué se instala, quién necesita permisos de Azure y en qué orden se enciende todo. No repite reglas — cada una vive en su ADR y se enlaza desde aquí. El detalle exhaustivo, con cada comando y cada caveat de campo, sigue en el [README, sección "Primeros pasos con el harness (greenfield)"](../README.md#primeros-pasos-con-el-harness-greenfield).
+Esto es lo que le contarías a un compañero que acaba de clonar un repo vacío y quiere adoptar Mefisto: qué se instala, quién necesita permisos de Azure y en qué orden se enciende todo. No repite reglas — cada una vive en su ADR y se enlaza desde aquí. El detalle exhaustivo, con cada comando y cada caveat de campo, sigue en la [guía del consumidor, sección "Primeros pasos con el harness (greenfield)"](guia-del-consumidor.md#primeros-pasos-con-el-harness-greenfield).
 
 ## Dos roles, no una persona haciendo de todo
 
@@ -30,7 +30,7 @@ Los pasos 4-6 son el **bootstrap**: una ráfaga privilegiada de una sola vez, al
 
 ## Para el detalle exhaustivo
 
-- Cada paso de arriba, con el comando completo, sus flags y los caveats verificados en campo (regiones restringidas, roles de datos, idempotencia parcial de condiciones ABAC): [README, "Primeros pasos con el harness (greenfield)"](../README.md#primeros-pasos-con-el-harness-greenfield).
+- Cada paso de arriba, con el comando completo, sus flags y los caveats verificados en campo (regiones restringidas, roles de datos, idempotencia parcial de condiciones ABAC): [guía del consumidor, "Primeros pasos con el harness (greenfield)"](guia-del-consumidor.md#primeros-pasos-con-el-harness-greenfield).
 - Los 8 módulos Terraform base y el workflow de CI que generan los pasos 7-8: **[MEF-ADR-0021](adr/mef-adr-0021-infraestructura-base.md)**.
 - El Service Principal, sus roles y los federated credentials del paso 5: **[MEF-ADR-0022](adr/mef-adr-0022-autenticacion-ci-azure-oidc.md)**.
 - El modelo de dos roles y los tres perfiles de acceso (decisión #10), y por qué ningún secreto viaja en texto plano: **[MEF-ADR-0025](adr/mef-adr-0025-custodia-de-secretos.md)**.
