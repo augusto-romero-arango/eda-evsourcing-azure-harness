@@ -4,6 +4,12 @@ Todo cambio notable a este proyecto se documenta aquí. Sigue [Keep a Changelog]
 
 ## [Unreleased]
 
+## [0.47.1] - 2026-10-11
+
+### Fixed
+
+- `fausto-blood-pact`: la primera línea `mefisto · listos N` ocupa todo el ancho de la banda sobre la mascota (con espacio en el separador); `parallel` pasa a la tecla `4`; los botones muestran cuántos issues lanzan (`1: sequential N · 4: parallel M`); el pie ya no muestra `5-9 uno` ni `N bloqueados`; `ocultar` en reposo queda sin tecla.
+
 ## [0.47.0] - 2026-10-11
 
 ### Added
@@ -3440,7 +3446,8 @@ Y reemplazar referencias en `CLAUDE.md` del proyecto: `/eda-evsourcing-azure-har
 - Los agentes `reviewer` e `implementer` mantienen el placeholder literal `ADR-XXXX` en sus plantillas de reporte (no es un bug; el agente lo sustituye en tiempo de ejecución por el número real del ADR aplicable).
 - Los ejemplos de código en `test-writer.md`, `implementer.md` y `smoke-test-writer.md` conservan nombres concretos de un proyecto consumidor (`Programacion`, `ControlHoras`) anotados en el "Contrato con el consumidor" de cada agente como ejemplos pedagógicos.
 
-[Unreleased]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.47.0...HEAD
+[Unreleased]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.47.1...HEAD
+[0.47.1]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.47.0...v0.47.1
 [0.47.0]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.46.5...v0.47.0
 [0.46.5]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.46.4...v0.46.5
 [0.46.4]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.46.3...v0.46.4
