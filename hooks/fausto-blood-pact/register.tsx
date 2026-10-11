@@ -590,7 +590,29 @@ async function plannerSession($: EngineInterface): Promise<boolean | null> {
   return agent === null ? null : agent === PLANNER_AGENT
 }
 
+async function pactOnPromptSubmit($: EngineInterface, e: { text: string }): Promise<void> {
+  const mergeArgs = isEligible && isWanted ? mergePromptArgs(e.text) : null
+  if (mergeArgs !== null) await startMerge($, mergeArgs, true)
+}
+
+async function pactOnTurnComplete($: EngineInterface): Promise<void> {
+  if (isEligible && isWanted) {
+    const run = await read($, mergeAtom)
+    if (run && run.finishedMs === null && (isMergeTurnSeen || Date.now() - run.startedMs > MERGE_STALE_MS)) await endMerge($)
+  }
+}
+
 export const register: Register = on => {
+  on('classic.UserPromptSubmit', async ($, e, next) => {
+    await pactOnPromptSubmit($, { text: e.prompt })
+    return next(e)
+  }).catch(($, e, next) => next(e))
+
+  on('classic.Stop', async ($, e, next) => {
+    await pactOnTurnComplete($)
+    return next(e)
+  }).catch(($, e, next) => next(e))
+
   // Con matcher: el engine admite un solo session.start sin matcher por plugin (el del tablero), y asi `-p` ni lo dispara.
   on('session.start', { isInteractive: true }, async ($, e, next) => {
     isEligible = false
@@ -620,21 +642,6 @@ export const register: Register = on => {
       await $.ui.invalidate('ui.render')
     }
     return next(e)
-  }).catch(($, e, next) => next(e))
-
-  on('prompt.submit', async ($, e, next) => {
-    const mergeArgs = isEligible && isWanted ? mergePromptArgs(e.text) : null
-    if (mergeArgs !== null) await startMerge($, mergeArgs, true)
-    return next(e)
-  }).catch(($, e, next) => next(e))
-
-  on('turn.complete', async ($, e, next) => {
-    const done = await next(e)
-    if (isEligible && isWanted) {
-      const run = await read($, mergeAtom)
-      if (run && run.finishedMs === null && (isMergeTurnSeen || Date.now() - run.startedMs > MERGE_STALE_MS)) await endMerge($)
-    }
-    return done
   }).catch(($, e, next) => next(e))
 
   on('command.run', { command: 'fausto-blood-pact' }, async ($, e) => {
