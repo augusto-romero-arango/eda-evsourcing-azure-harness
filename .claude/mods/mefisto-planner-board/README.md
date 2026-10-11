@@ -23,10 +23,11 @@ Solo se activa en una sesion interactiva cuyo proceso es `claude --agent mefisto
 de comando del proceso, o del transcript como respaldo). Un planner lanzado como subagente o con `-p` no lo ve.
 En otra sesion, `/mefisto-planner-board on` lo enciende a mano.
 
-`/clear`, `/resume` y `/branch` conservan el tablero: reaparece en reposo y recarga las listas sin esperar un
-mensaje (solo si estaba activo; una sesion que no es del planner y no se encendio a mano no lo enciende). Lo
-reactiva el hook `classic.SessionStart`, que el engine dispara en esos tres casos (`session.start` no); un
-`ui.render` no puede hacerlo porque dibujar es puro y el engine rechaza su `state.set`. `/mefisto-planner-board off`
+`/clear`, `/resume` y `/branch` conservan el tablero: reaparece en reposo en menos de un segundo y recarga las
+listas sin esperar un mensaje (solo si estaba activo; una sesion que no es del planner y no se encendio a mano no
+lo enciende). Lo reactiva un reloj de un segundo que compara la intencion del modulo con el atom: `session.start`
+no se repite en esos casos, el engine no entrega eventos `classic.*` a un plugin de tier user y un `ui.render` no
+puede hacerlo porque dibujar es puro y el engine rechaza su `state.set`. `/mefisto-planner-board off`
 dura toda la sesion, tambien tras mensajes y `/clear`, hasta un `/mefisto-planner-board on`.
 
 ## Estados

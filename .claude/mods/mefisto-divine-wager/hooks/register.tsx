@@ -205,6 +205,8 @@ let lastPrCheckMs = 0
 let isLogOpen = false
 let isRefreshingReady = false
 let readyTimer: { cancel: () => void } | null = null
+// La banda en reposo vive en el modulo, no en atoms: /clear, /resume y /branch los reinician y el modulo sigue.
+let isExecutionOn = false
 let lastMergePollMs = 0
 let isMergeSeen = false
 let lastReleasePollMs = 0
@@ -481,6 +483,7 @@ async function poll($: EngineInterface) {
   if (isPolling) return
   isPolling = true
   try {
+    if (isExecutionOn && !(await read($, executionAtom))) await restoreExecution($)
     await update($, nowAtom, () => Date.now())
     await pollBatch($)
     await pollHistorian($)
@@ -602,9 +605,17 @@ async function detectExecution($: EngineInterface) {
   const ps = await runInRepo($, ['sh', '-c', 'ps -o args= -p "$PPID"']).catch(() => ({ exitCode: 1, stdout: '' }))
   const cmdline = ps.exitCode === 0 ? ps.stdout.trim() : ''
   if (agentFlagOf(cmdline) === PLANNER_AGENT) return
+  isExecutionOn = true
   await update($, executionAtom, () => true)
   readyTimer?.cancel()
   readyTimer = $.clock.every(READY_POLL_MS, () => void refreshReady($))
+  void refreshReady($)
+}
+
+// El engine no entrega eventos classic.* a un plugin de tier user y session.start no se repite tras /clear: el
+// poll de cada segundo nota los atoms en blanco y rearma la banda con listos, PRs, field notes y fragmentos.
+async function restoreExecution($: EngineInterface) {
+  await update($, executionAtom, () => true)
   void refreshReady($)
 }
 
@@ -898,13 +909,6 @@ export const register: Register = on => {
     if (isInteractive) void detectExecution($)
     return next(e)
   })
-
-  // /clear, /resume y /branch reinician $.state sin volver a disparar session.start; classic.SessionStart si
-  // dispara. detectExecution recarga ahi mismo listos, PRs, field notes y fragmentos de changelog.
-  on('classic.SessionStart', { source: ['clear', 'resume', 'fork'] }, async ($, e, next) => {
-    if (isInteractive) await detectExecution($)
-    return next(e)
-  }).catch(($, e, next) => next(e))
 
   // El cohete del release: en reposo desde que se pide /mefisto-release, despegando mientras corre su script y
   // listo cuando termina el turno que lo ejecuto.

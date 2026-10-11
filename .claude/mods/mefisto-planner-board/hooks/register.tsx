@@ -147,10 +147,18 @@ async function deactivate($: EngineInterface) {
   await update($, activeAtom, () => false)
 }
 
+// El engine no entrega eventos classic.* a un plugin de tier user y session.start no se repite tras /clear,
+// /resume ni /branch: cada segundo se compara la intencion del modulo con el atom y se rearma el tablero.
+const HEAL_MS = 1_000
+
+async function heal($: EngineInterface) {
+  if (isBoardOn && !isTurnedOff && !(await read($, activeAtom))) await activate($)
+}
+
 const DETECT_TRIES = 20
 const DETECT_EVERY_MS = 3_000
 
-// El agente principal de la sesion. Los eventos clasicos no llegan a un modulo cargado con --plugin-dir,
+// El agente principal de la sesion. Los eventos clasicos no llegan a un plugin de tier user,
 // asi que se lee primero la linea de comando del proceso de Claude Code (padre del `sh` que corre aqui) y,
 // si no se puede, el inicio del transcript, que solo existe tras el primer mensaje: por eso se reintenta.
 async function detectPlanner($: EngineInterface, triesLeft: number) {
@@ -342,15 +350,9 @@ export const register: Register = on => {
     if (isInteractive && isWanted) await activate($)
     if (isInteractive && (await read($, workingAtom))) await setWorking($, true)
     else if (isInteractive) void detectPlanner($, DETECT_TRIES)
+    if (isInteractive) $.clock.every(HEAL_MS, () => void heal($))
     return next(e)
   })
-
-  // /clear, /resume y /branch reinician $.state sin volver a disparar session.start; classic.SessionStart si
-  // dispara. ui.render no puede reactivar: dibujar es puro y el engine rechaza su state.set.
-  on('classic.SessionStart', { source: ['clear', 'resume', 'fork'] }, async ($, e, next) => {
-    if (isInteractive && isBoardOn && !isTurnedOff && !(await read($, activeAtom))) await activate($)
-    return next(e)
-  }).catch(($, e, next) => next(e))
 
   on('prompt.submit', async ($, e, next) => {
     if (e.origin.kind === 'composer' && !(await read($, activeAtom))) await detectPlanner($, 0)
