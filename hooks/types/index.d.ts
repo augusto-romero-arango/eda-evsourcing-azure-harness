@@ -35,6 +35,12 @@ export type PipelineRun = {
 /** Una corrida terminada pendiente de descartar: `✗ <stage>` o `✓ PR #X`. */
 export type PipelineResult = { key: string; issue: number; pipeline: PipelineKind; text: string; ok: boolean }
 
+/** Una fila de la cinta de merge de la consola. */
+export type PactMergePr = { num: string; title: string; estado: 'pendiente' | 'mergeado' | 'fallido' }
+
+/** La cinta de merge en curso de la consola; `finishedMs` null mientras corre. */
+export type PactMerge = { prs: PactMergePr[]; startedMs: number; finishedMs: number | null }
+
 export type BoardTab = 'borrador' | 'listo'
 
 /** Lo que el planner esta haciendo: refinar un borrador o explorar una idea. */
@@ -86,6 +92,7 @@ declare module 'claude-code' {
         holdSeconds: number
         issues: { issue: number; status: 'pendiente' | 'en-curso' | 'mergeado' | 'fallido' | 'aplazado' | 'saltado'; pr: string | null; detail: string }[]
       } | null
+      pactMerge: PactMerge | null
       pactTick: number
       pactVersion: string | null
     }

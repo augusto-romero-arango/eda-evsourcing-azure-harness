@@ -1,6 +1,6 @@
 import type { Role } from '../sprites'
 import { padEnd, reasonOf, typeBadge } from '../logic'
-import type { BoardItem, BoardList, PipelineKind, PipelineResult, PipelineRun } from '../types'
+import type { BoardItem, BoardList, PactMerge, PactMergePr, PipelineKind, PipelineResult, PipelineRun } from '../types'
 
 export const NEXT_ORDER_FILE = 'scripts/next-order.sh'
 export const PLANNER_AGENT = 'mefisto:planner'
@@ -864,3 +864,83 @@ export function stopQuestion(b: BatchStatus): string {
 
 /** `1` se ofrece solo con el lote corriendo y sin parada pedida. */
 export const canStopBatch = (b: BatchStatus | null): boolean => b !== null && isBatchRunning(b) && !b.stopRequested
+
+// ---- Incremento 8: la cinta de merge en vivo (el estado vive en $.state; no toca `.mefisto/pipeline/`) ----
+export const MERGE_POLL_MS = 5_000
+export const MERGE_RIBBON_HIDE_MS = 15_000
+
+/** Argumentos de un prompt `/mefisto:merge <args>` (con o sin `mefisto:`); null si el texto no es ese comando. */
+export function mergePromptArgs(text: string): string | null {
+  const m = /^\/mefisto:merge(?:\s+([\s\S]*))?$/.exec(text.trim())
+  return m ? (m[1] ?? '').trim() : null
+}
+
+/** Los PRs de la cinta: con `--all`, los abiertos que se pasen; si no, los numeros de los argumentos, con el titulo que se conozca. */
+export function mergePrsOf(args: string, open: readonly OpenPr[]): PactMergePr[] {
+  const pending = (num: string, title: string): PactMergePr => ({ num, title, estado: 'pendiente' })
+  if (/(^|\s)--all(\s|$)/.test(args)) return open.map(p => pending(p.number, p.title))
+  const nums = [...new Set(args.match(/\d+/g) ?? [])]
+  return nums.map(n => pending(n, open.find(p => p.number === n)?.title ?? ''))
+}
+
+/** Pasa a `mergeado` los PRs pendientes indicados; devuelve la misma cinta si nada cambio. Un mergeado no vuelve atras. */
+export function withMerged(run: PactMerge, merged: readonly string[]): PactMerge {
+  if (!run.prs.some(p => p.estado === 'pendiente' && merged.includes(p.num))) return run
+  return { ...run, prs: run.prs.map(p => (p.estado === 'pendiente' && merged.includes(p.num) ? { ...p, estado: 'mergeado' } : p)) }
+}
+
+/** Cierra la cinta: lo que siga pendiente queda `fallido` (`✗ no mergeado`). */
+export function finishMerge(run: PactMerge, now: number): PactMerge {
+  if (run.finishedMs !== null) return run
+  return { ...run, prs: run.prs.map(p => (p.estado === 'pendiente' ? { ...p, estado: 'fallido' } : p)), finishedMs: now }
+}
+
+export function mergeCounts(run: PactMerge) {
+  return {
+    pending: run.prs.filter(p => p.estado === 'pendiente').length,
+    merged: run.prs.filter(p => p.estado === 'mergeado').length,
+    failed: run.prs.filter(p => p.estado === 'fallido').length,
+  }
+}
+
+/** Cabecera de la cinta: `merge N/M` (N cuenta los mergeados) y, al terminar, `terminado`. */
+export function mergeRibbonHeader(run: PactMerge, nowMs: number): string {
+  const c = mergeCounts(run)
+  const mins = Math.max(0, Math.floor(((run.finishedMs ?? nowMs) - run.startedMs) / 60_000))
+  return `merge ${c.merged}/${run.prs.length} · ${mins}m${run.finishedMs === null ? '' : ' · terminado'}`
+}
+
+/** Linea de un PR: `· #12 titulo` pendiente, `✓` mergeado, `✗ ... no mergeado` fallido. */
+export function mergeRibbonLine(p: PactMergePr, max: number): string {
+  const mark = p.estado === 'mergeado' ? '✓' : p.estado === 'fallido' ? '✗' : '·'
+  const tail = p.estado === 'fallido' ? ' · no mergeado' : ''
+  const head = `${mark} #${p.num}`
+  const room = max - head.length - tail.length - 1
+  const title = p.title.trim() === '' || room < 2 ? '' : ` ${clip(p.title, room)}`
+  return `${head}${title}${tail}`
+}
+
+/** Filas de la cinta: los pendientes primero, luego los fallidos y, al final, los mergeados. */
+export function mergeRibbonRows(run: PactMerge): PactMergePr[] {
+  return [
+    ...run.prs.filter(p => p.estado === 'pendiente'),
+    ...run.prs.filter(p => p.estado === 'fallido'),
+    ...run.prs.filter(p => p.estado === 'mergeado'),
+  ]
+}
+
+/** Toast de cierre: `N mergeados · M fallidos`. */
+export function mergeSummaryText(run: PactMerge): string {
+  const c = mergeCounts(run)
+  return `${c.merged} mergeados · ${c.failed} fallidos`
+}
+
+/** Vencimiento al dibujar: una cinta terminada hace mas de 15 s se oculta; una en curso, nunca. */
+export function isMergeRibbonExpired(run: PactMerge | null, nowMs: number): boolean {
+  return run !== null && run.finishedMs !== null && nowMs - run.finishedMs > MERGE_RIBBON_HIDE_MS
+}
+
+/** Precedencia de la banda: el lote de sequential primero, luego la cinta de merge vigente, luego corridas y reposo. */
+export function mergeRibbonShown(batch: BatchStatus | null, run: PactMerge | null, nowMs: number): PactMerge | null {
+  return batch === null && run !== null && !isMergeRibbonExpired(run, nowMs) ? run : null
+}

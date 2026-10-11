@@ -4,7 +4,7 @@ import type { EngineInterface, Register } from 'claude-code'
 import { RASTER_ROWS, ROLES, face, sprite, toRasterCells, waitingFace } from '../sprites'
 import type { Role } from '../sprites'
 import { cropGrid, numberWidth, padEnd, reasonOf, usedColumns } from '../logic'
-import type { BoardList, PipelineResult, PipelineRun } from '../types'
+import type { BoardList, PactMerge, PipelineResult, PipelineRun } from '../types'
 import type { BatchStatus, LastEvent, LaunchKind, LaunchPlan, MascotPose, OpenPr } from './logic'
 import {
   LOGS_DIR,
@@ -78,6 +78,16 @@ import {
   parseBatchStatus,
   runsOutsideBatch,
   stopQuestion,
+  MERGE_POLL_MS,
+  finishMerge,
+  mergePromptArgs,
+  mergePrsOf,
+  mergeRibbonHeader,
+  mergeRibbonLine,
+  mergeRibbonRows,
+  mergeRibbonShown,
+  mergeSummaryText,
+  withMerged,
 } from './logic'
 import { versionLabel } from '../logic'
 import type { ResultPr } from './logic'
@@ -94,6 +104,7 @@ const resultsAtom = atom({ plugin: 'mefisto', key: 'pactResults' } as const, [] 
 const lastEventAtom = atom({ plugin: 'mefisto', key: 'pactLastEvent' } as const, null as LastEvent | null)
 const openPrsAtom = atom({ plugin: 'mefisto', key: 'pactOpenPrs' } as const, [] as OpenPr[])
 const batchAtom = atom({ plugin: 'mefisto', key: 'pactBatch' } as const, null as BatchStatus | null)
+const mergeAtom = atom({ plugin: 'mefisto', key: 'pactMerge' } as const, null as PactMerge | null)
 const tickAtom = atom({ plugin: 'mefisto', key: 'pactTick' } as const, 0)
 
 // Columnas comunes a todos los cuadros de la mascota: el recorte no cambia al alternar poses.
@@ -120,6 +131,12 @@ let prTimer: { cancel: () => void } | null = null
 let isCheckingPrs = false
 let isRefreshingOpenPrs = false
 let isRefreshingRuns = false
+let mergeTimer: { cancel: () => void } | null = null
+let isPollingMerge = false
+// El turno que corre el merge ya empezo (prompt.submit visto); evita cerrar la cinta con el turn.complete de un turno anterior.
+let isMergeTurnSeen = false
+let mergeStartedMs = 0
+const MERGE_STALE_MS = 60_000
 // Corridas que esta sesion vio activas y resultados `✓` ya derivados; viven aqui porque /clear reinicia los atoms.
 let seenRuns: Record<string, PipelineRun> = {}
 let carriedResults: PipelineResult[] = []
@@ -349,6 +366,55 @@ async function closeMergedPrs($: EngineInterface) {
   }
 }
 
+// La cinta de merge: arranca al enviar /mefisto:merge; con --all la lista sale de los PRs abiertos de ese momento.
+async function startMerge($: EngineInterface, args: string, fromPrompt = false) {
+  if (fromPrompt) isMergeTurnSeen = true
+  const current = await read($, mergeAtom)
+  if (current && current.finishedMs === null) return
+  let open = await read($, openPrsAtom)
+  if (/(^|\s)--all(\s|$)/.test(args)) {
+    const listed = await $.process.run(['gh', ...OPEN_PRS_ARGS]).catch(() => ({ exitCode: 1, stdout: '' }))
+    if (listed.exitCode === 0) open = parseOpenPrs(listed.stdout)
+  }
+  const prs = mergePrsOf(args, open)
+  if (prs.length === 0) return
+  isMergeTurnSeen = fromPrompt
+  mergeStartedMs = Date.now()
+  await update($, mergeAtom, () => ({ prs, startedMs: mergeStartedMs, finishedMs: null }))
+}
+
+async function pollMerge($: EngineInterface) {
+  if (isPollingMerge) return
+  isPollingMerge = true
+  try {
+    const run = await read($, mergeAtom)
+    if (!run || run.finishedMs !== null) return
+    const pending = run.prs.filter(p => p.estado === 'pendiente').map(p => p.num)
+    const states = await Promise.all(
+      pending.map(n => $.process.run(['gh', 'pr', 'view', n, '--json', 'state', '-q', '.state']).catch(() => ({ exitCode: 1, stdout: '' }))),
+    )
+    const merged = pending.filter((_, i) => states[i]?.exitCode === 0 && states[i]?.stdout.trim() === 'MERGED')
+    if (merged.length > 0) await update($, mergeAtom, r => (r ? withMerged(r, merged) : r))
+  } finally {
+    isPollingMerge = false
+  }
+}
+
+async function endMerge($: EngineInterface) {
+  await pollMerge($)
+  const run = await read($, mergeAtom)
+  if (!run || run.finishedMs !== null) return
+  const done = finishMerge(run, Date.now())
+  await update($, mergeAtom, () => done)
+  $.ui.toast(mergeSummaryText(done))
+  void refreshOpenPrs($)
+}
+
+async function closeMerge($: EngineInterface) {
+  const run = await read($, mergeAtom)
+  if (run && run.finishedMs !== null) await update($, mergeAtom, () => null)
+}
+
 // Mergear: la confirmacion del dialogo es la unica; /mefisto:merge no pide otra. Nunca `--all`.
 async function mergePrs($: EngineInterface, preset: string[] | null = null): Promise<string> {
   const prs = resultPrs(await read($, resultsAtom))
@@ -364,6 +430,7 @@ async function mergePrs($: EngineInterface, preset: string[] | null = null): Pro
   const args = mergeArgsOf(answer, options, scope)
   if (!args) return 'Merge cancelado.'
   $.ui.toast(mergeToast(args, prs))
+  await startMerge($, args)
   await $.command.run({ command: 'mefisto:merge', args })
   void refreshOpenPrs($)
   return `/mefisto:merge ${args} en cola.`
@@ -395,6 +462,7 @@ async function mergeOpenPrs($: EngineInterface): Promise<string> {
   const args = openPrArgsOf(typeof answer === 'string' ? answer : null, options, prs)
   if (!args) return 'Merge cancelado.'
   $.ui.toast(`/mefisto:merge ${args} en cola`)
+  await startMerge($, args)
   await $.command.run({ command: 'mefisto:merge', args })
   void refreshOpenPrs($)
   return `/mefisto:merge ${args} en cola.`
@@ -478,6 +546,8 @@ async function activate($: EngineInterface) {
   })
   prTimer?.cancel()
   prTimer = $.clock.every(PR_CHECK_MS, () => void closeMergedPrs($))
+  mergeTimer?.cancel()
+  mergeTimer = $.clock.every(MERGE_POLL_MS, () => void pollMerge($))
   tickTimer?.cancel()
   // La mascota anima solo con corrida activa o con Claude trabajando; en reposo no hay re-render por segundo.
   tickTimer = $.clock.every(1000, () => {
@@ -494,6 +564,8 @@ async function deactivate($: EngineInterface) {
   runsTimer = null
   tickTimer?.cancel()
   tickTimer = null
+  mergeTimer?.cancel()
+  mergeTimer = null
   prTimer?.cancel()
   prTimer = null
   await update($, activeAtom, () => false)
@@ -548,6 +620,21 @@ export const register: Register = on => {
       await $.ui.invalidate('ui.render')
     }
     return next(e)
+  }).catch(($, e, next) => next(e))
+
+  on('prompt.submit', async ($, e, next) => {
+    const mergeArgs = isEligible && isWanted ? mergePromptArgs(e.text) : null
+    if (mergeArgs !== null) await startMerge($, mergeArgs, true)
+    return next(e)
+  }).catch(($, e, next) => next(e))
+
+  on('turn.complete', async ($, e, next) => {
+    const done = await next(e)
+    if (isEligible && isWanted) {
+      const run = await read($, mergeAtom)
+      if (run && run.finishedMs === null && (isMergeTurnSeen || Date.now() - run.startedMs > MERGE_STALE_MS)) await endMerge($)
+    }
+    return done
   }).catch(($, e, next) => next(e))
 
   on('command.run', { command: 'fausto-blood-pact' }, async ($, e) => {
@@ -609,18 +696,23 @@ export const register: Register = on => {
     const results = await read($, resultsAtom)
     const batch = await read($, batchAtom)
     const openPrs = await read($, openPrsAtom)
+    const mergeRun = await read($, mergeAtom)
     await read($, tickAtom)
     const isWorking = Boolean(e.props.isWorking)
     const sec = Math.floor(Date.now() / 1000)
     const batchRun = batch ? batchRunOf(batch, runs) : null
     const active = batch ? batchRun : activeRunOf(runs)
-    isAnimating = isWorking || active !== null || (batch !== null && isBatchRunning(batch))
+    // El vencimiento se calcula al dibujar: el render nunca escribe estado.
+    const ribbon = mergeRibbonShown(batch, mergeRun, Date.now())
+    isAnimating = isWorking || active !== null || (batch !== null && isBatchRunning(batch)) || (ribbon !== null && ribbon.finishedMs === null)
     const pose: MascotPose | null = active
       ? poseOfRun(active, await read($, lastEventAtom))
       : batch
         ? { role: 'desarrollador', state: batch.state === 'failed' ? 'error' : isBatchRunning(batch) ? 'pensando' : batch.state === 'completed' ? 'aprobado' : 'pensando' }
         : poseOfResults(results)
-    const grid = pose
+    const grid = ribbon
+      ? cropGrid(sprite('merge', ribbon.finishedMs === null ? 'cosiendo' : 'listo', ribbon.finishedMs === null ? (sec % 2 === 0 ? 0 : 1) : 0), MASCOT_COLS)
+      : pose
       ? mascotGrid(pose, active ? (sec % 2 === 0 ? 0 : 1) : 0)
       : cropGrid(waitingFace(face('normal'), isWorking ? sec : null), MASCOT_COLS)
     const version = await read($, versionAtom)
@@ -700,6 +792,40 @@ export const register: Register = on => {
                 {pages > 1 && !running && (
                   <Button key="pact-next-page" hotkey="0" plain dimColor label={`página ${page + 1}/${pages} ▸`}
                     onPress={() => void update($, pageAtom, () => (page + 1) % pages)} />
+                )}
+              </Box>
+            </Box>
+          </Box>
+        </Box>
+      )
+    }
+    if (ribbon) {
+      const rows = mergeRibbonRows(ribbon)
+      const shown = rows.length > PAGE_ROWS ? PAGE_ROWS - 1 : PAGE_ROWS
+      const visible = rows.slice(0, shown)
+      const hidden = rows.length - visible.length
+      const finished = ribbon.finishedMs !== null
+      const header = clip(mergeRibbonHeader(ribbon, Date.now()), body)
+      return (
+        <Box flexDirection="column" borderStyle="round" borderColor="claude" borderDimColor paddingX={1}>
+          <Box gap={2} alignItems="flex-start">
+            {mascot}
+            <Box flexDirection="column" width={body}>
+              <Text bold color="claude" wrap="truncate-end">{header}</Text>
+              {visible.map(p => (
+                <Text key={`m-${p.num}`} color={p.estado === 'mergeado' ? 'success' : p.estado === 'fallido' ? 'error' : undefined} dimColor={p.estado === 'pendiente'} wrap="truncate-end">
+                  {mergeRibbonLine(p, body)}
+                </Text>
+              ))}
+              {hidden > 0 && <Text dimColor>{`+${hidden} más`}</Text>}
+              {Array.from({ length: Math.max(0, PAGE_ROWS - visible.length - (hidden > 0 ? 1 : 0)) }, (_, i) => (
+                <Text key={`blank-${i}`}> </Text>
+              ))}
+              <Box>
+                {finished ? (
+                  <Button key="merge-close" hotkey="4" plain dimColor label="4 cerrar" onPress={() => void closeMerge($)} />
+                ) : (
+                  <Text dimColor> </Text>
                 )}
               </Box>
             </Box>

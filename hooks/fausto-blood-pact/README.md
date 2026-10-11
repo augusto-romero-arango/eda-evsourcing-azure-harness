@@ -86,3 +86,13 @@ Con `pipeline-status-batch.json` (lo escribe `batch-pipeline.sh`, #2202) en `sta
 - `/fausto-blood-pact detener` equivale a `1`; sin lote en curso, lo dice.
 
 Fuera de alcance: el log acumulado del lote (queda para el incremento de log en vivo).
+
+## Capacidad vigente (incremento 8): la cinta de merge en vivo
+
+Al enviar `/mefisto:merge <args>` (escrito a mano, con la tecla `3`, con la `1` o con `/fausto-blood-pact merge`), la banda pasa a la cinta de merge mientras `pr-sync.sh` trabaja. Con `--all`, la lista sale de `gh pr list --state open` al arrancar.
+
+- Cabecera `merge N/M · Mm` (N cuenta los mergeados), una fila por PR (`· #12 título` pendiente, `✓` mergeado, `✗ no mergeado`) y la mascota en pose `cosiendo` (sprite `merge`), a un cuadro por segundo.
+- `pr-sync.sh` corre en una sola llamada Bash, así que el avance sale del sondeo: cada 5 s `gh pr view <n> --json state` de los pendientes; un `MERGED` pasa a `✓`.
+- Al terminar el turno del merge (`turn.complete`) se hace un último sondeo; lo que siga pendiente queda `✗ no mergeado`, la mascota pasa a `listo` y un toast resume `N mergeados · M fallidos`.
+- La cinta terminada se oculta sola a los 15 s (se calcula al dibujar con `now - finishedMs`, sin escribir estado desde el render); `4 cerrar` la oculta antes.
+- Precedencia de la banda: lote de `sequential`, cinta de merge, corridas y reposo. El estado vive en `$.state` (atom `pactMerge`); no lee ni escribe `.mefisto/pipeline/`.
