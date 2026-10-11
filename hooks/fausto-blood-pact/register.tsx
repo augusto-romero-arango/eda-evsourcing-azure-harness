@@ -133,7 +133,7 @@ let isRefreshingOpenPrs = false
 let isRefreshingRuns = false
 let mergeTimer: { cancel: () => void } | null = null
 let isPollingMerge = false
-// El turno que corre el merge ya empezo (prompt.submit visto); evita cerrar la cinta con el turn.complete de un turno anterior.
+// El turno que corre el merge ya empezo (classic.UserPromptSubmit visto); evita cerrar la cinta con el classic.Stop de un turno anterior.
 let isMergeTurnSeen = false
 let mergeStartedMs = 0
 const MERGE_STALE_MS = 60_000
@@ -590,7 +590,31 @@ async function plannerSession($: EngineInterface): Promise<boolean | null> {
   return agent === null ? null : agent === PLANNER_AGENT
 }
 
+async function pactOnPromptSubmit($: EngineInterface, e: { text: string }): Promise<void> {
+  const mergeArgs = isEligible && isWanted ? mergePromptArgs(e.text) : null
+  if (mergeArgs !== null) await startMerge($, mergeArgs, true)
+}
+
+async function pactOnTurnComplete($: EngineInterface): Promise<void> {
+  if (isEligible && isWanted) {
+    const run = await read($, mergeAtom)
+    if (run && run.finishedMs === null && (isMergeTurnSeen || Date.now() - run.startedMs > MERGE_STALE_MS)) await endMerge($)
+  }
+}
+
 export const register: Register = on => {
+  // prompt.submit y turn.complete sin matcher ya los registra el tablero: un segundo registro hace que el engine rechace
+  // el modulo entero, y `$` no se puede pasar a funciones importadas, asi que index.tsx no puede componerlos (#2294).
+  on('classic.UserPromptSubmit', async ($, e, next) => {
+    await pactOnPromptSubmit($, { text: e.prompt })
+    return next(e)
+  }).catch(($, e, next) => next(e))
+
+  on('classic.Stop', async ($, e, next) => {
+    await pactOnTurnComplete($)
+    return next(e)
+  }).catch(($, e, next) => next(e))
+
   // Con matcher: el engine admite un solo session.start sin matcher por plugin (el del tablero), y asi `-p` ni lo dispara.
   on('session.start', { isInteractive: true }, async ($, e, next) => {
     isEligible = false
@@ -620,21 +644,6 @@ export const register: Register = on => {
       await $.ui.invalidate('ui.render')
     }
     return next(e)
-  }).catch(($, e, next) => next(e))
-
-  on('prompt.submit', async ($, e, next) => {
-    const mergeArgs = isEligible && isWanted ? mergePromptArgs(e.text) : null
-    if (mergeArgs !== null) await startMerge($, mergeArgs, true)
-    return next(e)
-  }).catch(($, e, next) => next(e))
-
-  on('turn.complete', async ($, e, next) => {
-    const done = await next(e)
-    if (isEligible && isWanted) {
-      const run = await read($, mergeAtom)
-      if (run && run.finishedMs === null && (isMergeTurnSeen || Date.now() - run.startedMs > MERGE_STALE_MS)) await endMerge($)
-    }
-    return done
   }).catch(($, e, next) => next(e))
 
   on('command.run', { command: 'fausto-blood-pact' }, async ($, e) => {
