@@ -30,7 +30,16 @@ export type PipelineRun = {
   stage: string
   state: string
   nextProbe: string | null
+  /** Pasos de `status.agents` en su orden (#2320). */
+  agents?: RunStep[]
+  /** Ruta del log del pipeline (`status.log`). */
+  log?: string | null
+  /** Titulo del issue (`status.title`). */
+  title?: string
 }
+
+/** Un agente del status: `pending` cubre todo `result` vacio o desconocido. */
+export type RunStep = { name: string; result: 'passed' | 'running' | 'failed' | 'pending' }
 
 /** Una corrida terminada pendiente de descartar: `✗ <stage>` o `✓ PR #X`. */
 export type PipelineResult = { key: string; issue: number; pipeline: PipelineKind; text: string; ok: boolean }
@@ -91,6 +100,7 @@ declare module 'claude-code' {
       pactRuns: PipelineRun[]
       pactResults: PipelineResult[]
       pactLastEvent: { kind: 'tool' | 'text'; tool: string } | null
+      pactBandLines: string[]
       pactOpenPrs: { number: string; title: string; isFieldNote: boolean }[]
       pactFieldNotes: number | null
       pactHistorian: Historian | null

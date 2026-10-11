@@ -7,7 +7,16 @@ import { cropGrid, numberWidth, padEnd, reasonOf, usedColumns } from '../logic'
 import type { BoardList, Historian, PactMerge, PipelineResult, PipelineRun } from '../types'
 import type { BatchStatus, LastEvent, LaunchKind, LaunchPlan, MascotPose, OpenPr } from './logic'
 import {
+  BAND_LOG_ROWS,
+  LAUNCH_POLL_WINDOW_MS,
+  LOG_TAIL_BYTES,
   LOGS_DIR,
+  bandLinesOf,
+  eventLineOf,
+  isPipelineLaunch,
+  logTailLines,
+  runHeader,
+  stepsOf,
   activeRunOf,
   bandViewOf,
   resultsFooterText,
@@ -129,6 +138,7 @@ const batchAtom = atom({ plugin: 'mefisto', key: 'pactBatch' } as const, null as
 const mergeAtom = atom({ plugin: 'mefisto', key: 'pactMerge' } as const, null as PactMerge | null)
 const fieldNotesAtom = atom({ plugin: 'mefisto', key: 'pactFieldNotes' } as const, null as number | null)
 const historianAtom = atom({ plugin: 'mefisto', key: 'pactHistorian' } as const, null as Historian | null)
+const bandLinesAtom = atom({ plugin: 'mefisto', key: 'pactBandLines' } as const, [] as string[])
 const tickAtom = atom({ plugin: 'mefisto', key: 'pactTick' } as const, 0)
 
 // Columnas comunes a todos los cuadros de la mascota: el recorte no cambia al alternar poses.
@@ -143,6 +153,8 @@ const MASCOT_WIDTH = MASCOT_COLS.to - MASCOT_COLS.from + 1
 
 const mascotGrid = (pose: MascotPose, frame: 0 | 1) => cropGrid(sprite(pose.role, pose.state, frame), MASCOT_COLS)
 let isAnimating = false
+// Tras ver el lanzamiento de un pipeline, el sondeo de corridas corre a 5 s hasta este instante aunque aun no haya status (#2320).
+let launchPollUntilMs = 0
 let lastNotesPollMs = 0
 let lastHistorianPollMs = 0
 let lastBitacoraPrCheckMs = 0
@@ -238,8 +250,8 @@ async function readRuns($: EngineInterface): Promise<PipelineRun[]> {
   return runs
 }
 
-// Ultimo evento del ultimo intento del agente activo; lector puro de `<estado>/logs/*.events.jsonl`.
-async function readLastEvent($: EngineInterface, run: PipelineRun | null): Promise<LastEvent | null> {
+// Cola del `events.jsonl` del ultimo intento del agente activo; lector puro de `<estado>/logs/*.events.jsonl`.
+async function readEventsTail($: EngineInterface, run: PipelineRun | null): Promise<string | null> {
   if (!run) return null
   const dir = `${runsRepo}/${STATE_DIR}/${LOGS_DIR}`
   const ls = await $.process.run(['ls', dir]).catch(() => ({ exitCode: 1, stdout: '' }))
@@ -247,7 +259,18 @@ async function readLastEvent($: EngineInterface, run: PipelineRun | null): Promi
   const file = eventsFileOf(run, ls.stdout.split('\n'))
   if (!file) return null
   const tail = await $.process.run(['tail', '-c', '65536', `${dir}/${file}`]).catch(() => ({ exitCode: 1, stdout: '' }))
-  return tail.exitCode === 0 ? lastEventOf(tail.stdout) : null
+  return tail.exitCode === 0 ? tail.stdout : null
+}
+
+// Ultimas lineas utiles: cola del log del pipeline (sin ANSI) y ultimo evento del agente; se calculan aqui, nunca al dibujar.
+async function readBandLines($: EngineInterface, run: PipelineRun | null, eventsTail: string | null): Promise<string[]> {
+  if (!run) return []
+  let logLines: string[] = []
+  if (run.log) {
+    const tail = await $.process.run(['tail', '-c', String(LOG_TAIL_BYTES), run.log]).catch(() => ({ exitCode: 1, stdout: '' }))
+    if (tail.exitCode === 0) logLines = logTailLines(tail.stdout, BAND_LOG_ROWS)
+  }
+  return bandLinesOf(logLines, eventsTail ? eventLineOf(eventsTail) : null, BAND_LOG_ROWS)
 }
 
 // Solo `.mefisto/pipeline/` (MEF-ADR-0053): la ruta legada ya no la escribe ningun pipeline.
@@ -346,8 +369,12 @@ async function refreshRuns($: EngineInterface) {
     const live = new Set(statuses.map(s => dismissKey(runsRepo, s)))
     const pruned = pruneDismissed(dismissed, runsRepo, live, Date.now())
     if (pruned.length !== dismissed.length) await saveDismissed($, pruned)
-    const last = await readLastEvent($, activeRunOf(view.runs))
+    const target = activeRunOf(view.runs)
+    const eventsTail = await readEventsTail($, target)
+    const last = eventsTail ? lastEventOf(eventsTail) : null
+    const lines = await readBandLines($, target, eventsTail)
     await update($, lastEventAtom, () => last)
+    await update($, bandLinesAtom, () => lines)
     await update($, runsAtom, () => view.runs)
     await refreshBatch($)
     await update($, resultsAtom, () => view.results)
@@ -706,7 +733,7 @@ async function activate($: EngineInterface) {
   runsTimer?.cancel()
   // Ritmo rapido solo con corridas activas; sin ellas, `refresh` las relee al ritmo de los listos (CA-5).
   runsTimer = $.clock.every(RUNS_POLL_MS, () => {
-    if (Object.keys(seenRuns).length > 0 || lastBatchIssues !== null) void refreshRuns($)
+    if (Object.keys(seenRuns).length > 0 || lastBatchIssues !== null || Date.now() < launchPollUntilMs) void refreshRuns($)
   })
   prTimer?.cancel()
   prTimer = $.clock.every(PR_CHECK_MS, () => void closeMergedPrs($))
@@ -781,6 +808,14 @@ export const register: Register = on => {
   // La senal del merge es la llamada Bash a pr-sync.sh: el plugin carga en tier user y el engine no le entrega classic.*.
   // Convive con el tool.call Bash del tablero (mismo matcher, #2302).
   on('tool.call', { tool: 'Bash' }, async ($, e, next) => {
+    if (isEligible && isWanted && isPipelineLaunch(e.command)) {
+      launchPollUntilMs = Date.now() + LAUNCH_POLL_WINDOW_MS
+      try {
+        return await next(e)
+      } finally {
+        void refreshRuns($)
+      }
+    }
     const mergeArgs = isEligible && isWanted ? mergeRunArgsOf(e.command) : null
     if (mergeArgs === null) return next(e)
     await startMerge($, mergeArgs)
@@ -873,6 +908,7 @@ export const register: Register = on => {
     const runs = await read($, runsAtom)
     const results = await read($, resultsAtom)
     const batch = await read($, batchAtom)
+    const bandLines = await read($, bandLinesAtom)
     const openPrs = await read($, openPrsAtom)
     const mergeRun = await read($, mergeAtom)
     await read($, tickAtom)
@@ -901,17 +937,33 @@ export const register: Register = on => {
     const list = await read($, listAtom)
     const listosText = list && !list.error ? `listos ${list.items.length}` : ''
     const headRoom = Math.max(8, inner - 20)
-    const head = (state: string | null, key: string, stateColor?: string) => (
+    const head = (state: string | null, key: string, stateColor?: string, withListos = true) => (
       <Text key={key} wrap="truncate-end">
         <Text color="claude">mefisto</Text>
-        {listosText && <Text dimColor>{` · ${clip(listosText, headRoom)}`}</Text>}
+        {withListos && listosText && <Text dimColor>{` · ${clip(listosText, headRoom)}`}</Text>}
         {state && (
           <Text color={stateColor} dimColor={!stateColor}>
-            {` · ${clip(state, Math.max(8, headRoom - listosText.length))}`}
+            {` · ${clip(state, withListos ? Math.max(8, headRoom - listosText.length) : inner - 12)}`}
           </Text>
         )}
       </Text>
     )
+    // Vista de corrida (#2320): fila de pasos, titulo del issue y las ultimas lineas; 5 filas fijas.
+    const runBody = (run: PipelineRun) => {
+      const shown = bandLines.slice(-BAND_LOG_ROWS)
+      return [
+        <Text key="run-steps" wrap="truncate-end">
+          {stepsOf(run).map((st, i) => (
+            <Text key={`step-${i}`} color={st.color} dimColor={st.dim}>{`${i > 0 ? ' ─ ' : ''}${st.mark} ${st.name}`}</Text>
+          ))}
+        </Text>,
+        <Text key="run-title" wrap="truncate-end">{run.title ? clip(run.title, body) : ' '}</Text>,
+        ...shown.map((l, i) => (
+          <Text key={`run-line-${i}`} dimColor wrap="truncate-end">{clip(l, body)}</Text>
+        )),
+        ...Array.from({ length: Math.max(0, BAND_LOG_ROWS - shown.length) }, (_, i) => <Text key={`run-pad-${i}`}> </Text>),
+      ]
+    }
     const raster =
       'Raster' in elements ? (
         <elements.Raster key="mefisto-mascota" columns={MASCOT_WIDTH} rows={RASTER_ROWS} cells={toRasterCells(grid, MASCOT_WIDTH)} />
@@ -940,11 +992,15 @@ export const register: Register = on => {
       const headColor = batch.state === 'failed' ? 'error' : batch.state === 'stopped' || batch.stopRequested ? 'warning' : undefined
       return (
         <Box flexDirection="column" borderStyle="round" borderColor="claude" borderDimColor paddingX={1}>
-          {head(`${batchHeader(batch, Date.now())}${running ? '' : ` · ${batch.state === 'completed' ? 'terminado' : batch.state === 'stopped' ? 'detenido' : 'con fallos'}`}`, 'pact-head', headColor)}
+          {running && batchRun
+            ? head(`${runHeader(batchRun, Date.now(), batch)}${batch.stopRequested ? ' · deteniendo' : ''}`, 'pact-head', headColor, false)
+            : head(`${batchHeader(batch, Date.now())}${running ? '' : ` · ${batch.state === 'completed' ? 'terminado' : batch.state === 'stopped' ? 'detenido' : 'con fallos'}`}`, 'pact-head', headColor)}
           <Box gap={2} alignItems="flex-start">
             {mascot}
             <Box flexDirection="column" width={body}>
-              {running ? (
+              {running && batchRun ? (
+                runBody(batchRun)
+              ) : running ? (
                 <>
                   <Text wrap="truncate-end">
                     {batch.issues.map((i, n) => (
@@ -966,7 +1022,7 @@ export const register: Register = on => {
                   <Text wrap="truncate-end">{clip(batchSummaryText(batch), body)}</Text>
                 </>
               )}
-              {Array.from({ length: Math.max(0, PAGE_ROWS - (running ? 3 : visible.length + 1)) }, (_, i) => (
+              {Array.from({ length: Math.max(0, PAGE_ROWS - (running ? (batchRun ? 5 : 3) : visible.length + 1)) }, (_, i) => (
                 <Text key={`blank-${i}`}> </Text>
               ))}
               <Box justifyContent="space-between">
@@ -1075,6 +1131,18 @@ export const register: Register = on => {
       ...runs.map(r => ({ key: `run-${r.pipeline}-${r.issue}-${r.variant ?? ''}`, text: runLine(r, Date.now()), color: undefined as string | undefined })),
       ...results.map(r => ({ key: `res-${r.key}`, text: resultLine(r), color: r.ok ? 'success' : 'error' })),
     ]
+    const soleRun = runs.length === 1 && results.length === 0 ? (runs[0] as PipelineRun) : null
+    if (soleRun && bandViewOf(runs, results) === 'runs') {
+      return (
+        <Box flexDirection="column" borderStyle="round" borderColor="claude" borderDimColor paddingX={1}>
+          {head(runHeader(soleRun, Date.now()), 'pact-head', soleRun.state === 'hold' ? 'warning' : undefined, false)}
+          <Box gap={2} alignItems="flex-start">
+            {mascot}
+            <Box flexDirection="column" width={body}>{runBody(soleRun)}</Box>
+          </Box>
+        </Box>
+      )
+    }
     if (bandViewOf(runs, results) === 'runs') {
       const { page, pages } = pageOf(await read($, pageAtom), lines.length, PAGE_ROWS)
       const visible = lines.slice(page * PAGE_ROWS, (page + 1) * PAGE_ROWS)
