@@ -586,11 +586,11 @@ export function mergeArgsOf(answer: string | null, options: string[], prs: Resul
   return argsOfAnswer(answer, options, prs.map(p => p.pr))
 }
 
-/** Comun a ambos dialogos de merge: un solo numero exige su opcion; "Todos" pasa todos los listados; si no, elegidos + texto libre. */
-function argsOfAnswer(answer: string | null, options: string[], numbersListed: string[]): string | null {
+/** Comun a ambos dialogos de merge: un solo numero exige su opcion; "Todos" pasa `allArg` si lo hay, o todos los listados; si no, elegidos + texto libre. */
+function argsOfAnswer(answer: string | null, options: string[], numbersListed: string[], allArg: string | null = null): string | null {
   if (answer === null) return null
   if (numbersListed.length === 1) return answer === options[0] && numbersListed[0] ? numbersListed[0] : null
-  if (answer.includes(MERGE_ALL)) return numbersListed.join(' ')
+  if (answer.includes(MERGE_ALL)) return allArg ?? numbersListed.join(' ')
   const known = new Set(numbersListed)
   let rest = answer
   const numbers: string[] = []
@@ -628,12 +628,11 @@ export function mergeToast(args: string, prs: ResultPr[]): string {
 }
 
 // ---- Incremento 6: mergear PRs abiertos desde el reposo (decision 11: referencia de experiencia) ----
-export const FIELD_NOTE_BRANCH_PREFIX = 'docs/planner-field-notes-'
 export const OPEN_PRS_ARGS = ['pr', 'list', '--state', 'open', '--limit', '100', '--json', 'number,title,isDraft,headRefName']
 
 export type OpenPr = { number: string; title: string }
 
-/** PRs abiertos de trabajo: sin borradores ni ramas de field notes; el mas reciente (numero mayor) primero. Vacio si no es JSON. */
+/** PRs abiertos que no son borradores (field notes incluidas); el mas reciente (numero mayor) primero. Vacio si no es JSON. */
 export function parseOpenPrs(raw: string): OpenPr[] {
   let rows: unknown
   try {
@@ -645,7 +644,6 @@ export function parseOpenPrs(raw: string): OpenPr[] {
   const out: OpenPr[] = []
   for (const r of rows as Record<string, unknown>[]) {
     if (!r || typeof r.number !== 'number' || r.isDraft === true) continue
-    if (typeof r.headRefName === 'string' && r.headRefName.startsWith(FIELD_NOTE_BRANCH_PREFIX)) continue
     out.push({ number: String(r.number), title: typeof r.title === 'string' ? r.title : '' })
   }
   return out.sort((a, b) => Number(b.number) - Number(a.number))
@@ -659,9 +657,9 @@ export function openPrOptions(prs: OpenPr[]): string[] {
   return [MERGE_ALL, ...prs.slice(0, MERGE_MAX_OPTIONS).map(openPrLabel)]
 }
 
-/** Argumentos de /mefisto:merge: "Todos" pasa los numeros listados (nunca `--all`); si no, los elegidos y los del texto libre. */
+/** Argumentos de /mefisto:merge: "Todos" es `--all`; si no, los elegidos y los del texto libre. */
 export function openPrArgsOf(answer: string | null, options: string[], prs: OpenPr[]): string | null {
-  return argsOfAnswer(answer, options, prs.map(p => p.number))
+  return argsOfAnswer(answer, options, prs.map(p => p.number), '--all')
 }
 
 // ---- Incremento 7: seguir un sequential como lote (MEF-ADR-0055 decision 10/11; #2202 escribe el status) ----
