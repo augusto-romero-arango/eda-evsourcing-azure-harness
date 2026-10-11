@@ -18,7 +18,7 @@ Si al arrancar no se puede leer la línea de comando de Claude Code y el transcr
 
 ## Capacidad vigente (incremento 1)
 
-Una banda sobre el prompt con los issues lanzables (`estado:listo`) en el orden de `scripts/next-order.sh --json`: número de orden, `#issue`, `tipo` y título. Alto fijo (5 filas), paginada con `0`; se refresca cada minuto y con `refresh`. Al pie cuenta los `blocked` y `cycles`. Si `next-order.sh` falla muestra el error sin romper la sesión.
+Una banda sobre el prompt cuya primera línea (en todas las vistas) es `mefisto · listos N` (`mefisto` en el color `claude`, el resto atenuado) seguida del estado de la vista (`· corridas N activas`, `· sequential N/M …`, `· merge N/M …`), con los issues listos (`estado:listo`) en el orden de `scripts/next-order.sh --json`: número de orden, `#issue`, `tipo` y título. Alto fijo (5 filas), paginada con `0`; se refresca cada minuto y con `refresh`. Al pie cuenta los `blocked` y `cycles`. Si `next-order.sh` falla muestra el error sin romper la sesión.
 
 Es solo lectura: no hay teclas ni botones que lancen trabajo, y el orden se lee del script, nunca se calcula aquí.
 
@@ -37,10 +37,10 @@ Las corridas toman la banda solo mientras haya al menos una activa (`running` o 
 
 Con la lista de listos visible y el prompt vacío (con la banda mostrando corridas las teclas no actúan), la consola **escribe el comando en el prompt sin enviarlo**; la persona lo revisa y lo envía. Las líneas se leen de `next-order.sh --json --launch-command "/mefisto:sequential" --parallel-command "/mefisto:parallel"`, nunca se calculan aquí.
 
-- `1`: línea de `/mefisto:sequential` (sin infra). `2`: línea del lote `/mefisto:parallel`. Con la línea en `null` la tecla no se muestra ni actúa.
-- Con `tipo:infra` lanzables, `1` y `2` abren un diálogo (`$.ui.ask`): "Infra primero" (`/mefisto:infra <primer infra>`), "Seguir sin infra" o "Cancelar". Cerrar el diálogo o un texto libre no escriben nada.
+- `1`: línea de `/mefisto:sequential` (sin infra). `p`: línea del lote `/mefisto:parallel`. Con la línea en `null` la tecla no se muestra ni actúa.
+- Con `tipo:infra` listos, `1` y `p` abren un diálogo (`$.ui.ask`): "Infra primero" (`/mefisto:infra <primer infra>`), "Seguir sin infra" o "Cancelar". Cerrar el diálogo o un texto libre no escriben nada.
 - `5`-`9`: el issue de esa fila (prefijo `5:`…`9:`) con diálogo por `tipo`: `feature`/`refactor`/`projection` -> "Con merge" (`/mefisto:sequential <n>`) o "Solo PR" (`/mefisto:implement <n>`); `tooling` -> "Con merge" o "Solo PR" (`/mefisto:tooling <n>`); `infra` -> solo "Solo PR" (`/mefisto:infra <n>`). Sin tipo lanzable, un toast lo avisa.
-- Pie: `1: sequential · 2: parallel N · 3: PRs N · 5-9 uno`, `infra: #N` y los bloqueados/en ciclo.
+- Pie: `1: sequential · p: parallel N · 5-9 uno`, `infra: #N` y los bloqueados/en ciclo.
 - `/fausto-blood-pact lanzar [sequential|parallel|<n>]`: lo mismo sin teclas; sin argumento equivale a `1`.
 
 Fuera de alcance: lanzar sin pasar por el prompt y mergear PRs.
@@ -72,9 +72,9 @@ Fuera de alcance: mergear PRs que la sesión no vio terminar y resolver comentar
 
 ## Capacidad vigente (incremento 6): mergear PRs abiertos desde el reposo
 
-En reposo (lanzables visibles), si hay PRs abiertos, el pie suma `3: PRs N` (`gh pr list --state open`, sin borradores pero con los de field notes `docs/planner-field-notes-*`; se refresca con los listos y tras cada merge). Sin PRs abiertos el botón no aparece.
+En reposo (listos visibles), si hay PRs abiertos, la primera línea suma, a la derecha, `2: PRs N` (`gh pr list --state open`, sin borradores pero con los de field notes `docs/planner-field-notes-*`; se refresca con los listos y tras cada merge). Sin PRs abiertos el botón no aparece.
 
-- `3`: con un solo PR, `$.ui.ask` con `#N título` y "Cancelar"; con varios, selección múltiple: "Todos" y los 3 más recientes (otros números, en la opción de texto). Ejecuta `/mefisto:merge` con `$.command.run`, anunciado con un toast. "Todos" ejecuta `/mefisto:merge --all` (`pr-sync.sh --all` toma todo PR abierto, borradores incluidos). Cancelar o no elegir no ejecuta nada.
+- `2`: con un solo PR, `$.ui.ask` con `#N título` y "Cancelar"; con varios, selección múltiple: "Todos" y los 3 más recientes (otros números, en la opción de texto). Ejecuta `/mefisto:merge` con `$.command.run`, anunciado con un toast. "Todos" ejecuta `/mefisto:merge --all` (`pr-sync.sh --all` toma todo PR abierto, borradores incluidos). Cancelar o no elegir no ejecuta nada.
 - `/fausto-blood-pact prs`: lo mismo sin teclas.
 
 ## Capacidad vigente (incremento 7): seguir un sequential como lote

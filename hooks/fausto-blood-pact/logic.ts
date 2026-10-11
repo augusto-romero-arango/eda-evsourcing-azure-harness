@@ -82,7 +82,7 @@ export function rowText(item: BoardItem, numWidth: number, titleMax: number): st
   return `${padEnd(`#${item.number}`, numWidth)} ${clip(item.title, titleMax)}`
 }
 
-/** Pie sin las teclas `1`/`2` (la consola las pinta como botones): `5-9 uno`, infra y excluidos. */
+/** Pie sin las teclas `1`/`p` (la consola las pinta como botones): `5-9 uno`, infra y excluidos. */
 export function footerRestOf(list: BoardList, afterButtons: boolean): string {
   const rest = [
     list.items.length > 0 ? '5-9 uno' : '',

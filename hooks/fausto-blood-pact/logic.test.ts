@@ -265,6 +265,12 @@ test('pie: teclas, infra y excluidos; fila sin prefijo', () => {
   expect(rowText(l.items[0]!, 4, 20)).toBe('#7   A')
 })
 
+test('pie en reposo: tras `1: sequential · p: parallel N` sigue el resto, sin el menu de PRs', () => {
+  const l = board({})
+  expect(footerRestOf(l, true)).toBe(' · 5-9 uno · 1 bloqueados')
+  expect(footerRestOf(l, true)).not.toContain('PRs')
+})
+
 test('lanzar: sin argumento es 1, un numero fuera de los lanzables lo dice', () => {
   const l = board()
   expect(parseLaunchArg('', l)).toEqual({ kind: 'launch', launch: 'sequential' })

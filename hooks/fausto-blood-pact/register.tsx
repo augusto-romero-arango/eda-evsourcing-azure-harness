@@ -732,6 +732,19 @@ export const register: Register = on => {
       ? mascotGrid(pose, active ? (sec % 2 === 0 ? 0 : 1) : 0)
       : cropGrid(waitingFace(face('normal'), isWorking ? sec : null), MASCOT_COLS)
     const version = await read($, versionAtom)
+    const list = await read($, listAtom)
+    const listosText = list && !list.error ? ` · listos ${list.items.length}` : ''
+    const head = (state: string | null, key: string, stateColor?: string) => (
+      <Text key={key} wrap="truncate-end">
+        <Text color="claude">mefisto</Text>
+        <Text dimColor>{clip(listosText, Math.max(8, body - 8))}</Text>
+        {state && (
+          <Text color={stateColor} dimColor={!stateColor}>
+            {clip(` · ${state}`, Math.max(8, body - 8 - listosText.length))}
+          </Text>
+        )}
+      </Text>
+    )
     const raster =
       'Raster' in elements ? (
         <elements.Raster key="mefisto-mascota" columns={MASCOT_WIDTH} rows={RASTER_ROWS} cells={toRasterCells(grid, MASCOT_WIDTH)} />
@@ -757,15 +770,13 @@ export const register: Register = on => {
       const queue = batch.issues.map(i => ({ key: `b-${i.issue}`, text: batchIssueLine(i, batchTitles[i.issue], body), dim: i.status === 'saltado' || i.status === 'pendiente' }))
       const { page, pages } = pageOf(await read($, pageAtom), queue.length, PAGE_ROWS)
       const visible = running ? [] : queue.slice(page * PAGE_ROWS, (page + 1) * PAGE_ROWS)
-      const headColor = batch.state === 'failed' ? 'error' : batch.state === 'stopped' || batch.stopRequested ? 'warning' : 'claude'
+      const headColor = batch.state === 'failed' ? 'error' : batch.state === 'stopped' || batch.stopRequested ? 'warning' : undefined
       return (
         <Box flexDirection="column" borderStyle="round" borderColor="claude" borderDimColor paddingX={1}>
           <Box gap={2} alignItems="flex-start">
             {mascot}
             <Box flexDirection="column" width={body}>
-              <Text bold color={headColor} wrap="truncate-end">
-                {clip(`${batchHeader(batch, Date.now())}${running ? '' : ` · ${batch.state === 'completed' ? 'terminado' : batch.state === 'stopped' ? 'detenido' : 'con fallos'}`}`, body)}
-              </Text>
+              {head(`${batchHeader(batch, Date.now())}${running ? '' : ` · ${batch.state === 'completed' ? 'terminado' : batch.state === 'stopped' ? 'detenido' : 'con fallos'}`}`, 'pact-head', headColor)}
               {running ? (
                 <>
                   <Text wrap="truncate-end">
@@ -823,13 +834,13 @@ export const register: Register = on => {
       const visible = rows.slice(0, shown)
       const hidden = rows.length - visible.length
       const finished = ribbon.finishedMs !== null
-      const header = clip(mergeRibbonHeader(ribbon, Date.now()), body)
+      const header = mergeRibbonHeader(ribbon, Date.now())
       return (
         <Box flexDirection="column" borderStyle="round" borderColor="claude" borderDimColor paddingX={1}>
           <Box gap={2} alignItems="flex-start">
             {mascot}
             <Box flexDirection="column" width={body}>
-              <Text bold color="claude" wrap="truncate-end">{header}</Text>
+              {head(header, 'pact-head')}
               {visible.map(p => (
                 <Text key={`m-${p.num}`} color={p.estado === 'mergeado' ? 'success' : p.estado === 'fallido' ? 'error' : undefined} dimColor={p.estado === 'pendiente'} wrap="truncate-end">
                   {mergeRibbonLine(p, body)}
@@ -864,7 +875,7 @@ export const register: Register = on => {
           <Box gap={2} alignItems="flex-start">
             {mascot}
             <Box flexDirection="column" width={body}>
-              <Text bold color="claude">Corridas{` · ${runs.length} activas`}</Text>
+              {head(`corridas ${runs.length} activas`, 'pact-head')}
               {visible.map(l => (
                 <Text key={l.key} color={l.color} wrap="truncate-end">{clip(l.text, body)}</Text>
               ))}
@@ -900,23 +911,30 @@ export const register: Register = on => {
         </Box>
       )
     }
-    const list = await read($, listAtom)
     if (!list) void refresh($)
     const { page, pages } = pageOf(await read($, pageAtom), list?.items.length ?? 0, PAGE_ROWS)
     const visible = list?.items.slice(page * PAGE_ROWS, (page + 1) * PAGE_ROWS) ?? []
     const numWidth = numberWidth(visible)
     const afterWidth = Math.min(16, Math.max(0, ...visible.map(i => reasonOf(i).length)))
     const titleWidth = Math.max(12, body - 3 - 2 - numWidth - 1 - (afterWidth > 0 ? afterWidth + 2 : 0))
-    const footerRest = list ? footerRestOf(list, Boolean(list.launch || list.parallel?.launch) || openPrs.length > 0) : ''
+    const footerRest = list ? footerRestOf(list, Boolean(list.launch || list.parallel?.launch)) : ''
     return (
       <Box flexDirection="column" borderStyle="round" borderColor="claude" borderDimColor paddingX={1}>
         <Box gap={2} alignItems="flex-start">
           {mascot}
           <Box flexDirection="column" width={body}>
-            <Text bold color="claude">Lanzables{list && !list.error ? ` · ${list.items.length}` : ''}</Text>
+            <Box justifyContent="space-between">
+              {head(null, 'pact-head')}
+              {openPrs.length > 0 && (
+                <Box gap={2}>
+                  <Button key="pact-open-prs" hotkey="2" plain dimColor label={`PRs ${openPrs.length}`}
+                    onPress={() => void mergeOpenPrs($)} />
+                </Box>
+              )}
+            </Box>
             {!list && <Text dimColor>cargando…</Text>}
             {list?.error && <Text color="error">next-order falló: {clip(list.error, body - 20)}</Text>}
-            {list && !list.error && visible.length === 0 && <Text dimColor>Sin issues lanzables</Text>}
+            {list && !list.error && visible.length === 0 && <Text dimColor>Sin issues en estado:listo.</Text>}
             {visible.map((item, i) => {
               const row = rowParts(item, numWidth, titleWidth)
               return (
@@ -947,12 +965,8 @@ export const register: Register = on => {
                       onPress={() => void launchKey($, 'sequential')} />
                   ),
                   list?.parallel?.launch && (
-                    <Button key="pact-parallel" hotkey="2" plain dimColor label={`parallel ${list.parallel.issues.length}`}
+                    <Button key="pact-parallel" hotkey="p" plain dimColor label={`parallel ${list.parallel.issues.length}`}
                       onPress={() => void launchKey($, 'parallel')} />
-                  ),
-                  openPrs.length > 0 && (
-                    <Button key="pact-open-prs" hotkey="3" plain dimColor label={`PRs ${openPrs.length}`}
-                      onPress={() => void mergeOpenPrs($)} />
                   ),
                 ], Text)}
                 <Text dimColor>{footerRest}</Text>
