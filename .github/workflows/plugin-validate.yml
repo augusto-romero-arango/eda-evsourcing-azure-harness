@@ -1,0 +1,66 @@
+# Validacion de plugin y mods de Mefisto en PRs (issue #2295). No se distribuye al consumidor (MEF-ADR-0019).
+# Por que existe: la v0.46.2 salio con el modulo de mods roto (#2294). 'claude plugin validate .'
+# detecta ese defecto en segundos ('on("prompt.submit") is registered twice without a matcher'),
+# pero ningun gate lo corria. MEF-ADR-0055 pide validar los mods antes de commitear; este workflow
+# lo vuelve verificable en cada PR que toca esas superficies.
+# Excepcion acotada a la politica de ci.yml (#1743, #1766: ningun PR corre tests ni CLIs de agente):
+# solo se dispara en PRs que tocan hooks/, .claude-plugin/ o .claude/mods/, y no usa secretos.
+# La validacion es estatica y no requiere autenticacion (verificado el 2026-10-11 con HOME vacio).
+# NO es obligatorio: el ruleset 'main' no lo exige, asi que la X roja avisa pero no frena el merge.
+# Especifico del adaptador Claude por naturaleza (MEF-ADR-0050): por eso vive en .github/ y no en
+# src/internal/scripts/.
+# Instalacion del CLI con el instalador nativo oficial, canal 'latest' y sin fijar version, para
+# validar contra el engine que reciben los consumidores. Doc oficial:
+#   https://code.claude.com/docs/en/setup
+# Corre en ubuntu-24.04 (pinneado, nunca 'ubuntu-latest'): la validacion es estatica, la plataforma no influye.
+name: Plugin validate
+
+on:
+  pull_request:
+    paths:
+      - 'hooks/**'
+      - '.claude-plugin/**'
+      - '.claude/mods/**'
+      - '.github/workflows/plugin-validate.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: validate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Instalar Claude Code CLI
+        run: |
+          curl -fsSL https://claude.ai/install.sh | bash
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Version del CLI
+        run: claude --version
+
+      - name: Validar plugin y mods
+        run: |
+          paths=(. .claude/mods)
+          for manifest in .claude/mods/*/.claude-plugin/plugin.json; do
+            [ -f "$manifest" ] || continue
+            paths+=("$(dirname "$(dirname "$manifest")")")
+          done
+          failed=()
+          for p in "${paths[@]}"; do
+            echo "::group::claude plugin validate $p"
+            if claude plugin validate "$p"; then
+              echo "OK: $p"
+            else
+              failed+=("$p")
+            fi
+            echo "::endgroup::"
+          done
+          for p in "${failed[@]}"; do
+            echo "::error::claude plugin validate fallo en '$p'"
+          done
+          [ "${#failed[@]}" -eq 0 ]
