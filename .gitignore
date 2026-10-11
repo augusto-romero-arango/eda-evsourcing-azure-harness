@@ -25,3 +25,4 @@ pipeline-state/
 
 # Cache local del runner de tests de los mods (no se versiona)
 .claude/mods/*/node_modules/
+hooks/*/node_modules/
