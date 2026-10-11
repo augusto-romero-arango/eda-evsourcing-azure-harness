@@ -33,6 +33,7 @@ import {
   resultsFooterText,
   eventsFileOf,
   lastEventOf,
+  poseOfBatch,
   poseOfResults,
   poseOfRun,
   DISMISSED_STORE_KEY,
@@ -1164,7 +1165,7 @@ export const register: Register = on => {
     const pose: MascotPose | null = active
       ? poseOfRun(active, await read($, lastEventAtom))
       : batch
-        ? { role: 'desarrollador', state: batch.state === 'failed' ? 'error' : isBatchRunning(batch) ? 'pensando' : batch.state === 'completed' ? 'aprobado' : 'pensando' }
+        ? poseOfBatch(batch)
         : poseOfResults(results)
     const grid = ribbon
       ? cropGrid(sprite('merge', ribbon.finishedMs === null ? 'cosiendo' : 'listo', ribbon.finishedMs === null ? (sec % 2 === 0 ? 0 : 1) : 0), MASCOT_COLS)

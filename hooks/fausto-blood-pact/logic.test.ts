@@ -1,5 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
+import { sprite } from '../sprites'
 import {
   batchSeparator,
   cleanLogLine,
@@ -8,6 +9,7 @@ import {
   mergePaneLines,
   paneHeaderOf,
   parseEvent,
+  poseOfBatch,
   bitacoraCount,
   bitacoraPrOf,
   bitacoraPrompt,
@@ -839,4 +841,16 @@ test('pane: cabecera, duraciones, separador y tope de lineas', () => {
   expect(batchSeparator(853).text).toBe('\u2550\u2550 #853 \u2550\u2550')
   const many = Array.from({ length: 5 }, (_, i) => ({ kind: 'log' as const, text: `l${i}` }))
   expect(mergePaneLines(many, [{ kind: 'log', text: 'z' }], 3).map(l => l.text)).toEqual(['l3', 'l4', 'z'])
+})
+
+test('poseOfBatch: cada estado del lote tiene sprite, y el terminado es el revisor aprobado', () => {
+  const batch = (state: 'running' | 'completed' | 'failed' | 'stopped') =>
+    ({ pipeline: 'tdd', started: '', state, current: null, stopRequested: false, holdSeconds: 0, issues: [], log: null }) as never
+  expect(poseOfBatch(batch('completed'))).toEqual({ role: 'revisor', state: 'aprobado' })
+  expect(poseOfBatch(batch('failed'))).toEqual({ role: 'desarrollador', state: 'error' })
+  expect(poseOfBatch(batch('running'))).toEqual({ role: 'desarrollador', state: 'pensando' })
+  for (const state of ['running', 'completed', 'failed', 'stopped'] as const) {
+    const pose = poseOfBatch(batch(state))
+    expect(() => sprite(pose.role, pose.state, 0)).not.toThrow()
+  }
 })

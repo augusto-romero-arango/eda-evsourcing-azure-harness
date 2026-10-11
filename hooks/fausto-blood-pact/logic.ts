@@ -744,6 +744,13 @@ export function parseBatchStatus(raw: string): BatchStatus | null {
 
 export const isBatchRunning = (b: BatchStatus) => b.state === 'running'
 
+/** Pose del lote sin corrida activa, como la cinta interna: terminado es el revisor aprobado; el desarrollador no tiene `aprobado`. */
+export function poseOfBatch(b: BatchStatus): MascotPose {
+  if (b.state === 'failed') return { role: 'desarrollador', state: 'error' }
+  if (b.state === 'completed') return { role: 'revisor', state: 'aprobado' }
+  return { role: 'desarrollador', state: 'pensando' }
+}
+
 export type BatchCounts = { merged: number; failed: number; deferred: number; skipped: number; total: number }
 
 export function batchCounts(b: BatchStatus): BatchCounts {
