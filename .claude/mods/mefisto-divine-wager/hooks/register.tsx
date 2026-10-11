@@ -86,6 +86,7 @@ import {
   mergePromptArgs,
   mergePrsOf,
   withMergeOutcomes,
+  liveTape,
 } from './logic'
 import { DEFAULT_COLOR, HEIGHT, PALETTE, RASTER_ROWS, face, sprite } from './sprites'
 
@@ -132,7 +133,7 @@ const MERGE_STALE_MS = 10 * 60_000
 /** Cada cuanto se sondea la fase del release en GitHub mientras corre su script. */
 const RELEASE_POLL_MS = 5_000
 /** Cuanto queda en la banda el release terminado, con su boton para abrirlo. */
-const RELEASE_DONE_MS = 120_000
+const RELEASE_DONE_MS = 15_000
 const PLUGIN_JSON = '.claude-plugin/plugin.json'
 
 // Recorte comun a todos los cuadros que usa la consola, calculado una vez: sin margen y sin saltos al alternar.
@@ -870,6 +871,25 @@ async function pollRelease($: EngineInterface, isForced = false) {
   })
 }
 
+// Las cintas terminadas vencen al dibujar, sin depender de que su clock.after sobreviva un hot-reload; el siguiente
+// hook que puede escribir estado limpia el atom vencido. La bitacora con un PR abierto espera al usuario.
+async function liveTapes($: EngineInterface, nowMs: number) {
+  const historian = await read($, historianAtom)
+  return {
+    historian: liveTape(historian, HISTORIAN_DONE_MS, nowMs, Boolean(historian?.pr)),
+    release: liveTape(await read($, releaseAtom), RELEASE_DONE_MS, nowMs),
+    merge: liveTape(await read($, mergeAtom), HISTORIAN_DONE_MS, nowMs),
+  }
+}
+
+async function sweepTapes($: EngineInterface) {
+  const now = Date.now()
+  const live = await liveTapes($, now)
+  if (!live.historian && (await read($, historianAtom))) await update($, historianAtom, h => liveTape(h, HISTORIAN_DONE_MS, now, Boolean(h?.pr)))
+  if (!live.release && (await read($, releaseAtom))) await update($, releaseAtom, r => liveTape(r, RELEASE_DONE_MS, now))
+  if (!live.merge && (await read($, mergeAtom))) await update($, mergeAtom, m => liveTape(m, HISTORIAN_DONE_MS, now))
+}
+
 async function openRelease($: EngineInterface) {
   const release = await read($, releaseAtom)
   if (!release?.version) return
@@ -905,6 +925,7 @@ export const register: Register = on => {
     })
     // Tras un hot-reload el tail del modulo anterior murio: se fuerza a reabrirlo.
     await update($, runAtom, run => (run && run.state === 'running' ? { ...run, eventsFile: null } : run))
+    await sweepTapes($)
     $.clock.every(1000, () => void poll($))
     if (isInteractive) void detectExecution($)
     return next(e)
@@ -913,6 +934,7 @@ export const register: Register = on => {
   // El cohete del release: en reposo desde que se pide /mefisto-release, despegando mientras corre su script y
   // listo cuando termina el turno que lo ejecuto.
   on('prompt.submit', async ($, e, next) => {
+    await sweepTapes($)
     if (isInteractive && isReleasePrompt(e.text)) await startRelease($, e.text)
     const mergeArgs = isInteractive ? mergePromptArgs(e.text) : null
     if (mergeArgs) await startMerge($, mergeArgs)
@@ -941,6 +963,7 @@ export const register: Register = on => {
   })
 
   on('tool.call', { tool: 'Bash' }, async ($, e, next) => {
+    await sweepTapes($)
     if (isInteractive && isReleaseRun(e.command)) {
       await startRelease($, e.command)
       isReleaseScriptSeen = true
@@ -1154,11 +1177,12 @@ export const register: Register = on => {
         : ''
       // En espera de que se lance algo; mientras Claude trabaja en la sesion, mira de lado a lado y corre la arena.
       // Si el historiador escribe la bitacora, es el quien aparece, con la pluma en movimiento.
-      const historian = await read($, historianAtom)
+      const tapes = await liveTapes($, now || Date.now())
+      const historian = tapes.historian
       const tick = e.props.isWorking ? Math.floor((now || Date.now()) / 1000) : null
-      const release = await read($, releaseAtom)
+      const release = tapes.release
       // La cinta de merge cose al ritmo del reloj aunque el turno este en un Bash largo.
-      const mergeRun = await read($, mergeAtom)
+      const mergeRun = tapes.merge
       const mergeTick = mergeRun && !mergeRun.finishedMs ? Math.floor((now || Date.now()) / 1000) : tick
       const frame = (mergeTick ?? 0) % 2 === 0 ? 0 : 1
       const grid = mergeRun

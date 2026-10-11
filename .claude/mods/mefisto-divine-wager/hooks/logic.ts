@@ -746,6 +746,15 @@ export function historianFrom(prev: Historian | null, active: boolean, now: numb
   return prev && !prev.finishedMs ? { ...prev, finishedMs: now } : prev
 }
 
+/**
+ * La cinta tal como se dibuja: terminada hace mas de `doneMs` no existe, aunque su atom siga ahi porque el
+ * `clock.after` que la limpiaba murio con un hot-reload. En curso nunca vence, ni la que espera al usuario.
+ */
+export function liveTape<T extends { finishedMs: number | null }>(tape: T | null, doneMs: number, nowMs: number, isAwaitingUser = false): T | null {
+  if (!tape || !tape.finishedMs || isAwaitingUser) return tape
+  return nowMs - tape.finishedMs > doneMs ? null : tape
+}
+
 /** Los argumentos del mensaje que lanza /mefisto-merge (`''` sin argumentos), o null si no es ese comando. */
 export function mergePromptArgs(text: string): string | null {
   const m = /^\/mefisto-merge(?:\s+([\s\S]*))?$/.exec(text.trim())

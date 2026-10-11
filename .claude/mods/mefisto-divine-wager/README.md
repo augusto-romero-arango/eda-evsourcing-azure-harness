@@ -82,7 +82,7 @@ sesiones `-p` no los cargan. Para probar una copia suelta: `claude --plugin-dir 
   fase rapida. Los nombres de la rama y del tag son los de `RELEASE_BRANCH` y `NEW_TAG` en `mefisto-release.sh`.
   Al cerrar el turno que corrio el script:
   - **Exito:** muestra `release vX.Y.Z publicado` (o `PR #N listo` con `--prepare-only`), y `2` abre la GitHub
-    Release o el PR durante dos minutos.
+    Release o el PR durante 15 segundos.
   - **Fallo:** si faltaron fases, la fase en curso queda con `✗` y el encabezado dice `falló en <fase>`.
 - Mientras corre `/mefisto-merge` (lanzado con `2`, con `1` desde la corrida o escrito a mano), la banda de espera
   muestra la cinta: el hilo de la rama y el de `main` bajan y se cierran como una cremallera, `cosiendo N PRs MM:SS` y una
@@ -91,6 +91,10 @@ sesiones `-p` no los cargan. Para probar una copia suelta: `claude --plugin-dir 
   `gh pr view N --json state` cada 5 s; si su merge falla queda con `✗`. Al terminar el turno lo que siga pendiente
   cuenta como fallido, la cremallera queda cerrada y la cabecera dice `N mergeados` (y los fallidos); se limpia sola
   a los pocos segundos.
+- Las cintas terminadas de release, merge y bitácora vencen al dibujar, sin depender del temporizador: si un
+  hot-reload del mod mata el `clock.after` que las limpiaba, la banda vuelve igual a reposo y el siguiente hook que
+  escribe estado (`session.start`, `prompt.submit`, `tool.call`) borra la cinta vencida. La de bitácora con un PR
+  abierto no vence: espera a que lo mergees, lo veas o lo cierres.
 - Si un agente espera por rate limit (la ultima linea de `events.log` es un `[hold]`), la banda de la corrida y la
   del sequential lo dicen: `en espera por RATE_LIMIT · próxima sonda HH:MM · techo HH:MM`.
 - Durante la corrida la misma banda muestra la mascota del agente activo (animada), issue, stage, tiempo, los
