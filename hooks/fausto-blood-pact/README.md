@@ -93,11 +93,19 @@ Con una corrida activa (la del eslabón en curso del lote, o la única corrida s
 
 - Primera línea, a todo el ancho: `mefisto · sequential 0/1 · #853 projection-implementer 3m` en el lote y `mefisto · #853 projection-implementer 3m` en una corrida suelta. Las teclas no cambian (`1: detener`, `2: ver PR`, `4: cerrar`, según la vista).
 - Fila de pasos, de `status.agents` en su orden, separados por ` ─ `: `✓` passed (success), `●` running (warning), `✗` failed (error), `○` pending (atenuado); se recorta al ancho.
-- Título del issue y las 3 últimas líneas útiles, atenuadas: cola del log del pipeline (`status.log`, sin ANSI) y el último evento del agente activo (`HH:MM:SS <Tool>`, o `success · N turnos · $X` al cerrar). Los `events.jsonl` publicados van redactados (MEF-ADR-0053), así que no traen mensajes. Se calculan en el sondeo de 5 s (cola del archivo, `tail -c`) y se guardan en el atom `pactBandLines`; el render no escribe. El seguimiento continuo con `tail -F` es del pane de log (#2321).
+- Título del issue y las 3 últimas líneas útiles, atenuadas: cola del log del pipeline (`status.log`, sin ANSI) y el último evento del agente activo (`HH:MM:SS <Tool>`, o `success · N turnos · $X` al cerrar). Los `events.jsonl` publicados van redactados (MEF-ADR-0053), así que no traen mensajes. Se calculan en el sondeo de 5 s (cola del archivo, `tail -c`) y se guardan en el atom `pactBandLines`; el render no escribe. El seguimiento continuo con `tail -F` es del pane de log (ver abajo).
 - La mascota decide su rol por sufijo del agente (el prefijo `<n>-` del stage se ignora): `*test-writer` y `*coverage-gate` tester, `*reviewer` revisor, `*infra-writer` infraestructura, el resto desarrollador.
 - Arranque inmediato: un `tool.call` Bash cuyo comando invoca `batch-`, `tmux-`, `tdd-`, `tooling-` o `iac-pipeline.sh` arma el sondeo de corridas cada 5 s durante 2 minutos aunque aún no haya status, y llama a `refreshRuns` al volver la llamada (mismo matcher `Bash` que ya usa la cinta de merge).
 
-Fuera de alcance: la tecla `3: log` y el seguimiento con `tail -F` (issue de log, #2321).
+### Pane de log (#2321)
+
+`3: log` en la vista de corrida y en la del lote (atenuada, igual que el resto) abre un pane enfocado, como la cinta interna; pulsar `3` otra vez, `c` o `/fausto-blood-pact log` lo abre o cierra. Lectura pura de `.mefisto/pipeline/`.
+
+- **Cabecera:** `mefisto · #N <pipeline>` (en el lote, `mefisto · sequential N/M · #N <pipeline>`) con el tiempo a la derecha, el título del issue y la fila de pasos con la duración de cada paso terminado (`agents.<x>.duration`). Con PR: `✓ PR #X creado`, `m: Mergear #X` (pasa por `mergePrs`, que confirma), `v: Ver en GitHub` y `c: Cerrar log`. Si falló: `✗ falló en <stage>: <last_error>` y `c`. Mientras corre: `c: Cerrar log` y la ayuda `3 en la banda también lo cierra · ctrl+x tab enfoca · esc vuelve al prompt`.
+- **Cuerpo:** dos `tail -n 40 -F` (`$.process.spawn`) mezclados en orden de llegada en un atom de hasta 400 líneas; se muestran las últimas que caben. Los pipelines publicados corren con `--redact-observability` (MEF-ADR-0053, no se toca), así que el `events.jsonl` solo trae nombre de herramienta, hora, fallos y cierre; el resto sale del log del pipeline.
+  - Eventos del agente: el `events.jsonl` del intento vigente del stage activo (`parseEvent`): `── agente · modelo ──`, `HH:MM:SS <Tool>`, `tool.completed` con `ok:false` y `run.failed` en rojo, y `success · N turnos · $X`. Al cambiar de stage o de intento sigue el archivo nuevo.
+  - Log del pipeline: el `log` del status de la corrida o, en el lote, el de `pipeline-status-batch.json` (acumula todos los issues), sin ANSI y atenuado. Cada eslabón del lote empieza con `══ #N ══`.
+- **Cierre:** al cerrar el pane, o al irse la vista (`4: cerrar`, `ocultar` o una corrida que cierra sola), se cierra el pane y se cancelan los dos `tail` por su stream (nunca por patrón).
 
 ## Capacidad vigente (incremento 8): la cinta de merge en vivo
 

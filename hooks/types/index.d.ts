@@ -36,10 +36,15 @@ export type PipelineRun = {
   log?: string | null
   /** Titulo del issue (`status.title`). */
   title?: string
+  /** Ultimo error del status (`last_error`) de una corrida fallida. */
+  lastError?: string
 }
 
+/** Una linea del pane de log: evento del agente o linea del log del pipeline (`log`, atenuada). */
+export type PaneLine = { kind: 'start' | 'tool' | 'fail' | 'done' | 'log'; text: string }
+
 /** Un agente del status: `pending` cubre todo `result` vacio o desconocido. */
-export type RunStep = { name: string; result: 'passed' | 'running' | 'failed' | 'pending' }
+export type RunStep = { name: string; result: 'passed' | 'running' | 'failed' | 'pending'; /** Segundos del paso (`agents.<x>.duration`). */ duration?: number }
 
 /** Una corrida terminada pendiente de descartar: `✗ <stage>` o `✓ PR #X`. */
 export type PipelineResult = { key: string; issue: number; pipeline: PipelineKind; text: string; ok: boolean }
@@ -114,6 +119,8 @@ declare module 'claude-code' {
         issues: { issue: number; status: 'pendiente' | 'en-curso' | 'mergeado' | 'fallido' | 'aplazado' | 'saltado'; pr: string | null; detail: string }[]
       } | null
       pactMerge: PactMerge | null
+      pactLogLines: PaneLine[]
+      pactPaneRun: PipelineRun | null
       pactTick: number
       pactVersion: string | null
     }

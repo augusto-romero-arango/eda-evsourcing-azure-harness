@@ -1,6 +1,13 @@
 import { expect, test } from 'claude-code/testing'
 
 import {
+  batchSeparator,
+  cleanLogLine,
+  durationText,
+  followTargetsOf,
+  mergePaneLines,
+  paneHeaderOf,
+  parseEvent,
   bitacoraCount,
   bitacoraPrOf,
   bitacoraPrompt,
@@ -784,4 +791,52 @@ test('isPipelineLaunch: detecta el lanzamiento de pipelines en un comando Bash',
   expect(isPipelineLaunch('scripts/pr-sync.sh 12 --merge')).toBe(false)
   expect(isPipelineLaunch('cat scripts/tdd-pipeline.sh.bak')).toBe(false)
   expect(isPipelineLaunch(undefined)).toBe(false)
+})
+
+test('parseEvent: eventos redactados reales (sin message, input_summary null)', () => {
+  expect(parseEvent(JSON.stringify({ type: 'run.started', agent: 'implementer', model: 'sonnet' }))).toEqual({ kind: 'start', text: '\u2500\u2500 implementer \u00b7 sonnet \u2500\u2500' })
+  const tool = parseEvent(JSON.stringify({ type: 'tool.started', ts: '2026-10-11T15:04:05Z', tool: 'Edit', input_summary: null }))
+  expect(tool?.kind).toBe('tool')
+  expect(tool?.text).toMatch(/^\d\d:\d\d:\d\d Edit$/)
+  expect(parseEvent(JSON.stringify({ type: 'tool.completed', tool: 'Edit', ok: true }))).toBe(null)
+  const failed = parseEvent(JSON.stringify({ type: 'tool.completed', ts: '2026-10-11T15:04:06Z', tool: 'Bash', ok: false }))
+  expect(failed?.kind).toBe('fail')
+  expect(failed?.text).toMatch(/^\d\d:\d\d:\d\d Bash fall\u00f3$/)
+  expect(parseEvent(JSON.stringify({ type: 'run.completed', status: 'success', turns: 7, estimated_cost_usd: 0.1417 }))).toEqual({ kind: 'done', text: 'success \u00b7 7 turnos \u00b7 $0.14' })
+  expect(parseEvent(JSON.stringify({ type: 'run.failed', error: 'timeout' }))).toEqual({ kind: 'fail', text: 'timeout' })
+  expect(parseEvent(JSON.stringify({ type: 'message', role: 'assistant' }))).toBe(null)
+  expect(parseEvent('no json')).toBe(null)
+})
+
+test('cleanLogLine: sin ANSI ni lineas vacias', () => {
+  expect(cleanLogLine('\u001b[32mFase roja confirmada\u001b[0m\r')).toBe('Fase roja confirmada')
+  expect(cleanLogLine('-----')).toBe(null)
+  expect(cleanLogLine('   ')).toBe(null)
+})
+
+test('followTargetsOf: events.jsonl del intento vigente y log de la corrida o del lote', () => {
+  const run = parseStatus('pipeline-status-tdd-853.json', JSON.stringify({ issue: 853, pipeline: 'tdd', started: '20261011-150000', stage: '1-test-writer', state: 'running', log: '.mefisto/pipeline/logs/pipeline-1.log' }))!
+  const base = eventsLogBase(run)
+  const names = [`${base}-attempt-1.events.jsonl`, `${base}-attempt-2.events.jsonl`, `${base}-attempt-2.log`]
+  const solo = followTargetsOf(run, null, names, '/repo/')
+  expect(solo.events).toBe(`/repo/.mefisto/pipeline/logs/${base}-attempt-2.events.jsonl`)
+  expect(solo.log).toBe('/repo/.mefisto/pipeline/logs/pipeline-1.log')
+  const batch = parseBatchStatus(JSON.stringify({ state: 'running', current: 853, log: '/abs/batch-1.log', issues: [{ issue: 853, status: 'en-curso' }] }))!
+  expect(followTargetsOf(run, batch, names, '/repo').log).toBe('/abs/batch-1.log')
+  expect(followTargetsOf(null, batch, [], '/repo')).toEqual({ events: null, log: '/abs/batch-1.log' })
+  expect(followTargetsOf(run, null, [], '/repo').events).toBe(null)
+})
+
+test('pane: cabecera, duraciones, separador y tope de lineas', () => {
+  const run = parseStatus('pipeline-status-tdd-853.json', JSON.stringify({ issue: 853, pipeline: 'tdd', started: '20261011-150000', stage: '1-x', state: 'running', agents: { x: { result: 'passed', duration: 185 } } }))!
+  expect(run.agents?.[0]?.duration).toBe(185)
+  expect(paneHeaderOf(run, null)).toBe('mefisto \u00b7 #853 tdd')
+  const batch = parseBatchStatus(JSON.stringify({ state: 'running', current: 853, issues: [{ issue: 852, status: 'mergeado' }, { issue: 853, status: 'en-curso' }] }))!
+  expect(paneHeaderOf(run, batch)).toBe('mefisto \u00b7 sequential 1/2 \u00b7 #853 tdd')
+  expect(durationText(185)).toBe('3m')
+  expect(durationText(45)).toBe('45s')
+  expect(durationText(undefined)).toBe('')
+  expect(batchSeparator(853).text).toBe('\u2550\u2550 #853 \u2550\u2550')
+  const many = Array.from({ length: 5 }, (_, i) => ({ kind: 'log' as const, text: `l${i}` }))
+  expect(mergePaneLines(many, [{ kind: 'log', text: 'z' }], 3).map(l => l.text)).toEqual(['l3', 'l4', 'z'])
 })
