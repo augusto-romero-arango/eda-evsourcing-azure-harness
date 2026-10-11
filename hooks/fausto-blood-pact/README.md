@@ -18,7 +18,7 @@ Si al arrancar no se puede leer la línea de comando de Claude Code y el transcr
 
 ## Capacidad vigente (incremento 1)
 
-Una banda sobre el prompt cuya primera línea (en todas las vistas) es `mefisto · listos N` (`mefisto` en el color `claude`, el resto atenuado) seguida del estado de la vista (`· corridas N activas`, `· sequential N/M …`, `· merge N/M …`), con los issues listos (`estado:listo`) en el orden de `scripts/next-order.sh --json`: número de orden, `#issue`, `tipo` y título. Alto fijo (5 filas), paginada con `0`; se refresca cada minuto y con `refresh`. Al pie cuenta los `blocked` y `cycles`. Si `next-order.sh` falla muestra el error sin romper la sesión.
+Una banda sobre el prompt cuya primera línea (en todas las vistas, a todo el ancho de la banda y por encima de la mascota; en reposo comparte línea con el menú `2: PRs N` / `3: bitácora N`) es `mefisto · listos N` (`mefisto` en el color `claude`, el resto atenuado) seguida del estado de la vista (`· corridas N activas`, `· sequential N/M …`, `· merge N/M …`), con los issues listos (`estado:listo`) en el orden de `scripts/next-order.sh --json`: número de orden, `#issue`, `tipo` y título. Alto fijo (5 filas), paginada con `0`; se refresca cada minuto y con `refresh`. Al pie solo quedan `infra: #N` y `N en ciclo`, que condicionan el lanzamiento. Si `next-order.sh` falla muestra el error sin romper la sesión.
 
 Es solo lectura: no hay teclas ni botones que lancen trabajo, y el orden se lee del script, nunca se calcula aquí.
 
@@ -26,21 +26,21 @@ Estado en `PluginState['mefisto']` con claves de prefijo `pact` (`pactIsActive`,
 
 ## Capacidad vigente (incremento 2): seguir corridas
 
-Las corridas toman la banda solo mientras haya al menos una activa (`running` o `hold`): muestra las del repo (todas, no solo las lanzadas por la sesión), una línea por corrida. Sin activas se ven los listos con todas sus teclas, y los resultados sin ocultar quedan en una línea al pie: `resultados: ✓#N PR #X · ✗#M <stage> · 4: ocultar` (recortada al ancho, con `+N`).
+Las corridas toman la banda solo mientras haya al menos una activa (`running` o `hold`): muestra las del repo (todas, no solo las lanzadas por la sesión), una línea por corrida. Sin activas se ven los listos con todas sus teclas, y los resultados sin ocultar quedan en una línea al pie: `resultados: ✓#N PR #X · ✗#M <stage> · ocultar` (recortada al ancho, con `+N`; en reposo `ocultar` no tiene tecla y solo se hace clic; en la vista de corridas sigue `4: ocultar`).
 
 - Lee solo de `.mefisto/pipeline/` (la ruta legada `.claude/pipeline/` se ignora, MEF-ADR-0053) `pipeline-status-{tdd,tooling,infra}-<n>[-<variante>].json` del checkout principal (`git rev-parse --git-common-dir`, aunque la sesión esté en un worktree). `running`: `#N pipeline agente Mm`; `hold`: `rate limit · sonda HH:MM`.
 - Resultados: `✗ <stage>` para `failed`/`blocked`/`gaps`; `✓ PR #X` cuando desaparece el status de una corrida que la sesión vio activa (PR leído de `pipeline-history.jsonl`).
-- Ocultar: tecla `4` o `/fausto-blood-pact ocultar` (`descartar` sigue como alias del comando). No toca `.mefisto/pipeline/`: se guarda en `$.store` con clave repo + pipeline + issue + variante + `started`, y no reaparece en otros panes ni sesiones. Las claves de status inexistente y de más de un día se podan.
+- Ocultar: tecla `4` (solo en la vista de corridas), clic en `ocultar` en reposo, o `/fausto-blood-pact ocultar` (`descartar` sigue como alias del comando). No toca `.mefisto/pipeline/`: se guarda en `$.store` con clave repo + pipeline + issue + variante + `started`, y no reaparece en otros panes ni sesiones. Las claves de status inexistente y de más de un día se podan.
 - Alto fijo de 5 filas, paginado con `0`. Con alguna corrida activa se refrescan cada 5 s; sin corridas activas, al ritmo de los listos (cada minuto).
 
 ## Capacidad vigente (incremento 3): lanzar trabajo
 
 Con la lista de listos visible y el prompt vacío (con la banda mostrando corridas las teclas no actúan), la consola **escribe el comando en el prompt sin enviarlo**; la persona lo revisa y lo envía. Las líneas se leen de `next-order.sh --json --launch-command "/mefisto:sequential" --parallel-command "/mefisto:parallel"`, nunca se calculan aquí.
 
-- `1`: línea de `/mefisto:sequential` (sin infra). `p`: línea del lote `/mefisto:parallel`. Con la línea en `null` la tecla no se muestra ni actúa.
-- Con `tipo:infra` listos, `1` y `p` abren un diálogo (`$.ui.ask`): "Infra primero" (`/mefisto:infra <primer infra>`), "Seguir sin infra" o "Cancelar". Cerrar el diálogo o un texto libre no escriben nada.
+- `1`: línea de `/mefisto:sequential` (sin infra). `4`: línea del lote `/mefisto:parallel` (`p` ya no actúa). `1` y `4` solo escriben el comando en el prompt; nunca lo envían. Con la línea en `null` la tecla no se muestra ni actúa.
+- Con `tipo:infra` listos, `1` y `4` abren un diálogo (`$.ui.ask`): "Infra primero" (`/mefisto:infra <primer infra>`), "Seguir sin infra" o "Cancelar". Cerrar el diálogo o un texto libre no escriben nada.
 - `5`-`9`: el issue de esa fila (prefijo `5:`…`9:`) con diálogo por `tipo`: `feature`/`refactor`/`projection` -> "Con merge" (`/mefisto:sequential <n>`) o "Solo PR" (`/mefisto:implement <n>`); `tooling` -> "Con merge" o "Solo PR" (`/mefisto:tooling <n>`); `infra` -> solo "Solo PR" (`/mefisto:infra <n>`). Sin tipo lanzable, un toast lo avisa.
-- Pie: `1: sequential · p: parallel N · 5-9 uno`, `infra: #N` y los bloqueados/en ciclo.
+- Pie: `1: sequential N · 4: parallel M` (N y M, los issues de cada línea) a la izquierda, `0: página 1/2 ▸` a la derecha, más `infra: #N` y `N en ciclo` si aplican.
 - `/fausto-blood-pact lanzar [sequential|parallel|<n>]`: lo mismo sin teclas; sin argumento equivale a `1`.
 
 Fuera de alcance: lanzar sin pasar por el prompt y mergear PRs.

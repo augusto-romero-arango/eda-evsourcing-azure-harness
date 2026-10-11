@@ -65,6 +65,7 @@ import {
   rowText,
   answerText,
   footerRestOf,
+  launchCountOf,
   parseLaunchArg,
   planIssue,
   planLaunch,
@@ -97,7 +98,7 @@ test('parseNextOrder lee items, bloqueados y ciclos', () => {
   expect(list.items[0]?.number).toBe(7)
   expect(list.blockedCount).toBe(2)
   expect(list.cycleCount).toBe(1)
-  expect(footerRestOf(list, false)).toBe('5-9 uno · 2 bloqueados · 1 en ciclo')
+  expect(footerRestOf(list, false)).toBe('1 en ciclo')
 })
 
 test('parseNextOrder con exit 1 y sin items no es error', () => {
@@ -272,15 +273,30 @@ test('tipo -> opciones de un solo issue', () => {
 
 test('pie: teclas, infra y excluidos; fila sin prefijo', () => {
   const l = board({ infra: [9] })
-  expect(footerRestOf(l, false)).toBe('5-9 uno · infra: #9 · 1 bloqueados')
-  expect(footerRestOf(l, true)).toBe(' · 5-9 uno · infra: #9 · 1 bloqueados')
+  expect(footerRestOf(l, false)).toBe('infra: #9')
+  expect(footerRestOf(l, true)).toBe(' · infra: #9')
   expect(rowText(l.items[0]!, 4, 20)).toBe('#7   A')
 })
 
-test('pie en reposo: tras `1: sequential · p: parallel N` sigue el resto, sin el menu de PRs', () => {
+test('pie en reposo: sin `5-9 uno` ni bloqueados ni el menu de PRs', () => {
   const l = board({})
-  expect(footerRestOf(l, true)).toBe(' · 5-9 uno · 1 bloqueados')
-  expect(footerRestOf(l, true)).not.toContain('PRs')
+  expect(footerRestOf(l, true)).toBe('')
+  expect(footerRestOf(board({ infra: [9] }), true)).not.toMatch(/5-9|bloqueados|PRs/)
+})
+
+test('launchCountOf cuenta los issues de la linea de lanzamiento', () => {
+  expect(launchCountOf('/mefisto:sequential 7 8')).toBe(2)
+  expect(launchCountOf(null)).toBe(0)
+})
+
+test('1 y 4 solo escriben o preguntan: planLaunch nunca envia', () => {
+  for (const kind of ['sequential', 'parallel'] as const) {
+    for (const infra of [[], [9]]) {
+      const plan = planLaunch(board({ infra }), kind)
+      expect(['fill', 'ask']).toContain(plan.kind)
+      expect(plan.kind).not.toBe('submit')
+    }
+  }
 })
 
 test('lanzar: sin argumento es 1, un numero fuera de los lanzables lo dice', () => {

@@ -82,17 +82,20 @@ export function rowText(item: BoardItem, numWidth: number, titleMax: number): st
   return `${padEnd(`#${item.number}`, numWidth)} ${clip(item.title, titleMax)}`
 }
 
-/** Pie sin las teclas `1`/`p` (la consola las pinta como botones): `5-9 uno`, infra y excluidos. */
+/** Pie sin las teclas `1`/`4` (la consola las pinta como botones): solo infra y ciclos, que condicionan el lanzamiento. */
 export function footerRestOf(list: BoardList, afterButtons: boolean): string {
   const rest = [
-    list.items.length > 0 ? '5-9 uno' : '',
     list.infra.length > 0 ? `infra: ${list.infra.map(n => `#${n}`).join(' ')}` : '',
-    list.blockedCount > 0 ? `${list.blockedCount} bloqueados` : '',
     list.cycleCount > 0 ? `${list.cycleCount} en ciclo` : '',
   ]
     .filter(Boolean)
     .join(' · ')
   return rest && afterButtons ? ` · ${rest}` : rest
+}
+
+/** Cantidad de issues de una linea de lanzamiento (`/mefisto:sequential 7 8` -> 2). */
+export function launchCountOf(line: string | null): number {
+  return (line ?? '').split(/\s+/).filter(t => /^\d+$/.test(t)).length
 }
 
 export function isMefistoManifest(raw: string): boolean {
@@ -354,12 +357,12 @@ export type LaunchPlan =
 /** Flags de next-order que fijan las lineas de lanzamiento que la consola escribe. */
 export const NEXT_ORDER_ARGS = ['--json', '--launch-command', SEQUENTIAL_COMMAND, '--parallel-command', PARALLEL_COMMAND]
 
-/** La linea de la tecla (`1` sequential, `2` parallel) tal como la entrego next-order; null si no hay. */
+/** La linea de la tecla (`1` sequential, `4` parallel) tal como la entrego next-order; null si no hay. */
 export function launchLineOf(list: BoardList, kind: LaunchKind): string | null {
   return kind === 'sequential' ? list.launch : (list.parallel?.launch ?? null)
 }
 
-/** `1`/`2`: escribe la linea; con infra lanzable ofrece desarrollarla antes (sin exigirlo). */
+/** `1`/`4`: escribe la linea; con infra lanzable ofrece desarrollarla antes (sin exigirlo). */
 export function planLaunch(list: BoardList, kind: LaunchKind): LaunchPlan {
   const line = launchLineOf(list, kind)
   if (!line) return { kind: 'none', message: `No hay linea de ${kind} para lanzar.` }
@@ -412,7 +415,7 @@ export function answerText(options: LaunchOption[], answer: unknown): string | n
 
 export type LaunchTarget = { kind: 'launch'; launch: LaunchKind } | { kind: 'issue'; issue: number } | { kind: 'invalid'; message: string }
 
-/** Argumento de `/fausto-blood-pact lanzar`: vacio o `sequential` -> 1, `parallel` -> 2, `<n>` -> ese issue si es lanzable. */
+/** Argumento de `/fausto-blood-pact lanzar`: vacio o `sequential` -> 1, `parallel` -> 4, `<n>` -> ese issue si es lanzable. */
 export function parseLaunchArg(arg: string, list: BoardList): LaunchTarget {
   const a = arg.trim()
   if (a === '' || a === 'sequential') return { kind: 'launch', launch: 'sequential' }

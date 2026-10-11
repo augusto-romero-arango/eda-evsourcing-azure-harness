@@ -29,6 +29,7 @@ import {
   planLaunch,
   clip,
   footerRestOf,
+  launchCountOf,
   isMefistoManifest,
   nextOrderPath,
   RUNS_POLL_MS,
@@ -898,14 +899,15 @@ export const register: Register = on => {
       : cropGrid(waitingFace(face('normal'), isWorking ? sec : null), MASCOT_COLS)
     const version = await read($, versionAtom)
     const list = await read($, listAtom)
-    const listosText = list && !list.error ? ` · listos ${list.items.length}` : ''
+    const listosText = list && !list.error ? `listos ${list.items.length}` : ''
+    const headRoom = Math.max(8, inner - 20)
     const head = (state: string | null, key: string, stateColor?: string) => (
       <Text key={key} wrap="truncate-end">
         <Text color="claude">mefisto</Text>
-        <Text dimColor>{clip(listosText, Math.max(8, body - 8))}</Text>
+        {listosText && <Text dimColor>{` · ${clip(listosText, headRoom)}`}</Text>}
         {state && (
           <Text color={stateColor} dimColor={!stateColor}>
-            {clip(` · ${state}`, Math.max(8, body - 8 - listosText.length))}
+            {` · ${clip(state, Math.max(8, headRoom - listosText.length))}`}
           </Text>
         )}
       </Text>
@@ -938,10 +940,10 @@ export const register: Register = on => {
       const headColor = batch.state === 'failed' ? 'error' : batch.state === 'stopped' || batch.stopRequested ? 'warning' : undefined
       return (
         <Box flexDirection="column" borderStyle="round" borderColor="claude" borderDimColor paddingX={1}>
+          {head(`${batchHeader(batch, Date.now())}${running ? '' : ` · ${batch.state === 'completed' ? 'terminado' : batch.state === 'stopped' ? 'detenido' : 'con fallos'}`}`, 'pact-head', headColor)}
           <Box gap={2} alignItems="flex-start">
             {mascot}
             <Box flexDirection="column" width={body}>
-              {head(`${batchHeader(batch, Date.now())}${running ? '' : ` · ${batch.state === 'completed' ? 'terminado' : batch.state === 'stopped' ? 'detenido' : 'con fallos'}`}`, 'pact-head', headColor)}
               {running ? (
                 <>
                   <Text wrap="truncate-end">
@@ -1002,10 +1004,10 @@ export const register: Register = on => {
       const header = mergeRibbonHeader(ribbon, Date.now())
       return (
         <Box flexDirection="column" borderStyle="round" borderColor="claude" borderDimColor paddingX={1}>
+          {head(header, 'pact-head')}
           <Box gap={2} alignItems="flex-start">
             {mascot}
             <Box flexDirection="column" width={body}>
-              {head(header, 'pact-head')}
               {visible.map(p => (
                 <Text key={`m-${p.num}`} color={p.estado === 'mergeado' ? 'success' : p.estado === 'fallido' ? 'error' : undefined} dimColor={p.estado === 'pendiente'} wrap="truncate-end">
                   {mergeRibbonLine(p, body)}
@@ -1037,23 +1039,23 @@ export const register: Register = on => {
       const used = (bitacoraPr ? 1 : 0) + visible.length + (hidden > 0 ? 1 : 0) + (historian.notes.length === 0 ? 1 : 0)
       return (
         <Box flexDirection="column" borderStyle="round" borderColor="claude" borderDimColor paddingX={1}>
+          <Box justifyContent="space-between">
+            {historian.finishedMs
+              ? head(`bitácora escrita${bitacoraPr ? ` · PR #${bitacoraPr.number}` : ''}`, 'pact-head', 'success')
+              : head(historianHeader(historian, Date.now()), 'pact-head', 'warning')}
+            {bitacoraPr && (
+              <Box>
+                {withSeparators([
+                  <Button key="bitacora-merge" hotkey="1" plain dimColor label="mergear" onPress={() => void mergeBitacoraPr($)} />,
+                  <Button key="bitacora-web" hotkey="2" plain dimColor label="ver PR" onPress={() => void openBitacoraPr($)} />,
+                  <Button key="bitacora-close" hotkey="3" plain dimColor label="cerrar PR" onPress={() => void closeBitacoraPr($)} />,
+                ], Text)}
+              </Box>
+            )}
+          </Box>
           <Box gap={2} alignItems="flex-start">
             {mascot}
             <Box flexDirection="column" width={body}>
-              <Box justifyContent="space-between">
-                {historian.finishedMs
-                  ? head(`bitácora escrita${bitacoraPr ? ` · PR #${bitacoraPr.number}` : ''}`, 'pact-head', 'success')
-                  : head(historianHeader(historian, Date.now()), 'pact-head', 'warning')}
-                {bitacoraPr && (
-                  <Box>
-                    {withSeparators([
-                      <Button key="bitacora-merge" hotkey="1" plain dimColor label="mergear" onPress={() => void mergeBitacoraPr($)} />,
-                      <Button key="bitacora-web" hotkey="2" plain dimColor label="ver PR" onPress={() => void openBitacoraPr($)} />,
-                      <Button key="bitacora-close" hotkey="3" plain dimColor label="cerrar PR" onPress={() => void closeBitacoraPr($)} />,
-                    ], Text)}
-                  </Box>
-                )}
-              </Box>
               {bitacoraPr && <Text wrap="truncate-end">{clip(`PR #${bitacoraPr.number} ${bitacoraPr.title}`, body)}</Text>}
               {historian.notes.length === 0 && <Text dimColor>leyendo las field notes…</Text>}
               {visible.map(n => (
@@ -1078,10 +1080,10 @@ export const register: Register = on => {
       const visible = lines.slice(page * PAGE_ROWS, (page + 1) * PAGE_ROWS)
       return (
         <Box flexDirection="column" borderStyle="round" borderColor="claude" borderDimColor paddingX={1}>
+          {head(`corridas ${runs.length} activas`, 'pact-head')}
           <Box gap={2} alignItems="flex-start">
             {mascot}
             <Box flexDirection="column" width={body}>
-              {head(`corridas ${runs.length} activas`, 'pact-head')}
               {visible.map(l => (
                 <Text key={l.key} color={l.color} wrap="truncate-end">{clip(l.text, body)}</Text>
               ))}
@@ -1128,24 +1130,24 @@ export const register: Register = on => {
     const footerRest = list ? footerRestOf(list, Boolean(list.launch || list.parallel?.launch)) : ''
     return (
       <Box flexDirection="column" borderStyle="round" borderColor="claude" borderDimColor paddingX={1}>
+        <Box justifyContent="space-between">
+          {head(null, 'pact-head')}
+          {(workPrs.length > 0 || notesCount > 0) && (
+            <Box gap={2}>
+              {workPrs.length > 0 && (
+                <Button key="pact-open-prs" hotkey="2" plain dimColor label={`PRs ${workPrs.length}`}
+                  onPress={() => void mergeOpenPrs($)} />
+              )}
+              {notesCount > 0 && (
+                <Button key="pact-bitacora" hotkey="3" plain dimColor label={`bitácora ${notesCount}`}
+                  onPress={() => void chooseBitacora($)} />
+              )}
+            </Box>
+          )}
+        </Box>
         <Box gap={2} alignItems="flex-start">
           {mascot}
           <Box flexDirection="column" width={body}>
-            <Box justifyContent="space-between">
-              {head(null, 'pact-head')}
-              {(workPrs.length > 0 || notesCount > 0) && (
-                <Box gap={2}>
-                  {workPrs.length > 0 && (
-                    <Button key="pact-open-prs" hotkey="2" plain dimColor label={`PRs ${workPrs.length}`}
-                      onPress={() => void mergeOpenPrs($)} />
-                  )}
-                  {notesCount > 0 && (
-                    <Button key="pact-bitacora" hotkey="3" plain dimColor label={`bitácora ${notesCount}`}
-                      onPress={() => void chooseBitacora($)} />
-                  )}
-                </Box>
-              )}
-            </Box>
             {!list && <Text dimColor>cargando…</Text>}
             {list?.error && <Text color="error">next-order falló: {clip(list.error, body - 20)}</Text>}
             {list && !list.error && visible.length === 0 && <Text dimColor>Sin issues en estado:listo.</Text>}
@@ -1168,18 +1170,18 @@ export const register: Register = on => {
               <Box>
                 <Text dimColor wrap="truncate-end">{resultsFooterText(results, Math.max(12, body - 12))}</Text>
                 <Text dimColor> · </Text>
-                <Button key="pact-dismiss" hotkey="4" plain dimColor label="ocultar" onPress={() => void dismissResults($)} />
+                <Button key="pact-dismiss-rest" plain dimColor label="ocultar" onPress={() => void dismissResults($)} />
               </Box>
             )}
             <Box justifyContent="space-between">
               <Box>
                 {withSeparators([
                   list?.launch && (
-                    <Button key="pact-sequential" hotkey="1" plain dimColor label="sequential"
+                    <Button key="pact-sequential" hotkey="1" plain dimColor label={`sequential ${launchCountOf(list.launch)}`}
                       onPress={() => void launchKey($, 'sequential')} />
                   ),
                   list?.parallel?.launch && (
-                    <Button key="pact-parallel" hotkey="p" plain dimColor label={`parallel ${list.parallel.issues.length}`}
+                    <Button key="pact-parallel" hotkey="4" plain dimColor label={`parallel ${list.parallel.issues.length}`}
                       onPress={() => void launchKey($, 'parallel')} />
                   ),
                 ], Text)}
