@@ -109,6 +109,10 @@ por fragmento en `changelog.d/<issue>.adr-index.md`.
 - **Red de seguridad `pre-push`** (issue #2110): `src/internal/githooks/pre-push` (activado por `ensure_githooks_installed` vía `core.hooksPath`) desvía un push directo a `main`/`master` a una rama `rescate/<fecha>-<sha>` con su PR, anota los SHAs en `.mefisto/pipeline/rescued-main.txt` y rechaza solo ese push. Detrás está el ruleset `main` de GitHub (`.github/rulesets/main.json`): PR obligatorio, sin force-push, sin borrado y sin bypass, así que ni `git push --no-verify` llega a `main`; todo cambio entra por PR.
 - **Los cambios notables se anotan como fragmento en `changelog.d/`, nunca editando `CHANGELOG.md` ni el índice temático de ADRs (`docs/adr/INDICE-TEMATICO.md`)** (issue #380). Un archivo por issue (`changelog.d/<issue>.<categoria>.md`, y `changelog.d/<issue>.adr-index.md` si el issue toca `docs/adr/`); ver `changelog.d/README.md`. Editar esos dos archivos-índice por-PR es la contención que colisionaba entre PRs paralelos: sólo `/mefisto-release` los consolida, y sólo en su rama de release.
 
+### Mods
+
+- **Paridad con el par** (MEF-ADR-0055 decisión 11): antes de cambiar un mod, estudia cómo lo resuelve su par del otro lado (tablero o consola, interno o publicado) y propón sobre ese patrón: ubicación de menús, lo que ve el usuario, cómo se pide input, teclas y mascota. Apartarse es una decisión explícita, no un descuido.
+
 ### Código C#
 
 - **Caracteres prohibidos en `.cs`**: nunca `─` (U+2500) ni decorativos Unicode. Solo guión ASCII `-`.

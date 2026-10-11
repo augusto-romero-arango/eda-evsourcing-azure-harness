@@ -76,6 +76,19 @@ Mefisto es un harness, no un producto desplegable:
 
 ---
 
+## Mods: paridad con el par
+
+Cuando la idea o el borrador toca un mod (MEF-ADR-0055, en cualquiera de sus dos ubicaciones, decision 4), en cualquier modo (explorar, desglosar, refinar):
+
+1. Identifica su par en la tabla de MEF-ADR-0055 decision 11 (tablero del planner o consola de operacion, interno o publicado).
+2. Antes de proponer, estudia el par: su README y la parte de su `register.tsx` que resuelve lo mismo. Anota como resuelve cada dimension de experiencia de la decision 11.
+3. Propone sobre el patron del par. Si conviene apartarse, preguntalo con la herramienta de preguntas, con la opcion alineada al par como recomendada.
+4. Deja el resultado en la seccion `## Referencia del par` del issue (ver el template).
+
+Una capacidad exclusiva de un lado no tiene par: dilo en esa seccion en vez de inventar una referencia.
+
+---
+
 ## Preguntas al usuario
 
 Cuando necesites que el usuario decida entre opciones, usa la herramienta de preguntas del runtime en vez de escribir la pregunta en el mensaje (MEF-ADR-0050):
@@ -228,6 +241,7 @@ Antes de proponer el paso a `estado:listo` (que solo se aplica tras la confirmac
 - **CAs verificables**: cada CA tiene una verificacion concreta (no "queda mejor" sino "skill X aborta con mensaje Y cuando cwd no es Mefisto").
 - **Decisiones cerradas** (MEF-ADR-0011): sin `## Preguntas abiertas` ni decisiones diferidas al implementador.
 - **Si el cambio afecta ambos lados (publicado e interno)**, verificar que el sub-issue no se quedo con un lado huerfano sin consumidor.
+- **Si toca un mod**: `## Referencia del par` cubre cada dimension que el cambio afecta, sin divergencias implicitas (ver "Mods: paridad con el par").
 
 Frase guia:
 
@@ -273,6 +287,9 @@ Enumera ADRs del marco que apliquen (nombre + descripcion breve). Si el cambio m
 ## Criterios de aceptacion
 - [ ] CA-1: [criterio verificable]
 - [ ] CA-2: [criterio verificable]
+
+## Referencia del par
+[Solo si toca un mod (ver "Mods: paridad con el par"). Una linea por dimension que el cambio afecta: `igual a <par>: <como>`, `diverge: <que y por que>` o `sin par` (capacidad exclusiva de este lado).]
 
 ## Notas tecnicas
 [Referencias al codigo existente, patrones a reutilizar, consideraciones]
