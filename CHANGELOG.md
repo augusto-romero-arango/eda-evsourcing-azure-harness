@@ -4,6 +4,12 @@ Todo cambio notable a este proyecto se documenta aquí. Sigue [Keep a Changelog]
 
 ## [Unreleased]
 
+## [0.48.1] - 2026-10-11
+
+### Fixed
+
+- `fausto-blood-pact` vuelve a dibujar la cinta con un sequential terminado: pedia la pose inexistente `desarrollador.aprobado` y cada render lanzaba; ahora el lote terminado es el revisor aprobado, como la cinta interna (issue #2328).
+
 ## [0.48.0] - 2026-10-11
 
 ### Added
@@ -3457,7 +3463,8 @@ Y reemplazar referencias en `CLAUDE.md` del proyecto: `/eda-evsourcing-azure-har
 - Los agentes `reviewer` e `implementer` mantienen el placeholder literal `ADR-XXXX` en sus plantillas de reporte (no es un bug; el agente lo sustituye en tiempo de ejecución por el número real del ADR aplicable).
 - Los ejemplos de código en `test-writer.md`, `implementer.md` y `smoke-test-writer.md` conservan nombres concretos de un proyecto consumidor (`Programacion`, `ControlHoras`) anotados en el "Contrato con el consumidor" de cada agente como ejemplos pedagógicos.
 
-[Unreleased]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.48.0...HEAD
+[Unreleased]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.48.1...HEAD
+[0.48.1]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.48.0...v0.48.1
 [0.48.0]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.47.1...v0.48.0
 [0.47.1]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.47.0...v0.47.1
 [0.47.0]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.46.5...v0.47.0
