@@ -173,7 +173,15 @@ Los mods de ambos lados no comparten codigo (MEF-ADR-0019), pero no deben diverg
 | Tablero del planner | `mefisto-planner-board` | `fausto-board` |
 | Consola de operacion | `mefisto-divine-wager` | `fausto-blood-pact` |
 
-- **Referencia**: al construir o cambiar en un mod una capacidad que su par ya tiene, el comportamiento visual y funcional del par es la referencia: mascota y poses por momento, teclas, forma de la banda y textos. Apartarse de la referencia es una decision explicita del issue, no un descuido.
+- **Referencia**: al construir o cambiar en un mod una capacidad que su par ya tiene, el comportamiento visual y funcional del par es la referencia en cada dimension de la experiencia:
+  - **Ubicacion**: donde viven los menus y las acciones (cabecera, pie, menu de arriba a la derecha) y en que orden.
+  - **Lo que ve el usuario**: informacion, conteos, estados y textos de la banda y del pane.
+  - **Como se pide input**: tecla en la banda, dialogo nativo para confirmar, subcomando como respaldo.
+  - **Teclas**: los digitos y lo que hace cada uno.
+  - **Mascota**: rol y pose por momento, y su animacion.
+
+  Apartarse de la referencia es una decision explicita del issue, no un descuido.
+- **Estudiar el par antes de proponer**: quien disena un cambio a un mod (el planner al refinar o una sesion de trabajo directo) lee primero como lo resuelve su par -- su README y la parte de su `register.tsx` que hace lo mismo -- y propone sobre ese patron. Una divergencia se decide con el usuario y queda escrita en el issue.
 - **Referencia, no sincronizacion**: un cambio en un mod no obliga a cambiar su par ni a abrir un issue espejo. Las capacidades exclusivas de un lado no tienen par: historiador y release en el interno, issues del reviewer en el publicado.
 - **Identidad visual por lado**: Mefisto es rojo en lo publicado (paleta de `hooks/sprites.ts`) y blanco perla con cuernos dorados en lo interno (paleta de los mods de `.claude/mods/`). Fausto viste la tunica del color del Mefisto de su lado: roja en lo publicado y blanco perla con ribete dorado en lo interno (`T` y `d` de la paleta de cada lado).
 
@@ -186,6 +194,7 @@ Los mods de ambos lados no comparten codigo (MEF-ADR-0019), pero no deben diverg
 
 ## Control de cambios
 
+- 2026-10-11: decision 11: la referencia del par se precisa por dimension de experiencia (ubicacion, lo que ve el usuario, como se pide input, teclas, mascota) y se anade el deber de estudiar el par antes de proponer (issue #2322).
 - 2026-10-09: decision 11 nueva (experiencia de referencia entre pares: referencia y no sincronizacion, identidad visual por lado); decision 8: los tableros son independientes en codigo y la tabla de diferencias es de mecanica, no de experiencia; decision 10 remite a la 11 (issue #2192).
 - 2026-10-09: decision 10 (ubicacion): la consola no es una segunda entrada de `modules` -- el runtime la rechaza --; un punto de entrada `hooks/index.tsx` compone tablero y consola (issue #2180).
 - 2026-10-09: decision 10 nueva (consola publicada `fausto-blood-pact`: activacion, ubicacion, independencia y regla incremental); "Aplica a" y "Que queda fuera de este ADR" la incluyen; decision 9 retira "nombre reservado: no existe todavia" (issue #2179).
