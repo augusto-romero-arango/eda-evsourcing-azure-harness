@@ -10,7 +10,7 @@ Se activa sola en una sesión **interactiva** del proyecto consumidor. No se act
 - una sesión no interactiva (`-p`),
 - el repo de Mefisto (manifiesto `name: mefisto`).
 
-La cinta de merge escucha `classic.UserPromptSubmit` y `classic.Stop`, no `prompt.submit`/`turn.complete`: esos dos sin matcher los registra el tablero y el engine rechaza el módulo si se registran dos veces (#2294).
+La cinta de merge sigue la llamada Bash a `pr-sync.sh` con `tool.call`, no `prompt.submit`/`turn.complete` ni `classic.*`: los dos primeros sin matcher los registra el tablero y el engine rechaza el módulo si se registran dos veces (#2294), y el plugin carga en tier user, que no recibe `classic.*` (#2302).
 
 Comandos: `/fausto-blood-pact on` | `off` | `refresh` | `ocultar`. `on`/`off` sobreviven a `/clear`: un vigilante de un segundo (`$.clock.every`, armado una vez en `session.start`) compara la intención guardada en variables del módulo con el atom y reactiva la banda si la consola es elegible y no está apagada, porque `/clear` reinicia el estado sin disparar `session.start` y el engine no entrega `classic.*` a un plugin de tier user. El render no escribe estado (el engine lo rechaza); el vigilante corre desde el reloj y pide `ui.invalidate('ui.render')` tras rearmar.
 
@@ -91,10 +91,10 @@ Fuera de alcance: el log acumulado del lote (queda para el incremento de log en 
 
 ## Capacidad vigente (incremento 8): la cinta de merge en vivo
 
-Al enviar `/mefisto:merge <args>` (escrito a mano, con la tecla `3`, con la `1` o con `/fausto-blood-pact merge`), la banda pasa a la cinta de merge mientras `pr-sync.sh` trabaja. Con `--all`, la lista sale de `gh pr list --state open` al arrancar.
+Cuando el agente lanza `pr-sync.sh <PRs> --merge` (o `--all --merge`) tras un `/mefisto:merge` escrito a mano, o la cinta ya arrancó con la tecla `3`, la `1` o `/fausto-blood-pact merge`, la banda pasa a la cinta de merge mientras `pr-sync.sh` trabaja. La detección es la función pura `mergeRunArgsOf`, que lee solo los tokens tras `pr-sync.sh` (hasta `;`, `&&`, `||` o `|`) y exige `--merge`; una cinta ya arrancada por teclas se adopta, no se duplica. Con `--all`, la lista sale de `gh pr list --state open` al arrancar.
 
 - Cabecera `merge N/M · Mm` (N cuenta los mergeados), una fila por PR (`· #12 título` pendiente, `✓` mergeado, `✗ no mergeado`) y la mascota en pose `cosiendo` (sprite `merge`), a un cuadro por segundo.
 - `pr-sync.sh` corre en una sola llamada Bash, así que el avance sale del sondeo: cada 5 s `gh pr view <n> --json state` de los pendientes; un `MERGED` pasa a `✓`.
-- Al terminar el turno del merge (`classic.Stop`) se hace un último sondeo; lo que siga pendiente queda `✗ no mergeado`, la mascota pasa a `listo` y un toast resume `N mergeados · M fallidos`.
+- Al volver la llamada a `pr-sync.sh` (también si falla o se deniega) se hace un último sondeo; lo que siga pendiente queda `✗ no mergeado`, la mascota pasa a `listo` y un toast resume `N mergeados · M fallidos`. Red de seguridad: una cinta arrancada por teclas que no ve su `pr-sync.sh` en 60 s la cierra el reloj de 1 s.
 - La cinta terminada se oculta sola a los 15 s (se calcula al dibujar con `now - finishedMs`, sin escribir estado desde el render); `4 cerrar` la oculta antes.
 - Precedencia de la banda: lote de `sequential`, cinta de merge, corridas y reposo. El estado vive en `$.state` (atom `pactMerge`); no lee ni escribe `.mefisto/pipeline/`.
