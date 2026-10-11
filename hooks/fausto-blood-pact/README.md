@@ -26,7 +26,7 @@ Estado en `PluginState['mefisto']` con claves de prefijo `pact` (`pactIsActive`,
 
 ## Capacidad vigente (incremento 2): seguir corridas
 
-Las corridas toman la banda solo mientras haya al menos una activa (`running` o `hold`): muestra las del repo (todas, no solo las lanzadas por la sesión), una línea por corrida. Sin activas se ven los listos con todas sus teclas, y los resultados sin ocultar quedan en una línea al pie: `resultados: ✓#N PR #X · ✗#M <stage> · 4 ocultar` (recortada al ancho, con `+N`).
+Las corridas toman la banda solo mientras haya al menos una activa (`running` o `hold`): muestra las del repo (todas, no solo las lanzadas por la sesión), una línea por corrida. Sin activas se ven los listos con todas sus teclas, y los resultados sin ocultar quedan en una línea al pie: `resultados: ✓#N PR #X · ✗#M <stage> · 4: ocultar` (recortada al ancho, con `+N`).
 
 - Lee solo de `.mefisto/pipeline/` (la ruta legada `.claude/pipeline/` se ignora, MEF-ADR-0053) `pipeline-status-{tdd,tooling,infra}-<n>[-<variante>].json` del checkout principal (`git rev-parse --git-common-dir`, aunque la sesión esté en un worktree). `running`: `#N pipeline agente Mm`; `hold`: `rate limit · sonda HH:MM`.
 - Resultados: `✗ <stage>` para `failed`/`blocked`/`gaps`; `✓ PR #X` cuando desaparece el status de una corrida que la sesión vio activa (PR leído de `pipeline-history.jsonl`).
@@ -40,7 +40,7 @@ Con la lista de listos visible y el prompt vacío (con la banda mostrando corrid
 - `1`: línea de `/mefisto:sequential` (sin infra). `2`: línea del lote `/mefisto:parallel`. Con la línea en `null` la tecla no se muestra ni actúa.
 - Con `tipo:infra` lanzables, `1` y `2` abren un diálogo (`$.ui.ask`): "Infra primero" (`/mefisto:infra <primer infra>`), "Seguir sin infra" o "Cancelar". Cerrar el diálogo o un texto libre no escriben nada.
 - `5`-`9`: el issue de esa fila (prefijo `5:`…`9:`) con diálogo por `tipo`: `feature`/`refactor`/`projection` -> "Con merge" (`/mefisto:sequential <n>`) o "Solo PR" (`/mefisto:implement <n>`); `tooling` -> "Con merge" o "Solo PR" (`/mefisto:tooling <n>`); `infra` -> solo "Solo PR" (`/mefisto:infra <n>`). Sin tipo lanzable, un toast lo avisa.
-- Pie: `1 sequential · 2 parallel N · 5-9 uno`, `infra: #N` y los bloqueados/en ciclo.
+- Pie: `1: sequential · 2: parallel N · 3: PRs N · 5-9 uno`, `infra: #N` y los bloqueados/en ciclo.
 - `/fausto-blood-pact lanzar [sequential|parallel|<n>]`: lo mismo sin teclas; sin argumento equivale a `1`.
 
 Fuera de alcance: lanzar sin pasar por el prompt y mergear PRs.
@@ -61,7 +61,7 @@ Anima solo mientras hay corrida activa o Claude trabaja. Es lectura pura de stat
 
 ## Capacidad vigente (incremento 5): mergear el PR de una corrida terminada
 
-Con la banda en corridas y al menos un `✓ PR #X`, el pie suma `1 mergear · 2 ver PR` a `4 ocultar` y `0` página. Sin `✓` con PR (o solo `✗`) las teclas no se muestran ni actúan.
+Con la banda en corridas y al menos un `✓ PR #X`, el pie suma `1: mergear · 2: ver PR` a `4: ocultar` y `0` página. Sin `✓` con PR (o solo `✗`) las teclas no se muestran ni actúan.
 
 - `1`: con un solo `✓`, confirma con `$.ui.ask` ("Mergear #X" / "Cancelar") y ejecuta `/mefisto:merge <pr>` con `$.command.run`, anunciado con un toast. Con varios, selección múltiple: "Todos" y hasta 3 PRs más recientes (los demás números, en la opción de texto). Se pasan solo los números de los `✓`, nunca `--all`. Cancelar o no elegir no ejecuta nada. La confirmación del diálogo es la única.
 - `2`: `gh pr view <pr> --web`; con varios `✓`, pregunta cuál.
@@ -72,7 +72,7 @@ Fuera de alcance: mergear PRs que la sesión no vio terminar y resolver comentar
 
 ## Capacidad vigente (incremento 6): mergear PRs abiertos desde el reposo
 
-En reposo (lanzables visibles), si hay PRs abiertos, el pie suma `3 PRs N` (`gh pr list --state open`, sin borradores pero con los de field notes `docs/planner-field-notes-*`; se refresca con los listos y tras cada merge). Sin PRs abiertos el botón no aparece.
+En reposo (lanzables visibles), si hay PRs abiertos, el pie suma `3: PRs N` (`gh pr list --state open`, sin borradores pero con los de field notes `docs/planner-field-notes-*`; se refresca con los listos y tras cada merge). Sin PRs abiertos el botón no aparece.
 
 - `3`: con un solo PR, `$.ui.ask` con `#N título` y "Cancelar"; con varios, selección múltiple: "Todos" y los 3 más recientes (otros números, en la opción de texto). Ejecuta `/mefisto:merge` con `$.command.run`, anunciado con un toast. "Todos" ejecuta `/mefisto:merge --all` (`pr-sync.sh --all` toma todo PR abierto, borradores incluidos). Cancelar o no elegir no ejecuta nada.
 - `/fausto-blood-pact prs`: lo mismo sin teclas.
@@ -96,5 +96,5 @@ Cuando el agente lanza `pr-sync.sh <PRs> --merge` (o `--all --merge`) tras un `/
 - Cabecera `merge N/M · Mm` (N cuenta los mergeados), una fila por PR (`· #12 título` pendiente, `✓` mergeado, `✗ no mergeado`) y la mascota en pose `cosiendo` (sprite `merge`), a un cuadro por segundo.
 - `pr-sync.sh` corre en una sola llamada Bash, así que el avance sale del sondeo: cada 5 s `gh pr view <n> --json state` de los pendientes; un `MERGED` pasa a `✓`.
 - Al volver la llamada a `pr-sync.sh` (también si falla o se deniega) se hace un último sondeo; lo que siga pendiente queda `✗ no mergeado`, la mascota pasa a `listo` y un toast resume `N mergeados · M fallidos`. Red de seguridad: una cinta arrancada por teclas que no ve su `pr-sync.sh` en 60 s la cierra el reloj de 1 s.
-- La cinta terminada se oculta sola a los 15 s (se calcula al dibujar con `now - finishedMs`, sin escribir estado desde el render); `4 cerrar` la oculta antes.
+- La cinta terminada se oculta sola a los 15 s (se calcula al dibujar con `now - finishedMs`, sin escribir estado desde el render); `4: cerrar` la oculta antes.
 - Precedencia de la banda: lote de `sequential`, cinta de merge, corridas y reposo. El estado vive en `$.state` (atom `pactMerge`); no lee ni escribe `.mefisto/pipeline/`.

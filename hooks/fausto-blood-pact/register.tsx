@@ -793,16 +793,18 @@ export const register: Register = on => {
               ))}
               <Box justifyContent="space-between">
                 <Box>
-                  {canStopBatch(batch) && (
-                    <Button key="batch-stop" hotkey="1" plain dimColor label="1 detener" onPress={() => void confirmStop($)} />
-                  )}
-                  {pr && (
-                    <Button key="batch-pr" hotkey="2" plain dimColor label={`${canStopBatch(batch) ? ' · ' : ''}2 ver PR #${pr}`}
-                      onPress={() => void viewBatchPr($)} />
-                  )}
-                  {!running && (
-                    <Button key="batch-close" hotkey="4" plain dimColor label={`${pr ? ' · ' : ''}4 cerrar`} onPress={() => void closeBatch($)} />
-                  )}
+                  {withSeparators([
+                    canStopBatch(batch) && (
+                      <Button key="batch-stop" hotkey="1" plain dimColor label="detener" onPress={() => void confirmStop($)} />
+                    ),
+                    pr && (
+                      <Button key="batch-pr" hotkey="2" plain dimColor label={`ver PR #${pr}`}
+                        onPress={() => void viewBatchPr($)} />
+                    ),
+                    !running && (
+                      <Button key="batch-close" hotkey="4" plain dimColor label="cerrar" onPress={() => void closeBatch($)} />
+                    ),
+                  ], Text)}
                   <Text dimColor>{others ? ` · ${others}` : ''}{c.failed > 0 && running ? ` · ${c.failed} ✗` : ''}</Text>
                 </Box>
                 {pages > 1 && !running && (
@@ -839,7 +841,7 @@ export const register: Register = on => {
               ))}
               <Box>
                 {finished ? (
-                  <Button key="merge-close" hotkey="4" plain dimColor label="4 cerrar" onPress={() => void closeMerge($)} />
+                  <Button key="merge-close" hotkey="4" plain dimColor label="cerrar" onPress={() => void closeMerge($)} />
                 ) : (
                   <Text dimColor> </Text>
                 )}
@@ -872,16 +874,18 @@ export const register: Register = on => {
               <Box justifyContent="space-between">
                 {results.length > 0 ? (
                   <Box>
-                    {hasPrs && (
-                      <Button key="pact-merge" hotkey="1" plain dimColor label="1 mergear"
-                        onPress={() => void mergePrs($)} />
-                    )}
-                    {hasPrs && (
-                      <Button key="pact-view-pr" hotkey="2" plain dimColor label=" · 2 ver PR"
-                        onPress={() => void viewPr($)} />
-                    )}
-                    <Button key="pact-dismiss" hotkey="4" plain dimColor label={`${hasPrs ? ' · ' : ''}4 ocultar`}
-                      onPress={() => void dismissResults($)} />
+                    {withSeparators([
+                      hasPrs && (
+                        <Button key="pact-merge" hotkey="1" plain dimColor label="mergear"
+                          onPress={() => void mergePrs($)} />
+                      ),
+                      hasPrs && (
+                        <Button key="pact-view-pr" hotkey="2" plain dimColor label="ver PR"
+                          onPress={() => void viewPr($)} />
+                      ),
+                      <Button key="pact-dismiss" hotkey="4" plain dimColor label="ocultar"
+                        onPress={() => void dismissResults($)} />,
+                    ], Text)}
                   </Box>
                 ) : (
                   <Text dimColor> </Text>
@@ -931,24 +935,26 @@ export const register: Register = on => {
             {results.length > 0 && (
               <Box>
                 <Text dimColor wrap="truncate-end">{resultsFooterText(results, Math.max(12, body - 12))}</Text>
-                <Button key="pact-dismiss" hotkey="4" plain dimColor label=" · 4 ocultar" onPress={() => void dismissResults($)} />
+                <Text dimColor> · </Text>
+                <Button key="pact-dismiss" hotkey="4" plain dimColor label="ocultar" onPress={() => void dismissResults($)} />
               </Box>
             )}
             <Box justifyContent="space-between">
               <Box>
-                {list?.launch && (
-                  <Button key="pact-sequential" hotkey="1" plain dimColor label="1 sequential"
-                    onPress={() => void launchKey($, 'sequential')} />
-                )}
-                {list?.parallel?.launch && (
-                  <Button key="pact-parallel" hotkey="2" plain dimColor label={`${list.launch ? ' · ' : ''}2 parallel ${list.parallel.issues.length}`}
-                    onPress={() => void launchKey($, 'parallel')} />
-                )}
-                {openPrs.length > 0 && (
-                  <Button key="pact-open-prs" hotkey="3" plain dimColor
-                    label={`${list?.launch || list?.parallel?.launch ? ' · ' : ''}3 PRs ${openPrs.length}`}
-                    onPress={() => void mergeOpenPrs($)} />
-                )}
+                {withSeparators([
+                  list?.launch && (
+                    <Button key="pact-sequential" hotkey="1" plain dimColor label="sequential"
+                      onPress={() => void launchKey($, 'sequential')} />
+                  ),
+                  list?.parallel?.launch && (
+                    <Button key="pact-parallel" hotkey="2" plain dimColor label={`parallel ${list.parallel.issues.length}`}
+                      onPress={() => void launchKey($, 'parallel')} />
+                  ),
+                  openPrs.length > 0 && (
+                    <Button key="pact-open-prs" hotkey="3" plain dimColor label={`PRs ${openPrs.length}`}
+                      onPress={() => void mergeOpenPrs($)} />
+                  ),
+                ], Text)}
                 <Text dimColor>{footerRest}</Text>
               </Box>
               {pages > 1 && (
@@ -961,4 +967,10 @@ export const register: Register = on => {
       </Box>
     )
   })
+}
+
+/** Intercala ` · ` (fuera de los botones) solo entre elementos visibles; descarta los falsos. */
+function withSeparators(items: unknown[], Text: any): unknown[] {
+  const shown = items.filter(Boolean)
+  return shown.flatMap((el, i) => (i === 0 ? [el] : [<Text key={`sep-${i}`} dimColor> · </Text>, el]))
 }
