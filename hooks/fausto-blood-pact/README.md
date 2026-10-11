@@ -12,7 +12,7 @@ Se activa sola en una sesión **interactiva** del proyecto consumidor. No se act
 
 La cinta de merge escucha `classic.UserPromptSubmit` y `classic.Stop`, no `prompt.submit`/`turn.complete`: esos dos sin matcher los registra el tablero y el engine rechaza el módulo si se registran dos veces (#2294).
 
-Comandos: `/fausto-blood-pact on` | `off` | `refresh` | `ocultar`. `on`/`off` sobreviven a `/clear`: un hook `classic.SessionStart` (`source` `clear`, `resume` o `fork`) reactiva la banda si la consola es elegible y no está apagada, porque `/clear` reinicia el estado sin disparar `session.start`. El render no escribe estado (el engine lo rechaza); `session.start` pide `ui.invalidate('ui.render')` tras activar para que la banda aparezca sola al arrancar.
+Comandos: `/fausto-blood-pact on` | `off` | `refresh` | `ocultar`. `on`/`off` sobreviven a `/clear`: un vigilante de un segundo (`$.clock.every`, armado una vez en `session.start`) compara la intención guardada en variables del módulo con el atom y reactiva la banda si la consola es elegible y no está apagada, porque `/clear` reinicia el estado sin disparar `session.start` y el engine no entrega `classic.*` a un plugin de tier user. El render no escribe estado (el engine lo rechaza); el vigilante corre desde el reloj y pide `ui.invalidate('ui.render')` tras rearmar.
 
 Si al arrancar no se puede leer la línea de comando de Claude Code y el transcript aún no existe, la consola arranca y reintenta la detección del planner en cada refresco; si resulta ser el planner, se apaga.
 

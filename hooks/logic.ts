@@ -321,3 +321,8 @@ export function versionLabel(manifestRaw: string | null | undefined, pluginRaw: 
   const version = semverOf(manifestRaw) ?? semverOf(pluginRaw)
   return version === null ? null : `v${version}`
 }
+
+/** Rearme tras /clear, /resume o /branch: el modulo quiere el mod activo (elegible y no apagado) pero el atom quedo en blanco. */
+export function shouldRearm(s: { isEligible: boolean; isWanted: boolean; isActive: boolean }): boolean {
+  return s.isEligible && s.isWanted && !s.isActive
+}
