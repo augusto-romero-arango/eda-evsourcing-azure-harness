@@ -1,6 +1,6 @@
 import type { Role } from '../sprites'
 import { padEnd, reasonOf, typeBadge } from '../logic'
-import type { BoardItem, BoardList, PactMerge, PactMergePr, PipelineKind, PipelineResult, PipelineRun } from '../types'
+import type { BitacoraNote, BitacoraPr, BoardItem, BoardList, Historian, PactMerge, PactMergePr, PipelineKind, PipelineResult, PipelineRun } from '../types'
 
 export const NEXT_ORDER_FILE = 'scripts/next-order.sh'
 export const PLANNER_AGENT = 'mefisto:planner'
@@ -615,9 +615,15 @@ export function mergeToast(args: string, prs: ResultPr[]): string {
 // ---- Incremento 6: mergear PRs abiertos desde el reposo (decision 11: referencia de experiencia) ----
 export const OPEN_PRS_ARGS = ['pr', 'list', '--state', 'open', '--limit', '100', '--json', 'number,title,isDraft,headRefName']
 
-export type OpenPr = { number: string; title: string }
+export type OpenPr = { number: string; title: string; isFieldNote: boolean }
 
-/** PRs abiertos que no son borradores (field notes incluidas); el mas reciente (numero mayor) primero. Vacio si no es JSON. */
+/** Rama de los PRs de field notes del planner: `docs/planner-field-notes-*`. */
+export const isFieldNoteBranch = (branch: string): boolean => /^docs\/planner-field-notes-/.test(branch)
+
+/** Los PRs que cuenta `2: PRs N`: los de field notes vuelven a la bitacora. */
+export const workPrsOf = (prs: readonly OpenPr[]): OpenPr[] => prs.filter(p => !p.isFieldNote)
+
+/** PRs abiertos que no son borradores (field notes marcadas con `isFieldNote`); el mas reciente (numero mayor) primero. Vacio si no es JSON. */
 export function parseOpenPrs(raw: string): OpenPr[] {
   let rows: unknown
   try {
@@ -629,7 +635,11 @@ export function parseOpenPrs(raw: string): OpenPr[] {
   const out: OpenPr[] = []
   for (const r of rows as Record<string, unknown>[]) {
     if (!r || typeof r.number !== 'number' || r.isDraft === true) continue
-    out.push({ number: String(r.number), title: typeof r.title === 'string' ? r.title : '' })
+    out.push({
+      number: String(r.number),
+      title: typeof r.title === 'string' ? r.title : '',
+      isFieldNote: typeof r.headRefName === 'string' && isFieldNoteBranch(r.headRefName),
+    })
   }
   return out.sort((a, b) => Number(b.number) - Number(a.number))
 }
@@ -930,4 +940,106 @@ export function isMergeRibbonExpired(run: PactMerge | null, nowMs: number): bool
 /** Precedencia de la banda: el lote de sequential primero, luego la cinta de merge vigente, luego corridas y reposo. */
 export function mergeRibbonShown(batch: BatchStatus | null, run: PactMerge | null, nowMs: number): PactMerge | null {
   return batch === null && run !== null && !isMergeRibbonExpired(run, nowMs) ? run : null
+}
+
+// ---- Incremento 9: la bitacora (boton `3: bitacora N` y la cinta del historiador) ----
+export const HISTORIAN_DONE_MS = 8_000
+export const NOTES_POLL_MS = 3_000
+export const FIELD_NOTES_DIR = 'docs/bitacora/field-notes'
+export const PROCESSED_NOTES_DIR = `${FIELD_NOTES_DIR}/procesadas`
+export const BITACORA_PR_ARGS = ['pr', 'list', '--state', 'open', '--limit', '50', '--json', 'number,title,headRefName,files']
+const AGENT_ACTIVE = new Set(['pending', 'running', 'waiting'])
+
+/** El tipo del agente lleva el prefijo del plugin (`mefisto:historiador`); se acepta con o sin el. */
+export const isHistorianType = (type: string): boolean => /(^|:)historiador$/.test(type)
+
+/** Un agente de `$.agent.list()` que aun no termina. */
+export const isAgentActive = (status: string): boolean => AGENT_ACTIVE.has(status)
+
+/** Field notes `.md` de `docs/bitacora/field-notes/` (sin bajar a `procesadas/`). */
+export function fieldNotesIn(names: readonly string[]): number {
+  return names.filter(n => n.endsWith('.md')).length
+}
+
+/** N de `3: bitacora N`: las field notes de main mas los PRs de field notes abiertos. */
+export const bitacoraCount = (fieldNotes: number | null, prs: readonly OpenPr[]): number => (fieldNotes ?? 0) + prs.filter(p => p.isFieldNote).length
+
+/** Pregunta del dialogo de integrar la bitacora. */
+export function bitacoraQuestion(local: number, prCount: number): string {
+  return `¿Integrar la bitácora? ${local} field notes en main${prCount > 0 ? ` y ${prCount} en PRs sin mergear` : ''}`
+}
+
+export const bitacoraIntegrateLabel = (prCount: number): string => (prCount > 0 ? `Mergear sus ${prCount} PRs e integrar` : 'Integrar')
+
+/** El prompt de usuario: mergear los PRs de field notes, traer main al dia y correr /mefisto:bitacora. */
+export function bitacoraPrompt(fieldNotePrs: readonly (number | string)[]): string {
+  const merge = fieldNotePrs.length > 0
+    ? `mergea los PRs de field notes ${fieldNotePrs.map(n => `#${n}`).join(' ')} con /mefisto:merge, `
+    : ''
+  return `Integra la bitacora: ${merge}pon el checkout en main al dia (git switch main && git pull --ff-only) y luego corre /mefisto:bitacora.`
+}
+
+/** Estado de la cinta del historiador; `prev` tal cual si nada cambio. */
+export function historianFrom(prev: Historian | null, active: boolean, now: number): Historian | null {
+  if (active) return prev && !prev.finishedMs ? prev : { startedMs: now, finishedMs: null, notes: [], pr: null }
+  return prev && !prev.finishedMs ? { ...prev, finishedMs: now } : prev
+}
+
+/** Terminada hace mas de `HISTORIAN_DONE_MS` (sin PR esperando al usuario) la cinta no existe; en curso nunca vence. */
+export function liveHistorian(h: Historian | null, nowMs: number): Historian | null {
+  if (!h || !h.finishedMs || h.pr) return h
+  return nowMs - h.finishedMs > HISTORIAN_DONE_MS ? null : h
+}
+
+const FIELD_NOTE_PATH = /^docs\/bitacora\/field-notes\/([^/]+\.md)$/
+
+/** Field notes a integrar: las locales (`.md`) y las de las rutas de los PRs de field notes, sin repetir. */
+export function fieldNoteNamesOf(local: readonly string[], prPaths: readonly string[]): string[] {
+  const fromPrs = prPaths.map(p => FIELD_NOTE_PATH.exec(p)?.[1]).filter((n): n is string => !!n)
+  return [...new Set([...local.filter(n => n.endsWith('.md')), ...fromPrs])].sort()
+}
+
+export const pendingNotes = (names: readonly string[]): BitacoraNote[] => names.map(name => ({ name, estado: 'pendiente' }))
+
+/** Pasa a procesada cada nota que ya aparece en `procesadas/`; `h` tal cual si nada cambio. */
+export function withProcessedNotes<T extends { notes: BitacoraNote[] }>(h: T, processed: readonly string[]): T {
+  const done = new Set(processed)
+  if (!h.notes.some(n => n.estado === 'pendiente' && done.has(n.name))) return h
+  return { ...h, notes: h.notes.map(n => (n.estado === 'pendiente' && done.has(n.name) ? { ...n, estado: 'procesada' } : n)) }
+}
+
+/** Filas de la cinta: las pendientes `●` primero y luego las procesadas `✓`. */
+export function orderedNotes(notes: readonly BitacoraNote[]): BitacoraNote[] {
+  return [...notes.filter(n => n.estado === 'pendiente'), ...notes.filter(n => n.estado === 'procesada')]
+}
+
+export const noteLine = (n: BitacoraNote): string => `${n.estado === 'procesada' ? '✓' : '●'} ${n.name}`
+
+/** `mm:ss` (o `h:mm:ss`). */
+export function elapsedText(ms: number): string {
+  const total = Math.max(0, Math.floor(ms / 1000))
+  const h = Math.floor(total / 3600)
+  const m = Math.floor((total % 3600) / 60)
+  const p = (n: number) => String(n).padStart(2, '0')
+  return h > 0 ? `${h}:${p(m)}:${p(total % 60)}` : `${p(m)}:${p(total % 60)}`
+}
+
+/** `historiador escribiendo la bitácora k/n mm:ss` (sin `k/n` mientras no se conocen las notas). */
+export function historianHeader(h: Historian, nowMs: number): string {
+  const done = h.notes.filter(n => n.estado === 'procesada').length
+  return `historiador escribiendo la bitácora ${h.notes.length > 0 ? `${done}/${h.notes.length} ` : ''}${elapsedText(nowMs - h.startedMs)}`
+}
+
+/** El PR de bitacora abierto (`gh pr list --json number,title,headRefName,files`): solo toca `docs/bitacora/` y no es de la rama de field notes. El mas reciente. */
+export function bitacoraPrOf(stdout: string): BitacoraPr | null {
+  try {
+    const rows = JSON.parse(stdout) as { number: number; title: string; headRefName?: string; files?: { path: string }[] }[]
+    const pr = rows
+      .filter(r => !isFieldNoteBranch(r.headRefName ?? ''))
+      .filter(r => (r.files ?? []).length > 0 && (r.files ?? []).every(f => f.path.startsWith('docs/bitacora/')))
+      .sort((a, b) => b.number - a.number)[0]
+    return pr ? { number: pr.number, title: pr.title } : null
+  } catch {
+    return null
+  }
 }

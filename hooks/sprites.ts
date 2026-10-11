@@ -236,7 +236,7 @@ export const EMOTIONS: Record<Emotion, readonly [Grid, Grid]> = (() => {
   }
 })()
 
-export type Role = 'desarrollador' | 'tester' | 'revisor' | 'planner' | 'infraestructura' | 'merge'
+export type Role = 'desarrollador' | 'tester' | 'revisor' | 'planner' | 'infraestructura' | 'historiador' | 'merge'
 
 export interface RoleState {
   /** Cara que usa este estado. */
@@ -618,6 +618,49 @@ export const ROLES: Record<Role, Record<string, RoleState>> = (() => {
     ' VU               ',
     '                  ',
   ]
+  // Historiador · pluma y tintero: la pluma sube y baja a mojarse en la tinta (/mefisto:bitacora)
+  const historiador_escribiendo_A: Grid = [
+    '                  ',
+    '                  ',
+    '  B               ',
+    ' BU               ',
+    ' BU               ',
+    ' BU               ',
+    '  U               ',
+    '  U               ',
+    '  E               ',
+    ' GGG              ',
+    'DDDDD             ',
+    'DDDDD             ',
+  ]
+  const historiador_escribiendo_B: Grid = [
+    '                  ',
+    '                  ',
+    '                  ',
+    '  B               ',
+    ' BU               ',
+    ' BU               ',
+    ' BU               ',
+    '  U               ',
+    '  U               ',
+    ' GUG              ',
+    'DDDDD             ',
+    'DDDDD             ',
+  ]
+  const historiador_listo_A: Grid = [
+    '                  ',
+    '                  ',
+    '  B               ',
+    ' BU               ',
+    ' BU               ',
+    ' BU               ',
+    '  U               ',
+    '  U               ',
+    '  E               ',
+    ' GGG              ',
+    'DDDDD             ',
+    'DDDDD             ',
+  ]
 
   return {
     desarrollador: {
@@ -646,6 +689,10 @@ export const ROLES: Record<Role, Record<string, RoleState>> = (() => {
       desplegando: { emotion: 'normal', layers: [infraestructura_desplegando_A, infraestructura_desplegando_B] },
       caido: { emotion: 'asustado', layers: [infraestructura_caido_A, infraestructura_caido_A] },
       arriba: { emotion: 'sonriente', layers: [infraestructura_arriba_A, infraestructura_arriba_A] },
+    },
+    historiador: {
+      escribiendo: { emotion: 'normal', layers: [historiador_escribiendo_A, historiador_escribiendo_B] },
+      listo: { emotion: 'sonriente', layers: [historiador_listo_A, historiador_listo_A] },
     },
     merge: {
       cosiendo: { emotion: 'concentrado', layers: [merge_cosiendo_A, merge_cosiendo_B] },
