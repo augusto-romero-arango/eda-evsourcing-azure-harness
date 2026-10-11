@@ -702,9 +702,10 @@ export const register: Register = on => {
     const sec = Math.floor(Date.now() / 1000)
     const batchRun = batch ? batchRunOf(batch, runs) : null
     const active = batch ? batchRun : activeRunOf(runs)
-    // El vencimiento se calcula al dibujar: el render nunca escribe estado.
+    // El vencimiento se calcula al dibujar: el render nunca escribe estado. La cinta terminada sigue pidiendo
+    // re-render por segundo hasta vencer, asi se oculta a los 15 s sin depender de $.clock.after.
     const ribbon = mergeRibbonShown(batch, mergeRun, Date.now())
-    isAnimating = isWorking || active !== null || (batch !== null && isBatchRunning(batch)) || (ribbon !== null && ribbon.finishedMs === null)
+    isAnimating = isWorking || active !== null || (batch !== null && isBatchRunning(batch)) || ribbon !== null
     const pose: MascotPose | null = active
       ? poseOfRun(active, await read($, lastEventAtom))
       : batch

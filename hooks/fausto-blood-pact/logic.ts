@@ -869,7 +869,7 @@ export const canStopBatch = (b: BatchStatus | null): boolean => b !== null && is
 export const MERGE_POLL_MS = 5_000
 export const MERGE_RIBBON_HIDE_MS = 15_000
 
-/** Argumentos de un prompt `/mefisto:merge <args>` (con o sin `mefisto:`); null si el texto no es ese comando. */
+/** Argumentos de un prompt `/mefisto:merge <args>`; null si el texto no es ese comando. */
 export function mergePromptArgs(text: string): string | null {
   const m = /^\/mefisto:merge(?:\s+([\s\S]*))?$/.exec(text.trim())
   return m ? (m[1] ?? '').trim() : null

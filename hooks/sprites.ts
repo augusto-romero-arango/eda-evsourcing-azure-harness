@@ -575,7 +575,7 @@ export const ROLES: Record<Role, Record<string, RoleState>> = (() => {
     '  V               ',
   ]
   // Merge · cremallera: el hilo de la rama (azul) y el de main (verde) bajan y se cierran diente a diente; los
-  // dientes corren hacia abajo mientras /mefisto-merge trabaja y en listo queda cerrada de punta a punta
+  // dientes corren hacia abajo mientras /mefisto:merge trabaja y en listo queda cerrada de punta a punta
   const merge_cosiendo_A: Grid = [
     'U   V             ',
     'U   V             ',
