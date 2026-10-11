@@ -45,7 +45,6 @@ import {
   resultLine,
   runLine,
   stateDirOf,
-  footerOf,
   isMefistoManifest,
   nextOrderPath,
   pageOf,
@@ -54,7 +53,6 @@ import {
   rowText,
   answerText,
   footerRestOf,
-  launchKeysText,
   parseLaunchArg,
   planIssue,
   planLaunch,
@@ -87,7 +85,7 @@ test('parseNextOrder lee items, bloqueados y ciclos', () => {
   expect(list.items[0]?.number).toBe(7)
   expect(list.blockedCount).toBe(2)
   expect(list.cycleCount).toBe(1)
-  expect(footerOf(list)).toBe('1 sequential · 5-9 uno · 2 bloqueados · 1 en ciclo')
+  expect(footerRestOf(list, false)).toBe('5-9 uno · 2 bloqueados · 1 en ciclo')
 })
 
 test('parseNextOrder con exit 1 y sin items no es error', () => {
@@ -226,7 +224,6 @@ test('linea null: no actua ni se muestra', () => {
   const l = board({ launch: null, parallel: { issues: [], launch: null } })
   expect(planLaunch(l, 'sequential').kind).toBe('none')
   expect(planLaunch(l, 'parallel').kind).toBe('none')
-  expect(launchKeysText(l)).toBe('')
 })
 
 test('con infra, 1 y 2 abren el dialogo previo con tres opciones', () => {
@@ -263,7 +260,7 @@ test('tipo -> opciones de un solo issue', () => {
 
 test('pie: teclas, infra y excluidos; fila sin prefijo', () => {
   const l = board({ infra: [9] })
-  expect(footerOf(l)).toBe('1 sequential · 2 parallel 2 · 5-9 uno · infra: #9 · 1 bloqueados')
+  expect(footerRestOf(l, false)).toBe('5-9 uno · infra: #9 · 1 bloqueados')
   expect(footerRestOf(l, true)).toBe(' · 5-9 uno · infra: #9 · 1 bloqueados')
   expect(rowText(l.items[0]!, 4, 20)).toBe('#7   A')
 })
