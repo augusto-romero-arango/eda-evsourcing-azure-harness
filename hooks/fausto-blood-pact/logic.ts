@@ -1,6 +1,6 @@
 import type { Role } from '../sprites'
 import { padEnd, reasonOf, typeBadge } from '../logic'
-import type { BitacoraNote, BitacoraPr, BoardItem, BoardList, Historian, PactMerge, PactMergePr, PipelineKind, PipelineResult, PipelineRun, RunStep } from '../types'
+import type { BitacoraNote, BitacoraPr, BoardItem, BoardList, Historian, PactMerge, PactMergePr, PipelineKind, PaneLine, PipelineResult, PipelineRun, RunStep } from '../types'
 
 export const NEXT_ORDER_FILE = 'scripts/next-order.sh'
 export const PLANNER_AGENT = 'mefisto:planner'
@@ -163,6 +163,7 @@ type StatusJson = {
   agents?: Record<string, { result?: string | null; duration?: number | null } | null> | null
   log?: string | null
   title?: string | null
+  last_error?: string | null
 }
 
 /** Parseo de un status; null si no es de un pipeline conocido o no es JSON valido. */
@@ -189,6 +190,7 @@ export function parseStatus(fileName: string, raw: string): PipelineRun | null {
     agents: stepsOfAgents(json.agents),
     title: typeof json.title === 'string' ? json.title : '',
     log: typeof json.log === 'string' && json.log !== '' ? json.log : null,
+    ...(typeof json.last_error === 'string' && json.last_error !== '' ? { lastError: json.last_error } : {}),
   }
 }
 
@@ -198,7 +200,8 @@ export function stepsOfAgents(agents: StatusJson['agents']): RunStep[] {
   return Object.entries(agents).map(([name, v]) => {
     const r = v?.result
     const result: RunStep['result'] = r === 'passed' || r === 'running' || r === 'failed' ? r : 'pending'
-    return { name, result }
+    const d = v?.duration
+    return typeof d === 'number' && d > 0 ? { name, result, duration: d } : { name, result }
   })
 }
 
@@ -686,6 +689,8 @@ export type BatchStatus = {
   stopRequested: boolean
   holdSeconds: number
   issues: BatchIssue[]
+  /** Ruta del log del lote (`log` del status), que acumula todos los issues. */
+  log?: string
 }
 
 const BATCH_ISSUE_STATUSES: readonly string[] = ['pendiente', 'en-curso', 'mergeado', 'fallido', 'aplazado', 'saltado']
@@ -733,6 +738,7 @@ export function parseBatchStatus(raw: string): BatchStatus | null {
     stopRequested: json.stop_requested === true,
     holdSeconds: typeof json.hold_seconds === 'number' && json.hold_seconds > 0 ? json.hold_seconds : 0,
     issues,
+    ...(typeof json.log === 'string' && json.log !== '' ? { log: json.log } : {}),
   }
 }
 
@@ -1138,4 +1144,85 @@ export function eventLineOf(raw: string): string | null {
 /** Lineas de la banda: las del log del pipeline y, al final, el ultimo evento del agente; se queda con las ultimas `max`. */
 export function bandLinesOf(logLines: readonly string[], eventLine: string | null, max = BAND_LOG_ROWS): string[] {
   return [...logLines, ...(eventLine ? [eventLine] : [])].slice(-max)
+}
+
+// ---- Pane de log (#2321): eventos del agente y log del pipeline mezclados en orden de llegada ----
+
+export const PANE_MAX_LINES = 400
+
+/** Linea de log del pipeline para el pane: sin ANSI ni retorno de carro; null si no tiene letras ni numeros. */
+export function cleanLogLine(raw: string): string | null {
+  const line = raw.replace(ANSI, '').replace(/\r/g, '').trim()
+  return /[\p{L}\p{N}]/u.test(line) ? line : null
+}
+
+/** Una linea del `events.jsonl` (run-events v1, redactado en lo publicado: sin `message` ni `input_summary`). */
+export function parseEvent(raw: string): PaneLine | null {
+  let ev: Record<string, unknown>
+  try {
+    ev = JSON.parse(raw) as Record<string, unknown>
+  } catch {
+    return null
+  }
+  const ts = hms(ev.ts)
+  const tool = typeof ev.tool === 'string' ? ev.tool : '?'
+  switch (ev.type) {
+    case 'run.started':
+      return { kind: 'start', text: `\u2500\u2500 ${`${typeof ev.agent === 'string' ? ev.agent : 'agente'} \u00b7 ${typeof ev.model === 'string' ? ev.model : ''}`.replace(/ \u00b7 $/, '')} \u2500\u2500` }
+    case 'tool.started': {
+      const summary = typeof ev.input_summary === 'string' && ev.input_summary !== '' ? ` ${clip(ev.input_summary, 200)}` : ''
+      return { kind: 'tool', text: `${ts} ${tool}${summary}`.trim() }
+    }
+    case 'tool.completed':
+      return ev.ok === false ? { kind: 'fail', text: `${ts} ${tool} fall\u00f3`.trim() } : null
+    case 'run.completed': {
+      const turns = typeof ev.turns === 'number' ? ` \u00b7 ${ev.turns} turnos` : ''
+      const cost = typeof ev.estimated_cost_usd === 'number' ? ` \u00b7 $${ev.estimated_cost_usd.toFixed(2)}` : ''
+      return { kind: ev.status === 'success' ? 'done' : 'fail', text: `${typeof ev.status === 'string' ? ev.status : 'fin'}${turns}${cost}` }
+    }
+    case 'run.failed':
+      return { kind: 'fail', text: clip(typeof ev.error === 'string' ? ev.error : 'fallo', 400) }
+    default:
+      return null
+  }
+}
+
+/** Separador de eslabon del lote. */
+export const batchSeparator = (issue: number): PaneLine => ({ kind: 'start', text: `\u2550\u2550 #${issue} \u2550\u2550` })
+
+/** Agrega al final y se queda con las ultimas `max`. */
+export function mergePaneLines(list: readonly PaneLine[], added: readonly PaneLine[], max = PANE_MAX_LINES): PaneLine[] {
+  return [...list, ...added].slice(-max)
+}
+
+/** Ruta absoluta de un log del status (relativa a la raiz del repo si no empieza por `/`). */
+export function logPathOf(log: string, repoRoot: string): string {
+  return log.startsWith('/') ? log : `${repoRoot.replace(/\/+$/, '')}/${log}`
+}
+
+/** Archivos a seguir: el `events.jsonl` del intento vigente del stage activo y el log del lote (si hay) o de la corrida. */
+export function followTargetsOf(
+  run: PipelineRun | null,
+  batch: BatchStatus | null,
+  logNames: readonly string[],
+  repoRoot: string,
+): { events: string | null; log: string | null } {
+  const file = run ? eventsFileOf(run, logNames) : null
+  const log = batch?.log ?? run?.log ?? null
+  return {
+    events: file ? `${repoRoot.replace(/\/+$/, '')}/.mefisto/pipeline/${LOGS_DIR}/${file}` : null,
+    log: log ? logPathOf(log, repoRoot) : null,
+  }
+}
+
+/** `3m` / `45s` de la duracion (segundos) de un paso terminado; vacio sin duracion. */
+export function durationText(seconds: number | undefined): string {
+  if (typeof seconds !== 'number' || seconds <= 0) return ''
+  return seconds >= 60 ? `${Math.round(seconds / 60)}m` : `${Math.round(seconds)}s`
+}
+
+/** Cabecera del pane: `mefisto \u00b7 #N pipeline`; en el lote antepone `sequential N/M \u00b7 `. */
+export function paneHeaderOf(run: PipelineRun, batch: BatchStatus | null): string {
+  const lead = batch ? `${batch.pipeline || 'sequential'} ${batchCounts(batch).merged}/${batch.issues.length} \u00b7 ` : ''
+  return `mefisto \u00b7 ${lead}#${run.issue} ${run.pipeline}`
 }

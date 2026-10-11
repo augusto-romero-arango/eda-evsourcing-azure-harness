@@ -4,10 +4,21 @@ import type { EngineInterface, Register } from 'claude-code'
 import { RASTER_ROWS, ROLES, face, sprite, toRasterCells, waitingFace } from '../sprites'
 import type { Role } from '../sprites'
 import { cropGrid, numberWidth, padEnd, reasonOf, usedColumns } from '../logic'
-import type { BoardList, Historian, PactMerge, PipelineResult, PipelineRun } from '../types'
+import type { BoardList, Historian, PaneLine, PactMerge, PipelineResult, PipelineRun } from '../types'
 import type { BatchStatus, LastEvent, LaunchKind, LaunchPlan, MascotPose, OpenPr } from './logic'
 import {
   BAND_LOG_ROWS,
+  PANE_MAX_LINES,
+  agentOf,
+  batchSeparator,
+  cleanLogLine,
+  durationText,
+  followTargetsOf,
+  isFailure,
+  mergePaneLines,
+  minutesSince,
+  paneHeaderOf,
+  parseEvent,
   LAUNCH_POLL_WINDOW_MS,
   LOG_TAIL_BYTES,
   LOGS_DIR,
@@ -139,6 +150,8 @@ const mergeAtom = atom({ plugin: 'mefisto', key: 'pactMerge' } as const, null as
 const fieldNotesAtom = atom({ plugin: 'mefisto', key: 'pactFieldNotes' } as const, null as number | null)
 const historianAtom = atom({ plugin: 'mefisto', key: 'pactHistorian' } as const, null as Historian | null)
 const bandLinesAtom = atom({ plugin: 'mefisto', key: 'pactBandLines' } as const, [] as string[])
+const logLinesAtom = atom({ plugin: 'mefisto', key: 'pactLogLines' } as const, [] as PaneLine[])
+const paneRunAtom = atom({ plugin: 'mefisto', key: 'pactPaneRun' } as const, null as PipelineRun | null)
 const tickAtom = atom({ plugin: 'mefisto', key: 'pactTick' } as const, 0)
 
 // Columnas comunes a todos los cuadros de la mascota: el recorte no cambia al alternar poses.
@@ -347,6 +360,140 @@ async function closeBatch($: EngineInterface) {
   keys.add(batchDismissKey(runsRepo, batch))
   await saveDismissed($, [...keys])
   await update($, batchAtom, () => null)
+  await closeLogIfGone($)
+}
+
+// ---- Pane de log (#2321): dos `tail -F` (eventos del agente y log del pipeline) mezclados en un mismo atom ----
+
+const PANE = 'fausto-blood-pact'
+const PANE_ROWS = 18
+const PANE_FIXED_ROWS = 7
+type Follow = { path: string; stream: AsyncGenerator<unknown, unknown> }
+type FollowKind = 'events' | 'log'
+
+let isLogOpen = false
+let isSyncingLog = false
+let eventsFollow: Follow | null = null
+let logFollow: Follow | null = null
+let separatedIssue: number | null = null
+
+const followOf = (kind: FollowKind) => (kind === 'events' ? eventsFollow : logFollow)
+
+async function stopFollow(kind: FollowKind) {
+  const current = followOf(kind)
+  if (kind === 'events') eventsFollow = null
+  else logFollow = null
+  if (current) await current.stream.return(undefined).catch(() => undefined)
+}
+
+async function stopFollows() {
+  await stopFollow('events')
+  await stopFollow('log')
+}
+
+async function consumeFollow($: EngineInterface, kind: FollowKind, follow: Follow) {
+  let pending = ''
+  try {
+    for await (const chunk of follow.stream) {
+      if (followOf(kind) !== follow) break
+      const { stream: channel, text } = chunk as { stream: string; text: string }
+      if (channel !== 'stdout') continue
+      pending += text
+      const rows = pending.split('\n')
+      pending = rows.pop() ?? ''
+      const added = rows
+        .map((row): PaneLine | null => {
+          if (kind === 'events') return parseEvent(row)
+          const clean = cleanLogLine(row)
+          return clean ? { kind: 'log', text: clean } : null
+        })
+        .filter((l): l is PaneLine => l !== null)
+      if (added.length > 0) await update($, logLinesAtom, list => mergePaneLines(list, added, PANE_MAX_LINES))
+    }
+  } catch (err) {
+    $.ui.log(`tail ${follow.path}: ${String(err)}`, { to: 'debug' })
+  }
+}
+
+async function startFollow($: EngineInterface, kind: FollowKind, path: string) {
+  await stopFollow(kind)
+  const stream = $.process.spawn({ argv: ['tail', '-n', '40', '-F', path], ...(runsRepo ? { cwd: runsRepo } : {}) })
+  const follow: Follow = { path, stream }
+  if (kind === 'events') eventsFollow = follow
+  else logFollow = follow
+  void consumeFollow($, kind, follow)
+}
+
+const isSameRun = (a: PipelineRun, b: PipelineRun) => a.issue === b.issue && a.pipeline === b.pipeline && a.variant === b.variant
+
+async function paneTarget($: EngineInterface): Promise<PipelineRun | null> {
+  const batch = await read($, batchAtom)
+  const runs = await read($, runsAtom)
+  return batch ? batchRunOf(batch, runs) : activeRunOf(runs)
+}
+
+// Cada sondeo: elige los archivos a seguir (intento vigente del stage activo, log de la corrida o del lote) y pasa al nuevo si cambian.
+async function syncLog($: EngineInterface) {
+  if (!isLogOpen || isSyncingLog) return
+  isSyncingLog = true
+  try {
+    const batch = await read($, batchAtom)
+    const active = await paneTarget($)
+    let run = active ?? (await read($, paneRunAtom))
+    if (!active && run) {
+      const known = run
+      run = (await readRuns($)).find(r => isSameRun(r, known)) ?? run
+    }
+    if (run) await update($, paneRunAtom, () => run)
+    const ls = run ? await $.process.run(['ls', `${runsRepo}/${STATE_DIR}/${LOGS_DIR}`]).catch(() => ({ exitCode: 1, stdout: '' })) : null
+    const names = ls && ls.exitCode === 0 ? ls.stdout.split('\n') : []
+    const targets = followTargetsOf(run, batch, names, runsRepo)
+    if (batch && active && active.issue !== separatedIssue) {
+      separatedIssue = active.issue
+      await update($, logLinesAtom, list => mergePaneLines(list, [batchSeparator(active.issue)], PANE_MAX_LINES))
+    }
+    if (!isLogOpen) return
+    if (targets.events && targets.events !== eventsFollow?.path) await startFollow($, 'events', targets.events)
+    if (targets.log && targets.log !== logFollow?.path) await startFollow($, 'log', targets.log)
+  } finally {
+    isSyncingLog = false
+  }
+}
+
+async function closeLog($: EngineInterface) {
+  isLogOpen = false
+  await stopFollows()
+  separatedIssue = null
+  await update($, logLinesAtom, () => [])
+  await update($, paneRunAtom, () => null)
+  await $.ui.close({ id: PANE })
+}
+
+async function openLog($: EngineInterface): Promise<boolean> {
+  const run = await paneTarget($)
+  if (!run) return false
+  isLogOpen = true
+  separatedIssue = null
+  await update($, logLinesAtom, () => [])
+  await update($, paneRunAtom, () => run)
+  await $.ui.open({ id: PANE, title: 'mefisto', rows: PANE_ROWS, focus: true as const })
+  await syncLog($)
+  return true
+}
+
+// La tecla 3 abre el log o, si ya estaba abierto, lo cierra.
+async function toggleLog($: EngineInterface) {
+  if (isLogOpen) await closeLog($)
+  else if (!(await openLog($))) $.ui.toast('No hay corrida que seguir')
+}
+
+// Cuando la vista se va (cerrar, ocultar o una corrida que cierra sola) el pane y sus `tail` se van con ella.
+async function closeLogIfGone($: EngineInterface) {
+  if (!isLogOpen) return
+  const batch = await read($, batchAtom)
+  const runs = await read($, runsAtom)
+  const results = await read($, resultsAtom)
+  if (!batch && runs.length === 0 && results.length === 0) await closeLog($)
 }
 
 async function refreshRuns($: EngineInterface) {
@@ -379,6 +526,8 @@ async function refreshRuns($: EngineInterface) {
     await update($, runsAtom, () => view.runs)
     await refreshBatch($)
     await update($, resultsAtom, () => view.results)
+    await syncLog($)
+    await closeLogIfGone($)
   } finally {
     isRefreshingRuns = false
   }
@@ -393,6 +542,7 @@ async function dismissResults($: EngineInterface): Promise<number> {
   carriedResults = []
   await update($, resultsAtom, () => [])
   await update($, pageAtom, () => 0)
+  await closeLogIfGone($)
   return results.length
 }
 
@@ -752,6 +902,7 @@ async function activate($: EngineInterface) {
 
 async function deactivate($: EngineInterface) {
   isWanted = false
+  if (isLogOpen) await closeLog($)
   timer?.cancel()
   timer = null
   runsTimer?.cancel()
@@ -841,8 +992,8 @@ export const register: Register = on => {
     agentChecksLeft = agent === null ? AGENT_CHECKS : 0
     await $.command.register({
       name: 'fausto-blood-pact',
-      description: 'Consola de Fausto: refresh | on | off | ocultar | detener | lanzar | merge | prs | pr',
-      argumentHint: '[refresh|on|off|ocultar|detener|lanzar [sequential|parallel|<n>]|merge [<pr>...]|prs|pr [<pr>]]',
+      description: 'Consola de Fausto: refresh | on | off | ocultar | detener | lanzar | merge | prs | pr | log',
+      argumentHint: '[refresh|on|off|ocultar|detener|lanzar [sequential|parallel|<n>]|merge [<pr>...]|prs|pr [<pr>]|log]',
       immediate: true,
     })
     if (isWanted) await activate($)
@@ -874,6 +1025,10 @@ export const register: Register = on => {
       if (prs.length === 0) return { text: `Sin ✓ con PR para: ${invalid.join(' ')}.` }
       return { text: await mergePrs($, prs) }
     }
+    if (arg === 'log') {
+      if (isLogOpen) return { text: 'El log ya está abierto.' }
+      return { text: (await openLog($)) ? 'Log abierto.' : 'No hay corrida que seguir.' }
+    }
     if (arg === 'prs') return { text: await mergeOpenPrs($) }
     if (arg === 'pr' || arg.startsWith('pr ')) {
       const given = arg.slice('pr'.length).trim()
@@ -897,6 +1052,90 @@ export const register: Register = on => {
     await loadVersion($)
     await refresh($)
     return { text: 'Consola actualizada.' }
+  })
+
+  // Cerrar el pane por su cuenta (esc o ui.close) tambien suelta los `tail`.
+  on('ui.close', { id: PANE }, async ($, e, next) => {
+    isLogOpen = false
+    await stopFollows()
+    return next(e)
+  })
+
+  on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
+    const { Box, Text, Button } = $.ui.resolve(e)
+    const run = await read($, paneRunAtom)
+    if (!run) {
+      return (
+        <Box flexDirection="column">
+          <Text dimColor>Sin corrida que seguir.</Text>
+        </Box>
+      )
+    }
+    const batch = await read($, batchAtom)
+    const results = await read($, resultsAtom)
+    const lines = await read($, logLinesAtom)
+    await read($, tickAtom)
+    const width = Math.max(20, e.props.bodyColumns ?? 60)
+    const rows = Math.max(3, (e.props.scroll?.bodyRows ?? PANE_ROWS) - PANE_FIXED_ROWS)
+    const ended = run.state !== 'running' && run.state !== 'hold'
+    const endMs = ended ? Date.parse(run.updated) || Date.now() : Date.now()
+    const mins = minutesSince(run.started, endMs)
+    const pr = resultPrs(results).find(p => p.issue === run.issue)?.pr ?? (batch ? batchPrOf(batch) : null)
+    const colorOf = (l: PaneLine) => (l.kind === 'fail' ? 'error' : l.kind === 'done' ? 'success' : l.kind === 'start' ? 'claude' : undefined)
+    return (
+      <Box flexDirection="column" width={width}>
+        <Box justifyContent="space-between">
+          <Text bold color="claude" wrap="truncate-end">{paneHeaderOf(run, batch)}</Text>
+          <Text dimColor>{mins === null ? '' : `${mins}m`}</Text>
+        </Box>
+        {run.title ? <Text wrap="truncate-end">{run.title}</Text> : null}
+        <Text wrap="truncate-end">
+          {stepsOf(run).map((st, i) => (
+            <Text key={`pane-step-${i}`} color={st.color} dimColor={st.dim}>
+              {`${i > 0 ? ' ─ ' : ''}${st.mark} ${st.name}`}
+              {(() => {
+                const d = durationText(run.agents?.[i]?.duration)
+                return d ? ` ${d}` : ''
+              })()}
+            </Text>
+          ))}
+        </Text>
+        {run.state === 'completed' && (
+          <Box flexDirection="column">
+            <Box gap={3}>
+              <Text color="success" bold>✓ {pr ? `PR #${pr} creado` : 'terminado'}</Text>
+              {pr && <Button key="merge" hotkey="m" plain variant="primary" label={`Mergear #${pr}`} onPress={() => void mergePrs($, [pr])} />}
+              {pr && <Button key="web" hotkey="v" plain label="Ver en GitHub" onPress={() => void viewPr($, pr)} />}
+              <Button key="close" hotkey="c" plain label="Cerrar log" role="dismiss" onPress={() => void closeLog($)} />
+            </Box>
+            <Text dimColor wrap="truncate-end">ctrl+x tab enfoca · esc vuelve al prompt</Text>
+          </Box>
+        )}
+        {isFailure(run) && (
+          <Box flexDirection="column">
+            <Text color="error" wrap="wrap">✗ falló en {agentOf(run.stage)}{run.lastError ? `: ${run.lastError}` : ''}</Text>
+            <Box gap={2}>
+              <Button key="close" hotkey="c" plain label="Cerrar log" role="dismiss" onPress={() => void closeLog($)} />
+            </Box>
+          </Box>
+        )}
+        {!ended && (
+          <Box gap={2}>
+            <Button key="close" hotkey="c" plain label="Cerrar log" role="dismiss" onPress={() => void closeLog($)} />
+            <Text dimColor>3 en la banda también lo cierra · ctrl+x tab enfoca · esc vuelve al prompt</Text>
+          </Box>
+        )}
+        <Text dimColor>{'─'.repeat(Math.min(width, 80))}</Text>
+        <Box flexDirection="column">
+          {lines.length === 0 && <Text dimColor>esperando eventos del agente…</Text>}
+          {lines.slice(-rows).map((line, i) => (
+            <Text key={`pane-line-${i}`} wrap="truncate-end" color={colorOf(line)} dimColor={line.kind === 'log'}>
+              {line.text}
+            </Text>
+          ))}
+        </Box>
+      </Box>
+    )
   })
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
@@ -1029,6 +1268,7 @@ export const register: Register = on => {
               <Box justifyContent="space-between">
                 <Box>
                   {withSeparators([
+                    <Button key="batch-log" hotkey="3" plain dimColor={running} label="log" onPress={() => void toggleLog($)} />,
                     canStopBatch(batch) && (
                       <Button key="batch-stop" hotkey="1" plain dimColor label="detener" onPress={() => void confirmStop($)} />
                     ),
@@ -1141,7 +1381,9 @@ export const register: Register = on => {
             {mascot}
             <Box flexDirection="column" width={body}>
               {runBody(soleRun)}
-              <Text dimColor> </Text>
+              <Box>
+                <Button key="run-log" hotkey="3" plain dimColor={soleRun.state === 'running'} label="log" onPress={() => void toggleLog($)} />
+              </Box>
             </Box>
           </Box>
         </Box>
