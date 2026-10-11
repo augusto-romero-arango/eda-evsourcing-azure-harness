@@ -267,7 +267,8 @@ async function readBandLines($: EngineInterface, run: PipelineRun | null, events
   if (!run) return []
   let logLines: string[] = []
   if (run.log) {
-    const tail = await $.process.run(['tail', '-c', String(LOG_TAIL_BYTES), run.log]).catch(() => ({ exitCode: 1, stdout: '' }))
+    const path = run.log.startsWith('/') ? run.log : `${runsRepo}/${run.log}`
+    const tail = await $.process.run(['tail', '-c', String(LOG_TAIL_BYTES), path]).catch(() => ({ exitCode: 1, stdout: '' }))
     if (tail.exitCode === 0) logLines = logTailLines(tail.stdout, BAND_LOG_ROWS)
   }
   return bandLinesOf(logLines, eventsTail ? eventLineOf(eventsTail) : null, BAND_LOG_ROWS)
@@ -1138,7 +1139,10 @@ export const register: Register = on => {
           {head(runHeader(soleRun, Date.now()), 'pact-head', soleRun.state === 'hold' ? 'warning' : undefined, false)}
           <Box gap={2} alignItems="flex-start">
             {mascot}
-            <Box flexDirection="column" width={body}>{runBody(soleRun)}</Box>
+            <Box flexDirection="column" width={body}>
+              {runBody(soleRun)}
+              <Text dimColor> </Text>
+            </Box>
           </Box>
         </Box>
       )
