@@ -6,6 +6,7 @@ import {
   showsDraftList,
   isMefistoManifest,
   versionLabel,
+  shouldRearm,
   isIssueChange,
   createdIssueOf,
   isIssueCreate,
@@ -225,4 +226,11 @@ test('versionLabel: manifest valido, fallback a plugin.json y null si ninguno si
   expect(versionLabel('no es json', plugin)).toBe('v0.45.1')
   expect(versionLabel(null, null)).toBe(null)
   expect(versionLabel('{}', '{"version": 3}')).toBe(null)
+})
+
+test('shouldRearm: rearma solo con intencion activa y el atom en blanco', () => {
+  expect(shouldRearm({ isEligible: true, isWanted: true, isActive: false })).toBe(true)
+  expect(shouldRearm({ isEligible: true, isWanted: true, isActive: true })).toBe(false)
+  expect(shouldRearm({ isEligible: true, isWanted: false, isActive: false })).toBe(false)
+  expect(shouldRearm({ isEligible: false, isWanted: true, isActive: false })).toBe(false)
 })

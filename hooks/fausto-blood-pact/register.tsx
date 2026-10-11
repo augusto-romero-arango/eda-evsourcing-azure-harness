@@ -89,7 +89,7 @@ import {
   mergeSummaryText,
   withMerged,
 } from './logic'
-import { versionLabel } from '../logic'
+import { shouldRearm, versionLabel } from '../logic'
 import type { ResultPr } from './logic'
 
 const POLL_MS = 60_000
@@ -123,6 +123,9 @@ let isAnimating = false
 // La intencion on/off y la elegibilidad viven aqui: /clear no dispara session.start y reinicia los atoms.
 let isEligible = false
 let isWanted = true
+let isHealing = false
+let healTimer: { cancel: () => void } | null = null
+const HEAL_MS = 1_000
 let isRefreshing = false
 let timer: { cancel: () => void } | null = null
 let runsTimer: { cancel: () => void } | null = null
@@ -590,6 +593,20 @@ async function plannerSession($: EngineInterface): Promise<boolean | null> {
   return agent === null ? null : agent === PLANNER_AGENT
 }
 
+// El engine no entrega classic.* a un plugin de tier user y session.start no se repite tras /clear, /resume ni /branch:
+// cada segundo se compara la intencion del modulo con el atom y se rearma la banda. Corre desde el reloj, donde escribir esta permitido.
+async function heal($: EngineInterface) {
+  if (isHealing) return
+  isHealing = true
+  try {
+    if (!shouldRearm({ isEligible, isWanted, isActive: await read($, activeAtom) })) return
+    await activate($)
+    await $.ui.invalidate('ui.render')
+  } finally {
+    isHealing = false
+  }
+}
+
 async function pactOnPromptSubmit($: EngineInterface, e: { text: string }): Promise<void> {
   const mergeArgs = isEligible && isWanted ? mergePromptArgs(e.text) : null
   if (mergeArgs !== null) await startMerge($, mergeArgs, true)
@@ -633,18 +650,10 @@ export const register: Register = on => {
       immediate: true,
     })
     if (isWanted) await activate($)
+    healTimer ??= $.clock.every(HEAL_MS, () => void heal($))
     await $.ui.invalidate('ui.render')
     return next(e)
   })
-
-  // /clear, /resume y /branch reinician $.state sin disparar session.start; classic.SessionStart si dispara.
-  on('classic.SessionStart', { source: ['clear', 'resume', 'fork'] }, async ($, e, next) => {
-    if (isEligible && isWanted) {
-      await activate($)
-      await $.ui.invalidate('ui.render')
-    }
-    return next(e)
-  }).catch(($, e, next) => next(e))
 
   on('command.run', { command: 'fausto-blood-pact' }, async ($, e) => {
     const arg = e.args.trim()
