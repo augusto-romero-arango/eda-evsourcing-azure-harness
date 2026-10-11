@@ -71,6 +71,7 @@ let isInteractive = false
 // La intencion vive aqui: /clear no dispara session.start y reinicia los atoms.
 let isBoardOn = false
 let isTurnedOff = false
+let isHealing = false
 let healTimer: { cancel: () => void } | null = null
 const HEAL_MS = 1_000
 let pending: Pending = new Map()
@@ -162,7 +163,15 @@ async function deactivate($: EngineInterface) {
 // El engine no entrega classic.* a un plugin de tier user y session.start no se repite tras /clear, /resume ni /branch:
 // cada segundo se compara la intencion del modulo con el atom y se rearma el tablero. Corre desde el reloj, donde escribir esta permitido.
 async function heal($: EngineInterface) {
-  if (shouldRearm({ isEligible: isBoardOn, isWanted: !isTurnedOff, isActive: await read($, activeAtom) })) await activate($)
+  if (isHealing) return
+  isHealing = true
+  try {
+    if (!shouldRearm({ isEligible: isBoardOn, isWanted: !isTurnedOff, isActive: await read($, activeAtom) })) return
+    await activate($)
+    await $.ui.invalidate('ui.render')
+  } finally {
+    isHealing = false
+  }
 }
 
 const DETECT_TRIES = 20
@@ -172,7 +181,7 @@ const DETECT_EVERY_MS = 3_000
 // asi que se lee primero la linea de comando del proceso de Claude Code (padre del `sh` que corre aqui) y,
 // si no se puede, el inicio del transcript, que solo existe tras el primer mensaje: por eso se reintenta.
 async function detectPlanner($: EngineInterface, triesLeft: number) {
-  if (!isInteractive || (await read($, activeAtom))) return
+  if (!isInteractive || isTurnedOff || (await read($, activeAtom))) return
   const ps = await $.process.run(['sh', '-c', 'ps -o args= -p "$PPID"']).catch(() => ({ exitCode: 1, stdout: '' }))
   const cmdline = ps.exitCode === 0 ? ps.stdout.trim() : ''
   if (/\bclaude\b/.test(cmdline)) {
