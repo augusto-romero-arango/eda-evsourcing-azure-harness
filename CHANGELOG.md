@@ -4,6 +4,16 @@ Todo cambio notable a este proyecto se documenta aquí. Sigue [Keep a Changelog]
 
 ## [Unreleased]
 
+## [0.47.0] - 2026-10-11
+
+### Added
+
+- `fausto-blood-pact` (incremento 9): botón `3: bitácora N` arriba a la derecha (field notes de `docs/bitacora/field-notes/` más PRs `docs/planner-field-notes-*`), diálogo que mergea esos PRs, pone `main` al día y corre `/mefisto:bitacora`, y cinta del historiador con mascota, lista `●`/`✓` de field notes y `mergear · ver PR · cerrar PR` sobre el PR de bitácora; `2: PRs N` deja de contar los PRs de field notes.
+
+### Changed
+
+- `fausto-blood-pact`: la primera línea de la banda pasa a `mefisto · listos N` (como la cinta interna) seguida del estado de la vista; el menú `2: PRs N` sube arriba a la derecha y `parallel` pasa a la tecla `p`.
+
 ## [0.46.5] - 2026-10-11
 
 ### Changed
@@ -3430,7 +3440,8 @@ Y reemplazar referencias en `CLAUDE.md` del proyecto: `/eda-evsourcing-azure-har
 - Los agentes `reviewer` e `implementer` mantienen el placeholder literal `ADR-XXXX` en sus plantillas de reporte (no es un bug; el agente lo sustituye en tiempo de ejecución por el número real del ADR aplicable).
 - Los ejemplos de código en `test-writer.md`, `implementer.md` y `smoke-test-writer.md` conservan nombres concretos de un proyecto consumidor (`Programacion`, `ControlHoras`) anotados en el "Contrato con el consumidor" de cada agente como ejemplos pedagógicos.
 
-[Unreleased]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.46.5...HEAD
+[Unreleased]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.47.0...HEAD
+[0.47.0]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.46.5...v0.47.0
 [0.46.5]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.46.4...v0.46.5
 [0.46.4]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.46.3...v0.46.4
 [0.46.3]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.46.2...v0.46.3
