@@ -4,6 +4,16 @@ Todo cambio notable a este proyecto se documenta aquí. Sigue [Keep a Changelog]
 
 ## [Unreleased]
 
+## [0.46.5] - 2026-10-11
+
+### Changed
+
+- `fausto-blood-pact`: el botón `3 PRs N` del reposo incluye los PRs de field notes (`docs/planner-field-notes-*`) y "Todos" ejecuta `/mefisto:merge --all` en lugar de la lista de números (#2306).
+
+### Fixed
+
+- `fausto-blood-pact`: los botones del pie ya no repiten la tecla ni llevan el separador ` · ` dentro de la etiqueta; se lee `1: sequential · 2: parallel 3 · 3: PRs 9` y el separador solo aparece entre botones visibles (#2307).
+
 ## [0.46.4] - 2026-10-11
 
 ### Fixed
@@ -3420,7 +3430,8 @@ Y reemplazar referencias en `CLAUDE.md` del proyecto: `/eda-evsourcing-azure-har
 - Los agentes `reviewer` e `implementer` mantienen el placeholder literal `ADR-XXXX` en sus plantillas de reporte (no es un bug; el agente lo sustituye en tiempo de ejecución por el número real del ADR aplicable).
 - Los ejemplos de código en `test-writer.md`, `implementer.md` y `smoke-test-writer.md` conservan nombres concretos de un proyecto consumidor (`Programacion`, `ControlHoras`) anotados en el "Contrato con el consumidor" de cada agente como ejemplos pedagógicos.
 
-[Unreleased]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.46.4...HEAD
+[Unreleased]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.46.5...HEAD
+[0.46.5]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.46.4...v0.46.5
 [0.46.4]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.46.3...v0.46.4
 [0.46.3]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.46.2...v0.46.3
 [0.46.2]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.46.1...v0.46.2
