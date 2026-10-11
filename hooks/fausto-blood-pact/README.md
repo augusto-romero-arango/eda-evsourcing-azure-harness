@@ -72,7 +72,7 @@ Fuera de alcance: mergear PRs que la sesión no vio terminar y resolver comentar
 
 ## Capacidad vigente (incremento 6): mergear PRs abiertos desde el reposo
 
-En reposo (listos visibles), si hay PRs abiertos, la primera línea suma, a la derecha, `2: PRs N` (`gh pr list --state open`, sin borradores pero con los de field notes `docs/planner-field-notes-*`; se refresca con los listos y tras cada merge). Sin PRs abiertos el botón no aparece.
+En reposo (listos visibles), si hay PRs abiertos, la primera línea suma, a la derecha, `2: PRs N` (`gh pr list --state open`, sin borradores ni los de field notes `docs/planner-field-notes-*`, que van a la bitácora, incremento 9; se refresca con los listos y tras cada merge). Sin PRs abiertos el botón no aparece.
 
 - `2`: con un solo PR, `$.ui.ask` con `#N título` y "Cancelar"; con varios, selección múltiple: "Todos" y los 3 más recientes (otros números, en la opción de texto). Ejecuta `/mefisto:merge` con `$.command.run`, anunciado con un toast. "Todos" ejecuta `/mefisto:merge --all` (`pr-sync.sh --all` toma todo PR abierto, borradores incluidos). Cancelar o no elegir no ejecuta nada.
 - `/fausto-blood-pact prs`: lo mismo sin teclas.
@@ -98,3 +98,13 @@ Cuando el agente lanza `pr-sync.sh <PRs> --merge` (o `--all --merge`) tras un `/
 - Al volver la llamada a `pr-sync.sh` (también si falla o se deniega) se hace un último sondeo; lo que siga pendiente queda `✗ no mergeado`, la mascota pasa a `listo` y un toast resume `N mergeados · M fallidos`. Red de seguridad: una cinta arrancada por teclas que no ve su `pr-sync.sh` en 60 s la cierra el reloj de 1 s.
 - La cinta terminada se oculta sola a los 15 s (se calcula al dibujar con `now - finishedMs`, sin escribir estado desde el render); `4: cerrar` la oculta antes.
 - Precedencia de la banda: lote de `sequential`, cinta de merge, corridas y reposo. El estado vive en `$.state` (atom `pactMerge`); no lee ni escribe `.mefisto/pipeline/`.
+
+## Capacidad vigente (incremento 9): la bitácora
+
+En reposo, arriba a la derecha y junto a `2: PRs N`, aparece `3: bitácora N`. N suma los `.md` de `docs/bitacora/field-notes/` (sin bajar a `procesadas/`) y los PRs abiertos de rama `docs/planner-field-notes-*`. Con N = 0 o con el historiador escribiendo, el botón se oculta. `2: PRs N` ya no cuenta ni lista esos PRs (aunque "Todos" sigue siendo `--all`). El conteo se refresca al ritmo de los listos.
+
+- `3`: `$.ui.ask` "¿Integrar la bitácora? X field notes en main y Y en PRs sin mergear" con `Mergear sus Y PRs e integrar` (o `Integrar` si Y = 0) y `Cancelar`. Al aceptar envía como prompt del usuario (`$.prompt.submit({ asUser: true })`): `Integra la bitacora: mergea los PRs de field notes #… con /mefisto:merge, pon el checkout en main al dia (git switch main && git pull --ff-only) y luego corre /mefisto:bitacora.` No se modifica `/mefisto:bitacora`.
+- Detección del historiador: se sondea `$.agent.list()` buscando un agente activo cuyo tipo cumpla `/(^|:)historiador$/` (el nombre lleva el prefijo del plugin).
+- La cinta: cabecera `· historiador escribiendo la bitácora k/n mm:ss` en `warning`, mascota historiador (diablito con pluma, poses `escribiendo` y `listo` en `hooks/sprites.ts`) y la lista de field notes (de `docs/bitacora/field-notes/` más las de los PRs de field notes vía `gh pr view --json files`): primero las pendientes `●`, luego las procesadas `✓`. Una nota pasa a procesada al aparecer su nombre en `docs/bitacora/field-notes/procesadas/`, revisado cada 3 s.
+- Al terminar: si queda abierto un PR que solo toca `docs/bitacora/` y no es de rama de field notes, la cabecera muestra `· bitácora escrita · PR #N` y arriba a la derecha `1: mergear · 2: ver PR · 3: cerrar PR` (`mergear` va por `/mefisto:merge N`; `cerrar PR` pide confirmación y borra la rama). Si no queda PR (el skill ya lo mergeó), la cinta se va sola a los 8 s; si el PR se mergea o cierra por fuera, en el siguiente chequeo.
+- Precedencia de la banda: lote de `sequential`, cinta de merge, cinta del historiador, corridas y reposo. Estado en `$.state` (atoms `pactFieldNotes` y `pactHistorian`); lectura pura de `docs/bitacora/`.

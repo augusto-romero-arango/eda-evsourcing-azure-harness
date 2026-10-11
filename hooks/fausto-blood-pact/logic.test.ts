@@ -1,6 +1,18 @@
 import { expect, test } from 'claude-code/testing'
 
 import {
+  bitacoraCount,
+  bitacoraPrOf,
+  bitacoraPrompt,
+  fieldNoteNamesOf,
+  fieldNotesIn,
+  historianFrom,
+  isHistorianType,
+  liveHistorian,
+  orderedNotes,
+  pendingNotes,
+  withProcessedNotes,
+  workPrsOf,
   finishMerge,
   isMergeRibbonExpired,
   mergeRunArgsOf,
@@ -400,18 +412,22 @@ test('parseOpenPrs: conserva field notes y descarta borradores; el mas reciente 
     { number: 8, title: 'Borrador', isDraft: true, headRefName: 'x' },
     { number: 7, title: 'Nota', isDraft: false, headRefName: 'docs/planner-field-notes-abc' },
   ])
-  expect(parseOpenPrs(raw)).toEqual([{ number: '9', title: 'B' }, { number: '7', title: 'Nota' }, { number: '5', title: 'A' }])
+  expect(parseOpenPrs(raw)).toEqual([
+    { number: '9', title: 'B', isFieldNote: false },
+    { number: '7', title: 'Nota', isFieldNote: true },
+    { number: '5', title: 'A', isFieldNote: false },
+  ])
   expect(parseOpenPrs('no json')).toEqual([])
   expect(parseOpenPrs('{}')).toEqual([])
 })
 
 test('openPrArgsOf: uno, varios, "Todos" (--all) y texto libre', () => {
-  const one = [{ number: '7', title: 'X' }]
+  const one = [{ number: '7', title: 'X', isFieldNote: false }]
   expect(openPrOptions(one)).toEqual(['#7 X', 'Cancelar'])
   expect(openPrArgsOf('#7 X', openPrOptions(one), one)).toBe('7')
   expect(openPrArgsOf('Cancelar', openPrOptions(one), one)).toBe(null)
 
-  const many = [9, 8, 7, 6, 5].map(n => ({ number: String(n), title: `T${n}` }))
+  const many = [9, 8, 7, 6, 5].map(n => ({ number: String(n), title: `T${n}`, isFieldNote: false }))
   const options = openPrOptions(many)
   expect(options).toEqual(['Todos', '#9 T9', '#8 T8', '#7 T7'])
   expect(openPrArgsOf('Todos', options, many)).toBe('--all')
@@ -611,4 +627,68 @@ test('el lote de sequential ocupa la banda antes que la cinta de merge', () => {
   expect(mergeRibbonShown(batch, ribbon(), 0)).toBeNull()
   expect(mergeRibbonShown(null, ribbon(), 0)).not.toBeNull()
   expect(mergeRibbonShown(null, ribbon(1000), 1000 + 20_000)).toBeNull()
+})
+
+// ---- Incremento 9: la bitacora ----
+
+test('bitacoraCount: field notes de main mas PRs de field notes; PRs N no los cuenta', () => {
+  const prs = [
+    ...[948, 947, 946, 945, 944, 943, 942, 941, 933].map(n => ({ number: String(n), title: 'nota', isFieldNote: true })),
+    { number: '900', title: 'trabajo', isFieldNote: false },
+  ]
+  expect(fieldNotesIn(['a.md', 'b.md', 'c.md', 'd.md', 'procesadas'])).toBe(4)
+  expect(bitacoraCount(4, prs)).toBe(13)
+  expect(workPrsOf(prs).map(p => p.number)).toEqual(['900'])
+  expect(bitacoraCount(0, [{ number: '900', title: 'trabajo', isFieldNote: false }])).toBe(0)
+  expect(bitacoraCount(null, [])).toBe(0)
+})
+
+test('bitacoraPrompt: mergea los PRs de field notes, trae main y corre /mefisto:bitacora', () => {
+  expect(bitacoraPrompt(['948', '933'])).toBe(
+    'Integra la bitacora: mergea los PRs de field notes #948 #933 con /mefisto:merge, pon el checkout en main al dia (git switch main && git pull --ff-only) y luego corre /mefisto:bitacora.',
+  )
+  expect(bitacoraPrompt([])).toBe(
+    'Integra la bitacora: pon el checkout en main al dia (git switch main && git pull --ff-only) y luego corre /mefisto:bitacora.',
+  )
+})
+
+test('isHistorianType: con o sin el prefijo del plugin', () => {
+  expect(isHistorianType('mefisto:historiador')).toBe(true)
+  expect(isHistorianType('historiador')).toBe(true)
+  expect(isHistorianType('mefisto:historiador-x')).toBe(false)
+})
+
+test('notas: pasan de pendiente a procesada al aparecer en procesadas/ y se ordenan pendientes primero', () => {
+  const names = fieldNoteNamesOf(['b.md', 'a.md', 'procesadas'], ['docs/bitacora/field-notes/c.md', 'docs/bitacora/field-notes/a.md', 'src/x.md'])
+  expect(names).toEqual(['a.md', 'b.md', 'c.md'])
+  const h = { notes: pendingNotes(names) }
+  const next = withProcessedNotes(h, ['a.md', 'zzz.md'])
+  expect(next.notes.map(n => n.estado)).toEqual(['procesada', 'pendiente', 'pendiente'])
+  expect(withProcessedNotes(next, ['zzz.md'])).toBe(next)
+  expect(orderedNotes(next.notes).map(n => n.name)).toEqual(['b.md', 'c.md', 'a.md'])
+})
+
+test('historianFrom y liveHistorian: arranca, termina y se va a los 8 s salvo con PR', () => {
+  const started = historianFrom(null, true, 1000)
+  expect(started).toEqual({ startedMs: 1000, finishedMs: null, notes: [], pr: null })
+  expect(historianFrom(started, true, 2000)).toBe(started)
+  const done = historianFrom(started, false, 5000)!
+  expect(done.finishedMs).toBe(5000)
+  expect(liveHistorian(done, 12_000)).toBe(done)
+  expect(liveHistorian(done, 13_001)).toBe(null)
+  const withPr = { ...done, pr: { number: 7, title: 'bitacora' } }
+  expect(liveHistorian(withPr, 999_999)).toBe(withPr)
+})
+
+test('bitacoraPrOf: excluye ramas de field notes y PRs que tocan algo fuera de docs/bitacora/', () => {
+  const rows = [
+    { number: 10, title: 'notas', headRefName: 'docs/planner-field-notes-abc', files: [{ path: 'docs/bitacora/field-notes/x.md' }] },
+    { number: 11, title: 'mezcla', headRefName: 'docs/otra', files: [{ path: 'docs/bitacora/a.md' }, { path: 'src/x.cs' }] },
+    { number: 12, title: 'bitacora vieja', headRefName: 'docs/bitacora-1', files: [{ path: 'docs/bitacora/a.md' }] },
+    { number: 13, title: 'bitacora', headRefName: 'docs/bitacora-2', files: [{ path: 'docs/bitacora/b.md' }] },
+    { number: 14, title: 'sin archivos', headRefName: 'docs/vacio', files: [] },
+  ]
+  expect(bitacoraPrOf(JSON.stringify(rows))).toEqual({ number: 13, title: 'bitacora' })
+  expect(bitacoraPrOf(JSON.stringify(rows.slice(0, 2)))).toBe(null)
+  expect(bitacoraPrOf('no json')).toBe(null)
 })

@@ -41,6 +41,15 @@ export type PactMergePr = { num: string; title: string; estado: 'pendiente' | 'm
 /** La cinta de merge en curso de la consola; `finishedMs` null mientras corre. */
 export type PactMerge = { prs: PactMergePr[]; startedMs: number; finishedMs: number | null }
 
+/** Una field note que integra el historiador: pendiente hasta que aparece en `procesadas/`. */
+export type BitacoraNote = { name: string; estado: 'pendiente' | 'procesada' }
+
+/** El PR de bitacora que dejo el historiador, abierto a la espera de mergearlo o cerrarlo. */
+export type BitacoraPr = { number: number; title: string }
+
+/** El subagente historiador escribiendo la bitacora en esta sesion (lo lanza /mefisto:bitacora). */
+export type Historian = { startedMs: number; finishedMs: number | null; notes: BitacoraNote[]; pr: BitacoraPr | null }
+
 export type BoardTab = 'borrador' | 'listo'
 
 /** Lo que el planner esta haciendo: refinar un borrador o explorar una idea. */
@@ -82,7 +91,9 @@ declare module 'claude-code' {
       pactRuns: PipelineRun[]
       pactResults: PipelineResult[]
       pactLastEvent: { kind: 'tool' | 'text'; tool: string } | null
-      pactOpenPrs: { number: string; title: string }[]
+      pactOpenPrs: { number: string; title: string; isFieldNote: boolean }[]
+      pactFieldNotes: number | null
+      pactHistorian: Historian | null
       pactBatch: {
         pipeline: string
         started: string
