@@ -1,6 +1,16 @@
 import { expect, test } from 'claude-code/testing'
 
 import {
+  finishMerge,
+  isMergeRibbonExpired,
+  mergePromptArgs,
+  mergePrsOf,
+  mergeRibbonHeader,
+  mergeRibbonLine,
+  mergeRibbonRows,
+  mergeRibbonShown,
+  mergeSummaryText,
+  withMerged,
   batchIssueLine,
   batchTitleOf,
   bandViewOf,
@@ -549,4 +559,53 @@ test('batchIssueLine muestra el titulo y lo recorta para dejar PR y detalle', ()
   expect(short.endsWith('· PR #30 · ok')).toBe(true)
   expect(short.length).toBeLessThanOrEqual(30)
   expect(batchIssueLine(i)).toBe(batchIssueLine(i, ''))
+})
+
+const ribbon = (finishedMs: number | null = null) => ({ prs: mergePrsOf('12 13', [{ number: '12', title: 'Uno' }]), startedMs: 0, finishedMs })
+
+test('mergePromptArgs reconoce /mefisto:merge con y sin argumentos', () => {
+  expect(mergePromptArgs('/mefisto:merge 12 13')).toBe('12 13')
+  expect(mergePromptArgs('  /mefisto:merge --all ')).toBe('--all')
+  expect(mergePromptArgs('/mefisto:merge')).toBe('')
+  expect(mergePromptArgs('/mefisto:mergeado 1')).toBeNull()
+  expect(mergePromptArgs('hola /mefisto:merge 1')).toBeNull()
+})
+
+test('mergePrsOf toma los numeros de los argumentos o los abiertos con --all', () => {
+  const open = [{ number: '5', title: 'Cinco' }, { number: '6', title: 'Seis' }]
+  expect(mergePrsOf('6 6 7', open).map(p => `${p.num}:${p.title}`)).toEqual(['6:Seis', '7:'])
+  expect(mergePrsOf('--all', open).map(p => p.num)).toEqual(['5', '6'])
+})
+
+test('la cinta pasa un PR MERGED a mergeado y no vuelve atras', () => {
+  const r = withMerged(ribbon(), ['12'])
+  expect(r.prs.map(p => p.estado)).toEqual(['mergeado', 'pendiente'])
+  expect(mergeRibbonRows(r).map(p => p.num)).toEqual(['13', '12'])
+  expect(mergeRibbonHeader(r, 0).startsWith('merge 1/2')).toBe(true)
+  expect(withMerged(r, ['12'])).toBe(r)
+  expect(withMerged(r, ['99'])).toBe(r)
+})
+
+test('al terminar el turno los pendientes quedan fallidos y se resume', () => {
+  const done = finishMerge(withMerged(ribbon(), ['12']), 1000)
+  expect(done.prs.map(p => p.estado)).toEqual(['mergeado', 'fallido'])
+  expect(done.finishedMs).toBe(1000)
+  expect(mergeSummaryText(done)).toBe('1 mergeados · 1 fallidos')
+  expect(finishMerge(done, 2000)).toBe(done)
+  expect(mergeRibbonLine(done.prs[1]!, 40)).toBe('✗ #13 · no mergeado')
+  expect(mergeRibbonLine(ribbon().prs[0]!, 40)).toBe('· #12 Uno')
+})
+
+test('la cinta terminada vence a los 15 s y una en curso nunca', () => {
+  expect(isMergeRibbonExpired(ribbon(1000), 1000 + 15_001)).toBe(true)
+  expect(isMergeRibbonExpired(ribbon(1000), 1000 + 15_000)).toBe(false)
+  expect(isMergeRibbonExpired(ribbon(null), 10_000_000)).toBe(false)
+  expect(isMergeRibbonExpired(null, 1)).toBe(false)
+})
+
+test('el lote de sequential ocupa la banda antes que la cinta de merge', () => {
+  const batch = { pipeline: 'sequential', started: '', state: 'running', current: null, stopRequested: false, holdSeconds: 0, issues: [] } as never
+  expect(mergeRibbonShown(batch, ribbon(), 0)).toBeNull()
+  expect(mergeRibbonShown(null, ribbon(), 0)).not.toBeNull()
+  expect(mergeRibbonShown(null, ribbon(1000), 1000 + 20_000)).toBeNull()
 })

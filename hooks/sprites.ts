@@ -236,7 +236,7 @@ export const EMOTIONS: Record<Emotion, readonly [Grid, Grid]> = (() => {
   }
 })()
 
-export type Role = 'desarrollador' | 'tester' | 'revisor' | 'planner' | 'infraestructura'
+export type Role = 'desarrollador' | 'tester' | 'revisor' | 'planner' | 'infraestructura' | 'merge'
 
 export interface RoleState {
   /** Cara que usa este estado. */
@@ -574,6 +574,51 @@ export const ROLES: Record<Role, Record<string, RoleState>> = (() => {
     ' V V              ',
     '  V               ',
   ]
+  // Merge · cremallera: el hilo de la rama (azul) y el de main (verde) bajan y se cierran diente a diente; los
+  // dientes corren hacia abajo mientras /mefisto:merge trabaja y en listo queda cerrada de punta a punta
+  const merge_cosiendo_A: Grid = [
+    'U   V             ',
+    'U   V             ',
+    ' U V              ',
+    ' U V              ',
+    ' UV               ',
+    ' VU               ',
+    ' UV               ',
+    ' VU               ',
+    ' UV               ',
+    ' VU               ',
+    ' UV               ',
+    '                  ',
+  ]
+  const merge_cosiendo_B: Grid = [
+    'U   V             ',
+    ' U V              ',
+    ' U V              ',
+    ' UV               ',
+    ' VU               ',
+    ' UV               ',
+    ' VU               ',
+    ' UV               ',
+    ' VU               ',
+    ' UV               ',
+    ' VU               ',
+    '                  ',
+  ]
+  const merge_listo_A: Grid = [
+    'y  y              ',
+    ' UV               ',
+    ' VU               ',
+    ' UV               ',
+    ' VU               ',
+    'yUVy              ',
+    ' VU               ',
+    ' UV               ',
+    ' VU               ',
+    ' UV               ',
+    ' VU               ',
+    '                  ',
+  ]
+
   return {
     desarrollador: {
       trabajando: { emotion: 'normal', layers: [desarrollador_trabajando_A, desarrollador_trabajando_B] },
@@ -601,6 +646,10 @@ export const ROLES: Record<Role, Record<string, RoleState>> = (() => {
       desplegando: { emotion: 'normal', layers: [infraestructura_desplegando_A, infraestructura_desplegando_B] },
       caido: { emotion: 'asustado', layers: [infraestructura_caido_A, infraestructura_caido_A] },
       arriba: { emotion: 'sonriente', layers: [infraestructura_arriba_A, infraestructura_arriba_A] },
+    },
+    merge: {
+      cosiendo: { emotion: 'concentrado', layers: [merge_cosiendo_A, merge_cosiendo_B] },
+      listo: { emotion: 'sonriente', layers: [merge_listo_A, merge_listo_A] },
     },
   }
 })()
