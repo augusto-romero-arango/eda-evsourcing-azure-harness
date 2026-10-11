@@ -72,9 +72,9 @@ Fuera de alcance: mergear PRs que la sesión no vio terminar y resolver comentar
 
 ## Capacidad vigente (incremento 6): mergear PRs abiertos desde el reposo
 
-En reposo (lanzables visibles), si hay PRs abiertos de trabajo, el pie suma `3 PRs N` (`gh pr list --state open`, sin borradores ni ramas `docs/planner-field-notes-*`; se refresca con los listos y tras cada merge). Sin PRs de trabajo el botón no aparece.
+En reposo (lanzables visibles), si hay PRs abiertos, el pie suma `3 PRs N` (`gh pr list --state open`, sin borradores pero con los de field notes `docs/planner-field-notes-*`; se refresca con los listos y tras cada merge). Sin PRs abiertos el botón no aparece.
 
-- `3`: con un solo PR, `$.ui.ask` con `#N título` y "Cancelar"; con varios, selección múltiple: "Todos" y los 3 más recientes (otros números, en la opción de texto). Ejecuta `/mefisto:merge` con `$.command.run`, anunciado con un toast. "Todos" pasa los números listados, nunca `--all` (mergearía borradores y field notes). Cancelar o no elegir no ejecuta nada.
+- `3`: con un solo PR, `$.ui.ask` con `#N título` y "Cancelar"; con varios, selección múltiple: "Todos" y los 3 más recientes (otros números, en la opción de texto). Ejecuta `/mefisto:merge` con `$.command.run`, anunciado con un toast. "Todos" ejecuta `/mefisto:merge --all` (`pr-sync.sh --all` toma todo PR abierto, borradores incluidos). Cancelar o no elegir no ejecuta nada.
 - `/fausto-blood-pact prs`: lo mismo sin teclas.
 
 ## Capacidad vigente (incremento 7): seguir un sequential como lote

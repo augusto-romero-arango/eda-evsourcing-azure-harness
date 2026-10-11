@@ -449,11 +449,11 @@ async function refreshOpenPrs($: EngineInterface) {
   }
 }
 
-// Reposo: la lista es de PRs abiertos de trabajo; "Todos" pasa sus numeros, nunca `--all`.
+// Reposo: la lista es de todo PR abierto que no es borrador (field notes incluidas); "Todos" pasa `--all`.
 async function mergeOpenPrs($: EngineInterface): Promise<string> {
   await refreshOpenPrs($)
   const prs = await read($, openPrsAtom)
-  if (prs.length === 0) return 'No hay PRs abiertos de trabajo.'
+  if (prs.length === 0) return 'No hay PRs abiertos.'
   const options = openPrOptions(prs)
   const answer = await $.ui
     .ask(
