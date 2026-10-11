@@ -369,7 +369,7 @@ async function closeMergedPrs($: EngineInterface) {
   }
 }
 
-// La cinta de merge: arranca al enviar /mefisto:merge; con --all la lista sale de los PRs abiertos de ese momento.
+// La cinta de merge: arranca con las teclas o al ver la llamada Bash a pr-sync.sh --merge; con --all la lista sale de los PRs abiertos de ese momento.
 async function startMerge($: EngineInterface, args: string) {
   const current = await read($, mergeAtom)
   if (current && current.finishedMs === null) return
