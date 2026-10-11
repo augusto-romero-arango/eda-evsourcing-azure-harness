@@ -1268,7 +1268,7 @@ export const register: Register = on => {
               <Box justifyContent="space-between">
                 <Box>
                   {withSeparators([
-                    <Button key="batch-log" hotkey="3" plain dimColor label="log" onPress={() => void toggleLog($)} />,
+                    <Button key="batch-log" hotkey="3" plain dimColor={running} label="log" onPress={() => void toggleLog($)} />,
                     canStopBatch(batch) && (
                       <Button key="batch-stop" hotkey="1" plain dimColor label="detener" onPress={() => void confirmStop($)} />
                     ),
@@ -1382,7 +1382,7 @@ export const register: Register = on => {
             <Box flexDirection="column" width={body}>
               {runBody(soleRun)}
               <Box>
-                <Button key="run-log" hotkey="3" plain dimColor label="log" onPress={() => void toggleLog($)} />
+                <Button key="run-log" hotkey="3" plain dimColor={soleRun.state === 'running'} label="log" onPress={() => void toggleLog($)} />
               </Box>
             </Box>
           </Box>

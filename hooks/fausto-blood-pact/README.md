@@ -99,7 +99,7 @@ Con una corrida activa (la del eslabón en curso del lote, o la única corrida s
 
 ### Pane de log (#2321)
 
-`3: log` en la vista de corrida y en la del lote (atenuada, igual que el resto) abre un pane enfocado, como la cinta interna; pulsar `3` otra vez, `c` o `/fausto-blood-pact log` lo abre o cierra. Lectura pura de `.mefisto/pipeline/`.
+`3: log` en la vista de corrida y en la del lote (atenuada mientras la corrida corre) abre un pane enfocado, como la cinta interna; pulsar `3` otra vez, `c` o `/fausto-blood-pact log` lo abre o cierra. Lectura pura de `.mefisto/pipeline/`.
 
 - **Cabecera:** `mefisto · #N <pipeline>` (en el lote, `mefisto · sequential N/M · #N <pipeline>`) con el tiempo a la derecha, el título del issue y la fila de pasos con la duración de cada paso terminado (`agents.<x>.duration`). Con PR: `✓ PR #X creado`, `m: Mergear #X` (pasa por `mergePrs`, que confirma), `v: Ver en GitHub` y `c: Cerrar log`. Si falló: `✗ falló en <stage>: <last_error>` y `c`. Mientras corre: `c: Cerrar log` y la ayuda `3 en la banda también lo cierra · ctrl+x tab enfoca · esc vuelve al prompt`.
 - **Cuerpo:** dos `tail -n 40 -F` (`$.process.spawn`) mezclados en orden de llegada en un atom de hasta 400 líneas; se muestran las últimas que caben. Los pipelines publicados corren con `--redact-observability` (MEF-ADR-0053, no se toca), así que el `events.jsonl` solo trae nombre de herramienta, hora, fallos y cierre; el resto sale del log del pipeline.
