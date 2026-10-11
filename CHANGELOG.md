@@ -4,6 +4,23 @@ Todo cambio notable a este proyecto se documenta aquí. Sigue [Keep a Changelog]
 
 ## [Unreleased]
 
+## [0.46.1] - 2026-10-11
+
+### Added
+
+- Las bandas `fausto-board` y `fausto-blood-pact` muestran la version del release cargado (`v<version>`, atenuada) bajo la mascota, leida de `mefisto-manifest.json` con respaldo en `.claude-plugin/plugin.json` (#2274).
+
+### Changed
+
+- `next-order --refinement` (publicado e interno) ordena los borradores del mas reciente al mas antiguo: en cada paso de Kahn elige el disponible de mayor numero, sin romper la dependencia. El orden de lanzamiento no cambia.
+
+### Fixed
+
+- Corregir fausto-blood-pact: la banda reaparece tras `/clear`, `/resume` y `/branch` y al arrancar sin `/fausto-blood-pact on`; el `ui.render` ya no escribe estado (`classic.SessionStart` reactiva y `session.start` invalida el render) (#2277).
+- `mefisto-tmux-pipeline.sh`: con el runtime resuelto `claude` y sin `MEFISTO_UI` explicito, `--tooling`/`--batch` corren desacoplados (sin pane herdr ni sesion tmux; los sigue la cinta de la sesion que los lanzo); `opencode` conserva el pane a la derecha y `MEFISTO_UI=tmux|herdr|mod` explicito siempre gana. `mefisto-herdr-pipeline.sh` aborta, sin abrir ningun pane, si el proceso no desciende del `shell_pid` del `HERDR_PANE_ID` (pane heredado y ajeno, p. ej. de otro workspace) (#2284).
+- `tmux-pipeline.sh`: con el runtime `claude` y sin `MEFISTO_UI` explicito, `implement`/`tooling`/`infra`/`scaffold`/`--batch` corren desacoplados (nohup, sin variables `HERDR_*`), sin abrir pane herdr ni sesion tmux; el avance lo sigue la consola `fausto-blood-pact`. OpenCode y `--parallel` no cambian; `MEFISTO_UI` explicito siempre gana (#2285).
+- `herdr-pipeline.sh`: un `HERDR_PANE_ID` heredado y ajeno (el proceso no desciende de su `shell_pid`) aborta sin tocar ningun pane (#2285).
+
 ## [0.46.0] - 2026-10-10
 
 ### Added
@@ -3380,7 +3397,8 @@ Y reemplazar referencias en `CLAUDE.md` del proyecto: `/eda-evsourcing-azure-har
 - Los agentes `reviewer` e `implementer` mantienen el placeholder literal `ADR-XXXX` en sus plantillas de reporte (no es un bug; el agente lo sustituye en tiempo de ejecución por el número real del ADR aplicable).
 - Los ejemplos de código en `test-writer.md`, `implementer.md` y `smoke-test-writer.md` conservan nombres concretos de un proyecto consumidor (`Programacion`, `ControlHoras`) anotados en el "Contrato con el consumidor" de cada agente como ejemplos pedagógicos.
 
-[Unreleased]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.46.0...HEAD
+[Unreleased]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.46.1...HEAD
+[0.46.1]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.46.0...v0.46.1
 [0.46.0]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.45.0...v0.46.0
 [0.45.0]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.44.1...v0.45.0
 [0.44.1]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.44.0...v0.44.1
