@@ -4,6 +4,13 @@ Todo cambio notable a este proyecto se documenta aquí. Sigue [Keep a Changelog]
 
 ## [Unreleased]
 
+## [0.46.4] - 2026-10-11
+
+### Fixed
+
+- Rearmar `fausto-board` y `fausto-blood-pact` tras `/clear`, `/resume` y `/branch` con un vigilante de un segundo (`shouldRearm` puro en `hooks/logic.ts`) en lugar del handler `classic.SessionStart`, que nunca llega a un plugin de tier user (#2300).
+- La cinta de merge de `fausto-blood-pact` se arranca y se cierra con un `tool.call` Bash sobre `pr-sync.sh --merge` (`mergeRunArgsOf`) en vez de `classic.UserPromptSubmit`/`classic.Stop`, que el tier `user` del plugin publicado nunca recibe; una cinta por teclas sin `pr-sync.sh` se cierra a los 60 s (#2302).
+
 ## [0.46.3] - 2026-10-11
 
 ### Added
@@ -3413,7 +3420,8 @@ Y reemplazar referencias en `CLAUDE.md` del proyecto: `/eda-evsourcing-azure-har
 - Los agentes `reviewer` e `implementer` mantienen el placeholder literal `ADR-XXXX` en sus plantillas de reporte (no es un bug; el agente lo sustituye en tiempo de ejecución por el número real del ADR aplicable).
 - Los ejemplos de código en `test-writer.md`, `implementer.md` y `smoke-test-writer.md` conservan nombres concretos de un proyecto consumidor (`Programacion`, `ControlHoras`) anotados en el "Contrato con el consumidor" de cada agente como ejemplos pedagógicos.
 
-[Unreleased]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.46.3...HEAD
+[Unreleased]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.46.4...HEAD
+[0.46.4]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.46.3...v0.46.4
 [0.46.3]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.46.2...v0.46.3
 [0.46.2]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.46.1...v0.46.2
 [0.46.1]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.46.0...v0.46.1
