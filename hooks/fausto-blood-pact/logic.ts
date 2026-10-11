@@ -82,11 +82,6 @@ export function rowText(item: BoardItem, numWidth: number, titleMax: number): st
   return `${padEnd(`#${item.number}`, numWidth)} ${clip(item.title, titleMax)}`
 }
 
-/** Pie con los issues que no entran al orden; vacio si no hay ninguno. */
-export function footerOf(list: BoardList): string {
-  return [launchKeysText(list), footerRestOf(list, false)].filter(Boolean).join(' · ')
-}
-
 /** Pie sin las teclas `1`/`2` (la consola las pinta como botones): `5-9 uno`, infra y excluidos. */
 export function footerRestOf(list: BoardList, afterButtons: boolean): string {
   const rest = [
@@ -362,16 +357,6 @@ export const NEXT_ORDER_ARGS = ['--json', '--launch-command', SEQUENTIAL_COMMAND
 /** La linea de la tecla (`1` sequential, `2` parallel) tal como la entrego next-order; null si no hay. */
 export function launchLineOf(list: BoardList, kind: LaunchKind): string | null {
   return kind === 'sequential' ? list.launch : (list.parallel?.launch ?? null)
-}
-
-/** Teclas `1`/`2` disponibles: `1 sequential · 2 parallel N`; vacio sin lineas. */
-export function launchKeysText(list: BoardList): string {
-  return [
-    list.launch ? '1 sequential' : '',
-    list.parallel?.launch ? `2 parallel ${list.parallel.issues.length}` : '',
-  ]
-    .filter(Boolean)
-    .join(' · ')
 }
 
 /** `1`/`2`: escribe la linea; con infra lanzable ofrece desarrollarla antes (sin exigirlo). */
