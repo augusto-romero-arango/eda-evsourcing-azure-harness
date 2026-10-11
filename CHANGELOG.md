@@ -4,6 +4,16 @@ Todo cambio notable a este proyecto se documenta aquí. Sigue [Keep a Changelog]
 
 ## [Unreleased]
 
+## [0.46.3] - 2026-10-11
+
+### Added
+
+- Se anade el workflow `.github/workflows/plugin-validate.yml`, que corre `claude plugin validate` sobre el plugin, el marketplace de mods y cada mod en los PRs que tocan `hooks/`, `.claude-plugin/` o `.claude/mods/`; avisa sin bloquear el merge (#2295).
+
+### Fixed
+
+- Repara la carga de los mods fausto-board y fausto-blood-pact en 0.46.2: la cinta de merge de fausto-blood-pact deja de registrar `prompt.submit` y `turn.complete` sin matcher (colision que hacia rechazar el modulo entero) y usa `classic.UserPromptSubmit` y `classic.Stop` (#2294).
+
 ## [0.46.2] - 2026-10-11
 
 ### Added
@@ -3403,7 +3413,8 @@ Y reemplazar referencias en `CLAUDE.md` del proyecto: `/eda-evsourcing-azure-har
 - Los agentes `reviewer` e `implementer` mantienen el placeholder literal `ADR-XXXX` en sus plantillas de reporte (no es un bug; el agente lo sustituye en tiempo de ejecución por el número real del ADR aplicable).
 - Los ejemplos de código en `test-writer.md`, `implementer.md` y `smoke-test-writer.md` conservan nombres concretos de un proyecto consumidor (`Programacion`, `ControlHoras`) anotados en el "Contrato con el consumidor" de cada agente como ejemplos pedagógicos.
 
-[Unreleased]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.46.2...HEAD
+[Unreleased]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.46.3...HEAD
+[0.46.3]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.46.2...v0.46.3
 [0.46.2]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.46.1...v0.46.2
 [0.46.1]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.46.0...v0.46.1
 [0.46.0]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.45.0...v0.46.0
