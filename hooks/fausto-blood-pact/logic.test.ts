@@ -83,6 +83,14 @@ import {
   otherRunsText,
   parseBatchStatus,
   runsOutsideBatch,
+  stepsOfAgents,
+  stepsOf,
+  stepsText,
+  runHeader,
+  logTailLines,
+  eventLineOf,
+  bandLinesOf,
+  isPipelineLaunch,
 } from './logic'
 
 const json = JSON.stringify({
@@ -310,7 +318,7 @@ test('lanzar: sin argumento es 1, un numero fuera de los lanzables lo dice', () 
 
 test('roleOfAgent mapea el agente del stage al rol', () => {
   for (const a of ['test-writer', 'smoke-test-writer', 'coverage-gate']) expect(roleOfAgent(a)).toBe('tester')
-  for (const a of ['implementer', 'writer', 'setup', 'scaffold']) expect(roleOfAgent(a)).toBe('desarrollador')
+  for (const a of ['implementer', 'writer', 'setup', 'scaffold', 'projection-implementer', '2-projection-implementer']) expect(roleOfAgent(a)).toBe('desarrollador')
   for (const a of ['reviewer', 'infra-reviewer']) expect(roleOfAgent(a)).toBe('revisor')
   expect(roleOfAgent('infra-writer')).toBe('infraestructura')
 })
@@ -707,4 +715,73 @@ test('bitacoraPrOf: excluye ramas de field notes y PRs que tocan algo fuera de d
   expect(bitacoraPrOf(JSON.stringify(rows))).toEqual({ number: 13, title: 'bitacora' })
   expect(bitacoraPrOf(JSON.stringify(rows.slice(0, 2)))).toBe(null)
   expect(bitacoraPrOf('no json')).toBe(null)
+})
+
+test('roleOfAgent decide por sufijo e ignora el prefijo del stage', () => {
+  expect(roleOfAgent('projection-test-writer')).toBe('tester')
+  expect(roleOfAgent('1-projection-test-writer')).toBe('tester')
+  expect(roleOfAgent('projection-implementer')).toBe('desarrollador')
+  expect(roleOfAgent('2-reviewer')).toBe('revisor')
+  expect(roleOfAgent('tooling-reviewer')).toBe('revisor')
+  expect(roleOfAgent('infra-writer')).toBe('infraestructura')
+})
+
+const AGENTS = {
+  'test-writer': { duration: 102, result: 'passed' },
+  implementer: { duration: null, result: 'running' },
+  'smoke-test-writer': { duration: null, result: '' },
+  reviewer: { duration: null, result: 'failed' },
+  'coverage-gate': { duration: null, result: 'otra-cosa' },
+}
+
+test('stepsOfAgents / stepsOf: la fila de pasos sale de status.agents en su orden', () => {
+  const raw = JSON.stringify({ issue: '853', stage: '2-implementer', state: 'running', agents: AGENTS, log: '/x/log.txt', title: 'Proyeccion' })
+  const run = parseStatus('pipeline-status-tdd-853.json', raw)!
+  expect(run.title).toBe('Proyeccion')
+  expect(run.log).toBe('/x/log.txt')
+  expect(stepsOfAgents(AGENTS).map(s => s.result)).toEqual(['passed', 'running', 'pending', 'failed', 'pending'])
+  expect(stepsOf(run).map(s => [s.mark, s.color, s.dim])).toEqual([
+    ['✓', 'success', false],
+    ['●', 'warning', false],
+    ['○', undefined, true],
+    ['✗', 'error', false],
+    ['○', undefined, true],
+  ])
+  expect(stepsText(run)).toBe('✓ test-writer ─ ● implementer ─ ○ smoke-test-writer ─ ✗ reviewer ─ ○ coverage-gate')
+  expect(stepsOfAgents(undefined)).toEqual([])
+})
+
+test('runHeader: corrida suelta y lote', () => {
+  const run = parseStatus('pipeline-status-tdd-853.json', JSON.stringify({ stage: '2-projection-implementer', state: 'running', started: '20261011-100000' }))!
+  const now = new Date(2026, 9, 11, 10, 3, 30).getTime()
+  expect(runHeader(run, now)).toBe('#853 projection-implementer 3m')
+  const batch = { pipeline: 'sequential', started: '', state: 'running', current: 853, stopRequested: false, holdSeconds: 0, issues: [{ issue: 853, status: 'en-curso', pr: null, detail: '' }] } as const
+  expect(runHeader(run, now, batch as never)).toBe('sequential 0/1 · #853 projection-implementer 3m')
+})
+
+test('logTailLines: ultimas lineas utiles sin ANSI', () => {
+  const raw = '\u001b[32mFase roja confirmada\u001b[0m\n\n-----\nInvocando projection-implementer…\n  \nlinea 3\nlinea 4\n'
+  expect(logTailLines(raw)).toEqual(['Invocando projection-implementer…', 'linea 3', 'linea 4'])
+  expect(logTailLines(raw, 5)[0]).toBe('Fase roja confirmada')
+})
+
+test('eventLineOf: ultimo evento como linea', () => {
+  const tool = JSON.stringify({ type: 'tool.started', ts: '2026-10-11T15:04:05Z', tool: 'Edit', input_summary: null })
+  expect(eventLineOf(`${tool}\n${JSON.stringify({ type: 'tool.completed', tool: 'Edit' })}\n`)).toMatch(/^\d\d:\d\d:\d\d Edit$/)
+  const done = JSON.stringify({ type: 'run.completed', status: 'success', turns: 7, estimated_cost_usd: 0.1417 })
+  expect(eventLineOf(`${tool}\n${done}\n`)).toBe('success · 7 turnos · $0.14')
+  expect(eventLineOf('')).toBe(null)
+  expect(bandLinesOf(['a', 'b', 'c'], 'x', 3)).toEqual(['b', 'c', 'x'])
+  expect(bandLinesOf(['a'], null)).toEqual(['a'])
+})
+
+test('isPipelineLaunch: detecta el lanzamiento de pipelines en un comando Bash', () => {
+  expect(isPipelineLaunch('bash "${CLAUDE_PLUGIN_ROOT}/scripts/batch-pipeline.sh" 853')).toBe(true)
+  expect(isPipelineLaunch('scripts/tdd-pipeline.sh 853 --verbose')).toBe(true)
+  expect(isPipelineLaunch('cd x && ./scripts/tooling-pipeline.sh 12')).toBe(true)
+  expect(isPipelineLaunch('scripts/tmux-pipeline.sh 1 2')).toBe(true)
+  expect(isPipelineLaunch('scripts/iac-pipeline.sh 9')).toBe(true)
+  expect(isPipelineLaunch('scripts/pr-sync.sh 12 --merge')).toBe(false)
+  expect(isPipelineLaunch('cat scripts/tdd-pipeline.sh.bak')).toBe(false)
+  expect(isPipelineLaunch(undefined)).toBe(false)
 })

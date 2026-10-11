@@ -1,6 +1,6 @@
 import type { Role } from '../sprites'
 import { padEnd, reasonOf, typeBadge } from '../logic'
-import type { BitacoraNote, BitacoraPr, BoardItem, BoardList, Historian, PactMerge, PactMergePr, PipelineKind, PipelineResult, PipelineRun } from '../types'
+import type { BitacoraNote, BitacoraPr, BoardItem, BoardList, Historian, PactMerge, PactMergePr, PipelineKind, PipelineResult, PipelineRun, RunStep } from '../types'
 
 export const NEXT_ORDER_FILE = 'scripts/next-order.sh'
 export const PLANNER_AGENT = 'mefisto:planner'
@@ -160,6 +160,9 @@ type StatusJson = {
   stage?: string
   state?: string
   hold?: { next_probe?: string | null } | null
+  agents?: Record<string, { result?: string | null; duration?: number | null } | null> | null
+  log?: string | null
+  title?: string | null
 }
 
 /** Parseo de un status; null si no es de un pipeline conocido o no es JSON valido. */
@@ -183,7 +186,20 @@ export function parseStatus(fileName: string, raw: string): PipelineRun | null {
     stage: json.stage ?? '',
     state: json.state ?? '',
     nextProbe: json.hold?.next_probe ?? null,
+    agents: stepsOfAgents(json.agents),
+    title: typeof json.title === 'string' ? json.title : '',
+    log: typeof json.log === 'string' && json.log !== '' ? json.log : null,
   }
+}
+
+/** Pasos de `status.agents` en su orden; un `result` desconocido o vacio es `pending`. */
+export function stepsOfAgents(agents: StatusJson['agents']): RunStep[] {
+  if (!agents || typeof agents !== 'object') return []
+  return Object.entries(agents).map(([name, v]) => {
+    const r = v?.result
+    const result: RunStep['result'] = r === 'passed' || r === 'running' || r === 'failed' ? r : 'pending'
+    return { name, result }
+  })
 }
 
 export const isActive = (r: PipelineRun) => r.state === 'running' || r.state === 'hold'
@@ -434,21 +450,13 @@ export function parseLaunchArg(arg: string, list: BoardList): LaunchTarget {
 export type MascotPose = { role: Role; state: string }
 export type LastEvent = { kind: 'tool' | 'text'; tool: string }
 
-/** Rol de la mascota segun el agente del stage; sin agente conocido, desarrollador. */
+/** Rol de la mascota segun el sufijo del agente (el prefijo `<n>-` del stage se ignora); sin agente conocido, desarrollador. */
 export function roleOfAgent(agent: string): Role {
-  switch (agent) {
-    case 'test-writer':
-    case 'smoke-test-writer':
-    case 'coverage-gate':
-      return 'tester'
-    case 'reviewer':
-    case 'infra-reviewer':
-      return 'revisor'
-    case 'infra-writer':
-      return 'infraestructura'
-    default:
-      return 'desarrollador'
-  }
+  const name = agentOf(agent)
+  if (/(^|-)(test-writer|coverage-gate)$/.test(name)) return 'tester'
+  if (/(^|-)reviewer$/.test(name)) return 'revisor'
+  if (/(^|-)infra-writer$/.test(name)) return 'infraestructura'
+  return 'desarrollador'
 }
 
 /** La corrida activa con `updated` mas reciente (a igualdad, la de `started` mas reciente); null sin corridas activas. */
@@ -1045,4 +1053,89 @@ export function bitacoraPrOf(stdout: string): BitacoraPr | null {
   } catch {
     return null
   }
+}
+
+// ---- Vista de corrida con pasos y ultimas lineas (#2320; lector puro de status, log del pipeline y events.jsonl) ----
+
+export const BAND_LOG_ROWS = 3
+export const LAUNCH_POLL_WINDOW_MS = 120_000
+export const LOG_TAIL_BYTES = 8192
+
+const PIPELINE_SCRIPTS = /(^|[\s/"'=])(batch|tmux|tdd|tooling|iac)-pipeline\.sh(\s|$|["';|&])/
+
+/** True si el comando Bash lanza un pipeline del consumidor (`*-pipeline.sh`). */
+export function isPipelineLaunch(command: string | null | undefined): boolean {
+  return typeof command === 'string' && PIPELINE_SCRIPTS.test(command)
+}
+
+export const STEP_MARKS: Record<RunStep['result'], { mark: string; color: string | undefined }> = {
+  passed: { mark: '\u2713', color: 'success' },
+  running: { mark: '\u25cf', color: 'warning' },
+  failed: { mark: '\u2717', color: 'error' },
+  pending: { mark: '\u25cb', color: undefined },
+}
+
+/** Pasos de la corrida: marca, color (undefined = atenuado) y nombre, en el orden de `status.agents`. */
+export function stepsOf(run: PipelineRun): { name: string; mark: string; color: string | undefined; dim: boolean }[] {
+  return (run.agents ?? []).map(s => ({ name: s.name, mark: STEP_MARKS[s.result].mark, color: STEP_MARKS[s.result].color, dim: s.result === 'pending' }))
+}
+
+/** Texto plano de la fila de pasos: `✓ test-writer ─ ● implementer`. */
+export function stepsText(run: PipelineRun): string {
+  return stepsOf(run).map(s => `${s.mark} ${s.name}`).join(' \u2500 ')
+}
+
+/** Cabecera de corrida suelta: `mefisto · #853 projection-implementer 3m`; la linea de lote antepone `sequential N/M · `. */
+export function runHeader(run: PipelineRun, nowMs: number, batch?: BatchStatus | null): string {
+  const mins = minutesSince(run.started, nowMs)
+  const what = run.state === 'hold' ? `rate limit \u00b7 sonda ${run.nextProbe ? clockOf(run.nextProbe) : '?'}` : agentOf(run.stage)
+  const tail = `#${run.issue} ${what}${mins === null ? '' : ` ${mins}m`}`
+  const lead = batch ? `${batch.pipeline || 'sequential'} ${batchCounts(batch).merged}/${batch.issues.length} \u00b7 ` : ''
+  return `${lead}${tail}`
+}
+
+const ANSI = /\u001b\[[0-9;?]*[ -/]*[@-~]/g
+
+/** Ultimas `max` lineas utiles del log del pipeline (sin ANSI, sin vacias ni separadores). */
+export function logTailLines(raw: string, max = BAND_LOG_ROWS): string[] {
+  return raw
+    .split('\n')
+    .map(l => l.replace(ANSI, '').replace(/\r/g, '').trim())
+    .filter(l => /[\p{L}\p{N}]/u.test(l))
+    .slice(-max)
+}
+
+const hms = (iso: unknown): string => {
+  if (typeof iso !== 'string') return ''
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return ''
+  const p = (n: number) => String(n).padStart(2, '0')
+  return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
+}
+
+/** Ultimo evento del agente como linea: `HH:MM:SS <Tool>`, o `success · N turnos · $X` al cerrar; null sin eventos. */
+export function eventLineOf(raw: string): string | null {
+  const lines = raw.split('\n')
+  for (let i = lines.length - 1; i >= 0; i -= 1) {
+    const line = (lines[i] ?? '').trim()
+    if (line === '') continue
+    let ev: Record<string, unknown>
+    try {
+      ev = JSON.parse(line) as Record<string, unknown>
+    } catch {
+      continue
+    }
+    if (ev.type === 'run.completed') {
+      const turns = typeof ev.turns === 'number' ? ` \u00b7 ${ev.turns} turnos` : ''
+      const cost = typeof ev.estimated_cost_usd === 'number' ? ` \u00b7 $${ev.estimated_cost_usd.toFixed(2)}` : ''
+      return `${typeof ev.status === 'string' ? ev.status : 'completado'}${turns}${cost}`
+    }
+    if (ev.type === 'tool.started' && typeof ev.tool === 'string') return `${hms(ev.ts)} ${ev.tool}`.trim()
+  }
+  return null
+}
+
+/** Lineas de la banda: las del log del pipeline y, al final, el ultimo evento del agente; se queda con las ultimas `max`. */
+export function bandLinesOf(logLines: readonly string[], eventLine: string | null, max = BAND_LOG_ROWS): string[] {
+  return [...logLines, ...(eventLine ? [eventLine] : [])].slice(-max)
 }

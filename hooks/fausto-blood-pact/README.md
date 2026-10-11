@@ -57,7 +57,7 @@ A la izquierda de la banda, Mefisto (rojo, de `hooks/sprites.ts`; código propio
 
 Bajo la mascota, centrada y atenuada, va la versión del release cargado (`v0.46.0`), igual que en `fausto-board`: sale de `mefisto-manifest.json` en la raíz del plugin y, si falta o no es SemVer válida, de `.claude-plugin/plugin.json`; se lee al activar y en `refresh`, y si ninguna se lee no se muestra nada (la banda no cambia de alto).
 
-Anima solo mientras hay corrida activa o Claude trabaja. Es lectura pura de status y `events.jsonl`. Fuera de alcance: las últimas líneas del agente bajo la mascota.
+Anima solo mientras hay corrida activa o Claude trabaja. Es lectura pura de status y `events.jsonl`. Los pasos y las últimas líneas del agente llegan con la vista de corrida (ver incremento 7).
 
 ## Capacidad vigente (incremento 5): mergear el PR de una corrida terminada
 
@@ -87,7 +87,17 @@ Con `pipeline-status-batch.json` (lo escribe `batch-pipeline.sh`, #2202) en `sta
 - Cada issue que pasa a `mergeado` dispara un toast. Con el lote en `completed`/`failed`/`stopped` la banda muestra el resumen (mergeados, fallidos, aplazados, saltados, espera por rate limit) con el PR de cada issue; `4` lo cierra (ocultado persistente en `$.store`, clave repo + `started`, sin tocar el archivo).
 - `/fausto-blood-pact detener` equivale a `1`; sin lote en curso, lo dice.
 
-Fuera de alcance: el log acumulado del lote (queda para el incremento de log en vivo).
+### Vista de corrida con pasos y últimas líneas (#2320)
+
+Con una corrida activa (la del eslabón en curso del lote, o la única corrida suelta sin resultados pendientes) la banda copia la experiencia de la cinta interna:
+
+- Primera línea, a todo el ancho: `mefisto · sequential 0/1 · #853 projection-implementer 3m` en el lote y `mefisto · #853 projection-implementer 3m` en una corrida suelta. Las teclas no cambian (`1: detener`, `2: ver PR`, `4: cerrar`, según la vista).
+- Fila de pasos, de `status.agents` en su orden, separados por ` ─ `: `✓` passed (success), `●` running (warning), `✗` failed (error), `○` pending (atenuado); se recorta al ancho.
+- Título del issue y las 3 últimas líneas útiles, atenuadas: cola del log del pipeline (`status.log`, sin ANSI) y el último evento del agente activo (`HH:MM:SS <Tool>`, o `success · N turnos · $X` al cerrar). Los `events.jsonl` publicados van redactados (MEF-ADR-0053), así que no traen mensajes. Se calculan en el sondeo de 5 s (cola del archivo, `tail -c`) y se guardan en el atom `pactBandLines`; el render no escribe. El seguimiento continuo con `tail -F` es del pane de log (#2321).
+- La mascota decide su rol por sufijo del agente (el prefijo `<n>-` del stage se ignora): `*test-writer` y `*coverage-gate` tester, `*reviewer` revisor, `*infra-writer` infraestructura, el resto desarrollador.
+- Arranque inmediato: un `tool.call` Bash cuyo comando invoca `batch-`, `tmux-`, `tdd-`, `tooling-` o `iac-pipeline.sh` arma el sondeo de corridas cada 5 s durante 2 minutos aunque aún no haya status, y llama a `refreshRuns` al volver la llamada (mismo matcher `Bash` que ya usa la cinta de merge).
+
+Fuera de alcance: la tecla `3: log` y el seguimiento con `tail -F` (issue de log, #2321).
 
 ## Capacidad vigente (incremento 8): la cinta de merge en vivo
 
