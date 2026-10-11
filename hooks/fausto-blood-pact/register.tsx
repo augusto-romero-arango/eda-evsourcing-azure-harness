@@ -734,10 +734,15 @@ export const register: Register = on => {
     const version = await read($, versionAtom)
     const list = await read($, listAtom)
     const listosText = list && !list.error ? ` · listos ${list.items.length}` : ''
-    const head = (state: string | null, key: string) => (
+    const head = (state: string | null, key: string, stateColor?: string) => (
       <Text key={key} wrap="truncate-end">
-        <Text bold color="claude">mefisto</Text>
-        <Text dimColor>{clip(`${listosText}${state ? ` · ${state}` : ''}`, Math.max(8, body - 8))}</Text>
+        <Text color="claude">mefisto</Text>
+        <Text dimColor>{clip(listosText, Math.max(8, body - 8))}</Text>
+        {state && (
+          <Text color={stateColor} dimColor={!stateColor}>
+            {clip(` · ${state}`, Math.max(8, body - 8 - listosText.length))}
+          </Text>
+        )}
       </Text>
     )
     const raster =
@@ -765,12 +770,13 @@ export const register: Register = on => {
       const queue = batch.issues.map(i => ({ key: `b-${i.issue}`, text: batchIssueLine(i, batchTitles[i.issue], body), dim: i.status === 'saltado' || i.status === 'pendiente' }))
       const { page, pages } = pageOf(await read($, pageAtom), queue.length, PAGE_ROWS)
       const visible = running ? [] : queue.slice(page * PAGE_ROWS, (page + 1) * PAGE_ROWS)
+      const headColor = batch.state === 'failed' ? 'error' : batch.state === 'stopped' || batch.stopRequested ? 'warning' : undefined
       return (
         <Box flexDirection="column" borderStyle="round" borderColor="claude" borderDimColor paddingX={1}>
           <Box gap={2} alignItems="flex-start">
             {mascot}
             <Box flexDirection="column" width={body}>
-              {head(`${batchHeader(batch, Date.now())}${running ? '' : ` · ${batch.state === 'completed' ? 'terminado' : batch.state === 'stopped' ? 'detenido' : 'con fallos'}`}`, 'pact-head')}
+              {head(`${batchHeader(batch, Date.now())}${running ? '' : ` · ${batch.state === 'completed' ? 'terminado' : batch.state === 'stopped' ? 'detenido' : 'con fallos'}`}`, 'pact-head', headColor)}
               {running ? (
                 <>
                   <Text wrap="truncate-end">
