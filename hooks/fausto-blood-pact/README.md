@@ -10,6 +10,8 @@ Se activa sola en una sesión **interactiva** del proyecto consumidor. No se act
 - una sesión no interactiva (`-p`),
 - el repo de Mefisto (manifiesto `name: mefisto`).
 
+La cinta de merge escucha `classic.UserPromptSubmit` y `classic.Stop`, no `prompt.submit`/`turn.complete`: esos dos sin matcher los registra el tablero y el engine rechaza el módulo si se registran dos veces (#2294).
+
 Comandos: `/fausto-blood-pact on` | `off` | `refresh` | `ocultar`. `on`/`off` sobreviven a `/clear`: un hook `classic.SessionStart` (`source` `clear`, `resume` o `fork`) reactiva la banda si la consola es elegible y no está apagada, porque `/clear` reinicia el estado sin disparar `session.start`. El render no escribe estado (el engine lo rechaza); `session.start` pide `ui.invalidate('ui.render')` tras activar para que la banda aparezca sola al arrancar.
 
 Si al arrancar no se puede leer la línea de comando de Claude Code y el transcript aún no existe, la consola arranca y reintenta la detección del planner en cada refresco; si resulta ser el planner, se apaga.
@@ -93,6 +95,6 @@ Al enviar `/mefisto:merge <args>` (escrito a mano, con la tecla `3`, con la `1` 
 
 - Cabecera `merge N/M · Mm` (N cuenta los mergeados), una fila por PR (`· #12 título` pendiente, `✓` mergeado, `✗ no mergeado`) y la mascota en pose `cosiendo` (sprite `merge`), a un cuadro por segundo.
 - `pr-sync.sh` corre en una sola llamada Bash, así que el avance sale del sondeo: cada 5 s `gh pr view <n> --json state` de los pendientes; un `MERGED` pasa a `✓`.
-- Al terminar el turno del merge (`turn.complete`) se hace un último sondeo; lo que siga pendiente queda `✗ no mergeado`, la mascota pasa a `listo` y un toast resume `N mergeados · M fallidos`.
+- Al terminar el turno del merge (`classic.Stop`) se hace un último sondeo; lo que siga pendiente queda `✗ no mergeado`, la mascota pasa a `listo` y un toast resume `N mergeados · M fallidos`.
 - La cinta terminada se oculta sola a los 15 s (se calcula al dibujar con `now - finishedMs`, sin escribir estado desde el render); `4 cerrar` la oculta antes.
 - Precedencia de la banda: lote de `sequential`, cinta de merge, corridas y reposo. El estado vive en `$.state` (atom `pactMerge`); no lee ni escribe `.mefisto/pipeline/`.

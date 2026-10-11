@@ -133,7 +133,7 @@ let isRefreshingOpenPrs = false
 let isRefreshingRuns = false
 let mergeTimer: { cancel: () => void } | null = null
 let isPollingMerge = false
-// El turno que corre el merge ya empezo (prompt.submit visto); evita cerrar la cinta con el turn.complete de un turno anterior.
+// El turno que corre el merge ya empezo (classic.UserPromptSubmit visto); evita cerrar la cinta con el classic.Stop de un turno anterior.
 let isMergeTurnSeen = false
 let mergeStartedMs = 0
 const MERGE_STALE_MS = 60_000
@@ -603,6 +603,8 @@ async function pactOnTurnComplete($: EngineInterface): Promise<void> {
 }
 
 export const register: Register = on => {
+  // prompt.submit y turn.complete sin matcher ya los registra el tablero: un segundo registro hace que el engine rechace
+  // el modulo entero, y `$` no se puede pasar a funciones importadas, asi que index.tsx no puede componerlos (#2294).
   on('classic.UserPromptSubmit', async ($, e, next) => {
     await pactOnPromptSubmit($, { text: e.prompt })
     return next(e)
