@@ -80,7 +80,7 @@ import {
   stopQuestion,
   MERGE_POLL_MS,
   finishMerge,
-  mergePromptArgs,
+  mergeRunArgsOf,
   mergePrsOf,
   mergeRibbonHeader,
   mergeRibbonLine,
@@ -136,8 +136,8 @@ let isRefreshingOpenPrs = false
 let isRefreshingRuns = false
 let mergeTimer: { cancel: () => void } | null = null
 let isPollingMerge = false
-// El turno que corre el merge ya empezo (classic.UserPromptSubmit visto); evita cerrar la cinta con el classic.Stop de un turno anterior.
-let isMergeTurnSeen = false
+// La llamada Bash a pr-sync.sh ya empezo; sin verla, el reloj cierra la cinta arrancada por teclas a los MERGE_STALE_MS.
+let isMergeScriptSeen = false
 let mergeStartedMs = 0
 const MERGE_STALE_MS = 60_000
 // Corridas que esta sesion vio activas y resultados `✓` ya derivados; viven aqui porque /clear reinicia los atoms.
@@ -369,9 +369,8 @@ async function closeMergedPrs($: EngineInterface) {
   }
 }
 
-// La cinta de merge: arranca al enviar /mefisto:merge; con --all la lista sale de los PRs abiertos de ese momento.
-async function startMerge($: EngineInterface, args: string, fromPrompt = false) {
-  if (fromPrompt) isMergeTurnSeen = true
+// La cinta de merge: arranca con las teclas o al ver la llamada Bash a pr-sync.sh --merge; con --all la lista sale de los PRs abiertos de ese momento.
+async function startMerge($: EngineInterface, args: string) {
   const current = await read($, mergeAtom)
   if (current && current.finishedMs === null) return
   let open = await read($, openPrsAtom)
@@ -381,7 +380,7 @@ async function startMerge($: EngineInterface, args: string, fromPrompt = false) 
   }
   const prs = mergePrsOf(args, open)
   if (prs.length === 0) return
-  isMergeTurnSeen = fromPrompt
+  isMergeScriptSeen = false
   mergeStartedMs = Date.now()
   await update($, mergeAtom, () => ({ prs, startedMs: mergeStartedMs, finishedMs: null }))
 }
@@ -555,6 +554,7 @@ async function activate($: EngineInterface) {
   // La mascota anima solo con corrida activa o con Claude trabajando; en reposo no hay re-render por segundo.
   tickTimer = $.clock.every(1000, () => {
     if (isAnimating) void update($, tickAtom, () => Math.floor(Date.now() / 1000))
+    void closeStaleMerge($)
   })
   void refresh($)
 }
@@ -607,29 +607,26 @@ async function heal($: EngineInterface) {
   }
 }
 
-async function pactOnPromptSubmit($: EngineInterface, e: { text: string }): Promise<void> {
-  const mergeArgs = isEligible && isWanted ? mergePromptArgs(e.text) : null
-  if (mergeArgs !== null) await startMerge($, mergeArgs, true)
-}
-
-async function pactOnTurnComplete($: EngineInterface): Promise<void> {
-  if (isEligible && isWanted) {
-    const run = await read($, mergeAtom)
-    if (run && run.finishedMs === null && (isMergeTurnSeen || Date.now() - run.startedMs > MERGE_STALE_MS)) await endMerge($)
-  }
+// Cinta vencida: una arrancada por teclas cuyo skill nunca invoco pr-sync.sh (p. ej. descarto todos los PRs).
+async function closeStaleMerge($: EngineInterface) {
+  if (!isEligible || !isWanted || isMergeScriptSeen) return
+  const run = await read($, mergeAtom)
+  if (run && run.finishedMs === null && Date.now() - run.startedMs > MERGE_STALE_MS) await endMerge($)
 }
 
 export const register: Register = on => {
-  // prompt.submit y turn.complete sin matcher ya los registra el tablero: un segundo registro hace que el engine rechace
-  // el modulo entero, y `$` no se puede pasar a funciones importadas, asi que index.tsx no puede componerlos (#2294).
-  on('classic.UserPromptSubmit', async ($, e, next) => {
-    await pactOnPromptSubmit($, { text: e.prompt })
-    return next(e)
-  }).catch(($, e, next) => next(e))
-
-  on('classic.Stop', async ($, e, next) => {
-    await pactOnTurnComplete($)
-    return next(e)
+  // La senal del merge es la llamada Bash a pr-sync.sh: el plugin carga en tier user y el engine no le entrega classic.*.
+  // Convive con el tool.call Bash del tablero (mismo matcher, #2302).
+  on('tool.call', { tool: 'Bash' }, async ($, e, next) => {
+    const mergeArgs = isEligible && isWanted ? mergeRunArgsOf(e.command) : null
+    if (mergeArgs === null) return next(e)
+    await startMerge($, mergeArgs)
+    isMergeScriptSeen = true
+    try {
+      return await next(e)
+    } finally {
+      await endMerge($)
+    }
   }).catch(($, e, next) => next(e))
 
   // Con matcher: el engine admite un solo session.start sin matcher por plugin (el del tablero), y asi `-p` ni lo dispara.

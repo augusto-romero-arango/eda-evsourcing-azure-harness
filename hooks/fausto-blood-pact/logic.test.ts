@@ -3,7 +3,7 @@ import { expect, test } from 'claude-code/testing'
 import {
   finishMerge,
   isMergeRibbonExpired,
-  mergePromptArgs,
+  mergeRunArgsOf,
   mergePrsOf,
   mergeRibbonHeader,
   mergeRibbonLine,
@@ -563,12 +563,13 @@ test('batchIssueLine muestra el titulo y lo recorta para dejar PR y detalle', ()
 
 const ribbon = (finishedMs: number | null = null) => ({ prs: mergePrsOf('12 13', [{ number: '12', title: 'Uno' }]), startedMs: 0, finishedMs })
 
-test('mergePromptArgs reconoce /mefisto:merge con y sin argumentos', () => {
-  expect(mergePromptArgs('/mefisto:merge 12 13')).toBe('12 13')
-  expect(mergePromptArgs('  /mefisto:merge --all ')).toBe('--all')
-  expect(mergePromptArgs('/mefisto:merge')).toBe('')
-  expect(mergePromptArgs('/mefisto:mergeado 1')).toBeNull()
-  expect(mergePromptArgs('hola /mefisto:merge 1')).toBeNull()
+test('mergeRunArgsOf reconoce un merge de pr-sync.sh y devuelve sus PRs o --all', () => {
+  const script = 'MEFISTO_RUNTIME=claude "/x/mefisto/0.46.3/scripts/pr-sync.sh"'
+  expect(mergeRunArgsOf(`${script} 12 13 --merge`)).toBe('12 13')
+  expect(mergeRunArgsOf(`${script} --all --merge`)).toBe('--all')
+  expect(mergeRunArgsOf(`${script} 12`)).toBeNull()
+  expect(mergeRunArgsOf('gh pr list --merge 12')).toBeNull()
+  expect(mergeRunArgsOf(`${script} 12 --merge && echo ok`)).toBe('12')
 })
 
 test('mergePrsOf toma los numeros de los argumentos o los abiertos con --all', () => {

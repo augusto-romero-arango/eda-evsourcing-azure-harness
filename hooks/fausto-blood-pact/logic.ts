@@ -869,10 +869,14 @@ export const canStopBatch = (b: BatchStatus | null): boolean => b !== null && is
 export const MERGE_POLL_MS = 5_000
 export const MERGE_RIBBON_HIDE_MS = 15_000
 
-/** Argumentos de un prompt `/mefisto:merge <args>`; null si el texto no es ese comando. */
-export function mergePromptArgs(text: string): string | null {
-  const m = /^\/mefisto:merge(?:\s+([\s\S]*))?$/.exec(text.trim())
-  return m ? (m[1] ?? '').trim() : null
+/** Argumentos de un merge de `pr-sync.sh` (`--merge`): los numeros de PR o `--all`; null si el comando no es un merge de ese script. */
+export function mergeRunArgsOf(command: string): string | null {
+  const m = /pr-sync\.sh["']?(?=\s|$|[;&|])([^;&|]*)/.exec(command)
+  if (!m) return null
+  const tokens = (m[1] ?? '').split(/\s+/).filter(t => t !== '')
+  if (!tokens.includes('--merge')) return null
+  if (tokens.includes('--all')) return '--all'
+  return tokens.filter(t => /^\d+$/.test(t)).join(' ')
 }
 
 /** Los PRs de la cinta: con `--all`, los abiertos que se pasen; si no, los numeros de los argumentos, con el titulo que se conozca. */
