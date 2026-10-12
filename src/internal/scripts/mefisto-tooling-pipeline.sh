@@ -458,7 +458,9 @@ BRANCH_NAME="worktree-mefisto-issue-${ISSUE_NUM}-${SLUG}"
 # Modo variante (CA-2): worktree y rama llevan el sufijo -<label>, para que N
 # corridas simultaneas del mismo issue coexistan sin colision de paths ni ramas.
 [ -n "$VARIANT_LABEL" ] && BRANCH_NAME="${BRANCH_NAME}-${VARIANT_LABEL}"
-WORKTREE_PATH="${REPO_ROOT}/../${BRANCH_NAME}"
+# Dentro del repo, bajo .mefisto/worktrees/ (ignorado por Git), como las sesiones
+# directas: no ensucia el directorio de trabajo y mefisto-worktree.sh clean lo ve.
+WORKTREE_PATH="${REPO_ROOT}/.mefisto/worktrees/${BRANCH_NAME}"
 
 if [ "$FROM_STAGE" -gt 1 ]; then
     [ -d "$WORKTREE_PATH" ] || abort "No existe el worktree en $WORKTREE_PATH. No se puede retomar desde Stage $FROM_STAGE."
@@ -486,6 +488,7 @@ else
     fi
 
     log "Creando worktree: $WORKTREE_PATH (base: origin/main)"
+    mkdir -p "$(dirname "$WORKTREE_PATH")" || abort "No se pudo crear $(dirname "$WORKTREE_PATH")"
     git -C "$REPO_ROOT" worktree add "$WORKTREE_PATH" -b "$BRANCH_NAME" origin/main >>"$LOG_FILE" 2>&1 \
         || abort "No se pudo crear el worktree desde origin/main"
 
