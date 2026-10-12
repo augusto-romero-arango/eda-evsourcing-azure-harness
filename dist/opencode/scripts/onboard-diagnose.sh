@@ -288,6 +288,71 @@ row() {
     printf '  [%-13s] %s\n' "$estado" "$item"
 }
 
+# _consumer_origin_slug
+#
+# Imprime owner/repo derivado de 'git remote get-url origin' (HTTPS, SSH scp-like o ssh://,
+# con o sin .git). Vacio si no hay origin o no se puede derivar. Sin red.
+_consumer_origin_slug() {
+    local url
+    url=$(git remote get-url origin 2>/dev/null) || return 0
+    url="${url%/}"
+    url="${url%.git}"
+    printf '%s\n' "$url" | sed -E 's#^.*[:/]([^/:]+/[^/:]+)$#\1#' | grep -E '^[^/]+/[^/]+$' || true
+}
+
+# _check_repo_slug <config>
+#
+# Valida el repoSlug efectivo (config o default augusto-romero-arango/mefisto, igual que
+# _repo_slug de upgrade.sh): atajo local contra el origin del consumidor y, si no coincide,
+# verificacion de contenido via gh (.claude-plugin/plugin.json con name == mefisto).
+_check_repo_slug() {
+    local cfg="$1" slug="" origin_slug origen err name rc motivo
+    slug=$(jq -r '.repoSlug // empty' "$cfg" 2>/dev/null) || slug=""
+    if [ -n "$slug" ]; then
+        origen="declarado en el config"
+    else
+        slug="augusto-romero-arango/mefisto"
+        origen="default, el config no declara repoSlug"
+    fi
+
+    origin_slug=$(_consumer_origin_slug)
+    if [ -n "$origin_slug" ] && [ "$(printf '%s' "$origin_slug" | tr '[:upper:]' '[:lower:]')" = "$(printf '%s' "$slug" | tr '[:upper:]' '[:lower:]')" ]; then
+        row FALTA "repoSlug '$slug' apunta al propio consumidor: los drafts cross-repo y el /upgrade de OpenCode irian a este repo ($origen)"
+        ACTIONS="${ACTIONS}  - Corrige repoSlug en $cfg con el slug owner/repo del fork de Mefisto, o borralo para usar el default augusto-romero-arango/mefisto.
+"
+        return 0
+    fi
+
+    if ! command -v gh >/dev/null 2>&1; then
+        row NV "repoSlug '$slug' ($origen) no verificado: gh no esta instalado"
+        return 0
+    fi
+    err=$(mktemp 2>/dev/null || echo "/tmp/onboard-slug.$$")
+    name=$(gh api "repos/$slug/contents/.claude-plugin/plugin.json" -H "Accept: application/vnd.github.raw+json" 2>"$err")
+    rc=$?
+    if [ "$rc" -ne 0 ]; then
+        if grep -Eqi '404|not found' "$err" 2>/dev/null; then
+            row FALTA "repoSlug '$slug' ($origen) no apunta a un repo de Mefisto: el repo no existe o no tiene .claude-plugin/plugin.json"
+            ACTIONS="${ACTIONS}  - Corrige repoSlug en $cfg con el slug owner/repo del fork de Mefisto, o borralo para usar el default augusto-romero-arango/mefisto.
+"
+        else
+            motivo=$(grep -m1 -v '^[[:space:]]*$' "$err" 2>/dev/null | tr -d '\r')
+            row NV "repoSlug '$slug' ($origen) no verificado: gh no pudo consultar el repo (${motivo:-sin detalle}); revisa 'gh auth status' y la red"
+        fi
+        rm -f "$err"
+        return 0
+    fi
+    rm -f "$err"
+    name=$(printf '%s' "$name" | jq -r '.name // empty' 2>/dev/null) || name=""
+    if [ "$name" = "mefisto" ]; then
+        row OK "repoSlug '$slug' apunta a un repo de Mefisto ($origen)"
+    else
+        row FALTA "repoSlug '$slug' ($origen) no apunta a un repo de Mefisto: plugin.json tiene name '${name:-<ilegible>}', distinto de 'mefisto'"
+        ACTIONS="${ACTIONS}  - Corrige repoSlug en $cfg con el slug owner/repo del fork de Mefisto, o borralo para usar el default augusto-romero-arango/mefisto.
+"
+    fi
+}
+
 main() {
     CONFIG=""
     CONFIG_VALID=0
@@ -366,6 +431,7 @@ main() {
             else
                 row OK "terraformStateStorage vacio (consumidor sin IaC; valido)"
             fi
+            _check_repo_slug "$CONFIG"
         else
             row FALTA "configuracion invalida o incompleta"
             PA_CONFIG_FALTA=1

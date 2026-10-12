@@ -305,6 +305,14 @@ cat > "$ONBOARD_BIN/gh" <<'GH'
 #!/usr/bin/env bash
 if [ "$1" = "label" ]; then
     printf '%s\n' tipo:feature tipo:infra tipo:refactor tipo:tooling tipo:projection estado:borrador estado:listo bug bloqueado dom:dominio1
+elif [ "$1" = "api" ]; then
+    case "${GH_API_MODE:-mefisto}" in
+        mefisto) printf '{"name":"mefisto"}\n' ;;
+        otro) printf '{"name":"otra-cosa"}\n' ;;
+        404) echo "gh: Not Found (HTTP 404)" >&2; exit 1 ;;
+        noauth) echo "gh: Bad credentials (HTTP 401)" >&2; exit 1 ;;
+    esac
+    if [ -n "${GH_API_LOG:-}" ]; then echo "$*" >> "$GH_API_LOG"; fi
 elif [ "$1" = "secret" ]; then
     printf '%s\t%s\n' AZURE_CLIENT_ID ahora AZURE_TENANT_ID ahora AZURE_SUBSCRIPTION_ID ahora TF_VAR_POSTGRESQL_ADMIN_PASSWORD ahora
 fi
@@ -414,6 +422,66 @@ if printf '%s\n' "$OUT_ERROR" | grep -Fqx '  [FALTA        ] aplicacion de Entra
 else
     fail "un error de Azure dejó de ser accionable o filtró el identificador centinela"
 fi
+
+echo ""
+echo "[S-5b] repoSlug: atajo local y verificacion de contenido"
+prepare_onboard_repo "$ONBOARD_REPO/.mefisto/harness.config.json" false
+run_slug() { (cd "$ONBOARD_REPO" && PATH="$ONBOARD_BIN:$PATH" "$@" bash "$REPO_ROOT/scripts/onboard-diagnose.sh" 2>&1); }
+NOGH_BIN=$(mktemp -d)
+for t in git jq bash mktemp cat rm sed grep tr dirname az; do
+    p=$(command -v "$t" 2>/dev/null) && ln -s "$p" "$NOGH_BIN/$t"
+done
+trap 'rm -f "$ROW_OUT"; rm -rf "$IGNORE_REPO" "$DIRECTIVES_REPO" "$ONBOARD_REPO" "$ONBOARD_BIN" "$NOGH_BIN"' EXIT
+set_slug() { jq --arg s "$1" '.repoSlug = $s' "$ONBOARD_REPO/.mefisto/harness.config.json" > "$ONBOARD_REPO/cfg.tmp" && mv "$ONBOARD_REPO/cfg.tmp" "$ONBOARD_REPO/.mefisto/harness.config.json"; }
+
+git -C "$ONBOARD_REPO" remote remove origin 2>/dev/null
+git -C "$ONBOARD_REPO" remote add origin "git@github.com:Org/Consumidor.git"
+set_slug "org/consumidor"
+GH_LOG=$(mktemp); : > "$GH_LOG"
+OUT=$(run_slug env GH_API_LOG="$GH_LOG")
+if printf '%s\n' "$OUT" | grep -Fq "[FALTA        ] repoSlug 'org/consumidor' apunta al propio consumidor" \
+    && [ ! -s "$GH_LOG" ] && printf '%s\n' "$OUT" | grep -Fq "Corrige repoSlug en"; then
+    pass "repoSlug igual al propio origin: FALTA con accion, sin llamar a gh api"
+else
+    fail "el atajo local no detecto el repoSlug propio"
+fi
+rm -f "$GH_LOG"
+
+git -C "$ONBOARD_REPO" remote set-url origin "https://github.com/Org/Consumidor.git"
+OUT=$(run_slug env)
+printf '%s\n' "$OUT" | grep -Fq "[FALTA        ] repoSlug 'org/consumidor' apunta al propio consumidor" \
+    && pass "el atajo reconoce el remoto HTTPS" || fail "el atajo no reconocio el remoto HTTPS"
+
+set_slug "otro/mefisto-fork"
+OUT=$(run_slug env GH_API_MODE=mefisto)
+printf '%s\n' "$OUT" | grep -Fq "[OK           ] repoSlug 'otro/mefisto-fork' apunta a un repo de Mefisto" \
+    && pass "plugin.json con name mefisto: OK" || fail "name mefisto no dio OK"
+
+OUT=$(run_slug env GH_API_MODE=otro)
+printf '%s\n' "$OUT" | grep -Fq "[FALTA        ] repoSlug 'otro/mefisto-fork'" \
+    && printf '%s\n' "$OUT" | grep -Fq "name 'otra-cosa'" \
+    && printf '%s\n' "$OUT" | grep -Fq "Corrige repoSlug en" \
+    && pass "name distinto: FALTA con causa y accion" || fail "name distinto no dio FALTA accionable"
+
+OUT=$(run_slug env GH_API_MODE=404)
+printf '%s\n' "$OUT" | grep -Fq "[FALTA        ] repoSlug 'otro/mefisto-fork'" \
+    && printf '%s\n' "$OUT" | grep -Fq "no existe o no tiene .claude-plugin/plugin.json" \
+    && pass "404: FALTA con causa" || fail "404 no dio FALTA con causa"
+
+OUT=$(run_slug env GH_API_MODE=noauth)
+printf '%s\n' "$OUT" | grep -Fq "[NO VERIFICADO] repoSlug 'otro/mefisto-fork'" \
+    && printf '%s\n' "$OUT" | grep -Fq "(gh: Bad credentials (HTTP 401))" \
+    && pass "gh sin autenticacion: NO VERIFICADO con el motivo de gh" || fail "gh sin autenticacion no dio NO VERIFICADO con motivo"
+
+OUT=$(cd "$ONBOARD_REPO" && PATH="$NOGH_BIN" bash "$REPO_ROOT/scripts/onboard-diagnose.sh" 2>&1)
+printf '%s\n' "$OUT" | grep -Fq "[NO VERIFICADO] repoSlug 'otro/mefisto-fork'" \
+    && pass "sin gh: NO VERIFICADO" || fail "sin gh no dio NO VERIFICADO"
+
+jq 'del(.repoSlug)' "$ONBOARD_REPO/.mefisto/harness.config.json" > "$ONBOARD_REPO/cfg.tmp" && mv "$ONBOARD_REPO/cfg.tmp" "$ONBOARD_REPO/.mefisto/harness.config.json"
+OUT=$(run_slug env GH_API_MODE=mefisto)
+printf '%s\n' "$OUT" | grep -Fq "[OK           ] repoSlug 'augusto-romero-arango/mefisto' apunta a un repo de Mefisto (default" \
+    && pass "sin repoSlug se valida el default" || fail "el default no se valido"
+git -C "$ONBOARD_REPO" remote remove origin
 
 rm -f "$ONBOARD_REPO/.mefisto/harness.config.json"
 OUT=$(cd "$ONBOARD_REPO" && PATH="$ONBOARD_BIN:$PATH" bash "$REPO_ROOT/scripts/onboard-diagnose.sh")
