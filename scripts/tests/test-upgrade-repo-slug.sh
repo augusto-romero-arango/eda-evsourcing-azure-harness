@@ -42,6 +42,7 @@ echo "== ambos: gana canonico, stdout limpio =="
 R=$(mkrepo ambos); cfg owner/fork "$R/.mefisto/harness.config.json"; cfg legacy/fork "$R/.claude/harness.config.json"
 out=$(slug_en "$R")
 [ "$out" = owner/fork ] && ok "gana canonico" || ko "canonico vs legacy: '$out'"
+[ ! -s "$TMP/stderr" ] && ok "el AVISO del resolver no se filtra" || ko "salida del resolver: $(cat "$TMP/stderr")"
 
 echo "== sin config / fuera de repo / sin repoSlug =="
 R=$(mkrepo vacio)
@@ -54,6 +55,11 @@ R=$(mkrepo sinslug); mkdir -p "$R/.mefisto"; echo '{}' > "$R/.mefisto/harness.co
 echo "== HARNESS_CONFIG_PATH explicito =="
 R=$(mkrepo explicito); cfg owner/fork "$R/.mefisto/harness.config.json"; cfg env/fork "$TMP/env.json"
 [ "$(HARNESS_CONFIG_PATH="$TMP/env.json" slug_en "$R")" = env/fork ] && ok "env tiene prioridad" || ko "env"
+
+echo "== sin _pipeline-common.sh: comportamiento previo =="
+SIN="$TMP/scripts-sin-common"; mkdir -p "$SIN"; cp "$SCRIPTS/upgrade.sh" "$SCRIPTS/_plugin-scopes.sh" "$SIN/"
+R=$(mkrepo sincommon); cfg owner/fork "$R/.mefisto/harness.config.json"; cfg legacy/fork "$R/.claude/harness.config.json"
+[ "$(SCRIPTS="$SIN" slug_en "$R")" = legacy/fork ] && ok "sin helper -> legacy relativo" || ko "sin helper"
 
 echo "Resultado: $PASS pass, $FAIL fail"
 [ "$FAIL" -eq 0 ]
