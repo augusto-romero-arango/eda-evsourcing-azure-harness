@@ -40,7 +40,7 @@ Con la lista de listos visible y el prompt vacío (con la banda mostrando corrid
 - `1`: línea de `/mefisto:sequential` (sin infra). `4`: línea del lote `/mefisto:parallel` (`p` ya no actúa). `1` y `4` solo escriben el comando en el prompt; nunca lo envían. Con la línea en `null` la tecla no se muestra ni actúa.
 - Con `tipo:infra` listos, `1` y `4` abren un diálogo (`$.ui.ask`): "Infra primero" (`/mefisto:infra <primer infra>`), "Seguir sin infra" o "Cancelar". Cerrar el diálogo o un texto libre no escriben nada.
 - `5`-`9`: el issue de esa fila (prefijo `5:`…`9:`) con diálogo por `tipo`: `feature`/`refactor`/`projection` -> "Con merge" (`/mefisto:sequential <n>`) o "Solo PR" (`/mefisto:implement <n>`); `tooling` -> "Con merge" o "Solo PR" (`/mefisto:tooling <n>`); `infra` -> solo "Solo PR" (`/mefisto:infra <n>`). Sin tipo lanzable, un toast lo avisa.
-- Pie: `1: sequential N · 4: parallel M` (N y M, los issues de cada línea) a la izquierda, `0: página 1/2 ▸` a la derecha, más `infra: #N` y `N en ciclo` si aplican.
+- Pie: última línea de la banda, fuera de la columna de la lista, bajo la mascota y a todo el ancho: `1: sequential N · 4: parallel M` (N y M, los issues de cada línea) a la izquierda, `0: página 1/2 ▸` a la derecha, más `infra: #N` y `N en ciclo` si aplican.
 - `/fausto-blood-pact lanzar [sequential|parallel|<n>]`: lo mismo sin teclas; sin argumento equivale a `1`.
 
 Fuera de alcance: lanzar sin pasar por el prompt y mergear PRs.
