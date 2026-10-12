@@ -89,17 +89,18 @@ import {
   transcriptPathOf,
   batchCounts,
   batchDismissKey,
-  batchHeader,
+  batchHoldLine,
   batchPrOf,
   batchQueueText,
+  batchQueueMarks,
+  batchRunningHeader,
+  recentLineColor,
+  recentLines,
   batchRunOf,
   batchStopPath,
-  batchSummaryText,
   canStopBatch,
   newlyMerged,
-  otherRunsText,
   parseBatchStatus,
-  runsOutsideBatch,
   stepsOfAgents,
   stepsOf,
   stepsText,
@@ -502,14 +503,15 @@ test('parseBatchStatus lee un lote running y calcula cabecera, cola y avance', (
   expect(b.state).toBe('running')
   expect(b.current).toBe(13)
   expect(b.issues[0]?.pr).toBe('101')
-  expect(batchHeader(b, batchNow)).toBe('sequential 1/3 · 7m')
-  expect(batchQueueText(b)).toBe('✓ #12 · ● #13 · · #14')
+  expect(batchQueueText(b)).toBe('✓ #12 ─ ● #13 ─ ○ #14')
+  expect(batchQueueText(b, 'reviewer')).toBe('✓ #12 ─ ● #13 reviewer ─ ○ #14')
+  expect(batchQueueMarks(b, 'reviewer').map(m => m.color)).toEqual(['success', 'warning', undefined])
   expect(canStopBatch(b)).toBe(true)
 })
 
-test('parseBatchStatus con stop_requested dice deteniendo y no ofrece 1', () => {
+test('parseBatchStatus con stop_requested dice se detiene tras #N y no ofrece 1', () => {
   const b = parseBatchStatus(batchRaw({ stop_requested: true }))!
-  expect(batchHeader(b, batchNow)).toContain('deteniendo')
+  expect(batchRunningHeader(b, batchNow).stopNote).toBe('se detiene tras #13')
   expect(canStopBatch(b)).toBe(false)
 })
 
@@ -528,7 +530,6 @@ test('parseBatchStatus completed con fallidos y saltados: conteos y resumen', ()
     }),
   )!
   expect(batchCounts(b)).toEqual({ merged: 1, failed: 1, deferred: 1, skipped: 1, total: 4 })
-  expect(batchSummaryText(b)).toBe('1 mergeados · 1 fallidos · 1 aplazados · 1 saltados · espera 10m por rate limit')
   expect(canStopBatch(b)).toBe(false)
 })
 
@@ -557,16 +558,12 @@ test('newlyMerged solo anuncia las transiciones a mergeado', () => {
   expect(newlyMerged(null, b.issues)).toEqual([])
 })
 
-test('el eslabon en curso no se repite como corrida suelta y las demas se cuentan', () => {
+test('batchRunOf: corrida suelta del eslabon en curso', () => {
   const b = parseBatchStatus(batchRaw())!
   const mk = (issue: number): ReturnType<typeof parseStatus> =>
     parseStatus(`pipeline-status-tdd-${issue}.json`, JSON.stringify({ issue, started: '20261009-100000', updated: '20261009-100100', stage: '2-implementer', state: 'running' }))
   const runs = [mk(13)!, mk(40)!]
   expect(batchRunOf(b, runs)?.issue).toBe(13)
-  expect(runsOutsideBatch(b, runs).map(r => r.issue)).toEqual([40])
-  expect(otherRunsText(1)).toBe('+1 corrida')
-  expect(otherRunsText(2)).toBe('+2 corridas')
-  expect(otherRunsText(0)).toBe('')
 })
 
 test('senal de parada en la raiz del checkout principal y clave de descarte por repo + started', () => {
@@ -794,8 +791,50 @@ test('runHeader: corrida suelta y lote', () => {
   const run = parseStatus('pipeline-status-tdd-853.json', JSON.stringify({ stage: '2-projection-implementer', state: 'running', started: '20261011-100000' }))!
   const now = new Date(2026, 9, 11, 10, 3, 30).getTime()
   expect(runHeader(run, now)).toBe('#853 projection-implementer 3m')
-  const batch = { pipeline: 'sequential', started: '', state: 'running', current: 853, stopRequested: false, holdSeconds: 0, issues: [{ issue: 853, status: 'en-curso', pr: null, detail: '' }] } as const
-  expect(runHeader(run, now, batch as never)).toBe('sequential 0/1 · #853 projection-implementer 3m')
+})
+
+test('batchRunningHeader: M/N, tiempo y parada pedida', () => {
+  const b = parseBatchStatus(batchRaw())!
+  const h = batchRunningHeader(b, batchNow)
+  expect(h.progress).toBe('sequential 1/3')
+  expect(h.time).toBe('07:30')
+  expect(h.stopNote).toBe('')
+  expect(batchRunningHeader({ ...b, started: '20261009-080000' }, batchNow).time).toBe('2:07:30')
+  expect(batchRunningHeader({ ...b, started: '' }, batchNow).time).toBe('')
+  expect(batchRunningHeader({ ...b, stopRequested: true }, batchNow).stopNote).toBe('se detiene tras #13')
+  const mixed = parseBatchStatus(batchRaw({ issues: [{ issue: 12, status: 'mergeado' }, { issue: 13, status: 'fallido' }, { issue: 14, status: 'en-curso' }] }))!
+  expect(batchRunningHeader(mixed, batchNow).progress).toBe('sequential 2/3')
+})
+
+test('batchQueueText: aplazado, fallido y el paso solo en el issue en curso', () => {
+  const b = parseBatchStatus(batchRaw({ current: 14, issues: [{ issue: 12, status: 'fallido' }, { issue: 13, status: 'aplazado' }, { issue: 14, status: 'en-curso' }] }))!
+  expect(batchQueueText(b, 'implementer')).toBe('✗ #12 ─ ⏸ #13 ─ ● #14 implementer')
+  expect(batchQueueMarks(b).map(m => m.color)).toEqual(['error', undefined, 'warning'])
+})
+
+test('batchHoldLine: solo con el eslabon en hold', () => {
+  const mk = (state: string) => parseStatus('pipeline-status-tdd-13.json', JSON.stringify({ stage: '2-implementer', state, started: '20261009-100000', hold: { next_probe: '2026-10-09T10:20:00' } }))!
+  expect(batchHoldLine(mk('hold'))).toBe('en espera por rate limit · próxima sonda 10:20')
+  expect(batchHoldLine(mk('running'))).toBe('')
+  expect(batchHoldLine(null)).toBe('')
+})
+
+test('recentLines: solo lineas con hora, formato HH:MM:SS y color por tipo', () => {
+  const lines = ['── Stage 3: Reviewer ──', 'sin hora', '[11:50:53] Invocando reviewer (modelo: opus)...', '11:51:11 Bash', '[11:52:00] ✓ listo', '[11:53:00] ERROR boom']
+  expect(recentLines(lines)).toEqual([
+    { ts: '11:51:11', text: 'Bash', color: undefined },
+    { ts: '11:52:00', text: '✓ listo', color: 'success' },
+    { ts: '11:53:00', text: 'ERROR boom', color: 'error' },
+  ])
+  expect(recentLines(lines, 4)[0]).toEqual({ ts: '11:50:53', text: 'Invocando reviewer (modelo: opus)...', color: 'claude' })
+  expect(recentLines(['✓ sin hora', 'success · 12 turnos'])).toEqual([])
+})
+
+test('recentLineColor: fallo, exito (incluido `<agente> completado`), inicio y resto sin color', () => {
+  expect(recentLineColor('reviewer completado en 312s')).toBe('success')
+  expect(recentLineColor('Error al crear el PR')).toBe('error')
+  expect(recentLineColor('Invocando implementer (modelo: sonnet)...')).toBe('claude')
+  expect(recentLineColor('Haciendo push de la rama...')).toBe(undefined)
 })
 
 test('logTailLines: ultimas lineas utiles sin ANSI', () => {

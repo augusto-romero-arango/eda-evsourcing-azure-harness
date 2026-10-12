@@ -8,6 +8,7 @@ import type { BoardList, Historian, PaneLine, PactMerge, PipelineResult, Pipelin
 import type { IssueStats } from './logic'
 import type { BatchStatus, LastEvent, LaunchKind, LaunchPlan, MascotPose, OpenPr } from './logic'
 import {
+  BAND_FETCH_ROWS,
   BAND_LOG_ROWS,
   PANE_MAX_LINES,
   agentOf,
@@ -83,10 +84,13 @@ import {
   BATCH_KEEP_ANSWER,
   BATCH_STOP_ANSWER,
   batchCounts,
-  batchCurrentOf,
   batchDismissKey,
-  batchHeader,
+  batchCurrentOf,
+  batchHoldLine,
   batchMark,
+  batchQueueMarks,
+  batchRunningHeader,
+  recentLines,
   batchSummaryMarks,
   batchEndLabel,
   batchEndFromStats,
@@ -102,13 +106,10 @@ import {
   batchRunOf,
   batchStatusPath,
   batchStopPath,
-  batchSummaryText,
   canStopBatch,
   isBatchRunning,
   newlyMerged,
-  otherRunsText,
   parseBatchStatus,
-  runsOutsideBatch,
   stopQuestion,
   MERGE_POLL_MS,
   finishMerge,
@@ -299,9 +300,9 @@ async function readBandLines($: EngineInterface, run: PipelineRun | null, events
   if (run.log) {
     const path = run.log.startsWith('/') ? run.log : `${runsRepo}/${run.log}`
     const tail = await $.process.run(['tail', '-c', String(LOG_TAIL_BYTES), path]).catch(() => ({ exitCode: 1, stdout: '' }))
-    if (tail.exitCode === 0) logLines = logTailLines(tail.stdout, BAND_LOG_ROWS)
+    if (tail.exitCode === 0) logLines = logTailLines(tail.stdout, BAND_FETCH_ROWS)
   }
-  return bandLinesOf(logLines, eventsTail ? eventLineOf(eventsTail) : null, BAND_LOG_ROWS)
+  return bandLinesOf(logLines, eventsTail ? eventLineOf(eventsTail) : null, BAND_FETCH_ROWS)
 }
 
 // Solo `.mefisto/pipeline/` (MEF-ADR-0053): la ruta legada ya no la escribe ningun pipeline.
@@ -1246,9 +1247,6 @@ export const register: Register = on => {
       const running = isBatchRunning(batch)
       const c = batchCounts(batch)
       const pr = batchPrOf(batch)
-      const current = batchCurrentOf(batch)
-      const others = otherRunsText(runsOutsideBatch(batch, runs).length)
-      const headColor = batch.state === 'failed' ? 'error' : batch.state === 'stopped' || batch.stopRequested ? 'warning' : undefined
       if (!running) {
         // Cierre del lote: misma vista que la cinta interna (cabecera con acciones, cola y resumen junto a la mascota, tabla a todo el ancho).
         const { stats, endedMs } = await read($, batchStatsAtom)
@@ -1309,49 +1307,52 @@ export const register: Register = on => {
           </Box>
         )
       }
+      // Lote en curso: misma vista que la cinta interna (cabecera con acciones, cola con paso, titulo y ultimas lineas junto a la mascota).
+      const head2 = batchRunningHeader(batch, Date.now())
+      const recent = recentLines(bandLines, BAND_LOG_ROWS)
+      const holdLine = batchHoldLine(batchRun)
+      const current = batchCurrentOf(batch)
       return (
         <Box flexDirection="column" borderStyle="round" borderColor="claude" borderDimColor paddingX={1}>
-          {running && batchRun
-            ? head(`${runHeader(batchRun, Date.now(), batch)}${batch.stopRequested ? ' · deteniendo' : ''}`, 'pact-head', headColor, false)
-            : head(batchHeader(batch, Date.now()), 'pact-head', headColor)}
+          <Box justifyContent="space-between">
+            <Text wrap="truncate-end">
+              <Text color="claude">mefisto</Text>
+              <Text> · {head2.progress}</Text>
+              {head2.time !== '' && <Text dimColor> {head2.time}</Text>}
+              {head2.stopNote !== '' && <Text color="warning"> · {head2.stopNote}</Text>}
+            </Text>
+            <Box gap={2}>
+              {canStopBatch(batch) && !batch.stopRequested && (
+                <Button key="batch-stop" hotkey="1" plain label="detener" onPress={() => void confirmStop($)} />
+              )}
+              {pr && <Button key="batch-pr" hotkey="2" plain label={`ver PR #${pr}`} onPress={() => void viewBatchPr($)} />}
+              <Button key="batch-log" hotkey="3" plain dimColor label="log" onPress={() => void toggleLog($)} />
+            </Box>
+          </Box>
           <Box gap={2} alignItems="flex-start">
             {mascot}
-            <Box flexDirection="column" width={body}>
-              {running && batchRun ? (
-                runBody(batchRun)
-              ) : running ? (
-                <>
-                  <Text wrap="truncate-end">
-                    {batch.issues.map((i, n) => (
-                      <Text key={`q-${i.issue}`} dimColor={i.status === 'saltado' || i.status === 'pendiente'}>
-                        {`${n > 0 ? ' · ' : ''}${batchMark(i.status)} #${i.issue}`}
-                      </Text>
-                    ))}
+            <Box flexDirection="column" width={body} marginTop={1}>
+              <Text wrap="truncate-end">
+                {batchQueueMarks(batch, batchRun ? agentOf(batchRun.stage) : null).map((m, n) => (
+                  <Text key={`q-${n}`} color={m.color} dimColor={m.color === undefined}>
+                    {`${n > 0 ? ' ─ ' : ''}${m.text}`}
                   </Text>
-                  <Text color="claude" wrap="truncate-end">
-                    {clip(batchRun ? runLine(batchRun, Date.now()) : `#${current?.issue ?? batch.current ?? '…'} en curso`, body)}
-                  </Text>
-                  {batch.holdSeconds > 0 && <Text dimColor>{clip(batchSummaryText(batch), body)}</Text>}
-                </>
-              ) : null}
-              {Array.from({ length: Math.max(0, PAGE_ROWS - (batchRun ? 5 : 3)) }, (_, i) => (
-                <Text key={`blank-${i}`}> </Text>
+                ))}
+              </Text>
+              <Text dimColor wrap="truncate-end">
+                {batchRun
+                  ? clip(`#${batchRun.issue} ${batchRun.title}`.trim(), body)
+                  : current
+                    ? `#${current.issue}`
+                    : 'preparando el primer issue…'}
+              </Text>
+              {holdLine ? <Text color="warning" wrap="truncate-end">{clip(holdLine, body)}</Text> : <Text> </Text>}
+              {recent.map((l, i) => (
+                <Text key={`recent-${i}`} color={l.color} wrap="truncate-end">{clip(`${l.ts} ${l.text}`, body)}</Text>
               ))}
-              <Box justifyContent="space-between">
-                <Box>
-                  {withSeparators([
-                    <Button key="batch-log" hotkey="3" plain dimColor label="log" onPress={() => void toggleLog($)} />,
-                    canStopBatch(batch) && (
-                      <Button key="batch-stop" hotkey="1" plain dimColor label="detener" onPress={() => void confirmStop($)} />
-                    ),
-                    pr && (
-                      <Button key="batch-pr" hotkey="2" plain dimColor label={`ver PR #${pr}`}
-                        onPress={() => void viewBatchPr($)} />
-                    ),
-                  ], Text)}
-                  <Text dimColor>{others ? ` · ${others}` : ''}{c.failed > 0 ? ` · ${c.failed} ✗` : ''}</Text>
-                </Box>
-              </Box>
+              {Array.from({ length: Math.max(0, BAND_LOG_ROWS - recent.length) }, (_, i) => (
+                <Text key={`recent-pad-${i}`}> </Text>
+              ))}
             </Box>
           </Box>
         </Box>
