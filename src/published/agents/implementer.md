@@ -1228,6 +1228,17 @@ La custodia de las cadenas de ASB descrita arriba (Key Vault, MEF-ADR-0024 decis
 
 ---
 
+## Modo documental (issue solo smoke)
+
+**Cuando aplica:** solo cuando el prompt del pipeline declara el issue como de SOLO SMOKE TESTS (modo documental). El pipeline lo decide por el diff del Stage 1 (`detect_smoke_only`): el test-writer solo toco `tests/*.SmokeTests/`, `docs/` o `pipeline-state/`, porque el unico entregable verificable del issue es un smoke post-deploy (MEF-ADR-0013). No hay rojo que poner en verde ni produccion que implementar. Sin esa declaracion en el prompt, este modo no aplica: el carril de `refactor-signal` salta tu stage entero y el de `no-red-signal` (read-side) si te deja implementacion por escribir.
+
+En este modo:
+
+1. **NUNCA** toques `src/` ni `tests/`. Los smoke tests ya estan escritos; el gate del Stage 2 aborta la corrida si tu diff cae en alguna de esas dos rutas, y en este modo no hay infraestructura que modificar.
+2. Resuelve **solo** los entregables no-codigo que pidan los criterios de aceptacion: un ADR en `docs/adr/` con el prefijo de ADR del consumidor (el que ya usan sus ADRs; nunca `MEF-ADR-`, reservado al marco), o filas en el `AGENTS.md` del consumidor (su puente por runtime solo lo importa). No inventes entregables que el issue no pide.
+3. Si no hay ninguno, termina sin cambios y dilo en tu resumen.
+4. Escribe el resumen del paso 9 con un `### Resultado` que nombre el modo, ej. "Modo documental (solo smoke): <entregables resueltos, o 'sin entregables no-codigo: termine sin cambios'>". Los pasos 2-7 del proceso no aplican.
+
 ## Proceso
 
 ### 1. Leer el contexto
