@@ -932,6 +932,18 @@ for PR_NUM in "${PR_NUMS[@]}"; do
 done
 
 echo ""
+# Limpieza de worktrees abandonados: una vez, si algun merge del lote salio bien.
+# Su fallo nunca cambia el exit code de pr-sync.
+ANY_MERGED=false
+for PR_NUM in "${PR_NUMS[@]}"; do
+    [ "$(get_status "$PR_NUM")" = "mergeado" ] && ANY_MERGED=true
+done
+if [ "$ANY_MERGED" = true ]; then
+    log "Limpiando worktrees mergeados o abandonados..."
+    "$SCRIPT_DIR/worktree-clean.sh" >>"$LOG_FILE_ABS" 2>&1 \
+        || warn "worktree-clean.sh fallo; la limpieza de worktrees quedo pendiente (ver $LOG_FILE_ABS)"
+fi
+
 if [ "$HAVE_ERRORS" = true ]; then
     warn "Algunos PRs tuvieron errores. Revisa el log: $LOG_FILE_ABS"
     exit 1
