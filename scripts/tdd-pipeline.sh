@@ -990,8 +990,12 @@ PROHIBIDO hacer 'git push' o 'gh pr create' (ni ninguna operacion de publicacion
             if [ "$IS_NO_RED_SIGNAL" = true ]; then
                 log "fase roja no aplicable: $NO_RED_JUSTIFICATION"
             else
-                SMOKE_OTHER_LIST=$(printf '%s' "$SMOKE_DETECT_OUT" | grep '^otro: ' | sed 's/^otro: //' | paste -sd, - || true)
-                abort "Stage 1 fallido: todos los tests pasan (exit code: 0). Opciones: (1) el $STAGE1_AGENT escribio implementacion real en lugar de stubs: reemplazala por stubs que hagan fallar los tests; (2) en tipo:projection, la fase roja estructuralmente inalcanzable se señaliza con pipeline-state/no-red-signal.md (JUSTIFICATION=<razon>); (3) el carril solo-smoke se detecta solo cuando todo cambio cae en tests/*.SmokeTests/, docs/ o pipeline-state/ y hay al menos un archivo smoke. Archivos fuera de esas rutas que impidieron detectarlo: ${SMOKE_OTHER_LIST:-ninguno (no hay archivos bajo tests/*.SmokeTests/)}."
+                if printf '%s' "$SMOKE_DETECT_OUT" | grep -q '^smoke: '; then
+                    SMOKE_OTHER_LIST=$(printf '%s' "$SMOKE_DETECT_OUT" | grep '^otro: ' | sed 's/^otro: //' | paste -sd, - || true)
+                else
+                    SMOKE_OTHER_LIST="ninguno de los cambios cae bajo tests/*.SmokeTests/"
+                fi
+                abort "Stage 1 fallido: todos los tests pasan (exit code: 0). Opciones: (1) el $STAGE1_AGENT escribio implementacion real en lugar de stubs: reemplazala por stubs que hagan fallar los tests; (2) en tipo:projection, la fase roja estructuralmente inalcanzable se señaliza con pipeline-state/no-red-signal.md (JUSTIFICATION=<razon>); (3) el carril solo-smoke se detecta solo cuando todo cambio cae en tests/*.SmokeTests/, docs/ o pipeline-state/ y hay al menos un archivo smoke. Lo que impidio detectarlo: ${SMOKE_OTHER_LIST}."
             fi
         elif [ "$g1_rc" -eq 8 ]; then
             abort "Stage 1 fallido: no se encontraron tests para ejecutar (exit code: 8) — el $STAGE1_AGENT no genero tests validos"
@@ -1048,7 +1052,10 @@ PROHIBIDO hacer 'git push' o 'gh pr create' (ni ninguna operacion de publicacion
     AGENT_TW_METRICS_JSON=$LAST_AGENT_METRICS_JSON
     AGENT_TW_RES="passed"
     update_status "1-${STAGE1_AGENT}" "passed"
-    if [ "$IS_NO_RED_SIGNAL" = true ]; then
+    if [ "$IS_SMOKE_ONLY" = true ]; then
+        echo "[$(date +%H:%M:%S)] SMOKE_ONLY ${STAGE1_AGENT} passed: fase roja no aplica, solo smoke tests (corren post-deploy, MEF-ADR-0013)" >> "$EVENTS_LOG_ABS"
+        success "Stage 1 completado — fase roja no aplica: solo smoke tests (corren post-deploy, MEF-ADR-0013)"
+    elif [ "$IS_NO_RED_SIGNAL" = true ]; then
         success "Stage 1 completado — fase roja no aplicable (señalizada por el $STAGE1_AGENT)"
     else
         success "Stage 1 completado — fase roja confirmada"
@@ -1194,9 +1201,18 @@ PROHIBIDO hacer 'git push' o 'gh pr create' (ni ninguna operacion de publicacion
 
     # Auto-commit de seguridad
     auto_commit_if_needed "verde" "feat(hu-${ISSUE_NUM:-?}): implementación fase verde"
-    if [ "$IS_SMOKE_ONLY" = true ] && [ -n "$(git -C "$WORKTREE_PATH" status --porcelain -- . ':!pipeline-state' 2>/dev/null)" ]; then
-        git -C "$WORKTREE_PATH" add -A -- . ':!pipeline-state' >>"${LOG_FILE_ABS:-$LOG_FILE}" 2>&1 || true
-        git -C "$WORKTREE_PATH" commit -m "docs(hu-${ISSUE_NUM:-?}): entregables no-código (solo smoke)" >>"${LOG_FILE_ABS:-$LOG_FILE}" 2>&1 || true
+    # auto_commit_if_needed solo cubre tests/ y src/; en modo documental los
+    # entregables viven en docs/, AGENTS.md o CLAUDE.md (CA-3 de #2357).
+    if [ "$IS_SMOKE_ONLY" = true ]; then
+        for doc_path in docs AGENTS.md CLAUDE.md; do
+            if [ -n "$(git -C "$WORKTREE_PATH" status --porcelain -- "$doc_path" 2>/dev/null)" ]; then
+                git -C "$WORKTREE_PATH" add -A -- "$doc_path" >>"${LOG_FILE_ABS:-$LOG_FILE}" 2>&1 || true
+            fi
+        done
+        if ! git -C "$WORKTREE_PATH" diff --cached --quiet 2>/dev/null; then
+            log "El $STAGE2_AGENT no commitió los entregables documentales. Haciendo commit automático (modo documental)..."
+            git -C "$WORKTREE_PATH" commit -m "docs(hu-${ISSUE_NUM:-?}): entregables no-código (solo smoke)" >>"${LOG_FILE_ABS:-$LOG_FILE}" 2>&1 || true
+        fi
     fi
 
     AGENT_IM_DUR=$LAST_AGENT_DURATION
@@ -1208,7 +1224,11 @@ PROHIBIDO hacer 'git push' o 'gh pr create' (ni ninguna operacion de publicacion
     else
         AGENT_IM_RES="passed"
         update_status "2-${STAGE2_AGENT}" "passed"
-        success "Stage 2 completado — fase verde confirmada"
+        if [ "$IS_SMOKE_ONLY" = true ]; then
+            success "Stage 2 completado — modo documental (solo smoke)"
+        else
+            success "Stage 2 completado — fase verde confirmada"
+        fi
     fi
 else
     log "Saltando Stage 2 (--from-stage $FROM_STAGE)"
