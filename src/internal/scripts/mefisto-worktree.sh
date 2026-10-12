@@ -10,8 +10,10 @@
 # Uso:
 #   mefisto-worktree.sh new <slug>   crea (o reutiliza) el worktree desde
 #                                    origin/main e imprime su ruta absoluta
-#   mefisto-worktree.sh clean        elimina los worktrees cuya rama ya esta en
-#                                    origin/main y con status limpio
+#   mefisto-worktree.sh clean        recorre todos los worktrees del repo (tambien
+#                                    los antiguos al lado del repo) y elimina los
+#                                    de rama mergeada con status limpio y las
+#                                    raices de batch cuyo proceso ya no existe
 #
 # Exit code: 0 en exito, 1 en cualquier fallo.
 
@@ -91,21 +93,41 @@ branch_is_merged() {
     [ "$track" = "[gone]" ]
 }
 
-cmd_clean() {
-    [ -d "$WT_BASE" ] || { echo "Sin worktrees en '$WT_BASE'"; return 0; }
+# Raiz de ejecucion del batch (mefisto-batch-execution-<ts>-<pid>): huerfana
+# solo si el proceso que la creo ya no existe.
+is_orphan_execution_root() {
+    local name pid
+    name="$(basename "$1")"
+    case "$name" in mefisto-batch-execution-*) ;; *) return 1 ;; esac
+    pid="${name##*-}"
+    [[ "$pid" =~ ^[0-9]+$ ]] || return 1
+    ! kill -0 "$pid" 2>/dev/null
+}
 
+cmd_clean() {
     # Sin refspec: con 'origin main', --prune solo poda origin/main y una rama
     # mergeada por squash nunca quedaria con upstream [gone].
     git -C "$MAIN_ROOT" fetch --prune origin >&2 \
         || { echo "ERROR: 'git fetch --prune origin' fallo; verifica la red y las credenciales" >&2; return 1; }
     git -C "$MAIN_ROOT" worktree prune >/dev/null 2>&1 || true
 
+    # Todos los worktrees del repo, no solo los de .mefisto/worktrees/: asi entran
+    # los que los pipelines creaban al lado del repo antes del issue #2336.
+    local dirs=() line
+    while IFS= read -r line; do
+        case "$line" in "worktree "*) dirs+=("${line#worktree }") ;; esac
+    done < <(git -C "$MAIN_ROOT" worktree list --porcelain)
+
     local dir branch status removed=0 kept=0
-    for dir in "$WT_BASE"/*/; do
+    for dir in "${dirs[@]}"; do
+        [ "$dir" = "$MAIN_ROOT" ] && continue
         [ -d "$dir" ] || continue
-        dir="${dir%/}"
         branch="$(git -C "$dir" symbolic-ref -q --short HEAD 2>/dev/null || true)"
         if [ -z "$branch" ]; then
+            if is_orphan_execution_root "$dir"; then
+                git -C "$MAIN_ROOT" worktree remove --force "$dir" >/dev/null 2>&1 \
+                    && { echo "Eliminado: $dir (raiz de batch sin proceso vivo)"; removed=$((removed + 1)); continue; }
+            fi
             echo "AVISO: '$dir' sin rama (HEAD desacoplado); se conserva" >&2
             kept=$((kept + 1)); continue
         fi

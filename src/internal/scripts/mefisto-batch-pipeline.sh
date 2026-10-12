@@ -343,10 +343,11 @@ BATCH_STOP_SIGNAL="$MEFISTO_STATE_DIR/batch-stop"
 # origin/main. Asi writer y reviewer comparten maquinaria inmutable, y el
 # siguiente eslabon recibe el pipeline que su predecesor pudo haber mergeado.
 #
-# No se ubica dentro de REPO_ROOT (un worktree anidado mezcla infraestructura
-# temporal con el checkout humano): es un sibling con identidad propia, ajena a
-# worktree-mefisto-issue-<N>-<slug>. git worktree remove es la unica limpieza;
-# nunca hacemos reset, clean ni switch sobre el checkout lanzador.
+# Vive bajo .mefisto/worktrees/ (ignorado por Git, junto a los worktrees de las
+# corridas) con identidad propia, ajena a worktree-mefisto-issue-<N>-<slug>; el
+# sufijo es el PID del batch, que mefisto-worktree.sh clean usa para no tocar la
+# raiz de un batch vivo. git worktree remove es la unica limpieza; nunca hacemos
+# reset, clean ni switch sobre el checkout lanzador.
 EXECUTION_ROOT=""
 EXECUTION_ROOT_ACTIVE=false
 EXECUTION_SHA=""
@@ -371,7 +372,8 @@ refresh_execution_root() {
         return 1
     }
 
-    EXECUTION_ROOT="${REPO_ROOT}/../mefisto-batch-execution-${TIMESTAMP}-$$"
+    EXECUTION_ROOT="${REPO_ROOT}/.mefisto/worktrees/mefisto-batch-execution-${TIMESTAMP}-$$"
+    mkdir -p "$(dirname "$EXECUTION_ROOT")" 2>/dev/null || true
     if ! git -C "$REPO_ROOT" worktree add --detach "$EXECUTION_ROOT" "$EXECUTION_SHA" >>"$LOG_FILE_ABS" 2>&1; then
         warn "snapshot: no se pudo materializar la raiz aislada $EXECUTION_ROOT en $EXECUTION_SHA"
         EXECUTION_ROOT=""

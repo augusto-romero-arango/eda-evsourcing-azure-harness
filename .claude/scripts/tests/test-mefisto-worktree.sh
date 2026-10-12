@@ -65,5 +65,32 @@ git show-ref --verify --quiet refs/heads/feat-a && ko "rama feat-a debia borrars
 [ -d "$PC" ] && ok "feat-c con cambios sin commitear conservada" || ko "feat-c debia conservarse"
 check "checkout principal intacto tras clean" "$BR0" "$(git symbolic-ref --short HEAD)"
 
+echo "[#2336] clean recorre todos los worktrees del repo"
+# Worktree antiguo al lado del repo, mergeado por squash con la rama remota borrada -> se elimina
+git -C "$TMP/repo" fetch -q origin main
+git -C "$TMP/repo" worktree add -q -b legacy-e "$TMP/worktree-legacy-e" origin/main 2>/dev/null
+echo e > "$TMP/worktree-legacy-e/e.txt" && git -C "$TMP/worktree-legacy-e" add e.txt && git -C "$TMP/worktree-legacy-e" commit -q -m e
+git -C "$TMP/worktree-legacy-e" push -q -u origin legacy-e 2>/dev/null
+git -C "$TMP/origin.git" branch -q -D legacy-e
+# Antiguo al lado del repo con trabajo sin mergear (sin push) -> se conserva
+git -C "$TMP/repo" worktree add -q -b legacy-f "$TMP/worktree-legacy-f" origin/main 2>/dev/null
+echo f > "$TMP/worktree-legacy-f/f.txt" && git -C "$TMP/worktree-legacy-f" add f.txt && git -C "$TMP/worktree-legacy-f" commit -q -m f
+# Raiz de batch de un proceso muerto -> se elimina; la de un proceso vivo -> se conserva
+sleep 60 & LIVE_PID=$!
+( exit 0 ) & DEAD_PID=$!; wait "$DEAD_PID" 2>/dev/null
+mkdir -p "$TMP/repo/.mefisto/worktrees"
+DEAD_ROOT="$TMP/repo/.mefisto/worktrees/mefisto-batch-execution-20260101-000000-$DEAD_PID"
+LIVE_ROOT="$TMP/repo/.mefisto/worktrees/mefisto-batch-execution-20260101-000001-$LIVE_PID"
+git -C "$TMP/repo" worktree add -q --detach "$DEAD_ROOT" origin/main 2>/dev/null
+git -C "$TMP/repo" worktree add -q --detach "$LIVE_ROOT" origin/main 2>/dev/null
+
+"$HELPER" clean >/dev/null 2>&1
+[ -d "$TMP/worktree-legacy-e" ] && ko "worktree antiguo mergeado debia eliminarse" || ok "worktree antiguo al lado del repo, mergeado, eliminado"
+[ -d "$TMP/worktree-legacy-f" ] && ok "worktree antiguo sin mergear conservado" || ko "worktree antiguo sin mergear debia conservarse"
+[ -d "$DEAD_ROOT" ] && ko "raiz de batch sin proceso vivo debia eliminarse" || ok "raiz de batch sin proceso vivo eliminada"
+[ -d "$LIVE_ROOT" ] && ok "raiz de batch con proceso vivo conservada" || ko "raiz de batch con proceso vivo debia conservarse"
+kill "$LIVE_PID" 2>/dev/null; wait "$LIVE_PID" 2>/dev/null
+check "checkout principal intacto tras el segundo clean" "$BR0" "$(git symbolic-ref --short HEAD)"
+
 echo "Resultado: $PASS OK, $FAIL FAIL"
 [ "$FAIL" -eq 0 ]

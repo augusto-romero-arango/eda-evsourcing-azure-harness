@@ -374,8 +374,8 @@ STUB
         fail "G-8: aparecieron archivos bajo .claude/pipeline/: $(find "$LEGACY_DIR" -type f 2>/dev/null)"
     fi
 
-    if compgen -G "$FAKE_MEFISTO/../worktree-mefisto-issue-869-*" >/dev/null 2>&1; then
-        WT_DIR=$(compgen -G "$FAKE_MEFISTO/../worktree-mefisto-issue-869-*" | head -n1)
+    if compgen -G "$FAKE_MEFISTO/.mefisto/worktrees/worktree-mefisto-issue-869-*" >/dev/null 2>&1; then
+        WT_DIR=$(compgen -G "$FAKE_MEFISTO/.mefisto/worktrees/worktree-mefisto-issue-869-*" | head -n1)
         if [ -d "$WT_DIR/.mefisto/pipeline/summaries" ]; then
             pass "G-9: el worktree de la corrida tiene .mefisto/pipeline/summaries/ (creado al preparar el worktree)"
         else
@@ -458,7 +458,7 @@ STUB
     else
         fail "J-5: el mensaje de aborto no nombra la variable/valor -- stderr: $(cat "$J4_ERR")"
     fi
-    if compgen -G "$FAKE_MEFISTO/../worktree-mefisto-issue-871-*" >/dev/null 2>&1; then
+    if compgen -G "$FAKE_MEFISTO/.mefisto/worktrees/worktree-mefisto-issue-871-*" >/dev/null 2>&1; then
         fail "J-6: se creo un worktree para el issue 871 pese a que MEFISTO_AGENT_TIMEOUT_SECONDS era invalido"
     else
         pass "J-6: no se creo worktree para el issue 871 (abort ocurrio antes de crear el worktree)"
