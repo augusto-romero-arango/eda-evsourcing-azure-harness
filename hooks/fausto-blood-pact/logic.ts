@@ -783,9 +783,32 @@ export function batchHeader(b: BatchStatus, nowMs: number): string {
   return `${b.pipeline || 'sequential'} ${batchCounts(b).merged}/${b.issues.length}${mins === null ? '' : ` · ${mins}m`}${stopping}`
 }
 
-/** Cola en una linea por tramo: `✓ #12 · ● #13 · ⏸ #14`. */
-export function batchQueueText(b: BatchStatus): string {
-  return b.issues.map(i => `${batchMark(i.status)} #${i.issue}`).join(' · ')
+/** Cola en una linea, separada por ` ─ `: `✓ #12 ─ ● #13 reviewer ─ ⏸ #14`; el issue en curso lleva su paso si se conoce. */
+export function batchQueueText(b: BatchStatus, step?: string | null): string {
+  return batchQueueMarks(b, step).map((m, n) => `${n > 0 ? ' \u2500 ' : ''}${m.text}`).join('')
+}
+
+/** Marcas de la cola con color (undefined = atenuado): `✓` success, `●` warning, `✗` error, `⏸` y `○` atenuados. */
+export function batchQueueMarks(b: BatchStatus, step?: string | null): { text: string; color: string | undefined }[] {
+  const cur = batchCurrentOf(b)
+  return b.issues.map(i => {
+    const color = i.status === 'mergeado' ? 'success' : i.status === 'en-curso' ? 'warning' : i.status === 'fallido' ? 'error' : undefined
+    const mark = i.status === 'pendiente' ? '\u25cb' : batchMark(i.status)
+    const withStep = step && cur && cur.issue === i.issue && i.status === 'en-curso' ? ` ${step}` : ''
+    return { text: `${mark} #${i.issue}${withStep}`, color }
+  })
+}
+
+/** Cabecera del lote en curso: `sequential M/N` (M = mergeados + fallidos), tiempo `MM:SS` desde `started` y, con parada pedida, `se detiene tras #N`. */
+export function batchRunningHeader(b: BatchStatus, nowMs: number): { progress: string; time: string; stopNote: string } {
+  const c = batchCounts(b)
+  const parsed = stampToMs(b.started) || Date.parse(b.started)
+  const startedMs = Number.isNaN(parsed) ? 0 : parsed
+  return {
+    progress: `sequential ${c.merged + c.failed}/${c.total}`,
+    time: startedMs > 0 ? elapsedText(nowMs - startedMs) : '',
+    stopNote: b.stopRequested ? `se detiene tras #${b.current ?? batchCurrentOf(b)?.issue ?? '\u2026'}` : '',
+  }
 }
 
 /** El eslabon en curso: `current` del status o, si no, el primero `en-curso`; null si no hay. */
@@ -1172,6 +1195,8 @@ export function bitacoraPrOf(stdout: string): BitacoraPr | null {
 // ---- Vista de corrida con pasos y ultimas lineas (#2320; lector puro de status, log del pipeline y events.jsonl) ----
 
 export const BAND_LOG_ROWS = 3
+/** Lineas que se leen del log: el filtro de la vista del lote descarta separadores y lineas sin hora. */
+export const BAND_FETCH_ROWS = 12
 export const LAUNCH_POLL_WINDOW_MS = 120_000
 export const LOG_TAIL_BYTES = 8192
 
@@ -1199,13 +1224,11 @@ export function stepsText(run: PipelineRun): string {
   return stepsOf(run).map(s => `${s.mark} ${s.name}`).join(' \u2500 ')
 }
 
-/** Cabecera de corrida suelta: `mefisto · #853 projection-implementer 3m`; la linea de lote antepone `sequential N/M · `. */
-export function runHeader(run: PipelineRun, nowMs: number, batch?: BatchStatus | null): string {
+/** Cabecera de corrida suelta: `mefisto · #853 projection-implementer 3m`. */
+export function runHeader(run: PipelineRun, nowMs: number): string {
   const mins = minutesSince(run.started, nowMs)
   const what = run.state === 'hold' ? `rate limit \u00b7 sonda ${run.nextProbe ? clockOf(run.nextProbe) : '?'}` : agentOf(run.stage)
-  const tail = `#${run.issue} ${what}${mins === null ? '' : ` ${mins}m`}`
-  const lead = batch ? `${batch.pipeline || 'sequential'} ${batchCounts(batch).merged}/${batch.issues.length} \u00b7 ` : ''
-  return `${lead}${tail}`
+  return `#${run.issue} ${what}${mins === null ? '' : ` ${mins}m`}`
 }
 
 const ANSI = /\u001b\[[0-9;?]*[ -/]*[@-~]/g
@@ -1333,4 +1356,25 @@ export function durationText(seconds: number | undefined): string {
 export function paneHeaderOf(run: PipelineRun, batch: BatchStatus | null): string {
   const lead = batch ? `${batch.pipeline || 'sequential'} ${batchCounts(batch).merged}/${batch.issues.length} \u00b7 ` : ''
   return `mefisto \u00b7 ${lead}#${run.issue} ${run.pipeline}`
+}
+
+export type RecentLine = { ts: string; text: string; color: string | undefined }
+
+/** Ultimas `max` lineas con hora (`[11:50:53] x` o `11:50:53 x`) como `HH:MM:SS texto`; color: inicio `claude`, exito `success`, fallo `error`. */
+export function recentLines(lines: readonly string[], max = BAND_LOG_ROWS): RecentLine[] {
+  const out: RecentLine[] = []
+  for (const raw of lines) {
+    const m = /^\[?(\d{2}:\d{2}:\d{2})\]?\s+(.+)$/.exec(raw.trim())
+    if (!m) continue
+    const text = m[2] as string
+    const color = /^(invocando|iniciando|lanzando)/i.test(text)
+      ? 'claude'
+      : /^(\u2713|ok\b|exito|éxito|completad|aprobad|mergead)/i.test(text)
+        ? 'success'
+        : /^(\u2717|error|fall)/i.test(text)
+          ? 'error'
+          : undefined
+    out.push({ ts: m[1] as string, text, color })
+  }
+  return out.slice(-max)
 }

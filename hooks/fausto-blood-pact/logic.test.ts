@@ -92,6 +92,9 @@ import {
   batchHeader,
   batchPrOf,
   batchQueueText,
+  batchQueueMarks,
+  batchRunningHeader,
+  recentLines,
   batchRunOf,
   batchStopPath,
   batchSummaryText,
@@ -503,7 +506,9 @@ test('parseBatchStatus lee un lote running y calcula cabecera, cola y avance', (
   expect(b.current).toBe(13)
   expect(b.issues[0]?.pr).toBe('101')
   expect(batchHeader(b, batchNow)).toBe('sequential 1/3 · 7m')
-  expect(batchQueueText(b)).toBe('✓ #12 · ● #13 · · #14')
+  expect(batchQueueText(b)).toBe('✓ #12 ─ ● #13 ─ ○ #14')
+  expect(batchQueueText(b, 'reviewer')).toBe('✓ #12 ─ ● #13 reviewer ─ ○ #14')
+  expect(batchQueueMarks(b, 'reviewer').map(m => m.color)).toEqual(['success', 'warning', undefined])
   expect(canStopBatch(b)).toBe(true)
 })
 
@@ -794,8 +799,25 @@ test('runHeader: corrida suelta y lote', () => {
   const run = parseStatus('pipeline-status-tdd-853.json', JSON.stringify({ stage: '2-projection-implementer', state: 'running', started: '20261011-100000' }))!
   const now = new Date(2026, 9, 11, 10, 3, 30).getTime()
   expect(runHeader(run, now)).toBe('#853 projection-implementer 3m')
-  const batch = { pipeline: 'sequential', started: '', state: 'running', current: 853, stopRequested: false, holdSeconds: 0, issues: [{ issue: 853, status: 'en-curso', pr: null, detail: '' }] } as const
-  expect(runHeader(run, now, batch as never)).toBe('sequential 0/1 · #853 projection-implementer 3m')
+})
+
+test('batchRunningHeader: M/N, tiempo y parada pedida', () => {
+  const b = parseBatchStatus(batchRaw())!
+  const h = batchRunningHeader(b, batchNow)
+  expect(h.progress).toBe('sequential 1/3')
+  expect(h.time).toMatch(/^\d{2}:\d{2}$/)
+  expect(h.stopNote).toBe('')
+  expect(batchRunningHeader({ ...b, stopRequested: true }, batchNow).stopNote).toBe('se detiene tras #13')
+})
+
+test('recentLines: solo lineas con hora, formato HH:MM:SS y color por tipo', () => {
+  const lines = ['── Stage 3: Reviewer ──', 'sin hora', '[11:50:53] Invocando reviewer (modelo: opus)...', '11:51:11 Bash', '[11:52:00] ✓ listo', '[11:53:00] ERROR boom']
+  expect(recentLines(lines)).toEqual([
+    { ts: '11:51:11', text: 'Bash', color: undefined },
+    { ts: '11:52:00', text: '✓ listo', color: 'success' },
+    { ts: '11:53:00', text: 'ERROR boom', color: 'error' },
+  ])
+  expect(recentLines(lines, 4)[0]).toEqual({ ts: '11:50:53', text: 'Invocando reviewer (modelo: opus)...', color: 'claude' })
 })
 
 test('logTailLines: ultimas lineas utiles sin ANSI', () => {
