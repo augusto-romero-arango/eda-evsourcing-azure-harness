@@ -1507,6 +1507,7 @@ export const register: Register = on => {
     const workPrs = workPrsOf(openPrs)
     const notesCount = bitacoraCount(await read($, fieldNotesAtom), openPrs)
     const footerRest = list ? footerRestOf(list, Boolean(list.launch || list.parallel?.launch)) : ''
+    const hasFooter = Boolean(list?.launch || list?.parallel?.launch || footerRest !== '' || pages > 1)
     return (
       <Box flexDirection="column" borderStyle="round" borderColor="claude" borderDimColor paddingX={1}>
         <Box justifyContent="space-between">
@@ -1526,7 +1527,7 @@ export const register: Register = on => {
         </Box>
         <Box gap={2} alignItems="flex-start">
           {mascot}
-          <Box flexDirection="column" width={body}>
+          <Box flexDirection="column" width={body} marginTop={1} marginBottom={hasFooter ? 1 : 0}>
             {!list && <Text dimColor>cargando…</Text>}
             {list?.error && <Text color="error">next-order falló: {clip(list.error, body - 20)}</Text>}
             {list && !list.error && visible.length === 0 && <Text dimColor>Sin issues en estado:listo.</Text>}
@@ -1554,7 +1555,7 @@ export const register: Register = on => {
             )}
           </Box>
         </Box>
-        {(list?.launch || list?.parallel?.launch || footerRest !== '' || pages > 1) && (
+        {hasFooter && (
           <Box justifyContent="space-between">
             <Box>
               {withSeparators([
