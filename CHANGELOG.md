@@ -4,6 +4,19 @@ Todo cambio notable a este proyecto se documenta aquí. Sigue [Keep a Changelog]
 
 ## [Unreleased]
 
+## [0.49.0] - 2026-10-12
+
+### Added
+
+- `scripts/worktree-clean.sh`: limpia los worktrees mergeados o abandonados del repo del consumidor (rama mergeada, upstream `[gone]` o rama de pipeline sin trabajo propio con el issue cerrado); `pr-sync.sh` lo corre una vez al final de un lote con algun merge exitoso, sin afectar su exit code (#2342).
+
+### Changed
+
+- `fausto-blood-pact`: en reposo, el pie `1: sequential N · 4: parallel M` y `0: página X/Y ▸` baja a la última línea de la banda, a todo el ancho y bajo la mascota (paridad con `ready-all` de la cinta interna).
+- Los pipelines internos crean sus worktrees bajo `.mefisto/worktrees/` (tooling y la raiz de ejecucion del batch) en vez de al lado del repo, y `mefisto-worktree.sh clean` recorre todos los worktrees del repo: elimina los antiguos ya mergeados y las raices de batch sin proceso vivo (issue #2336).
+- `mefisto-worktree.sh clean` elimina tambien los worktrees de pipeline (`worktree-mefisto-issue-<N>-*`) que abortaron sin trabajo propio cuando el issue #N ya esta cerrado; sin `gh`, o si falla, los conserva (issue #2338).
+- Los pipelines publicados (`tdd`, `tooling`, `iac`, `scaffold`) crean su worktree en `.mefisto/pipeline/worktrees/<rama>` (ruta ya ignorada por Git en el consumidor) en vez de al lado del repo; al retomar con `--from-stage` se usa el worktree de la ruta anterior si solo existe ahí (#2341).
+
 ## [0.48.2] - 2026-10-12
 
 ### Changed
@@ -3469,7 +3482,8 @@ Y reemplazar referencias en `CLAUDE.md` del proyecto: `/eda-evsourcing-azure-har
 - Los agentes `reviewer` e `implementer` mantienen el placeholder literal `ADR-XXXX` en sus plantillas de reporte (no es un bug; el agente lo sustituye en tiempo de ejecución por el número real del ADR aplicable).
 - Los ejemplos de código en `test-writer.md`, `implementer.md` y `smoke-test-writer.md` conservan nombres concretos de un proyecto consumidor (`Programacion`, `ControlHoras`) anotados en el "Contrato con el consumidor" de cada agente como ejemplos pedagógicos.
 
-[Unreleased]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.48.2...HEAD
+[Unreleased]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.49.0...HEAD
+[0.49.0]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.48.2...v0.49.0
 [0.48.2]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.48.1...v0.48.2
 [0.48.1]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.48.0...v0.48.1
 [0.48.0]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.47.1...v0.48.0
