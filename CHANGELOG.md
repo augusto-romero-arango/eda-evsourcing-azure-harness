@@ -4,6 +4,12 @@ Todo cambio notable a este proyecto se documenta aquí. Sigue [Keep a Changelog]
 
 ## [Unreleased]
 
+## [0.48.2] - 2026-10-12
+
+### Changed
+
+- `fausto-blood-pact`: la vista del sequential terminado repite la de la cinta interna (cabecera `sequential M/N · estado tiempo` con acciones arriba, cola y resumen con marcas junto a la mascota, tabla de cierre con duración y costo desde `pipeline-history.jsonl`) (#2332)
+
 ## [0.48.1] - 2026-10-11
 
 ### Fixed
@@ -3463,7 +3469,8 @@ Y reemplazar referencias en `CLAUDE.md` del proyecto: `/eda-evsourcing-azure-har
 - Los agentes `reviewer` e `implementer` mantienen el placeholder literal `ADR-XXXX` en sus plantillas de reporte (no es un bug; el agente lo sustituye en tiempo de ejecución por el número real del ADR aplicable).
 - Los ejemplos de código en `test-writer.md`, `implementer.md` y `smoke-test-writer.md` conservan nombres concretos de un proyecto consumidor (`Programacion`, `ControlHoras`) anotados en el "Contrato con el consumidor" de cada agente como ejemplos pedagógicos.
 
-[Unreleased]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.48.1...HEAD
+[Unreleased]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.48.2...HEAD
+[0.48.2]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.48.1...v0.48.2
 [0.48.1]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.48.0...v0.48.1
 [0.48.0]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.47.1...v0.48.0
 [0.47.1]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.47.0...v0.47.1
