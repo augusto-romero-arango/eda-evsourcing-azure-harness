@@ -8,6 +8,7 @@
 #
 #   [A] Root canonico (CA-5 a/b/d)
 #   [B] MEFISTO_STATE_DIR (CA-5 c)
+#   [C] Worktree dentro de .mefisto/pipeline/worktrees/ (#2341 CA-1/3/4)
 #
 # Uso: scripts/tests/test-scaffold-pipeline-state-paths.sh
 set -uo pipefail
@@ -127,6 +128,26 @@ else
 fi
 [ ! -e "$B/work/.mefisto/pipeline/pipeline-history.jsonl" ] && [ ! -e "$B/work/.claude/pipeline" ] \
     && pass "el repo no recibe estado del pipeline" || fail "el repo recibio estado pese al override"
+
+echo "[C] Worktree en .mefisto/pipeline/worktrees/ y checkout principal limpio (#2341)"
+W="$TMP_DIR/c"; setup_case "$W"
+printf '.mefisto/pipeline/\n' > "$W/work/.gitignore"
+git -C "$W/work" add .gitignore && git -C "$W/work" commit -q -m "gitignore" && git -C "$W/work" push -q origin main
+# El agente stub commitea su trabajo: el commit defensivo (fuera de este caso) no entra en juego.
+{ grep -v '^exit 0$' "$W/run-agent.sh"
+  printf '%s\n' 'git -C "$cwd" add -A -- src tests && git -C "$cwd" commit -q -m agente' 'exit 0'
+} > "$W/run-agent.tmp" && mv "$W/run-agent.tmp" "$W/run-agent.sh" && chmod +x "$W/run-agent.sh"
+W_ROOT="$(cd "$W/work" && pwd -P)"
+PORCELAIN_BEFORE=$(git -C "$W/work" status --porcelain)
+run_case "$W" </dev/null >"$W/stdout" 2>"$W/stderr"; RC_C=$?
+[ "$RC_C" -eq 0 ] && pass "el pipeline completa con .mefisto/pipeline/ ignorado" || fail "exit $RC_C: $(cat "$W/stderr")"
+grep -Fq "Creando worktree: $W_ROOT/.mefisto/pipeline/worktrees/scaffold-prueba" "$W/stdout" \
+    && pass "el worktree se crea en .mefisto/pipeline/worktrees/<rama>" || fail "ruta de worktree inesperada: $(grep -F 'Creando worktree' "$W/stdout")"
+[ ! -e "$W/scaffold-prueba" ] && pass "no se crea worktree al lado del repo" || fail "worktree creado al lado del repo"
+[ ! -e "$W/work/.mefisto/pipeline/worktrees/scaffold-prueba" ] \
+    && pass "el worktree se elimina al terminar con exito" || fail "el worktree sigue en .mefisto/pipeline/worktrees/"
+PORCELAIN=$(git -C "$W/work" status --porcelain)
+[ "$PORCELAIN" = "$PORCELAIN_BEFORE" ] && pass "git status --porcelain del checkout principal no gana entradas" || fail "checkout principal con entradas nuevas: $PORCELAIN"
 
 printf '\nResultado: %s PASS, %s FAIL\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

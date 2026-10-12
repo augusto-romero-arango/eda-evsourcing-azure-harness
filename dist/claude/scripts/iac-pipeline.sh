@@ -351,7 +351,14 @@ CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
 
 SLUG=$(echo "$ISSUE_TITLE" | tr '[:upper:]' '[:lower:]' | tr ' ' '-' | sed 's/[^a-z0-9-]//g' | tr -s '-' | cut -c1-40 | sed 's/-$//')
 BRANCH_NAME="infra-issue-${ISSUE_NUM}-${SLUG}"
-WORKTREE_PATH="${REPO_ROOT}/../${BRANCH_NAME}"
+WORKTREE_PATH="${REPO_ROOT}/.mefisto/pipeline/worktrees/${BRANCH_NAME}"
+
+# Retomar: si el worktree solo existe en la ruta anterior (al lado del repo), usarlo.
+LEGACY_WORKTREE_PATH="${REPO_ROOT}/../${BRANCH_NAME}"
+if [ "$FROM_STAGE" -gt 1 ] && [ ! -d "$WORKTREE_PATH" ] && [ -d "$LEGACY_WORKTREE_PATH" ]; then
+    log "Worktree no encontrado en la ruta nueva; usando el de la ruta anterior: $LEGACY_WORKTREE_PATH"
+    WORKTREE_PATH="$LEGACY_WORKTREE_PATH"
+fi
 
 # Ruta absoluta al directorio del ambiente dentro del worktree
 INFRA_ENV_DIR_ABS_WT="$WORKTREE_PATH/$INFRA_ENV_DIR"
@@ -384,6 +391,7 @@ else
     fi
 
     log "Creando worktree: $WORKTREE_PATH (base: origin/main)"
+    mkdir -p "$(dirname "$WORKTREE_PATH")"
     git worktree add "$WORKTREE_PATH" -b "$BRANCH_NAME" origin/main >>"$LOG_FILE" 2>&1 \
         || abort "No se pudo crear el worktree desde origin/main"
 
