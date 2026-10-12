@@ -1552,27 +1552,29 @@ export const register: Register = on => {
                 <Button key="pact-dismiss-rest" plain dimColor label="ocultar" onPress={() => void dismissResults($)} />
               </Box>
             )}
-            <Box justifyContent="space-between">
-              <Box>
-                {withSeparators([
-                  list?.launch && (
-                    <Button key="pact-sequential" hotkey="1" plain dimColor label={`sequential ${launchCountOf(list.launch)}`}
-                      onPress={() => void launchKey($, 'sequential')} />
-                  ),
-                  list?.parallel?.launch && (
-                    <Button key="pact-parallel" hotkey="4" plain dimColor label={`parallel ${list.parallel.issues.length}`}
-                      onPress={() => void launchKey($, 'parallel')} />
-                  ),
-                ], Text)}
-                <Text dimColor>{footerRest}</Text>
-              </Box>
-              {pages > 1 && (
-                <Button key="pact-next-page" hotkey="0" plain dimColor label={`página ${page + 1}/${pages} ▸`}
-                  onPress={() => void update($, pageAtom, () => (page + 1) % pages)} />
-              )}
-            </Box>
           </Box>
         </Box>
+        {(list?.launch || list?.parallel?.launch || footerRest !== '' || pages > 1) && (
+          <Box justifyContent="space-between">
+            <Box>
+              {withSeparators([
+                list?.launch && (
+                  <Button key="pact-sequential" hotkey="1" plain dimColor label={`sequential ${launchCountOf(list.launch)}`}
+                    onPress={() => void launchKey($, 'sequential')} />
+                ),
+                list?.parallel?.launch && (
+                  <Button key="pact-parallel" hotkey="4" plain dimColor label={`parallel ${list.parallel.issues.length}`}
+                    onPress={() => void launchKey($, 'parallel')} />
+                ),
+              ], Text)}
+              <Text dimColor>{footerRest}</Text>
+            </Box>
+            {pages > 1 && (
+              <Button key="pact-next-page" hotkey="0" plain dimColor label={`página ${page + 1}/${pages} ▸`}
+                onPress={() => void update($, pageAtom, () => (page + 1) % pages)} />
+            )}
+          </Box>
+        )}
       </Box>
     )
   })
