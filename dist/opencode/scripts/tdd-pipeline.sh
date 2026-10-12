@@ -604,7 +604,14 @@ fi
 # corridas simultaneas del mismo issue coexistan sin colision de paths ni ramas.
 [ -n "$VARIANT_LABEL" ] && BRANCH_NAME="${BRANCH_NAME}-${VARIANT_LABEL}"
 
-WORKTREE_PATH="${REPO_ROOT}/../${BRANCH_NAME}"
+WORKTREE_PATH="${REPO_ROOT}/.mefisto/pipeline/worktrees/${BRANCH_NAME}"
+
+# Retomar: si el worktree solo existe en la ruta anterior (al lado del repo), usarlo.
+LEGACY_WORKTREE_PATH="${REPO_ROOT}/../${BRANCH_NAME}"
+if [ "$FROM_STAGE" -gt 1 ] && [ ! -d "$WORKTREE_PATH" ] && [ -d "$LEGACY_WORKTREE_PATH" ]; then
+    log "Worktree no encontrado en la ruta nueva; usando el de la ruta anterior: $LEGACY_WORKTREE_PATH"
+    WORKTREE_PATH="$LEGACY_WORKTREE_PATH"
+fi
 
 if [ "$FROM_STAGE" -gt 1 ]; then
     # ── Modo retomar: el worktree ya debe existir ──
@@ -637,6 +644,7 @@ else
     fi
 
     log "Creando worktree: $WORKTREE_PATH (base: origin/main)"
+    mkdir -p "$(dirname "$WORKTREE_PATH")"
     git worktree add "$WORKTREE_PATH" -b "$BRANCH_NAME" origin/main >>"$LOG_FILE" 2>&1 \
         || abort "No se pudo crear el worktree desde origin/main"
 

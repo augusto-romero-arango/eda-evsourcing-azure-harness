@@ -250,7 +250,7 @@ if [ -n "$ISSUE_NUM" ]; then
 else
     BRANCH_NAME="scaffold-${DOMAIN_NAME}"
 fi
-WORKTREE_PATH="${REPO_ROOT}/../${BRANCH_NAME}"
+WORKTREE_PATH="${REPO_ROOT}/.mefisto/pipeline/worktrees/${BRANCH_NAME}"
 
 # Idempotencia: limpiar worktree/rama existente
 if [ -d "$WORKTREE_PATH" ]; then
@@ -263,6 +263,7 @@ if git -C "$REPO_ROOT" show-ref --verify --quiet "refs/heads/$BRANCH_NAME" 2>/de
     git -C "$REPO_ROOT" branch -D "$BRANCH_NAME" >>"$LOG_FILE" 2>&1 || true
 fi
 
+mkdir -p "$(dirname "$WORKTREE_PATH")"
 log "Creando worktree: $WORKTREE_PATH (base: origin/main)"
 git -C "$REPO_ROOT" worktree add "$WORKTREE_PATH" -b "$BRANCH_NAME" origin/main >>"$LOG_FILE" 2>&1 \
     || abort "No se pudo crear el worktree desde origin/main"
