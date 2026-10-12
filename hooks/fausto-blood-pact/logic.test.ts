@@ -32,8 +32,16 @@ import {
   mergeRibbonShown,
   mergeSummaryText,
   withMerged,
-  batchIssueLine,
-  batchTitleOf,
+  batchSummaryMarks,
+  batchEndLabel,
+  batchEndFromStats,
+  closeRowText,
+  closeTotalText,
+  fmtCost,
+  issueStatsFromHistory,
+  stampToMs,
+  statsPending,
+  statsTotal,
   bandViewOf,
   resultsFooterText,
   mergeArgsOf,
@@ -588,28 +596,50 @@ test('resultsFooterText: formato, recorte al ancho y +N', () => {
   expect(resultsFooterText(res, 45).length).toBeLessThanOrEqual(45)
 })
 
-const hist = (issue: string, started: string, title?: string) => ({ issue, pipeline: 'tdd', variant: null, started, pr: null, title })
-
-test('batchTitleOf toma la entrada mas reciente dentro de la ventana del lote', () => {
-  const entries = [hist('7', '20260101-000000', 'viejo'), hist('7', '20260102-100000', 'a'), hist('7', '20260102-110000', 'b')]
-  expect(batchTitleOf(entries, 7, '20260102-090000')).toBe('b')
+test('batchSummaryMarks lleva marcas y omite lo que esta en cero', () => {
+  const b = parseBatchStatus(JSON.stringify({ state: 'stopped', started: '20260101-000000', hold_seconds: 600, issues: [
+    { issue: 1, status: 'mergeado', pr: 5 }, { issue: 2, status: 'fallido' }, { issue: 3, status: 'aplazado' },
+  ] })) as BatchStatus
+  expect(batchSummaryMarks(b)).toBe('✓ 1 mergeados · ✗ 1 fallidos · ⏸ 1 aplazados · espera 10m')
+  const ok = parseBatchStatus(JSON.stringify({ state: 'completed', issues: [{ issue: 1, status: 'mergeado' }] })) as BatchStatus
+  expect(batchSummaryMarks(ok)).toBe('✓ 1 mergeados')
+  expect(batchEndLabel('completed')).toBe('terminado')
+  expect(batchEndLabel('stopped')).toBe('detenido')
+  expect(batchEndLabel('failed')).toBe('con fallos')
 })
 
-test('batchTitleOf ignora entradas anteriores al lote y issues ausentes', () => {
-  const entries = [hist('7', '20260101-000000', 'viejo')]
-  expect(batchTitleOf(entries, 7, '20260102-090000')).toBeNull()
-  expect(batchTitleOf(entries, 8, '20260101-000000')).toBeNull()
+const histLine = (o: Record<string, unknown>) => JSON.stringify({ pipeline: 'tdd', started: '20260101-100000', finished: '2026-01-01T10:10:00', ...o })
+
+test('issueStatsFromHistory lee duracion y costo de los pipelines publicados desde el inicio del lote', () => {
+  const raw = [
+    histLine({ issue: '7', title: 'Uno', agents: { a: { metrics: { estimated_cost_usd: 1.5 } }, b: { metrics: { estimated_cost_usd: 0.25 } } } }),
+    histLine({ issue: '8', pipeline: 'tooling', started: '20260101-102000', finished: '2026-01-01T10:21:00' }),
+    histLine({ issue: '9', pipeline: 'mefisto-tooling' }),
+    histLine({ issue: '10', started: '20251231-100000' }),
+    'no es json',
+  ].join('\n')
+  const since = stampToMs('20260101-095900')
+  const out = issueStatsFromHistory(raw, ['7', '8', '9', '10'], since)
+  expect(out['7']).toMatchObject({ durationMs: 600_000, costUsd: 1.75, title: 'Uno' })
+  expect(out['8']).toMatchObject({ durationMs: 60_000, costUsd: null, title: null })
+  expect(out['9']).toBeUndefined()
+  expect(out['10']).toBeUndefined()
+  expect(statsPending(['7', '8', '11'], out)).toEqual(['8', '11'])
 })
 
-test('batchIssueLine muestra el titulo y lo recorta para dejar PR y detalle', () => {
-  const i = { issue: 12, status: 'mergeado' as const, pr: '30', detail: 'ok' }
-  const full = batchIssueLine(i, 'Mostrar el titulo del issue')
-  expect(full).toContain('#12  Mostrar el titulo del issue  · PR #30 · ok')
-  const short = batchIssueLine(i, 'Mostrar el titulo del issue', 30)
-  expect(short).toContain('…')
-  expect(short.endsWith('· PR #30 · ok')).toBe(true)
-  expect(short.length).toBeLessThanOrEqual(30)
-  expect(batchIssueLine(i)).toBe(batchIssueLine(i, ''))
+test('closeRowText, closeTotalText y statsTotal arman la tabla de cierre', () => {
+  const i = { issue: 853, status: 'mergeado' as const, pr: '949', detail: '' }
+  const st = { durationMs: 76_000, costUsd: 4.21, title: 'Listar los dias', finishedMs: 0 }
+  const row = closeRowText(i, st, 20)
+  expect(row.lead).toBe(`#853    ${'Listar los dias'.padEnd(20)} PR #949    `)
+  expect(row.trail).toBe('01:16    $4.21')
+  expect(closeRowText({ ...i, pr: null }, undefined, 0)).toEqual({ lead: '#853    sin PR     ', trail: '…' })
+  const total = statsTotal([st, { ...st, durationMs: 4000, costUsd: null }])
+  expect(total).toMatchObject({ durationMs: 80_000, costUsd: 4.21 })
+  expect(closeTotalText(2, total, 20)).toBe(`  total ${'2'.padEnd(33)} 01:20    $4.21`)
+  expect(fmtCost(null)).toBe('$?')
+  expect(batchEndFromStats({ a: st, b: { ...st, finishedMs: 5 } })).toBe(5)
+  expect(batchEndFromStats({})).toBeNull()
 })
 
 const ribbon = (finishedMs: number | null = null) => ({ prs: mergePrsOf('12 13', [{ number: '12', title: 'Uno' }]), startedMs: 0, finishedMs })

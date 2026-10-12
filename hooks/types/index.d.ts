@@ -118,6 +118,10 @@ declare module 'claude-code' {
         holdSeconds: number
         issues: { issue: number; status: 'pendiente' | 'en-curso' | 'mergeado' | 'fallido' | 'aplazado' | 'saltado'; pr: string | null; detail: string }[]
       } | null
+      pactBatchStats: {
+        stats: Record<string, { durationMs: number; costUsd: number | null; title: string | null; finishedMs: number }>
+        endedMs: number | null
+      }
       pactMerge: PactMerge | null
       pactLogLines: PaneLine[]
       pactPaneRun: PipelineRun | null

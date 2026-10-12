@@ -5,6 +5,7 @@ import { RASTER_ROWS, ROLES, face, sprite, toRasterCells, waitingFace } from '..
 import type { Role } from '../sprites'
 import { cropGrid, numberWidth, padEnd, reasonOf, usedColumns } from '../logic'
 import type { BoardList, Historian, PaneLine, PactMerge, PipelineResult, PipelineRun } from '../types'
+import type { IssueStats } from './logic'
 import type { BatchStatus, LastEvent, LaunchKind, LaunchPlan, MascotPose, OpenPr } from './logic'
 import {
   BAND_LOG_ROWS,
@@ -86,8 +87,17 @@ import {
   batchDismissKey,
   batchHeader,
   batchMark,
-  batchIssueLine,
-  batchTitleOf,
+  batchSummaryMarks,
+  batchEndLabel,
+  batchEndFromStats,
+  closeRowText,
+  closeTotalText,
+  elapsedText,
+  issueStatsFromHistory,
+  statsPending,
+  statsTotal,
+  stampToMs,
+  summaryTitleWidth,
   batchPrOf,
   batchRunOf,
   batchStatusPath,
@@ -147,6 +157,8 @@ const resultsAtom = atom({ plugin: 'mefisto', key: 'pactResults' } as const, [] 
 const lastEventAtom = atom({ plugin: 'mefisto', key: 'pactLastEvent' } as const, null as LastEvent | null)
 const openPrsAtom = atom({ plugin: 'mefisto', key: 'pactOpenPrs' } as const, [] as OpenPr[])
 const batchAtom = atom({ plugin: 'mefisto', key: 'pactBatch' } as const, null as BatchStatus | null)
+type BatchStats = { stats: Record<string, IssueStats>; endedMs: number | null }
+const batchStatsAtom = atom({ plugin: 'mefisto', key: 'pactBatchStats' } as const, { stats: {}, endedMs: null } as BatchStats)
 const mergeAtom = atom({ plugin: 'mefisto', key: 'pactMerge' } as const, null as PactMerge | null)
 const fieldNotesAtom = atom({ plugin: 'mefisto', key: 'pactFieldNotes' } as const, null as number | null)
 const historianAtom = atom({ plugin: 'mefisto', key: 'pactHistorian' } as const, null as Historian | null)
@@ -201,9 +213,13 @@ let carriedResults: PipelineResult[] = []
 let runsRepo = ''
 // Ultimo estado del lote leido: base para anunciar con un toast cada issue que pasa a `mergeado`.
 let lastBatchIssues: BatchStatus['issues'] | null = null
-// Titulos del lote en curso (del historial, leido solo cuando aparece un issue terminado sin titulo); se reinician al cambiar el `started` del lote.
-let batchTitles: Record<number, string> = {}
-let batchTitlesFor = ''
+// Estadisticas del lote (del historial: titulo, duracion y costo); se reinician al cambiar el `started` del lote.
+let batchStatsFor = ''
+// Primer instante en que se vio el lote ya terminado: cierra el reloj de la cabecera si el historial no lo da.
+let batchSeenEndedMs: number | null = null
+// El historial se relee para estadisticas faltantes a lo sumo cada BATCH_STATS_EVERY_MS (como `withStats` en la cinta interna).
+const BATCH_STATS_EVERY_MS = 5_000
+let lastBatchStatsReadMs = 0
 // Si al arrancar no se pudo saber el agente (sin linea de comando y sin transcript aun), se reintenta en cada refresh.
 let agentChecksLeft = 0
 const AGENT_CHECKS = 20
@@ -309,19 +325,24 @@ async function refreshBatch($: EngineInterface) {
   }
   for (const i of newlyMerged(lastBatchIssues, batch.issues)) $.ui.toast(`#${i.issue} mergeado${i.pr ? ` · PR #${i.pr}` : ''}`)
   lastBatchIssues = batch.issues
-  if (batchTitlesFor !== batch.started) {
-    batchTitles = {}
-    batchTitlesFor = batch.started
+  if (batchStatsFor !== batch.started) {
+    batchStatsFor = batch.started
+    batchSeenEndedMs = null
+    lastBatchStatsReadMs = 0
+    await update($, batchStatsAtom, () => ({ stats: {}, endedMs: null }))
   }
   const finished = (i: BatchStatus['issues'][number]) => i.status !== 'pendiente' && i.status !== 'en-curso'
-  if (batch.issues.some(i => finished(i) && batchTitles[i.issue] === undefined)) {
-    const entries = parseHistory(await readHistory($))
-    for (const i of batch.issues) {
-      if (!finished(i) || batchTitles[i.issue] !== undefined) continue
-      const t = batchTitleOf(entries, i.issue, batch.started)
-      batchTitles[i.issue] = t ?? ''
-    }
+  const known = await read($, batchStatsAtom)
+  const missing = statsPending(batch.issues.filter(finished).map(i => String(i.issue)), known.stats)
+  let stats = known.stats
+  if (missing.length > 0 && Date.now() - lastBatchStatsReadMs >= BATCH_STATS_EVERY_MS) {
+    lastBatchStatsReadMs = Date.now()
+    stats = { ...stats, ...issueStatsFromHistory(await readHistory($), missing, stampToMs(batch.started)) }
   }
+  if (isBatchRunning(batch)) batchSeenEndedMs = null
+  else batchSeenEndedMs ??= Date.now()
+  const endedMs = isBatchRunning(batch) ? null : (batchEndFromStats(stats) ?? batchSeenEndedMs)
+  if (stats !== known.stats || endedMs !== known.endedMs) await update($, batchStatsAtom, () => ({ stats, endedMs }))
   const closed = !isBatchRunning(batch) && (await readDismissed($)).includes(batchDismissKey(runsRepo, batch))
   await update($, batchAtom, () => (closed ? null : batch))
 }
@@ -1227,15 +1248,72 @@ export const register: Register = on => {
       const pr = batchPrOf(batch)
       const current = batchCurrentOf(batch)
       const others = otherRunsText(runsOutsideBatch(batch, runs).length)
-      const queue = batch.issues.map(i => ({ key: `b-${i.issue}`, text: batchIssueLine(i, batchTitles[i.issue], body), dim: i.status === 'saltado' || i.status === 'pendiente' }))
-      const { page, pages } = pageOf(await read($, pageAtom), queue.length, PAGE_ROWS)
-      const visible = running ? [] : queue.slice(page * PAGE_ROWS, (page + 1) * PAGE_ROWS)
       const headColor = batch.state === 'failed' ? 'error' : batch.state === 'stopped' || batch.stopRequested ? 'warning' : undefined
+      if (!running) {
+        // Cierre del lote: misma vista que la cinta interna (cabecera con acciones, cola y resumen junto a la mascota, tabla a todo el ancho).
+        const { stats, endedMs } = await read($, batchStatsAtom)
+        const markColor = (s: string) => (s === 'mergeado' ? 'success' : s === 'fallido' ? 'error' : undefined)
+        const failedIssue = batch.issues.find(i => i.status === 'fallido')
+        const doneRows = batch.issues.filter(i => i.status === 'mergeado' || i.status === 'fallido')
+        const titleW = summaryTitleWidth(inner)
+        const total = statsTotal(doneRows.map(i => stats[String(i.issue)]).filter((st): st is IssueStats => st !== undefined))
+        const startedMs = stampToMs(batch.started)
+        const endColor = batch.state === 'completed' ? 'success' : batch.state === 'stopped' ? 'warning' : 'error'
+        return (
+          <Box flexDirection="column" borderStyle="round" borderColor="claude" borderDimColor paddingX={1}>
+            <Box justifyContent="space-between">
+              <Text wrap="truncate-end">
+                <Text color="claude">mefisto</Text>
+                <Text> · sequential {c.merged + c.failed}/{c.total}</Text>
+                <Text color={endColor}> · {batchEndLabel(batch.state)}</Text>
+                {startedMs > 0 && endedMs !== null && <Text dimColor> {elapsedText(endedMs - startedMs)}</Text>}
+              </Text>
+              <Box gap={2}>
+                {pr && <Button key="batch-pr" hotkey="2" plain label={`ver PR #${pr}`} onPress={() => void viewBatchPr($)} />}
+                <Button key="batch-log" hotkey="3" plain label="log" onPress={() => void toggleLog($)} />
+                <Button key="batch-close" hotkey="4" plain label="cerrar" onPress={() => void closeBatch($)} />
+              </Box>
+            </Box>
+            <Box gap={2} alignItems="flex-start">
+              {mascot}
+              <Box flexDirection="column" width={body}>
+                <Text wrap="truncate-end">
+                  {batch.issues.map((i, n) => (
+                    <Text key={`q-${i.issue}`} color={markColor(i.status)} dimColor={markColor(i.status) === undefined}>
+                      {`${n > 0 ? ' ─ ' : ''}${batchMark(i.status)} #${i.issue}`}
+                    </Text>
+                  ))}
+                </Text>
+                <Text wrap="truncate-end">{batchSummaryMarks(batch)}</Text>
+                {failedIssue && (
+                  <Text color="error" wrap="truncate-end">#{failedIssue.issue} {failedIssue.detail.replace(/^ERROR:\s*/, '')}</Text>
+                )}
+              </Box>
+            </Box>
+            {doneRows.length > 0 && (
+              <Box flexDirection="column">
+                {doneRows.map(i => {
+                  const row = closeRowText(i, stats[String(i.issue)], titleW)
+                  return (
+                    <Text key={`done-${i.issue}`} wrap="truncate-end" color={markColor(i.status)}>
+                      {`${batchMark(i.status)} ${row.lead}`}
+                      <Text dimColor>{row.trail}</Text>
+                    </Text>
+                  )
+                })}
+                {doneRows.length > 1 && (
+                  <Text dimColor wrap="truncate-end">{closeTotalText(doneRows.length, total, titleW)}</Text>
+                )}
+              </Box>
+            )}
+          </Box>
+        )
+      }
       return (
         <Box flexDirection="column" borderStyle="round" borderColor="claude" borderDimColor paddingX={1}>
           {running && batchRun
             ? head(`${runHeader(batchRun, Date.now(), batch)}${batch.stopRequested ? ' · deteniendo' : ''}`, 'pact-head', headColor, false)
-            : head(`${batchHeader(batch, Date.now())}${running ? '' : ` · ${batch.state === 'completed' ? 'terminado' : batch.state === 'stopped' ? 'detenido' : 'con fallos'}`}`, 'pact-head', headColor)}
+            : head(batchHeader(batch, Date.now()), 'pact-head', headColor)}
           <Box gap={2} alignItems="flex-start">
             {mascot}
             <Box flexDirection="column" width={body}>
@@ -1255,21 +1333,14 @@ export const register: Register = on => {
                   </Text>
                   {batch.holdSeconds > 0 && <Text dimColor>{clip(batchSummaryText(batch), body)}</Text>}
                 </>
-              ) : (
-                <>
-                  {visible.map(l => (
-                    <Text key={l.key} dimColor={l.dim} wrap="truncate-end">{clip(l.text, body)}</Text>
-                  ))}
-                  <Text wrap="truncate-end">{clip(batchSummaryText(batch), body)}</Text>
-                </>
-              )}
-              {Array.from({ length: Math.max(0, PAGE_ROWS - (running ? (batchRun ? 5 : 3) : visible.length + 1)) }, (_, i) => (
+              ) : null}
+              {Array.from({ length: Math.max(0, PAGE_ROWS - (batchRun ? 5 : 3)) }, (_, i) => (
                 <Text key={`blank-${i}`}> </Text>
               ))}
               <Box justifyContent="space-between">
                 <Box>
                   {withSeparators([
-                    <Button key="batch-log" hotkey="3" plain dimColor={running} label="log" onPress={() => void toggleLog($)} />,
+                    <Button key="batch-log" hotkey="3" plain dimColor label="log" onPress={() => void toggleLog($)} />,
                     canStopBatch(batch) && (
                       <Button key="batch-stop" hotkey="1" plain dimColor label="detener" onPress={() => void confirmStop($)} />
                     ),
@@ -1277,16 +1348,9 @@ export const register: Register = on => {
                       <Button key="batch-pr" hotkey="2" plain dimColor label={`ver PR #${pr}`}
                         onPress={() => void viewBatchPr($)} />
                     ),
-                    !running && (
-                      <Button key="batch-close" hotkey="4" plain dimColor label="cerrar" onPress={() => void closeBatch($)} />
-                    ),
                   ], Text)}
-                  <Text dimColor>{others ? ` · ${others}` : ''}{c.failed > 0 && running ? ` · ${c.failed} ✗` : ''}</Text>
+                  <Text dimColor>{others ? ` · ${others}` : ''}{c.failed > 0 ? ` · ${c.failed} ✗` : ''}</Text>
                 </Box>
-                {pages > 1 && !running && (
-                  <Button key="pact-next-page" hotkey="0" plain dimColor label={`página ${page + 1}/${pages} ▸`}
-                    onPress={() => void update($, pageAtom, () => (page + 1) % pages)} />
-                )}
               </Box>
             </Box>
           </Box>
