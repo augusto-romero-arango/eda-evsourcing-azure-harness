@@ -4,6 +4,22 @@ Todo cambio notable a este proyecto se documenta aquí. Sigue [Keep a Changelog]
 
 ## [Unreleased]
 
+## [0.51.0] - 2026-10-12
+
+### Added
+
+- `/onboard` (`scripts/onboard-diagnose.sh`) valida el `repoSlug` efectivo (config o default `augusto-romero-arango/mefisto`): `FALTA` si apunta al propio consumidor (atajo local, sin red) o si `.claude-plugin/plugin.json` del repo no tiene `name: mefisto`; `NO VERIFICADO` sin `gh`, autenticacion o red (#2353).
+
+### Changed
+
+- La vista del `sequential` en curso de `fausto-blood-pact` iguala la cinta interna (#2350): cabecera `sequential M/N <tiempo>` con las acciones arriba a la derecha, cola con el paso del issue en curso, título, espera por rate limit y las últimas 3 líneas con hora y color; se quita la fila de pasos del lote.
+- `agents/test-writer.md` y `agents/implementer.md` conocen el carril solo smoke del pipeline TDD: el test-writer escribe solo en `tests/*.SmokeTests/` sin stubs ni señales, y el implementer tiene la sección "Modo documental (issue solo smoke)" (sin tocar `src/` ni `tests/`, solo entregables no-código).
+
+### Fixed
+
+- `scripts/upgrade.sh`: `_repo_slug` resuelve el config con `resolve_harness_config_path read` (canónico `.mefisto/harness.config.json` primero, legacy como fallback), de modo que se respeta el `repoSlug` de un fork (#2352).
+- `tdd-pipeline.sh` detecta los issues de solo smoke (`detect_smoke_only`: diff con al menos un archivo bajo `tests/*.SmokeTests/` y el resto en `docs/` o `pipeline-state/`) y deja de abortar el Gate 1b con "todos los tests pasan": salta la fase roja, corre el Stage 2 en modo documental, omite los Stages 2b y 4, conserva el reviewer y el PR lleva la sección "Validación pendiente post-deploy". El mensaje del abort del Gate 1b ya no presenta `no-red-signal.md` como salida write-side.
+
 ## [0.50.0] - 2026-10-12
 
 ### Changed
@@ -3489,7 +3505,8 @@ Y reemplazar referencias en `CLAUDE.md` del proyecto: `/eda-evsourcing-azure-har
 - Los agentes `reviewer` e `implementer` mantienen el placeholder literal `ADR-XXXX` en sus plantillas de reporte (no es un bug; el agente lo sustituye en tiempo de ejecución por el número real del ADR aplicable).
 - Los ejemplos de código en `test-writer.md`, `implementer.md` y `smoke-test-writer.md` conservan nombres concretos de un proyecto consumidor (`Programacion`, `ControlHoras`) anotados en el "Contrato con el consumidor" de cada agente como ejemplos pedagógicos.
 
-[Unreleased]: https://github.com/augusto-romero-arango/mefisto/compare/v0.50.0...HEAD
+[Unreleased]: https://github.com/augusto-romero-arango/mefisto/compare/v0.51.0...HEAD
+[0.51.0]: https://github.com/augusto-romero-arango/mefisto/compare/v0.50.0...v0.51.0
 [0.50.0]: https://github.com/augusto-romero-arango/mefisto/compare/v0.49.0...v0.50.0
 [0.49.0]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.48.2...v0.49.0
 [0.48.2]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.48.1...v0.48.2
