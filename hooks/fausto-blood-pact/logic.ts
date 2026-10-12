@@ -851,15 +851,125 @@ export function batchTitleOf(entries: readonly HistoryEntry[], issue: number, ba
   return null
 }
 
-/** Una linea por issue del resumen: marca, issue, titulo (recortado al ancho `max` para dejar PR y detalle visibles), PR y motivo. */
-export function batchIssueLine(i: BatchIssue, title?: string | null, max?: number): string {
-  const head = `${batchMark(i.status)} #${i.issue}`
-  const tail = `${i.pr ? ` · PR #${i.pr}` : ''}${i.detail ? ` · ${i.detail}` : ''}`
+export type IssueStats = { durationMs: number; costUsd: number | null; title: string | null; finishedMs: number }
+
+/** `YYYYMMDD-HHMMSS` a milisegundos locales; 0 si no tiene ese formato. */
+export function stampToMs(stamp: string): number {
+  const m = /^(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})$/.exec(stamp)
+  if (!m) return 0
+  const [y = 0, mo = 1, d = 1, h = 0, mi = 0, s = 0] = m.slice(1).map(Number)
+  return new Date(y, mo - 1, d, h, mi, s).getTime()
+}
+
+/** Pipelines publicados que escriben el historial de un issue del lote. */
+export const BATCH_HISTORY_PIPELINES = ['tdd', 'tooling', 'iac']
+
+type StatsEntry = {
+  issue?: string
+  pipeline?: string
+  started?: string
+  finished?: string
+  title?: string
+  agents?: Record<string, { metrics?: { estimated_cost_usd?: number | null } }>
+}
+
+/**
+ * Duracion y costo de la ultima corrida de cada issue en el historial, arrancada en o despues de `sinceMs`.
+ * El costo suma `agents.*.metrics.estimated_cost_usd` (null si ningun agente lo informa).
+ */
+export function issueStatsFromHistory(raw: string, issues: readonly string[], sinceMs: number): Record<string, IssueStats> {
+  const out: Record<string, IssueStats> = {}
+  for (const line of raw.split('\n')) {
+    let h: StatsEntry
+    try {
+      h = JSON.parse(line)
+    } catch {
+      continue
+    }
+    const issue = String(h.issue ?? '')
+    if (!BATCH_HISTORY_PIPELINES.includes(h.pipeline ?? '') || !issues.includes(issue) || !h.started || !h.finished) continue
+    const startedMs = stampToMs(h.started)
+    const finishedMs = new Date(h.finished).getTime()
+    if (startedMs + 1000 < sinceMs || Number.isNaN(finishedMs)) continue
+    const costs = Object.values(h.agents ?? {})
+      .map(a => a.metrics?.estimated_cost_usd)
+      .filter((c): c is number => typeof c === 'number')
+    out[issue] = {
+      durationMs: Math.max(0, finishedMs - startedMs),
+      costUsd: costs.length > 0 ? costs.reduce((x, y) => x + y, 0) : null,
+      title: typeof h.title === 'string' && h.title !== '' ? h.title : null,
+      finishedMs,
+    }
+  }
+  return out
+}
+
+/** Issues sin estadisticas o con estadisticas sin titulo: un titulo vacio en cache no se corrige solo. */
+export function statsPending(issues: readonly string[], stats: Record<string, IssueStats>): string[] {
+  return issues.filter(issue => !stats[issue] || stats[issue].title === null)
+}
+
+export const fmtCost = (usd: number | null) => (usd === null ? '$?' : `$${usd.toFixed(2)}`)
+
+/** Total de lo terminado: duracion sumada y costo sumado (sin contar los que no lo informan). */
+export function statsTotal(stats: IssueStats[]): IssueStats {
+  const costs = stats.map(s => s.costUsd).filter((c): c is number => c !== null)
+  return {
+    durationMs: stats.reduce((a, s) => a + s.durationMs, 0),
+    costUsd: costs.length > 0 ? costs.reduce((a, c) => a + c, 0) : null,
+    title: null,
+    finishedMs: 0,
+  }
+}
+
+/** Titulo recortado con `...` a `width` columnas y rellenado a ese ancho (vacio si no hay titulo o espacio). */
+export function fitTitle(title: string | null | undefined, width: number): string {
+  if (width <= 0) return ''
   const t = (title ?? '').trim()
-  if (t === '') return `${head}${tail}`
-  const room = max === undefined ? t.length : max - head.length - tail.length - 4
-  if (room < 2) return `${head}${tail}`
-  return `${head}  ${clip(t, room)}  ${tail.replace(/^ /, '')}`.trimEnd()
+  return padEnd(t.length > width ? `${t.slice(0, width - 1)}…` : t, width)
+}
+
+/** Ancho de la columna de titulo de la tabla de cierre; 0 si no cabe un titulo legible. */
+export function summaryTitleWidth(inner: number): number {
+  const w = Math.min(60, inner - 38)
+  return w < 8 ? 0 : w
+}
+
+/** Resumen de cierre con marcas: `✓ N mergeados · ✗ N fallidos · ⏸ N aplazados · espera Xm` (omite lo que esta en cero). */
+export function batchSummaryMarks(b: BatchStatus): string {
+  const c = batchCounts(b)
+  const hold = holdText(b.holdSeconds)
+  return [
+    `✓ ${c.merged} mergeados`,
+    c.failed > 0 ? `✗ ${c.failed} fallidos` : '',
+    c.deferred > 0 ? `⏸ ${c.deferred} aplazados` : '',
+    hold ? `espera ${hold}` : '',
+  ]
+    .filter(Boolean)
+    .join(' · ')
+}
+
+/** Estado del cierre en la cabecera: `terminado`, `detenido` o `con fallos`. */
+export function batchEndLabel(state: BatchState): string {
+  return state === 'completed' ? 'terminado' : state === 'stopped' ? 'detenido' : 'con fallos'
+}
+
+/** Fila de la tabla de cierre (sin la marca): issue, titulo, PR, duracion y costo; `…` sin entrada de historial. */
+export function closeRowText(i: BatchIssue, st: IssueStats | undefined, titleW: number): { lead: string; trail: string } {
+  const lead = `${padEnd(`#${i.issue}`, 7)} ${titleW > 0 ? `${fitTitle(st?.title, titleW)} ` : ''}${padEnd(i.pr ? `PR #${i.pr}` : 'sin PR', 10)} `
+  return { lead, trail: st ? `${padEnd(elapsedText(st.durationMs), 8)} ${fmtCost(st.costUsd)}` : '…' }
+}
+
+/** Fila `total` de la tabla de cierre, alineada con las columnas de `closeRowText`. */
+export function closeTotalText(count: number, total: IssueStats, titleW: number): string {
+  const titleCol = titleW > 0 ? titleW + 1 : 0
+  return `  total ${padEnd(String(count), 12 + titleCol)} ${padEnd(elapsedText(total.durationMs), 8)} ${fmtCost(total.costUsd)}`
+}
+
+/** Momento de cierre del lote: el ultimo `finished` del historial entre sus issues; null sin entradas. */
+export function batchEndFromStats(stats: Record<string, IssueStats>): number | null {
+  const all = Object.values(stats).map(s => s.finishedMs)
+  return all.length > 0 ? Math.max(...all) : null
 }
 
 /** Issues que pasaron a `mergeado` entre dos lecturas; con `prev` vacio no hay toasts (el primer vistazo no anuncia). */

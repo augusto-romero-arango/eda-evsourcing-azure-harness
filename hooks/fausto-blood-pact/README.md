@@ -81,7 +81,7 @@ En reposo (listos visibles), si hay PRs abiertos, la primera línea suma, a la d
 
 Con `pipeline-status-batch.json` (lo escribe `batch-pipeline.sh`, #2202) en `state: running`, **el lote ocupa la banda**. Lectura pura del archivo; la consola nunca lo modifica.
 
-- Cabecera `sequential N/M · Mm` (N cuenta los `mergeado`; con parada pedida, `deteniendo`), la cola por issue (`✓` mergeado, `●` en curso, `✗` fallido, `⏸` aplazado, `-` saltado, `·` pendiente), y el eslabon en curso con pipeline, agente y tiempo de su propio status; la mascota sigue la regla del incremento 4. Ese eslabon no se repite como corrida suelta; las otras corridas activas se cuentan al pie (`+N corridas`).
+- Lote en curso: cabecera `sequential N/M · Mm` (N cuenta los `mergeado`; con parada pedida, `deteniendo`), la cola por issue (`✓` mergeado, `●` en curso, `✗` fallido, `⏸` aplazado, `-` saltado, `·` pendiente), y el eslabon en curso con pipeline, agente y tiempo de su propio status; la mascota sigue la regla del incremento 4. Ese eslabon no se repite como corrida suelta; las otras corridas activas se cuentan al pie (`+N corridas`).
 - `1`: `$.ui.ask` ("Detener tras el actual" / "Seguir"); al aceptar escribe la señal vacía `pipeline-state/batch-stop` en la raíz del checkout principal (`git rev-parse --git-common-dir`), la misma de `/mefisto:batch-stop` (MEF-ADR-0017); nunca mata un proceso. Con `stop_requested` la tecla no se ofrece.
 - `2`: `gh pr view --web` del PR del eslabón en curso o, si aún no tiene, del último `mergeado`. Sin PR no se muestra.
 - Cada issue que pasa a `mergeado` dispara un toast. Con el lote en `completed`/`failed`/`stopped` la banda muestra el resumen (mergeados, fallidos, aplazados, saltados, espera por rate limit) con el PR de cada issue; `4` lo cierra (ocultado persistente en `$.store`, clave repo + `started`, sin tocar el archivo).
@@ -126,3 +126,12 @@ En reposo, arriba a la derecha y junto a `2: PRs N`, aparece `3: bitácora N`. N
 - La cinta: cabecera `· historiador escribiendo la bitácora k/n mm:ss` en `warning`, mascota historiador (diablito con pluma, poses `escribiendo` y `listo` en `hooks/sprites.ts`) y la lista de field notes (de `docs/bitacora/field-notes/` más las de los PRs de field notes vía `gh pr view --json files`): primero las pendientes `●`, luego las procesadas `✓`. Una nota pasa a procesada al aparecer su nombre en `docs/bitacora/field-notes/procesadas/`, revisado cada 3 s.
 - Al terminar: si queda abierto un PR que solo toca `docs/bitacora/` y no es de rama de field notes, la cabecera muestra `· bitácora escrita · PR #N` y arriba a la derecha `1: mergear · 2: ver PR · 3: cerrar PR` (`mergear` va por `/mefisto:merge N`; `cerrar PR` pide confirmación y borra la rama). Si no queda PR (el skill ya lo mergeó), la cinta se va sola a los 8 s; si el PR se mergea o cierra por fuera, en el siguiente chequeo.
 - Precedencia de la banda: lote de `sequential`, cinta de merge, cinta del historiador, corridas y reposo. Estado en `$.state` (atoms `pactFieldNotes` y `pactHistorian`); lectura pura de `docs/bitacora/`.
+
+## Capacidad vigente (#2332): vista del sequential terminado igual a la cinta interna
+
+Con el lote terminado (MEF-ADR-0055 decisión 11, referencia `mefisto-divine-wager`):
+
+- Cabecera `mefisto · sequential M/N · <estado> <MM:SS|H:MM:SS>` (M = mergeados + fallidos; estado `terminado`/`detenido`/`con fallos`; sin `listos N` ni `batch`) con las acciones arriba a la derecha en el orden `2: ver PR #X`, `3: log`, `4: cerrar`. No hay fila de acciones al pie ni paginación `0`.
+- Junto a la mascota: la cola `✓ #853 ─ ✗ #854 ─ ⏸ #855`, el resumen `✓ N mergeados · ✗ N fallidos · ⏸ N aplazados · espera Xm` y, si hay un fallido, `#N <motivo>` en rojo.
+- Tabla de cierre a todo el ancho: una fila por issue mergeado o fallido (marca, `#N`, título, `PR #X`/`sin PR`, duración y costo) y una fila `total` con más de un issue.
+- Duración y costo salen de `pipeline-history.jsonl` del consumidor (pipelines `tdd`, `tooling`, `iac`; `started`→`finished` y suma de `agents.*.metrics.estimated_cost_usd`), solo con entradas posteriores al inicio del lote; sin entrada la celda muestra `…` y se relee en cada refresco.
