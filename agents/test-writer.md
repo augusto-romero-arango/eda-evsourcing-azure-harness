@@ -371,7 +371,21 @@ Antes de escribir una sola linea de test, determina si esta tarea requiere tests
 > runtime de Claude Code intercepta escrituras a `.claude/**` en worktrees aun
 > con `bypassPermissions`. Cualquier ruta antigua de `refactor-signal.md` bajo el directorio de estado del pipeline es legacy: la unica valida es `pipeline-state/`.
 
-**Si NO es refactoring puro:** continua con el flujo normal.
+**Si NO es refactoring puro:** evalua el carril solo smoke (seccion 2b) antes de continuar con el flujo normal.
+
+### 2b. Evaluar si el unico entregable verificable es un smoke post-deploy (carril solo smoke)
+
+**Cuando aplica:** el issue no pide comportamiento nuevo en `src/` y lo unico verificable de sus criterios de aceptacion es un smoke test post-deploy (MEF-ADR-0013) -- por ejemplo, cubrir un endpoint o un efecto secundario ya desplegados que nunca tuvieron smoke. No hay clase de produccion que stubear: el rojo local es **estructuralmente inalcanzable**, porque los proyectos `*.SmokeTests/` corren post-deploy contra dev y el gate local de tests los excluye.
+
+En ese caso:
+
+1. Escribe los tests **solo** en `tests/*.SmokeTests/` del dominio, cada uno con `[Trait("Category", "Smoke")]`. Sigue las convenciones de smoke del proyecto (naming, prefijo `"[TEST] "`, `CancellationToken`): las fija el agente `smoke-test-writer` y la suite existente. La DSL Given/When/Then de MEF-ADR-0002 **no aplica** a smoke tests -- no la fuerces (la regla absoluta 4 no rige en este carril).
+2. **No** crees stubs en `src/` ni tests unitarios para forzar un rojo. Un archivo fuera de `tests/*.SmokeTests/`, `docs/` o `pipeline-state/` saca al issue del carril y el Gate 1b vuelve a exigir un rojo que no existe.
+3. **No** escribas ninguna señal: ni `refactor-signal.md` (gana sobre el carril smoke y salta el Stage 2) ni `no-red-signal.md` (pertenece a la ruta read-side de `projection-test-writer`). El pipeline detecta el carril por el diff (`detect_smoke_only`): hay al menos un archivo bajo `tests/*.SmokeTests/` y todo lo demas cae en esos proyectos, `docs/` o `pipeline-state/`. En ese caso salta el Gate 1b, corre el Stage 2 en modo documental y salta los stages 2b y 4.
+4. **No** escribas los entregables documentales de los criterios de aceptacion (ADR, filas en `AGENTS.md`): los resuelve el implementer en el Stage 2 (seccion "Modo documental (issue solo smoke)" de su agente). Tu entregable termina en los smoke tests.
+5. Verifica que compila, commitea y escribe tu resumen como en los pasos 7-9. Nombra el carril en el resumen bajo un encabezado explicito, ej. "Carril solo smoke: <que verifica cada smoke y por que no hay rojo local>".
+
+**Cuando NO aplica:** si algun criterio de aceptacion pide comportamiento nuevo en `src/` (un handler, un endpoint, un evento), el carril normal sigue vigente aunque el issue tambien pida smoke: escribe los tests unitarios con su rojo y deja los smoke al `smoke-test-writer` del Stage 2b. Si el issue es refactoring puro, manda la seccion 2.
 
 ---
 
@@ -1190,7 +1204,7 @@ Crea el archivo `.mefisto/pipeline/summaries/stage-1-test-writer.md`:
 1. **NUNCA** escribas implementacion real. Un `throw new NotImplementedException()` es todo lo que pones en metodos de produccion.
 2. **Puedes modificar o eliminar tests existentes** solo si el issue lo requiere explicitamente (listados en "Impacto / Modifica") y tu modificacion responde al refactor que el issue pide. Toda modificacion de tests existentes se documenta en tu resumen como "Desviacion del plan del planner" o "Refactor guiado por el issue". Regla de fondo: no modifiques tests para hacerlos pasar artificialmente — solo cuando el issue mismo lo solicita o cuando una contradiccion arquitectonica del plan lo obliga. **Excepcion — carril de señal de refactor puro (seccion 2):** en ese carril NUNCA modifiques ni elimines tests tu mismo, ni siquiera los que el propio refactor vuelve obsoletos. Documentalos en la `JUSTIFICATION` y en `REMOVED_TESTS` de la señal; su eliminacion es responsabilidad exclusiva del reviewer (Stage 3).
 3. **NO** corras `dotnet test` — ya sabes que fallara. Solo verifica que **compila**.
-4. **Cada test DEBE tener tanto `Then(...)` como al menos un `And<>()`** — sin excepcion.
+4. **Cada test DEBE tener tanto `Then(...)` como al menos un `And<>()`** — sin excepcion en los tests de la DSL. Los smoke tests del carril solo smoke (seccion 2b) no usan la DSL y quedan fuera de esta regla.
 5. **NUNCA** uses NSubstitute para fakes de dependencias del handler. Crea clases fake manuales.
 6. Cubre **todos los eventos** que puede emitir cada handler (todas las ramas).
 7. Incluye al menos un test de **idempotencia o error** por handler cuando aplique. Para todo PUT/DELETE nuevo o migrado cuyo contrato declare "Estado ya alcanzado", este es obligatoriamente un no-op exitoso: pre-carga el estado objetivo, ejecuta sin excepcion, usa `Then()` o `Then(streamId)` vacio, conserva un `And<>()` del estado objetivo y usa los asserts vacios de publicacion correspondientes si el camino de cambio publica. No lo sustituyas por el caso de stream inexistente ni introduzcas un tipo `SinCambios`.
