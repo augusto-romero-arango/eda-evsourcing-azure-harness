@@ -2912,3 +2912,40 @@ caffeinate_prefix() {
         printf '%s' "caffeinate -i"
     fi
 }
+
+# detect_smoke_only <worktree> <snapshot> [--committed]
+#
+# Carril "solo smoke" (issue #2357): los proyectos *.SmokeTests/ corren
+# post-deploy contra dev (MEF-ADR-0013) y run_tests_projects los excluye, asi
+# que un issue que solo los toca nunca queda en rojo en el gate local.
+#
+# Evalua el conjunto de archivos cambiados desde <snapshot>: commits
+# (snapshot..HEAD) y, salvo con --committed, tambien cambios sin commitear y
+# archivos nuevos. Es solo smoke cuando hay al menos un archivo bajo
+# tests/${HARNESS_NAMESPACE_PREFIX}.*.SmokeTests/ y todo lo demas cae en esos
+# proyectos, docs/ o pipeline-state/.
+#
+# Imprime una linea por archivo ("smoke: <ruta>" | "docs: <ruta>" |
+# "otro: <ruta>"). Exit 0 si es solo smoke, 1 si no. Sin efectos colaterales.
+detect_smoke_only() {
+    local worktree="$1" snapshot="$2" mode="${3:-}"
+    local files f has_smoke=false has_other=false out=""
+    local prefix="${HARNESS_NAMESPACE_PREFIX:-}"
+    files=$( {
+        git -C "$worktree" diff --name-only "$snapshot"..HEAD 2>/dev/null || true
+        if [ "$mode" != "--committed" ]; then
+            git -C "$worktree" diff --name-only HEAD 2>/dev/null || true
+            git -C "$worktree" ls-files --others --exclude-standard 2>/dev/null || true
+        fi
+    } | sort -u )
+    while IFS= read -r f; do
+        [ -n "$f" ] || continue
+        case "$f" in
+            "tests/${prefix}."*".SmokeTests/"*) has_smoke=true; out+="smoke: $f"$'\n' ;;
+            docs/*|pipeline-state/*) out+="docs: $f"$'\n' ;;
+            *) has_other=true; out+="otro: $f"$'\n' ;;
+        esac
+    done <<< "$files"
+    printf '%s' "$out"
+    [ "$has_smoke" = true ] && [ "$has_other" = false ]
+}

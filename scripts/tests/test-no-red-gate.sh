@@ -185,10 +185,14 @@ assert_script_contains "F3: parseo de JUSTIFICATION con el mismo patron que refa
     'NO_RED_JUSTIFICATION=$(grep "^JUSTIFICATION=" "$NO_RED_SIGNAL_PATH" | cut -d= -f2- || echo "no especificada")'
 assert_script_contains "F4 (CA-3): exit 8 conserva su rama de abort propia" \
     'elif [ "$g1_rc" -eq 8 ]; then'
-assert_script_contains "F5 (CA-4): el abort sin señal presenta las dos hipotesis" \
-    "Dos hipotesis:"
-assert_script_contains "F6 (CA-4): el abort instruye como señalizar el caso legitimo" \
-    "pipeline-state/no-red-signal.md con JUSTIFICATION="
+# Issue #2357 (CA-6): el abort enumera tres opciones y la señal queda acotada
+# a tipo:projection; el carril solo-smoke se detecta solo por diff.
+assert_script_contains "F5 (CA-4, #2357 CA-6): el abort sin señal enumera las opciones" \
+    "Opciones: (1) el \$STAGE1_AGENT escribio implementacion real en lugar de stubs"
+assert_script_contains "F6 (CA-4, #2357 CA-6): la señal se ofrece solo en tipo:projection" \
+    "(2) en tipo:projection, la fase roja estructuralmente inalcanzable se señaliza con pipeline-state/no-red-signal.md (JUSTIFICATION="
+assert_script_contains "F6b (#2357 CA-6): el abort explica el carril solo-smoke" \
+    "(3) el carril solo-smoke se detecta solo"
 assert_script_contains "F7 (CA-5): la justificacion viaja al prompt del reviewer" \
     'Justificación: $NO_RED_JUSTIFICATION'
 assert_script_contains "F8 (CA-5): la justificacion viaja al cuerpo del PR" \

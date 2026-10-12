@@ -147,6 +147,8 @@ REMOVED_TESTS=0
 # Señal de fase roja no aplicable (issue #585): gemela de refactor-signal.md,
 # pero solo honrada en la ruta read-side (STAGE1_AGENT=projection-test-writer).
 IS_NO_RED_SIGNAL=false
+IS_SMOKE_ONLY=false
+SMOKE_ONLY_FILES=""
 NO_RED_JUSTIFICATION=""
 # Rama read-side (issue #371): tipo:projection despacha projection-test-writer/
 # projection-implementer en vez de test-writer/implementer. reviewer y
@@ -964,7 +966,19 @@ PROHIBIDO hacer 'git push' o 'gh pr create' (ni ninguna operacion de publicacion
     dotnet build "$WORKTREE_PATH" >>"${LOG_FILE_ABS:-$LOG_FILE}" 2>&1 \
         || abort "Stage 1 fallido: el proyecto no compila después del $STAGE1_AGENT. Revisa $LOG_DIR/stage-1-${STAGE1_AGENT}.log"
 
-    if [ "$IS_REFACTOR" = false ]; then
+    # Carril solo smoke (issue #2357): deteccion determinista por diff.
+    SMOKE_DETECT_OUT=""
+    if [ "$IS_REFACTOR" = false ] && SMOKE_DETECT_OUT=$(detect_smoke_only "$WORKTREE_PATH" "$SNAPSHOT_COMMIT"); then
+        IS_SMOKE_ONLY=true
+        SMOKE_ONLY_FILES="$SMOKE_DETECT_OUT"
+        log "Issue de solo smoke detectado (archivos que lo decidieron):"
+        printf '%s' "$SMOKE_DETECT_OUT" | while read -r l; do log "  $l"; done
+        echo "[$(date +%H:%M:%S)] SMOKE_ONLY detectado" >> "$EVENTS_LOG_ABS"
+    fi
+
+    if [ "$IS_SMOKE_ONLY" = true ]; then
+        log "fase roja no aplica: solo smoke tests (corren post-deploy, MEF-ADR-0013)"
+    elif [ "$IS_REFACTOR" = false ]; then
         # Gate 1b: los tests nuevos deben FALLAR (exit code != 0)
         # Exit codes de Microsoft Testing Platform: 0=pasan, 2=fallan, 8=no hay tests, 1=agregado mixto
         # Gate 1a ya verifico compilacion, asi que exit != 0 aqui significa tests fallando
@@ -976,7 +990,12 @@ PROHIBIDO hacer 'git push' o 'gh pr create' (ni ninguna operacion de publicacion
             if [ "$IS_NO_RED_SIGNAL" = true ]; then
                 log "fase roja no aplicable: $NO_RED_JUSTIFICATION"
             else
-                abort "Stage 1 fallido: todos los tests pasan (exit code: 0). Dos hipotesis: (1) el $STAGE1_AGENT escribio implementacion real en lugar de stubs; o (2) la fase roja es estructuralmente inalcanzable (ej. la unica capa de test posible es composicion/config-test sobre un stub que debe existir para compilar). Si es el caso (2) y este es un issue tipo:projection, el $STAGE1_AGENT debe señalizarlo creando pipeline-state/no-red-signal.md con JUSTIFICATION=<razon> — esa señal solo se honra en la ruta read-side (STAGE1_AGENT=projection-test-writer)."
+                if printf '%s' "$SMOKE_DETECT_OUT" | grep -q '^smoke: '; then
+                    SMOKE_OTHER_LIST=$(printf '%s' "$SMOKE_DETECT_OUT" | grep '^otro: ' | sed 's/^otro: //' | paste -sd, - || true)
+                else
+                    SMOKE_OTHER_LIST="ninguno de los cambios cae bajo tests/*.SmokeTests/"
+                fi
+                abort "Stage 1 fallido: todos los tests pasan (exit code: 0). Opciones: (1) el $STAGE1_AGENT escribio implementacion real en lugar de stubs: reemplazala por stubs que hagan fallar los tests; (2) en tipo:projection, la fase roja estructuralmente inalcanzable se señaliza con pipeline-state/no-red-signal.md (JUSTIFICATION=<razon>); (3) el carril solo-smoke se detecta solo cuando todo cambio cae en tests/*.SmokeTests/, docs/ o pipeline-state/ y hay al menos un archivo smoke. Lo que impidio detectarlo: ${SMOKE_OTHER_LIST}."
             fi
         elif [ "$g1_rc" -eq 8 ]; then
             abort "Stage 1 fallido: no se encontraron tests para ejecutar (exit code: 8) — el $STAGE1_AGENT no genero tests validos"
@@ -1033,13 +1052,23 @@ PROHIBIDO hacer 'git push' o 'gh pr create' (ni ninguna operacion de publicacion
     AGENT_TW_METRICS_JSON=$LAST_AGENT_METRICS_JSON
     AGENT_TW_RES="passed"
     update_status "1-${STAGE1_AGENT}" "passed"
-    if [ "$IS_NO_RED_SIGNAL" = true ]; then
+    if [ "$IS_SMOKE_ONLY" = true ]; then
+        echo "[$(date +%H:%M:%S)] SMOKE_ONLY ${STAGE1_AGENT} passed: fase roja no aplica, solo smoke tests (corren post-deploy, MEF-ADR-0013)" >> "$EVENTS_LOG_ABS"
+        success "Stage 1 completado — fase roja no aplica: solo smoke tests (corren post-deploy, MEF-ADR-0013)"
+    elif [ "$IS_NO_RED_SIGNAL" = true ]; then
         success "Stage 1 completado — fase roja no aplicable (señalizada por el $STAGE1_AGENT)"
     else
         success "Stage 1 completado — fase roja confirmada"
     fi
 else
     log "Saltando Stage 1 (--from-stage $FROM_STAGE)"
+    if [ "$IS_REFACTOR" = false ] && SMOKE_DETECT_OUT=$(detect_smoke_only "$WORKTREE_PATH" "$SNAPSHOT_COMMIT" --committed); then
+        IS_SMOKE_ONLY=true
+        SMOKE_ONLY_FILES="$SMOKE_DETECT_OUT"
+        log "Issue de solo smoke detectado sobre SNAPSHOT..HEAD (archivos que lo decidieron):"
+        printf '%s' "$SMOKE_DETECT_OUT" | while read -r l; do log "  $l"; done
+        echo "[$(date +%H:%M:%S)] SMOKE_ONLY detectado (--from-stage $FROM_STAGE)" >> "$EVENTS_LOG_ABS"
+    fi
 fi
 
 # [Cambio 6] Capturar archivos y verificar que hay contenido
@@ -1087,12 +1116,42 @@ Estas reglas no cubren todos los casos; ante cualquier otro, decide con el mismo
 
 PROHIBIDO hacer 'git push' o 'gh pr create' (ni ninguna operacion de publicacion de rama/PR): eso es responsabilidad exclusiva del pipeline, nunca tuya."
 
+    if [ "$IS_SMOKE_ONLY" = true ]; then
+        STAGE2_PROMPT="Estás en el directorio raíz del proyecto ${HARNESS_PROJECT_NAME}.
+
+Contexto de la historia de usuario:
+
+$ISSUE_CONTEXT
+
+Este issue es de SOLO SMOKE TESTS (modo documental): los smoke tests ya están escritos por el $STAGE1_AGENT y no hay código de producción que implementar. NO toques src/ ni tests/. Tu única tarea es resolver los entregables no-código de los criterios de aceptación (ADR en docs/, filas en AGENTS.md o CLAUDE.md). Si no hay ninguno, termina sin cambios.
+
+Archivos del $STAGE1_AGENT:
+$STAGE1_FILES
+
+PROHIBIDO hacer 'git push' o 'gh pr create' (ni ninguna operacion de publicacion de rama/PR): eso es responsabilidad exclusiva del pipeline, nunca tuya."
+    fi
+    STAGE2_BASE_HEAD=$(git -C "$WORKTREE_PATH" rev-parse HEAD 2>/dev/null || true)
     run_agent "2" "$STAGE2_AGENT" "$STAGE2_PROMPT"
 
     # Gate 2: verificar tests
-    log "Gate: verificando fase verde..."
     g2_rc=0
-    TEST_OUTPUT_G2=$(run_tests_projects "$WORKTREE_PATH" 2>&1) || g2_rc=$?
+    if [ "$IS_SMOKE_ONLY" = true ]; then
+        log "Gate: modo documental (solo smoke) — sin src/ ni tests/, compila, tests exit 0 u 8..."
+        S2_FORBIDDEN=$( {
+            git -C "$WORKTREE_PATH" diff --name-only "$STAGE2_BASE_HEAD" 2>/dev/null || true
+            git -C "$WORKTREE_PATH" ls-files --others --exclude-standard 2>/dev/null || true
+        } | sort -u | grep -E '^(src|tests)/' || true)
+        if [ -n "$S2_FORBIDDEN" ]; then
+            abort "Stage 2 fallido (solo smoke, modo documental): el $STAGE2_AGENT toco src/ o tests/: $(printf '%s' "$S2_FORBIDDEN" | paste -sd, -)"
+        fi
+        dotnet build "$WORKTREE_PATH" >>"${LOG_FILE_ABS:-$LOG_FILE}" 2>&1 \
+            || abort "Stage 2 fallido (solo smoke): el proyecto no compila despues del $STAGE2_AGENT. Revisa $LOG_DIR_ABS/stage-2-${STAGE2_AGENT}.log"
+        TEST_OUTPUT_G2=$(run_tests_projects "$WORKTREE_PATH" 2>&1) || g2_rc=$?
+        [ "$g2_rc" -eq 8 ] && g2_rc=0
+    else
+        log "Gate: verificando fase verde..."
+        TEST_OUTPUT_G2=$(run_tests_projects "$WORKTREE_PATH" 2>&1) || g2_rc=$?
+    fi
     echo "$TEST_OUTPUT_G2" | tee -a "${LOG_FILE_ABS:-$LOG_FILE}" >/dev/null
     if [ "$g2_rc" -ne 0 ]; then
         BLOCKAGE_REPORT="$(mefisto_state_read_first 'blockage-report.md' "$WORKTREE_PATH" 2>/dev/null || true)"
@@ -1142,6 +1201,19 @@ PROHIBIDO hacer 'git push' o 'gh pr create' (ni ninguna operacion de publicacion
 
     # Auto-commit de seguridad
     auto_commit_if_needed "verde" "feat(hu-${ISSUE_NUM:-?}): implementación fase verde"
+    # auto_commit_if_needed solo cubre tests/ y src/; en modo documental los
+    # entregables viven en docs/, AGENTS.md o CLAUDE.md (CA-3 de #2357).
+    if [ "$IS_SMOKE_ONLY" = true ]; then
+        for doc_path in docs AGENTS.md CLAUDE.md; do
+            if [ -n "$(git -C "$WORKTREE_PATH" status --porcelain -- "$doc_path" 2>/dev/null)" ]; then
+                git -C "$WORKTREE_PATH" add -A -- "$doc_path" >>"${LOG_FILE_ABS:-$LOG_FILE}" 2>&1 || true
+            fi
+        done
+        if ! git -C "$WORKTREE_PATH" diff --cached --quiet 2>/dev/null; then
+            log "El $STAGE2_AGENT no commitió los entregables documentales. Haciendo commit automático (modo documental)..."
+            git -C "$WORKTREE_PATH" commit -m "docs(hu-${ISSUE_NUM:-?}): entregables no-código (solo smoke)" >>"${LOG_FILE_ABS:-$LOG_FILE}" 2>&1 || true
+        fi
+    fi
 
     AGENT_IM_DUR=$LAST_AGENT_DURATION
     AGENT_IM_METRICS_JSON=$LAST_AGENT_METRICS_JSON
@@ -1152,7 +1224,11 @@ PROHIBIDO hacer 'git push' o 'gh pr create' (ni ninguna operacion de publicacion
     else
         AGENT_IM_RES="passed"
         update_status "2-${STAGE2_AGENT}" "passed"
-        success "Stage 2 completado — fase verde confirmada"
+        if [ "$IS_SMOKE_ONLY" = true ]; then
+            success "Stage 2 completado — modo documental (solo smoke)"
+        else
+            success "Stage 2 completado — fase verde confirmada"
+        fi
     fi
 else
     log "Saltando Stage 2 (--from-stage $FROM_STAGE)"
@@ -1172,7 +1248,12 @@ fi
 # el mismo sed que extrae "{Dominio}" de src/{NS}.{Dominio}/... extrae
 # "Mcp.{Proposito}" completo de src/{NS}.Mcp.{Proposito}/... (el punto interno
 # no es separador de ruta), asi que ya cae en tests/{NS}.Mcp.{Proposito}.SmokeTests.
-if [ "$IS_REFACTOR" != true ] && [ "$FROM_STAGE" -le 2 ]; then
+if [ "$IS_SMOKE_ONLY" = true ]; then
+    log "Saltando Stage 2b (smoke escritos en Stage 1)"
+    echo "[$(date +%H:%M:%S)] SKIP smoke-test-writer: smoke escritos en Stage 1" >> "$EVENTS_LOG_ABS"
+    AGENT_ST_RES="skipped"
+    update_status "2b-smoke-test-writer" "skipped"
+elif [ "$IS_REFACTOR" != true ] && [ "$FROM_STAGE" -le 2 ]; then
     # Anclado a src/ (issue #1562): SNAPSHOT_COMMIT se toma ANTES de Stage 1,
     # asi que el diff incluye los tests que escribio el test-writer -- sin el
     # anclaje, una ruta tests/.../XFunction/... coincide con el patron
@@ -1365,6 +1446,11 @@ PROHIBIDO hacer 'git push' o 'gh pr create' (ni ninguna operacion de publicacion
 
 Nota: el $STAGE1_AGENT señalizo que la fase roja del Stage 1 era estructuralmente inalcanzable (unica capa de test posible: composicion/config-test). Justificación: $NO_RED_JUSTIFICATION"
         fi
+        if [ "$IS_SMOKE_ONLY" = true ]; then
+            STAGE3_PROMPT="$STAGE3_PROMPT
+
+Nota: este issue es de SOLO SMOKE TESTS (corren post-deploy, MEF-ADR-0013). No hay implementación que revisar en src/: revisa la calidad de los smoke tests y de los entregables documentales (docs/), sin tocar src/."
+        fi
     fi
 
     # Agregar contexto de bloqueo al prompt si el implementer reporto tests bloqueados
@@ -1385,6 +1471,7 @@ ATENCION: hay tests bloqueados tras la fase verde (reportados por el implementer
     log "Gate: verificando que refactor no rompió tests..."
     g3_rc=0
     TEST_OUTPUT_G3=$(run_tests_projects "$WORKTREE_PATH" 2>&1) || g3_rc=$?
+    [ "$IS_SMOKE_ONLY" = true ] && [ "$g3_rc" -eq 8 ] && g3_rc=0
     echo "$TEST_OUTPUT_G3" | tee -a "${LOG_FILE_ABS:-$LOG_FILE}" >/dev/null
     if [ "$g3_rc" -ne 0 ]; then
         BLOCKAGE_REPORT="$(mefisto_state_read_first 'blockage-report.md' "$WORKTREE_PATH" 2>/dev/null || true)"
@@ -1484,6 +1571,7 @@ PROHIBIDO hacer 'git push' o 'gh pr create': eso es responsabilidad exclusiva de
     log "Verificando tests después del merge..."
     merge_rc=0
     TEST_OUTPUT_MERGE=$(run_tests_projects "$WORKTREE_PATH" 2>&1) || merge_rc=$?
+    [ "$IS_SMOKE_ONLY" = true ] && [ "$merge_rc" -eq 8 ] && merge_rc=0
     echo "$TEST_OUTPUT_MERGE" | tee -a "${LOG_FILE_ABS:-$LOG_FILE}" >/dev/null
     if [ "$merge_rc" -ne 0 ]; then
         abort "Tests fallan después del merge con main (exit code: $merge_rc). Revisa manualmente: cd $WORKTREE_PATH"
@@ -1495,7 +1583,12 @@ fi
 # Mide cobertura de lineas sobre archivos de logica del PR.
 # Si hay brechas, genera patch spec y relanza test-writer (+implementer si necesario).
 # Maximo 1 iteracion de remediacion.
-if [ "$IS_REFACTOR" != true ] && [ "$FROM_STAGE" -le 4 ]; then
+if [ "$IS_SMOKE_ONLY" = true ]; then
+    log "Saltando Stage 4 (sin cambios en src/)"
+    echo "[$(date +%H:%M:%S)] SKIP coverage-gate: sin cambios en src/" >> "$EVENTS_LOG_ABS"
+    AGENT_CG_RES="skipped"
+    update_status "4-coverage-gate" "skipped"
+elif [ "$IS_REFACTOR" != true ] && [ "$FROM_STAGE" -le 4 ]; then
     header "Stage 4: Coverage Gate"
 
     CG_START=$(date +%s)
@@ -2190,6 +2283,25 @@ EOF
 - Refactoring ejecutado manteniendo todos los tests verdes"
             IMPLEMENTER_SECTION=""
             SMOKE_TEST_SECTION=""
+        elif [ "$IS_SMOKE_ONLY" = true ]; then
+            PR_BODY_SUMMARY="Pipeline TDD completado (solo smoke):
+- Smoke tests escritos en Stage 1 (corren post-deploy, MEF-ADR-0013)
+- Stage 2 en modo documental: solo entregables no-código
+- Fase refactor: revisión de calidad"
+            IMPLEMENTER_SECTION="<details>
+<summary>${STAGE2_LABEL} (modo documental) — ${IM_DUR_FMT}</summary>
+
+${IM_SUMMARY}
+
+</details>
+"
+            SMOKE_TEST_SECTION="## Validación pendiente post-deploy
+
+Este PR contiene solo smoke tests (\`Category=Smoke\`), que corren contra dev tras el despliegue (MEF-ADR-0013); el gate local no los ejecuta. La evidencia de los criterios de aceptación que dependen de ellos saldrá del job de smoke tras el merge: este PR **no** la presenta como verificada.
+
+Archivos smoke:
+$(printf '%s' "$SMOKE_ONLY_FILES" | awk '/^smoke: /{sub(/^smoke: /,""); print "- `" $0 "`"}')
+"
         else
             if [ "$AGENT_ST_RES" = "passed" ]; then
                 PR_BODY_SUMMARY="Pipeline TDD completado:
