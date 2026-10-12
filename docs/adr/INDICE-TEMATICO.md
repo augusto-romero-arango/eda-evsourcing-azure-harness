@@ -157,3 +157,4 @@ no necesita estar residente en cada sesión, solo cuando se busca en qué ADR vi
 | Paridad de experiencia entre mods pares (tablero y consola, interno y publicado): comportamiento del par como referencia sin compartir codigo, e identidad visual por lado (enmienda de la superficie de observacion por mods) | MEF-ADR-0055 |
 | Activacion de Mefisto por repositorio: archivos por usuario inertes, habilitacion commiteada por consumidor y raiz de release entregada a los agentes de pipeline | MEF-ADR-0053 |
 | Paridad de mods por dimension de experiencia (ubicacion, lo que ve el usuario, como se pide input, teclas, mascota) y deber de estudiar el par antes de proponer (enmienda de la superficie de observacion por mods) | MEF-ADR-0055 |
+| Default de `repoSlug` tras renombrar el repo a `augusto-romero-arango/mefisto`; el nombre previo resuelve por redireccion (enmienda del routing cross-repo) | MEF-ADR-0019 |
