@@ -242,11 +242,18 @@ _disable_user() {
 }
 
 _repo_slug() {
-    local slug=""
+    local slug="" cfg=""
     if [ -n "${HARNESS_CONFIG_PATH:-}" ] && [ -f "$HARNESS_CONFIG_PATH" ]; then
-        slug=$(jq -r '.repoSlug // empty' "$HARNESS_CONFIG_PATH" 2>/dev/null)
-    elif [ -f .claude/harness.config.json ]; then
-        slug=$(jq -r '.repoSlug // empty' .claude/harness.config.json 2>/dev/null)
+        cfg="$HARNESS_CONFIG_PATH"
+    elif [ -f "$SCRIPT_DIR/_pipeline-common.sh" ]; then
+        # Subshell: el source no deja estado en este script; si falla, cfg queda vacio.
+        cfg=$( (source "$SCRIPT_DIR/_pipeline-common.sh" >/dev/null 2>&1 && resolve_harness_config_path read 2>/dev/null) ) || cfg=""
+    fi
+    if [ -z "$cfg" ] && [ -f .claude/harness.config.json ]; then
+        cfg=.claude/harness.config.json
+    fi
+    if [ -n "$cfg" ] && [ -f "$cfg" ]; then
+        slug=$(jq -r '.repoSlug // empty' "$cfg" 2>/dev/null) || slug=""
     fi
     printf '%s\n' "${slug:-$DEFAULT_REPO_SLUG}"
 }
