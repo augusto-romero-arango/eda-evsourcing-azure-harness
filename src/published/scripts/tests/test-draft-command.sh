@@ -29,7 +29,7 @@ operation_line="$(awk '/gh issue create/ { print NR; exit }' "$SOURCE")"
 [ -n "$guard_line" ] && [ -n "$operation_line" ] && [ "$guard_line" -lt "$operation_line" ] && pass 'guard precede cualquier operacion' || fail 'guard no precede las operaciones'
 contains "$body" 'domainLabels` de {{mefisto:config-path}}' 'domainLabels se lee desde config-path'
 contains "$body" "jq -r '.repoSlug // empty' \"{{mefisto:config-path}}\"" 'repoSlug se lee desde config-path con el molde del planner'
-contains "$body" 'REPO_SLUG="augusto-romero-arango/eda-evsourcing-azure-harness"' 'mismo default que el planner cuando el campo falta'
+contains "$body" 'REPO_SLUG="augusto-romero-arango/mefisto"' 'mismo default que el planner cuando el campo falta'
 contains "$body" 'gh issue create -R "$REPO_SLUG"' 'draft cross-repo usa -R con el slug resuelto'
 absent "$body" 'HARNESS_REPO_SLUG' 'HARNESS_REPO_SLUG desaparece de la fuente (CA-2/CA-6c)'
 for forbidden in 'Claude' 'OpenCode' '.claude/' '.opencode/' 'cache' 'model:' 'tools:' 'allowed-tools:' 'permission:' '.plugin-root' 'CLAUDE_' 'plugins/cache'; do absent "$body" "$forbidden" "fuente no publica token prohibido: $forbidden"; done

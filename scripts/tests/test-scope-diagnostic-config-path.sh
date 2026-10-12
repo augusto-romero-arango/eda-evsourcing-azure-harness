@@ -56,7 +56,7 @@ ${repo_slug_fragment}  "boundedContext": { "name": "Principal", "domains": ["pru
 EOF
 }
 
-DEFAULT_SLUG="augusto-romero-arango/eda-evsourcing-azure-harness"
+DEFAULT_SLUG="augusto-romero-arango/mefisto"
 
 echo "[1] Config canonico con repoSlug=org/fork via HARNESS_CONFIG_PATH"
 (

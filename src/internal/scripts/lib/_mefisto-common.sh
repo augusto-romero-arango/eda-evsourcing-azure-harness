@@ -12,7 +12,7 @@
 # No invocar directamente (prefijo _ = sourceable).
 #
 # ALCANCE: estos pipelines solo se ejecutan dentro del repo del propio Mefisto
-# (eda-evsourcing-azure-harness). No usan .claude/harness.config.json (que es
+# (augusto-romero-arango/mefisto). No usan .claude/harness.config.json (que es
 # del consumidor) ni dotnet/Terraform. Operan sobre commands/, agents/, scripts/,
 # hooks/, docs/adr/ y archivos de gobierno del repo.
 
@@ -51,7 +51,7 @@ unset _mefisto_common_state_lib
 # Exporta:
 #   MEFISTO_REPO_ROOT       - Raiz del repo (toplevel git)
 #   MEFISTO_PROJECT_NAME    - Nombre legible ("mefisto", leido de plugin.json)
-#   MEFISTO_REPO_SLUG       - owner/repo (ej: augusto-romero-arango/eda-evsourcing-azure-harness)
+#   MEFISTO_REPO_SLUG       - owner/repo (ej: augusto-romero-arango/mefisto)
 assert_in_mefisto() {
     local repo_root
     repo_root=$(git rev-parse --show-toplevel 2>/dev/null) || {

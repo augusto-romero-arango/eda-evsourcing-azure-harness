@@ -5,7 +5,7 @@ set -euo pipefail
 export LC_ALL=C
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
-REPOSITORY="${MEFISTO_OPENCODE_REPOSITORY:-augusto-romero-arango/eda-evsourcing-azure-harness}"
+REPOSITORY="${MEFISTO_OPENCODE_REPOSITORY:-augusto-romero-arango/mefisto}"
 
 error() { printf 'ERROR: %s\n' "$1" >&2; exit 1; }
 usage() { error 'uso: mefisto-opencode bootstrap <semver> | install <semver> | activate <semver> | prune [--keep <n>] [--yes] | project | deactivate | status | projection-status | diagnose | package-root'; }

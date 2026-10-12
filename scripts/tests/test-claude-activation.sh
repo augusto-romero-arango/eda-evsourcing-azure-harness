@@ -9,7 +9,8 @@
 #   A-4: el modo actualizar reporta MIGRACION PENDIENTE / AVISO segun el estado.
 #   A-5: onboard-activate-repo.sh fusiona sin pisar otras claves; --preview no escribe.
 #   A-6: _check_repo_activation de onboard-diagnose.sh: OK / FALTA / INFO.
-#   A-7: _mefisto_marketplace deriva el nombre de la raiz del cache.
+#   A-7: _mefisto_marketplace deriva el nombre de la raiz del cache o de known_marketplaces.json
+#        con el slug actual o el previo al rename; _fuente_marketplace cae al slug actual.
 #   A-8: upgrade.sh --disable-user retira la proyeccion global de OpenCode solo con el
 #        cargador commiteado, y es idempotente.
 #   A-9: _reportar_activacion_opencode: MIGRACION PENDIENTE / AVISO / silencio.
@@ -183,6 +184,15 @@ rm -f "$XDG_CONFIG_HOME/opencode/.mefisto-projection.json"
 
 echo "[A-7] _mefisto_marketplace"
 assert_igual "$MKT" "$(_mefisto_marketplace "$CACHE/$MKT/mefisto/0.50.0")" "A-7: deriva el nombre de la raiz del cache"
+KNOWN="$CLAUDE_CONFIG_DIR/plugins/known_marketplaces.json"
+mkdir -p "$(dirname "$KNOWN")"
+printf '{"mkt-previo":{"source":{"source":"github","repo":"augusto-romero-arango/eda-evsourcing-azure-harness"}}}\n' > "$KNOWN"
+assert_igual "mkt-previo" "$(_mefisto_marketplace "$TMP/checkout")" "A-7: reconoce el marketplace registrado con el slug previo al rename (#2349)"
+printf '{"otro":{"source":{"source":"github","repo":"augusto-romero-arango/mefisto-site"}},"mkt-nuevo":{"source":{"source":"github","repo":"augusto-romero-arango/mefisto"}}}\n' > "$KNOWN"
+assert_igual "mkt-nuevo" "$(_mefisto_marketplace "$TMP/checkout")" "A-7: reconoce el marketplace registrado con el slug actual"
+rm -f "$KNOWN"
+assert_igual "augusto-romero-arango-harness" "$(_mefisto_marketplace "$TMP/checkout")" "A-7: sin registro cae al nombre publicado"
+assert_igual '{"source":"github","repo":"augusto-romero-arango/mefisto"}' "$(_fuente_marketplace augusto-romero-arango-harness)" "A-7: fuente por defecto con el slug actual"
 
 echo "[A-8] upgrade.sh --disable-user retira la proyeccion global de OpenCode"
 C8=$(nuevo_consumidor a8)

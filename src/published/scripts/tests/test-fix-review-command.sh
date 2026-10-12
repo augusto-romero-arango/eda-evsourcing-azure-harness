@@ -28,7 +28,7 @@ contains "$body" 'Uso: {{mefisto:command fix-review}} <numero-de-PR>' 'uso vacio
 contains "$body" '{{mefisto:package-root}}/agents/<id>.md' 'agentes del harness desde package-root'
 contains "$body" '{{mefisto:package-root}}/docs/adr/mef-adr-0019-*.md' 'ADR-0019 desde package-root'
 contains "$body" '{{mefisto:config-path}}' 'repoSlug desde config-path'
-contains "$body" 'augusto-romero-arango/eda-evsourcing-azure-harness' 'default de repoSlug como el planner'
+contains "$body" 'augusto-romero-arango/mefisto' 'default de repoSlug como el planner'
 contains "$body" '**No avances a la Fase 3 sin aprobacion del plan.**' 'regla de gate del plan literal'
 contains "$body" 'aprobacion explicita' 'aprobacion explicita exigida'
 contains "$body" 'in_reply_to' 'respuestas via in_reply_to'

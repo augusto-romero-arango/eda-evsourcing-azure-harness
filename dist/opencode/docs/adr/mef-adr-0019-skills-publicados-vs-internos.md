@@ -58,8 +58,8 @@ Los skills internos:
 
 La unica operacion permitida desde el consumidor hacia el repo de Mefisto es **crear un draft** (`estado:borrador`). El refinamiento, desglose, oleadas, backlog, analisis y limpieza de issues del plugin se hacen exclusivamente con `/mefisto-plan` dentro del repo del plugin.
 
-- `agents/tooling-investigator.md` y `agents/planner.md` (publicados) implementan esta restriccion: si la causa raiz vive en el plugin, abren un draft con `gh -R augusto-romero-arango/eda-evsourcing-azure-harness ...` y detienen el flujo.
-- El slug del repo de Mefisto se lee del campo `repoSlug` en `.claude/harness.config.json` (opcional; se lee inline con `jq`, no se exporta como `HARNESS_*`); default: `augusto-romero-arango/eda-evsourcing-azure-harness`. Esto soporta forks.
+- `agents/tooling-investigator.md` y `agents/planner.md` (publicados) implementan esta restriccion: si la causa raiz vive en el plugin, abren un draft con `gh -R augusto-romero-arango/mefisto ...` y detienen el flujo.
+- El slug del repo de Mefisto se lee del campo `repoSlug` en `.claude/harness.config.json` (opcional; se lee inline con `jq`, no se exporta como `HARNESS_*`); default: `augusto-romero-arango/mefisto`. Esto soporta forks.
 
 ### D. Grupos de trabajo homogeneos
 
@@ -126,7 +126,7 @@ Pros: separacion fisica dura. Contras: dos artefactos a publicar y mantener, dep
 
 - **Duplicacion inicial**: los pipelines y agentes empezaran muy parecidos (mefisto-tooling-pipeline.sh es ~85% identico a tooling-pipeline.sh). Aceptado deliberadamente; refactorizar a un common compartido solo cuando la duplicacion duela en la practica (regla de tres -- MEF-ADR-0018).
 - **Guard defensivo en cada skill**: cada `.md` lleva un bloque de pre-condicion. Un developer puede olvidarlo al anadir un skill nuevo. Mitigacion: test de guards (`scripts/tests/`) que itera sobre todos los skills publicados y verifica que abortan al invocarse en Mefisto.
-- **Fork del repo de Mefisto**: el slug hardcodeado en el routing del publicado queda incorrecto para forks. Mitigado con el campo opcional `repoSlug` en `.claude/harness.config.json` (default: `augusto-romero-arango/eda-evsourcing-azure-harness`).
+- **Fork del repo de Mefisto**: el slug hardcodeado en el routing del publicado queda incorrecto para forks. Mitigado con el campo opcional `repoSlug` en `.claude/harness.config.json` (default: `augusto-romero-arango/mefisto`).
 - **Documentacion adicional**: este ADR + secciones nuevas en CLAUDE.md y README.md son necesarias para que un nuevo developer entienda los dos sets.
 
 ## Referencias
@@ -142,3 +142,4 @@ Pros: separacion fisica dura. Contras: dos artefactos a publicar y mantener, dep
 - 2026-05-15: creacion como `aceptado`.
 - 2026-07-26: enmienda por MEF-ADR-0033 (issue #360). Se agrega el tercer tipo de artefacto a los dos lados de la separacion (`skills/` publicado, `.claude/skills/` interno) y se registra en los gates de scope: `skills/*` en el blocklist publicado (`is_path_in_consumer_blocklist`), `skills/*` y `.claude/skills/*` en la allowlist interna (`is_path_in_mefisto_scope`), con cobertura en `scripts/tests/test-guards.sh`. Se explicita que ambos gates enumeran rutas de forma explicita, por lo que todo tipo de artefacto nuevo debe registrarse a mano.
 - 2026-07-26: enmienda por issue #406, a raiz de los dos bloqueos consecutivos del issue #380 (PRs #399 y #401). Se agrega la seccion E ("Secuencia de registro de rutas nuevas en los gates"): registrar una ruta y usarla son dos PRs distintos porque los pipelines cargan su gate con `source` desde `main`, no desde el worktree -- se documenta esa mecanica como propiedad de seguridad deliberada (no un defecto) y se cita el precedente canonico #360/PR #376 -> #364/PR #385 frente al contraejemplo #380. Las secciones A y B remiten a E para la secuencia, y la regla queda propagada al prompt del writer del pipeline interno y al resumen de la separacion publicado/interno en CLAUDE.md.
+- 2026-10-12: enmienda por issue #2349. El repo se renombra en GitHub a `augusto-romero-arango/mefisto` y el default de `repoSlug` (secciones C y Consecuencias) pasa a ese slug. El nombre previo (`eda-evsourcing-azure-harness`) sigue resolviendo por la redireccion de GitHub; el marketplace (`augusto-romero-arango-harness`) y el id del plugin no cambian.

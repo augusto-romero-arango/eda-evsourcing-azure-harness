@@ -43,7 +43,7 @@ absent() { case "$1" in *"$2"*) fail "$3" ;; *) pass "$3" ;; esac; }
 TMP_DIR=$(mktemp -d)
 trap 'rm -rf "$TMP_DIR"' EXIT
 
-DEFAULT_SLUG="augusto-romero-arango/eda-evsourcing-azure-harness"
+DEFAULT_SLUG="augusto-romero-arango/mefisto"
 
 extract_after_anchor() {
     # $1: archivo, $2: substring literal del anclaje que precede el primer ```bash

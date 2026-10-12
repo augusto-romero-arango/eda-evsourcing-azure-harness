@@ -52,7 +52,7 @@ del contenido verificado:
 
 ```bash
 VERSION=<semver>
-BASE="https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/releases/download/v$VERSION"
+BASE="https://github.com/augusto-romero-arango/mefisto/releases/download/v$VERSION"
 curl -fL "$BASE/mefisto-opencode-v$VERSION.tar.gz" -o "mefisto-opencode-v$VERSION.tar.gz"
 curl -fL "$BASE/mefisto-opencode-v$VERSION.tar.gz.sha256" -o "mefisto-opencode-v$VERSION.tar.gz.sha256"
 shasum -a 256 -c "mefisto-opencode-v$VERSION.tar.gz.sha256"
@@ -108,7 +108,7 @@ Crea (o extiende) `.claude/settings.json` en la raíz del repo consumidor con tr
     "augusto-romero-arango-harness": {
       "source": {
         "source": "github",
-        "repo": "augusto-romero-arango/eda-evsourcing-azure-harness"
+        "repo": "augusto-romero-arango/mefisto"
       }
     }
   },
@@ -132,7 +132,7 @@ Crea (o extiende) `.claude/settings.json` en la raíz del repo consumidor con tr
 }
 ```
 
-- **`extraKnownMarketplaces`** registra el marketplace que aloja a Mefisto (el repo de GitHub). El esquema del bloque `source` usa la clave `source` (no `type`) con valor `"github"` — ver issue #75.
+- **`extraKnownMarketplaces`** registra el marketplace que aloja a Mefisto (el repo de GitHub). El esquema del bloque `source` usa la clave `source` (no `type`) con valor `"github"` — ver issue #75. Si tu repo todavía declara `"repo": "augusto-romero-arango/eda-evsourcing-azure-harness"` (el nombre del repo antes del issue #2349), sigue funcionando porque GitHub redirige el nombre viejo; para actualizarlo edita solo ese `repo` y Claude Code vuelve a traer el marketplace desde la fuente nueva ([doc de marketplaces](https://code.claude.com/docs/en/plugins/host-marketplace)). No uses `claude plugin marketplace remove`: desinstala los plugins de ese marketplace. El nombre del marketplace (`augusto-romero-arango-harness`) no cambia.
 - **`enabledPlugins`** es **lo que activa Mefisto en este repo**: Mefisto se instala por usuario pero deshabilitado a ese nivel, y la precedencia proyecto > usuario de Claude Code lo habilita solo donde este archivo lo declara (MEF-ADR-0053, decisión 2). Al estar en el `settings.json` versionado, cualquiera que clone el repo arranca con Mefisto habilitado, y los worktrees de pipeline (que nacen de `origin/main`) también. Por eso debe quedar **commiteado**: un `settings.local.json` no viaja. La clave es `<plugin.name>@<marketplace.name>` = `mefisto@augusto-romero-arango-harness` (verificado contra `.claude-plugin/plugin.json` y `.claude-plugin/marketplace.json`). El `/plugin install` interactivo del paso 2 habilita el plugin en tu instalación local pero **no deja artefacto en el repo**, así que sin esta clave la habilitación no es reproducible.
 - **`permissions`** es un **punto de partida ajustable** (sintaxis `Bash(<cmd>:*)` de Claude Code; ver la [doc de settings](https://code.claude.com/docs/en/settings)). El `allow` evita la fricción de aprobar uno a uno los `dotnet`/`git`/`gh`/`terraform`/`az` que disparan los pipelines; el `deny` es una red de seguridad contra comandos destructivos (`terraform destroy`, `az group delete`, `git push --force`). Endurécelo o relájalo según la política de tu equipo — el `deny` tiene prioridad sobre el `allow`.
 
@@ -219,7 +219,7 @@ El resource group del BC se forma como `infraResourceGroupPrefix`+`-`+`name` (ej
 
 > **Proyectos existentes (que vienen de una versión sin este campo)**: si `boundedContext` no está en tu config, `load_harness_config` aborta con un mensaje accionable que muestra el shape exacto a añadir y un ejemplo con tus `domainLabels` actuales. Corre `/mefisto:onboard` para obtener el diagnóstico, o lee la sección **"Migración para consumidores existentes"** al final de este documento.
 
-**Campo opcional `repoSlug`**: el slug `owner/repo` del repositorio de Mefisto al que se enrutan los **drafts cross-repo** (`estado:borrador`) que crean el `planner` y el `tooling-investigator` cuando detectan que un problema descubierto en tu proyecto pertenece al harness. Sirve para redirigir esos drafts a **tu fork** de Mefisto en vez del repo upstream. Si no lo declaras, el default es `augusto-romero-arango/eda-evsourcing-azure-harness`. No se exporta como variable `HARNESS_*`: se lee directo con `jq` donde se necesita (`scripts/_pipeline-common.sh`, `agents/planner.md`, `agents/tooling-investigator.md`). Es **opcional** (añadirlo no es MAJOR).
+**Campo opcional `repoSlug`**: el slug `owner/repo` del repositorio de Mefisto al que se enrutan los **drafts cross-repo** (`estado:borrador`) que crean el `planner` y el `tooling-investigator` cuando detectan que un problema descubierto en tu proyecto pertenece al harness. Sirve para redirigir esos drafts a **tu fork** de Mefisto en vez del repo upstream. Si no lo declaras, el default es `augusto-romero-arango/mefisto`. Si lo declaraste con el nombre previo del repo (`augusto-romero-arango/eda-evsourcing-azure-harness`), los drafts siguen llegando por la redirección de GitHub, pero conviene actualizarlo. No se exporta como variable `HARNESS_*`: se lee directo con `jq` donde se necesita (`scripts/_pipeline-common.sh`, `agents/planner.md`, `agents/tooling-investigator.md`). Es **opcional** (añadirlo no es MAJOR).
 
 **Campo opcional `tenancy`** (MEF-ADR-0028, issue #323): declara la etapa vigente del `ITenantResolver` del BC. Único subfield, `strategy`, con dos valores válidos:
 

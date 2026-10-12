@@ -47,6 +47,9 @@ unset _REPO_TOP
 
 load_harness_config || exit 1
 
+MEFISTO_DRAFTS_SLUG=$(jq -r '.repoSlug // empty' "${HARNESS_CONFIG_PATH:-}" 2>/dev/null || true)
+[ -n "$MEFISTO_DRAFTS_SLUG" ] || MEFISTO_DRAFTS_SLUG="augusto-romero-arango/mefisto"
+
 # Identidad declarada por el paquete; se revalida contra el runtime resuelto
 # antes de crear evidencia durable.
 HARNESS_IDENTITY_JSON="$(get_harness_identity_json)"
@@ -671,7 +674,7 @@ PROHIBIDO MODIFICAR (pertenece al plugin Mefisto, no a este repo):
 - src/ (eso es para /implement, no para /tooling)
 
 Si la tarea requiere modificar el plugin Mefisto, NO la ejecutes. En su lugar, propon crear un draft con:
-  gh issue create -R augusto-romero-arango/eda-evsourcing-azure-harness --label \"estado:borrador,tipo:tooling\" --title \"...\" --body \"...\"
+  gh issue create -R ${MEFISTO_DRAFTS_SLUG} --label \"estado:borrador,tipo:tooling\" --title \"...\" --body \"...\"
 Y registra esto en el resumen del stage.
 
 CONTEXTO DE EJECUCION:

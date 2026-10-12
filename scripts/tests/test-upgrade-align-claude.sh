@@ -60,7 +60,7 @@ case "$1 $2" in
     "plugin update"|"plugin install") printf '%s' "${STUB_CLAUDE_AFTER:-1.1.0}" > "$state" ;;
     "plugin disable") printf '{"enabledPlugins":{"%s":false}}\n' "$3" > "$CLAUDE_CONFIG_DIR/settings.json" ;;
     "plugin marketplace")
-        if [ "$3" = list ]; then printf '  > mkt-x\n    Source: GitHub (augusto-romero-arango/eda-evsourcing-azure-harness)\n'; fi ;;
+        if [ "$3" = list ]; then printf '  > mkt-x\n    Source: GitHub (%s)\n' "${STUB_MKT_SLUG:-augusto-romero-arango/mefisto}"; fi ;;
 esac
 exit 0
 S
@@ -99,6 +99,10 @@ has "$(log)" "claude plugin install mefisto@mkt-x --scope user" && ok "install" 
 has "$(log)" "claude plugin disable mefisto@mkt-x --scope user" && ok "deshabilita a nivel usuario tras install (MEF-ADR-0053)" || ko "disable: $(log)"
 has "$out" "Activacion de Mefisto:" && ok "reporta la activacion por repositorio" || ko "reporte: $out"
 has "$(log)" "claude plugin update" && ko "no debia hacer update" || ok "sin update"
+out=$(STUB_CLAUDE_MODE=disabled STUB_MKT_SLUG=augusto-romero-arango/eda-evsourcing-azure-harness run --align-peer)
+has "$(log)" "claude plugin install mefisto@mkt-x --scope user" && ok "install con marketplace registrado bajo el slug previo al rename (#2349)" || ko "slug previo: $(log)"
+out=$(STUB_CLAUDE_MODE=disabled STUB_MKT_SLUG=augusto-romero-arango/mefisto-site run --align-peer)
+has "$(log)" "claude plugin install" && ko "derivo un marketplace de otro repo: $(log)" || ok "no confunde un repo con prefijo comun"
 
 echo "[d] unavailable: sin mutacion"
 out=$(STUB_CLAUDE_MODE=weird run --align-peer); rc=$?

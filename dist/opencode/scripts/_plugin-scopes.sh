@@ -11,6 +11,11 @@
 # _scopes_aplicables devuelve 'user' (comportamiento previo) y _instalacion_efectiva
 # no devuelve nada.
 
+# Slug del repo de Mefisto y el previo al rename (#2349): GitHub redirige el viejo, y los
+# consumidores lo conservan en known_marketplaces.json y en su extraKnownMarketplaces.
+MEFISTO_SLUG_PUBLICADO="augusto-romero-arango/mefisto"
+MEFISTO_SLUG_PREVIO="augusto-romero-arango/eda-evsourcing-azure-harness"
+
 # JSON de 'claude plugin list --json' (vacio si no hay jq, el CLI falla o no es un array).
 _plugin_list_json() {
     local out
@@ -141,7 +146,8 @@ _mefisto_marketplace() {
     fi
     known="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/plugins/known_marketplaces.json"
     if [ -f "$known" ] && command -v jq >/dev/null 2>&1; then
-        jq -r 'to_entries[] | select(.value.source.repo == "augusto-romero-arango/eda-evsourcing-azure-harness") | .key' "$known" 2>/dev/null | head -1 | grep . && return 0
+        jq -r --arg a "$MEFISTO_SLUG_PUBLICADO" --arg b "$MEFISTO_SLUG_PREVIO" \
+            'to_entries[] | select(.value.source.repo == $a or .value.source.repo == $b) | .key' "$known" 2>/dev/null | head -1 | grep . && return 0
     fi
     echo augusto-romero-arango-harness
 }
@@ -153,7 +159,7 @@ _fuente_marketplace() {
     if [ -f "$known" ] && command -v jq >/dev/null 2>&1; then
         src=$(jq -c --arg m "$1" '.[$m].source // empty | select(.source == "github" or .source == "git")' "$known" 2>/dev/null)
     fi
-    [ -n "$src" ] || src='{"source":"github","repo":"augusto-romero-arango/eda-evsourcing-azure-harness"}'
+    [ -n "$src" ] || src="{\"source\":\"github\",\"repo\":\"$MEFISTO_SLUG_PUBLICADO\"}"
     printf '%s\n' "$src"
 }
 
