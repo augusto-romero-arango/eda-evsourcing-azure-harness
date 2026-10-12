@@ -92,5 +92,34 @@ git -C "$TMP/repo" worktree add -q --detach "$LIVE_ROOT" origin/main 2>/dev/null
 kill "$LIVE_PID" 2>/dev/null; wait "$LIVE_PID" 2>/dev/null
 check "checkout principal intacto tras el segundo clean" "$BR0" "$(git symbolic-ref --short HEAD)"
 
+echo "[#2338] ramas de pipeline sin trabajo segun el estado del issue"
+# gh simulado: el issue 901 esta cerrado y el 902 abierto
+mkdir -p "$TMP/bin"
+cat > "$TMP/bin/gh" <<'GH'
+#!/usr/bin/env bash
+case "$*" in
+  *"issue view 901"*) echo CLOSED ;;
+  *"issue view 902"*) echo OPEN ;;
+  *) exit 1 ;;
+esac
+GH
+chmod +x "$TMP/bin/gh"
+git -C "$TMP/repo" fetch -q origin main
+git -C "$TMP/repo" worktree add -q -b worktree-mefisto-issue-901-cerrado "$TMP/worktree-mefisto-issue-901-cerrado" origin/main 2>/dev/null
+git -C "$TMP/repo" worktree add -q -b worktree-mefisto-issue-902-abierto "$TMP/worktree-mefisto-issue-902-abierto" origin/main 2>/dev/null
+PG="$("$HELPER" new feat-g 2>/dev/null)"
+PATH="$TMP/bin:$PATH" "$HELPER" clean >/dev/null 2>&1
+[ -d "$TMP/worktree-mefisto-issue-901-cerrado" ] && ko "rama de pipeline sin trabajo e issue cerrado debia eliminarse" || ok "rama de pipeline sin trabajo e issue cerrado eliminada"
+git show-ref --verify --quiet refs/heads/worktree-mefisto-issue-901-cerrado && ko "la rama del 901 debia borrarse" || ok "rama del 901 borrada"
+[ -d "$TMP/worktree-mefisto-issue-902-abierto" ] && ok "rama de pipeline con issue abierto conservada" || ko "rama de pipeline con issue abierto debia conservarse"
+[ -d "$PG" ] && ok "sesion directa recien creada conservada" || ko "sesion directa recien creada debia conservarse"
+# Sin gh disponible: la del 902 tampoco se toca (y no hay error)
+cat > "$TMP/bin/gh" <<'GH'
+#!/usr/bin/env bash
+exit 1
+GH
+PATH="$TMP/bin:$PATH" "$HELPER" clean >/dev/null 2>&1
+[ -d "$TMP/worktree-mefisto-issue-902-abierto" ] && ok "con gh fallando se conserva" || ko "con gh fallando debia conservarse"
+
 echo "Resultado: $PASS OK, $FAIL FAIL"
 [ "$FAIL" -eq 0 ]

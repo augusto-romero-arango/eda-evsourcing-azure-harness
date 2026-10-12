@@ -82,7 +82,8 @@ cmd_new() {
 # Una rama cuenta como mergeada si su punta esta en origin/main habiendo tenido
 # commits propios (una rama recien creada, sin trabajo, tambien es ancestro de
 # origin/main y no debe borrarse), o si su upstream desaparecio del remoto
-# (rama borrada al mergear, p. ej. squash).
+# (rama borrada al mergear, p. ej. squash), o si es una rama de pipeline
+# abandonada (ver pipeline_branch_abandoned).
 branch_is_merged() {
     local branch="$1" n track
     n="$(git -C "$MAIN_ROOT" reflog show "refs/heads/$branch" 2>/dev/null | wc -l | tr -d ' ')"
@@ -90,7 +91,22 @@ branch_is_merged() {
         return 0
     fi
     track="$(git -C "$MAIN_ROOT" for-each-ref --format='%(upstream:track)' "refs/heads/$branch")"
-    [ "$track" = "[gone]" ]
+    [ "$track" = "[gone]" ] && return 0
+    pipeline_branch_abandoned "$branch"
+}
+
+# Rama de una corrida del pipeline (worktree-mefisto-issue-<N>-...) que abortó sin
+# trabajo propio: sin commits fuera de origin/main y con el issue #N cerrado. La
+# guarda del reflog no la distingue de una rama recien creada. Sin gh, o si gh
+# falla, se conserva.
+pipeline_branch_abandoned() {
+    local branch="$1" issue state
+    [[ "$branch" =~ ^worktree-mefisto-issue-([0-9]+)- ]] || return 1
+    issue="${BASH_REMATCH[1]}"
+    [ "$(git -C "$MAIN_ROOT" rev-list --count "origin/$BASE_BRANCH..refs/heads/$branch" 2>/dev/null)" = "0" ] || return 1
+    command -v gh >/dev/null 2>&1 || return 1
+    state="$(cd "$MAIN_ROOT" && gh issue view "$issue" --json state -q .state 2>/dev/null)" || return 1
+    [ "$state" = "CLOSED" ]
 }
 
 # Raiz de ejecucion del batch (mefisto-batch-execution-<ts>-<pid>): huerfana
