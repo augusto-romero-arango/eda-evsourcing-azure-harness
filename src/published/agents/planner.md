@@ -95,7 +95,7 @@ Lee `repoSlug` desde `{{mefisto:config-path}}` (MEF-ADR-0053 decision 4). El cam
 
 ```bash
 HARNESS_REPO_SLUG=$(jq -r '.repoSlug // empty' "{{mefisto:config-path}}" 2>/dev/null)
-[ -z "$HARNESS_REPO_SLUG" ] && HARNESS_REPO_SLUG="augusto-romero-arango/eda-evsourcing-azure-harness"
+[ -z "$HARNESS_REPO_SLUG" ] && HARNESS_REPO_SLUG="augusto-romero-arango/mefisto"
 echo "$HARNESS_REPO_SLUG"
 ```
 
@@ -133,7 +133,8 @@ No abras secciones adicionales del template, no preguntes por criterios de acept
 ```bash
 # Si el usuario menciona un número de issue, verifica el repo de origen
 gh issue view <num> --json url -q .url
-# Si el url incluye eda-evsourcing-azure-harness (o el HARNESS_REPO_SLUG configurado), aborta:
+# Si el url es de github.com/augusto-romero-arango/mefisto/, de su nombre previo
+# github.com/augusto-romero-arango/eda-evsourcing-azure-harness/ o del HARNESS_REPO_SLUG configurado, aborta:
 ```
 
 Mensaje a mostrar:

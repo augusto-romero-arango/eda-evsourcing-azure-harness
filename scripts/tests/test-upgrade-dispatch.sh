@@ -81,7 +81,7 @@ seq=$(log | grep '^launcher' | awk '{print $2}' | grep -v projection-status | he
 [ "$seq" = "install activate project status " ] && ok "con proyeccion global opt-in la refresca" || ko "secuencia con proyeccion: $seq"
 rm -f "$TMP/xdg/opencode/.mefisto-projection.json"
 out=$(MEFISTO_RUNTIME=opencode run)
-has "$(log)" "launcher install 1.1.0" && has "$(log)" "gh release view --repo augusto-romero-arango/eda-evsourcing-azure-harness" && ok "version de gh" || ko "version de gh"
+has "$(log)" "launcher install 1.1.0" && has "$(log)" "gh release view --repo augusto-romero-arango/mefisto" && ok "version de gh" || ko "version de gh"
 has "$out" "Version cargada en esta sesion: 1.0.0" && has "$out" "Version destino: 1.1.0" && ok "salida" || ko "salida: $out"
 
 echo "[d] ya en la ultima version"

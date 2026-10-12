@@ -62,7 +62,7 @@ Lee el slug efectivo del repo de Mefisto -- mismo campo y mismo default que usa 
 
 ```bash
 REPO_SLUG=$(jq -r '.repoSlug // empty' "{{mefisto:config-path}}" 2>/dev/null)
-[ -z "$REPO_SLUG" ] && REPO_SLUG="augusto-romero-arango/eda-evsourcing-azure-harness"
+[ -z "$REPO_SLUG" ] && REPO_SLUG="augusto-romero-arango/mefisto"
 echo "$REPO_SLUG"
 ```
 

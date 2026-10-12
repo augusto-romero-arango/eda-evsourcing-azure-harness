@@ -177,7 +177,7 @@ Ruta efectiva del config (`${MEFISTO_CONFIG_PATH}`); `repoSlug` es opcional -- s
 CONFIG="${MEFISTO_CONFIG_PATH}"
 HARNESS_REPO_SLUG=""
 [ -f "$CONFIG" ] && HARNESS_REPO_SLUG=$(jq -r '.repoSlug // empty' "$CONFIG" 2>/dev/null)
-[ -z "$HARNESS_REPO_SLUG" ] && HARNESS_REPO_SLUG="augusto-romero-arango/eda-evsourcing-azure-harness"
+[ -z "$HARNESS_REPO_SLUG" ] && HARNESS_REPO_SLUG="augusto-romero-arango/mefisto"
 echo "$HARNESS_REPO_SLUG"
 ```
 

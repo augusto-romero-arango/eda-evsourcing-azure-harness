@@ -5,7 +5,7 @@
   "author": {
     "name": "Augusto Romero Arango"
   },
-  "homepage": "https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness",
+  "homepage": "https://github.com/augusto-romero-arango/mefisto",
   "license": "Apache-2.0",
   "types": "./hooks/types/index.d.ts"
 }

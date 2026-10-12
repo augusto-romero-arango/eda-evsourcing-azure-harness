@@ -754,7 +754,7 @@ main() {
         fi
     fi
     echo ""
-    QUICKSTART_URL="https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/blob/main/docs/greenfield-quickstart.md"
+    QUICKSTART_URL="https://github.com/augusto-romero-arango/mefisto/blob/main/docs/greenfield-quickstart.md"
     if [ -f "${PLUGIN_ROOT%/}/.claude-plugin/plugin.json" ] && command -v jq >/dev/null 2>&1; then
         HOMEPAGE=$(jq -r '.homepage // empty' "${PLUGIN_ROOT%/}/.claude-plugin/plugin.json" 2>/dev/null)
         [ -n "$HOMEPAGE" ] && QUICKSTART_URL="${HOMEPAGE%/}/blob/main/docs/greenfield-quickstart.md"

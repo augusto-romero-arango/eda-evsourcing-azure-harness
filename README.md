@@ -3,8 +3,8 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/releases"><img alt="Última release" src="https://img.shields.io/github/v/release/augusto-romero-arango/eda-evsourcing-azure-harness"></a>
-  <a href="LICENSE"><img alt="Licencia" src="https://img.shields.io/github/license/augusto-romero-arango/eda-evsourcing-azure-harness"></a>
+  <a href="https://github.com/augusto-romero-arango/mefisto/releases"><img alt="Última release" src="https://img.shields.io/github/v/release/augusto-romero-arango/mefisto"></a>
+  <a href="LICENSE"><img alt="Licencia" src="https://img.shields.io/github/license/augusto-romero-arango/mefisto"></a>
   <a href="https://mefisto.io"><img alt="mefisto.io" src="https://img.shields.io/badge/sitio-mefisto.io-blueviolet"></a>
 </p>
 

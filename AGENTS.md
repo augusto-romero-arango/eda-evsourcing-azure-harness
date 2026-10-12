@@ -1,6 +1,6 @@
 # AGENTS.md — mefisto
 
-Harness opinionado para agentes de codigo (nombre interno: `mefisto`, repo: `eda-evsourcing-azure-harness`): orquesta el desarrollo asistido de aplicaciones .NET 10 serverless en Azure con Event Driven Architecture y Event Sourcing. Claude Code se conserva como runtime compatible detras de un adaptador; OpenCode es el runtime del dogfooding interno (MEF-ADR-0049).
+Harness opinionado para agentes de codigo (nombre interno: `mefisto`, repo: `augusto-romero-arango/mefisto`, antes `eda-evsourcing-azure-harness`): orquesta el desarrollo asistido de aplicaciones .NET 10 serverless en Azure con Event Driven Architecture y Event Sourcing. Claude Code se conserva como runtime compatible detras de un adaptador; OpenCode es el runtime del dogfooding interno (MEF-ADR-0049).
 
 ## Principios de respuesta
 

@@ -164,7 +164,7 @@ resolve_harness_config_path() {
 # que esta funcion exporta: el contrato canonico, o el legacy solo como
 # fallback de lectura):
 #   repoSlug  - Slug owner/repo del fork de Mefisto a usar para drafts cross-repo
-#               y mensajes de error. Default: augusto-romero-arango/eda-evsourcing-azure-harness
+#               y mensajes de error. Default: augusto-romero-arango/mefisto
 #
 # Nota: el context map (registro de BCs externos) es trabajo diferido a futuras
 # evoluciones; hoy el BC solo se nombra a si mismo via boundedContext.name y
@@ -2371,7 +2371,7 @@ validate_consumer_scope_changes() {
         if [ -n "${HARNESS_CONFIG_PATH:-}" ] && [ -f "$HARNESS_CONFIG_PATH" ]; then
             repo_slug=$(jq -r '.repoSlug // empty' "$HARNESS_CONFIG_PATH" 2>/dev/null)
         fi
-        [ -z "$repo_slug" ] && repo_slug="augusto-romero-arango/eda-evsourcing-azure-harness"
+        [ -z "$repo_slug" ] && repo_slug="augusto-romero-arango/mefisto"
 
         local branch
         branch=$(git -C "$wt" rev-parse --abbrev-ref HEAD 2>/dev/null)

@@ -27,7 +27,7 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 # shellcheck disable=SC1091
 source "$SCRIPT_DIR/_plugin-scopes.sh"
-DEFAULT_REPO_SLUG="augusto-romero-arango/eda-evsourcing-azure-harness"
+DEFAULT_REPO_SLUG="$MEFISTO_SLUG_PUBLICADO"
 LEGACY_USAGE='ERROR: uso: mefisto-opencode install <semver> | activate <semver> | prune [--keep <n>] [--yes] | project | deactivate | status | diagnose | package-root'
 
 usage() {
@@ -154,13 +154,15 @@ _peer_claude() {
 
 # Marketplace donde instalar mefisto cuando el par esta disabled: se deriva de
 # 'claude plugin marketplace list' por el slug del repo, sin hardcodear el nombre.
+# Acepta tambien el slug previo al rename: los marketplaces ya registrados lo conservan.
 _claude_marketplace_for_install() {
     local slug out
     slug=$(_repo_slug)
     out=$(claude plugin marketplace list 2>/dev/null) || return 1
-    printf '%s\n' "$out" | awk -v s="$slug" '
+    printf '%s\n' "$out" | awk -v s="$slug" -v a="$MEFISTO_SLUG_PUBLICADO" -v b="$MEFISTO_SLUG_PREVIO" '
+        function es_repo(x) { return index($0, x ")") || index($0, x ".git)") }
         /^[^A-Za-z0-9]*[A-Za-z0-9._-]+[[:space:]]*$/ {n=$0; gsub(/^[^A-Za-z0-9]*|[[:space:]]*$/, "", n)}
-        index($0, s) && n != "" {print n; exit}'
+        (es_repo(s) || es_repo(a) || es_repo(b)) && n != "" {print n; exit}'
 }
 
 cmd_status() {

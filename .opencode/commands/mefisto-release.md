@@ -28,7 +28,7 @@ REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || {
 }
 [ -f "$REPO_ROOT/.claude-plugin/plugin.json" ] || {
     echo "ERROR: este skill solo se ejecuta en el repo de Mefisto."
-    echo "Abre el repo del plugin (eda-evsourcing-azure-harness) y reintenta."
+    echo "Abre el repo del plugin (augusto-romero-arango/mefisto) y reintenta."
     exit 1
 }
 ```
