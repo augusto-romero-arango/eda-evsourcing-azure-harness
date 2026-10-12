@@ -217,6 +217,9 @@ let lastBatchIssues: BatchStatus['issues'] | null = null
 let batchStatsFor = ''
 // Primer instante en que se vio el lote ya terminado: cierra el reloj de la cabecera si el historial no lo da.
 let batchSeenEndedMs: number | null = null
+// El historial se relee para estadisticas faltantes a lo sumo cada BATCH_STATS_EVERY_MS (como `withStats` en la cinta interna).
+const BATCH_STATS_EVERY_MS = 5_000
+let lastBatchStatsReadMs = 0
 // Si al arrancar no se pudo saber el agente (sin linea de comando y sin transcript aun), se reintenta en cada refresh.
 let agentChecksLeft = 0
 const AGENT_CHECKS = 20
@@ -325,13 +328,17 @@ async function refreshBatch($: EngineInterface) {
   if (batchStatsFor !== batch.started) {
     batchStatsFor = batch.started
     batchSeenEndedMs = null
+    lastBatchStatsReadMs = 0
     await update($, batchStatsAtom, () => ({ stats: {}, endedMs: null }))
   }
   const finished = (i: BatchStatus['issues'][number]) => i.status !== 'pendiente' && i.status !== 'en-curso'
   const known = await read($, batchStatsAtom)
   const missing = statsPending(batch.issues.filter(finished).map(i => String(i.issue)), known.stats)
   let stats = known.stats
-  if (missing.length > 0) stats = { ...stats, ...issueStatsFromHistory(await readHistory($), missing, stampToMs(batch.started)) }
+  if (missing.length > 0 && Date.now() - lastBatchStatsReadMs >= BATCH_STATS_EVERY_MS) {
+    lastBatchStatsReadMs = Date.now()
+    stats = { ...stats, ...issueStatsFromHistory(await readHistory($), missing, stampToMs(batch.started)) }
+  }
   if (isBatchRunning(batch)) batchSeenEndedMs = null
   else batchSeenEndedMs ??= Date.now()
   const endedMs = isBatchRunning(batch) ? null : (batchEndFromStats(stats) ?? batchSeenEndedMs)

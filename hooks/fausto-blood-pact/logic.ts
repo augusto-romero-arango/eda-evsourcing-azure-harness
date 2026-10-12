@@ -842,15 +842,6 @@ export function batchSummaryText(b: BatchStatus): string {
     .join(' · ')
 }
 
-/** Titulo de la entrada mas reciente del issue con `started` igual o posterior al del lote (mismo formato `YYYYMMDD-HHMMSS`); null si no hay. */
-export function batchTitleOf(entries: readonly HistoryEntry[], issue: number, batchStarted: string): string | null {
-  for (let i = entries.length - 1; i >= 0; i -= 1) {
-    const e = entries[i] as HistoryEntry
-    if (e.issue === String(issue) && e.started >= batchStarted && e.title) return e.title
-  }
-  return null
-}
-
 export type IssueStats = { durationMs: number; costUsd: number | null; title: string | null; finishedMs: number }
 
 /** `YYYYMMDD-HHMMSS` a milisegundos locales; 0 si no tiene ese formato. */
