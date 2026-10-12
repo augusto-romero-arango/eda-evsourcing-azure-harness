@@ -85,8 +85,9 @@ import {
   BATCH_STOP_ANSWER,
   batchCounts,
   batchDismissKey,
+  batchCurrentOf,
+  batchHoldLine,
   batchMark,
-  holdText,
   batchQueueMarks,
   batchRunningHeader,
   recentLines,
@@ -1309,7 +1310,8 @@ export const register: Register = on => {
       // Lote en curso: misma vista que la cinta interna (cabecera con acciones, cola con paso, titulo y ultimas lineas junto a la mascota).
       const head2 = batchRunningHeader(batch, Date.now())
       const recent = recentLines(bandLines, BAND_LOG_ROWS)
-      const holdMin = holdText(batch.holdSeconds)
+      const holdLine = batchHoldLine(batchRun)
+      const current = batchCurrentOf(batch)
       return (
         <Box flexDirection="column" borderStyle="round" borderColor="claude" borderDimColor paddingX={1}>
           <Box justifyContent="space-between">
@@ -1337,18 +1339,19 @@ export const register: Register = on => {
                   </Text>
                 ))}
               </Text>
-              {batchRun ? (
-                <Text dimColor wrap="truncate-end">{clip(`#${batchRun.issue} ${batchRun.title}`.trim(), body)}</Text>
-              ) : (
-                <Text dimColor wrap="truncate-end">preparando el primer issue…</Text>
-              )}
-              {holdMin ? (
-                <Text color="warning" wrap="truncate-end">{clip(`rate limit · espera ${holdMin}`, body)}</Text>
-              ) : (
-                <Text> </Text>
-              )}
+              <Text dimColor wrap="truncate-end">
+                {batchRun
+                  ? clip(`#${batchRun.issue} ${batchRun.title}`.trim(), body)
+                  : current
+                    ? `#${current.issue}`
+                    : 'preparando el primer issue…'}
+              </Text>
+              {holdLine ? <Text color="warning" wrap="truncate-end">{clip(holdLine, body)}</Text> : <Text> </Text>}
               {recent.map((l, i) => (
                 <Text key={`recent-${i}`} color={l.color} wrap="truncate-end">{clip(`${l.ts} ${l.text}`, body)}</Text>
+              ))}
+              {Array.from({ length: Math.max(0, BAND_LOG_ROWS - recent.length) }, (_, i) => (
+                <Text key={`recent-pad-${i}`}> </Text>
               ))}
             </Box>
           </Box>

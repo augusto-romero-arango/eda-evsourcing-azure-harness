@@ -776,13 +776,6 @@ export function batchMark(status: BatchIssueStatus): string {
   }
 }
 
-/** Cabecera: `sequential N/M · Xm`; con parada pedida, `· deteniendo`. N cuenta los `mergeado`. */
-export function batchHeader(b: BatchStatus, nowMs: number): string {
-  const mins = minutesSince(b.started, nowMs)
-  const stopping = isBatchRunning(b) && b.stopRequested ? ' · deteniendo' : ''
-  return `${b.pipeline || 'sequential'} ${batchCounts(b).merged}/${b.issues.length}${mins === null ? '' : ` · ${mins}m`}${stopping}`
-}
-
 /** Cola en una linea, separada por ` ─ `: `✓ #12 ─ ● #13 reviewer ─ ⏸ #14`; el issue en curso lleva su paso si se conoce. */
 export function batchQueueText(b: BatchStatus, step?: string | null): string {
   return batchQueueMarks(b, step).map((m, n) => `${n > 0 ? ' \u2500 ' : ''}${m.text}`).join('')
@@ -834,35 +827,15 @@ export function batchRunOf(b: BatchStatus, runs: readonly PipelineRun[]): Pipeli
   return runs.filter(r => r.issue === current.issue && isActive(r)).sort((a, c) => c.updated.localeCompare(a.updated))[0] ?? null
 }
 
-/** Corridas que no son el eslabon en curso: ese no se repite como corrida suelta. */
-export function runsOutsideBatch(b: BatchStatus, runs: readonly PipelineRun[]): PipelineRun[] {
-  const mine = batchRunOf(b, runs)
-  return runs.filter(r => r !== mine)
-}
-
-/** Pie `+N corridas`; vacio sin otras corridas. */
-export function otherRunsText(n: number): string {
-  return n > 0 ? `+${n} ${n === 1 ? 'corrida' : 'corridas'}` : ''
+/** Espera por rate limit en curso del eslabon: `en espera por rate limit · próxima sonda HH:MM`; vacio si no esta en `hold`. */
+export function batchHoldLine(run: PipelineRun | null): string {
+  if (!run || run.state !== 'hold') return ''
+  return `en espera por rate limit · próxima sonda ${run.nextProbe ? clockOf(run.nextProbe) : '?'}`
 }
 
 /** Minutos de espera por rate limit acumulados, como `Mm`; vacio sin espera. */
 export function holdText(holdSeconds: number): string {
   return holdSeconds > 0 ? `${Math.max(1, Math.round(holdSeconds / 60))}m` : ''
-}
-
-/** Resumen de cierre: `N mergeados · N fallidos · N aplazados · N saltados · espera Mm` (omite lo que esta en cero). */
-export function batchSummaryText(b: BatchStatus): string {
-  const c = batchCounts(b)
-  const hold = holdText(b.holdSeconds)
-  return [
-    `${c.merged} mergeados`,
-    c.failed > 0 ? `${c.failed} fallidos` : '',
-    c.deferred > 0 ? `${c.deferred} aplazados` : '',
-    c.skipped > 0 ? `${c.skipped} saltados` : '',
-    hold ? `espera ${hold} por rate limit` : '',
-  ]
-    .filter(Boolean)
-    .join(' · ')
 }
 
 export type IssueStats = { durationMs: number; costUsd: number | null; title: string | null; finishedMs: number }
@@ -1360,21 +1333,22 @@ export function paneHeaderOf(run: PipelineRun, batch: BatchStatus | null): strin
 
 export type RecentLine = { ts: string; text: string; color: string | undefined }
 
-/** Ultimas `max` lineas con hora (`[11:50:53] x` o `11:50:53 x`) como `HH:MM:SS texto`; color: inicio `claude`, exito `success`, fallo `error`. */
+/** Color por tipo, en el orden del `lineColor` interno: fallo `error`, exito `success` (`<agente> completado en Ns`), inicio `claude`. */
+export function recentLineColor(text: string): string | undefined {
+  if (/^(\u2717|error|fall)/i.test(text)) return 'error'
+  if (/^(\u2713|ok\b|exito|\u00e9xito|aprobad|mergead)/i.test(text) || /\bcompletad[oa]\b/i.test(text)) return 'success'
+  if (/^(invocando|iniciando|lanzando)\b/i.test(text)) return 'claude'
+  return undefined
+}
+
+/** Ultimas `max` lineas con hora (`[11:50:53] x` o `11:50:53 x`) como `HH:MM:SS texto`; las demas (separadores, sin hora) se descartan. */
 export function recentLines(lines: readonly string[], max = BAND_LOG_ROWS): RecentLine[] {
   const out: RecentLine[] = []
   for (const raw of lines) {
     const m = /^\[?(\d{2}:\d{2}:\d{2})\]?\s+(.+)$/.exec(raw.trim())
     if (!m) continue
     const text = m[2] as string
-    const color = /^(invocando|iniciando|lanzando)/i.test(text)
-      ? 'claude'
-      : /^(\u2713|ok\b|exito|éxito|completad|aprobad|mergead)/i.test(text)
-        ? 'success'
-        : /^(\u2717|error|fall)/i.test(text)
-          ? 'error'
-          : undefined
-    out.push({ ts: m[1] as string, text, color })
+    out.push({ ts: m[1] as string, text, color: recentLineColor(text) })
   }
   return out.slice(-max)
 }
