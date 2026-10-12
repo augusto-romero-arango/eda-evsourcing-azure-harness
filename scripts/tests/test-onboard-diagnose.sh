@@ -310,6 +310,7 @@ elif [ "$1" = "api" ]; then
         mefisto) printf '{"name":"mefisto"}\n' ;;
         otro) printf '{"name":"otra-cosa"}\n' ;;
         404) echo "gh: Not Found (HTTP 404)" >&2; exit 1 ;;
+        noauth) echo "gh: Bad credentials (HTTP 401)" >&2; exit 1 ;;
     esac
     if [ -n "${GH_API_LOG:-}" ]; then echo "$*" >> "$GH_API_LOG"; fi
 elif [ "$1" = "secret" ]; then
@@ -466,6 +467,11 @@ OUT=$(run_slug env GH_API_MODE=404)
 printf '%s\n' "$OUT" | grep -Fq "[FALTA        ] repoSlug 'otro/mefisto-fork'" \
     && printf '%s\n' "$OUT" | grep -Fq "no existe o no tiene .claude-plugin/plugin.json" \
     && pass "404: FALTA con causa" || fail "404 no dio FALTA con causa"
+
+OUT=$(run_slug env GH_API_MODE=noauth)
+printf '%s\n' "$OUT" | grep -Fq "[NO VERIFICADO] repoSlug 'otro/mefisto-fork'" \
+    && printf '%s\n' "$OUT" | grep -Fq "(gh: Bad credentials (HTTP 401))" \
+    && pass "gh sin autenticacion: NO VERIFICADO con el motivo de gh" || fail "gh sin autenticacion no dio NO VERIFICADO con motivo"
 
 OUT=$(cd "$ONBOARD_REPO" && PATH="$NOGH_BIN" bash "$REPO_ROOT/scripts/onboard-diagnose.sh" 2>&1)
 printf '%s\n' "$OUT" | grep -Fq "[NO VERIFICADO] repoSlug 'otro/mefisto-fork'" \

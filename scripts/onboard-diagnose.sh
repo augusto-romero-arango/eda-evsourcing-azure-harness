@@ -306,7 +306,7 @@ _consumer_origin_slug() {
 # _repo_slug de upgrade.sh): atajo local contra el origin del consumidor y, si no coincide,
 # verificacion de contenido via gh (.claude-plugin/plugin.json con name == mefisto).
 _check_repo_slug() {
-    local cfg="$1" slug="" origin_slug origen err name rc
+    local cfg="$1" slug="" origin_slug origen err name rc motivo
     slug=$(jq -r '.repoSlug // empty' "$cfg" 2>/dev/null) || slug=""
     if [ -n "$slug" ]; then
         origen="declarado en el config"
@@ -336,7 +336,8 @@ _check_repo_slug() {
             ACTIONS="${ACTIONS}  - Corrige repoSlug en $cfg con el slug owner/repo del fork de Mefisto, o borralo para usar el default augusto-romero-arango/mefisto.
 "
         else
-            row NV "repoSlug '$slug' ($origen) no verificado: gh sin autenticacion o sin red"
+            motivo=$(grep -m1 -v '^[[:space:]]*$' "$err" 2>/dev/null | tr -d '\r')
+            row NV "repoSlug '$slug' ($origen) no verificado: gh no pudo consultar el repo (${motivo:-sin detalle}); revisa 'gh auth status' y la red"
         fi
         rm -f "$err"
         return 0
