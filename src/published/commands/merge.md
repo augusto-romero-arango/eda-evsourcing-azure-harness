@@ -94,7 +94,7 @@ fi
 
 ### 5. Reportar resultado
 
-El script ya imprime un resumen final con tabla `PR | Rama | Estado` y la ruta del log. Tu solo debes:
+El script ya imprime un resumen final con tabla `PR | Rama | Estado` y la ruta del log. Si al menos un merge del lote salio bien, `pr-sync.sh` corre ademas una vez `worktree-clean.sh`, que elimina los worktrees de rama mergeada o de pipeline abandonada (issue cerrado sin trabajo propio) y conserva con aviso los que tienen cambios sin commitear, rama sin mergear o HEAD desacoplado; su salida va al log y su fallo solo deja un aviso, sin cambiar el exit code. Tu solo debes:
 
 - Confirmar el exit code.
 - Si hubo errores, apunta al log en `{{mefisto:state-path logs}}/pr-sync-<ts>.log` y ofrece reintentar con el PR concreto:

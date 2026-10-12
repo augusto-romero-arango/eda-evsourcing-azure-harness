@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# worktree-clean.sh — Limpia los worktrees mergeados o abandonados del repo del consumidor
+# worktree-clean.sh -- Limpia los worktrees mergeados o abandonados del repo del consumidor
 #
 # Uso:
 #   ./scripts/worktree-clean.sh
