@@ -226,6 +226,35 @@ Para queries generadas por la receta read-side del marco (Skill `projections`, p
 
 **La consistencia es eventual: los casos 1 y 3 DEBEN reintentar la consulta.** El ciclo de vida canonico de una proyeccion es `Async` (MEF-ADR-0034 seccion 3): un worker aparte materializa la vista *despues* de que el comando persistio sus eventos, asi que un GET inmediato al POST puede devolver 404 legitimamente y un test sin reintento es flaky por construccion. Envuelve la consulta en `Polling.WaitUntilTrueAsync(...)` con el timeout estandar (`TimeSpan.FromSeconds(30)`) -- esta es la unica excepcion al "no lo uses directamente en tests" de la tabla de fixtures, porque ningun fixture envuelve lecturas HTTP. Si el timeout se agota **es un fallo real** (worker no desplegado, proyeccion sin registrar en el named store, lifecycle equivocado), nunca un caso para `Assert.Skip`.
 
+**Si el arrange produce varias ocurrencias, el polling espera todas y su resultado se afirma** (MEF-ADR-0013, seccion "Polling de un arrange con varias ocurrencias"). Cuando el arrange genera N ocurrencias que llegan por separado (N eventos que una proyeccion N2 agrega en un mismo documento, N mensajes de bus que un consumidor procesa uno a uno, N dias de una misma solicitud), cortar con la primera deja al test afirmando sobre una vista a medio materializar: falla de forma intermitente aunque la proyeccion sea correcta. Cuatro reglas:
+
+1. **La condicion espera el estado completo que produce el arrange**: las N ocurrencias reflejadas (p. ej. "N casillas en el estado del arrange"), nunca la primera aparicion del documento ni "la coleccion ya no esta vacia".
+2. **La condicion describe el arrange, no lo que el test verifica**: si esperara lo verificado, un defecto se volveria timeout en vez de una asercion clara.
+3. **El resultado del polling siempre se afirma**: `WaitUntilTrueAsync` devuelve `false` al agotar el timeout sin excepcion de por medio. Envuelvelo en `(...).Should().BeTrue("<motivo>")`; si lo ignoras, el test sigue y el defecto aparece como una asercion confusa en vez de un timeout claro.
+4. **Las aserciones van despues**, sobre la copia completa capturada en la ultima vuelta del polling.
+
+```csharp
+// Arrange: una solicitud de N fechas (o N mensajes publicados al bus que el consumidor
+// procesa uno a uno) -> la vista termina con N casillas en el estado del arrange
+foreach (var fecha in fechas)
+    await serviceBus.PublishAsync(topic, new { SolicitudId = solicitudId, Fecha = fecha }, correlationId);
+
+List<JsonElement> casillas = [];
+var completo = await Polling.WaitUntilTrueAsync(async () =>
+{
+    var vista = await api.Client.GetFromJsonAsync<JsonElement>($"/api/vistas/{solicitudId}");
+    casillas = [.. vista.GetProperty("casillas").EnumerateArray()];
+    return casillas.Count(c => c.GetProperty("estado").GetString() == EstadoDelArrange) == fechas.Count;
+}, TimeSpan.FromSeconds(30));
+
+completo.Should().BeTrue($"las {fechas.Count} ocurrencias del arrange deben estar reflejadas en la vista");
+
+// Assert sobre la copia completa de la ultima vuelta
+casillas.Should().Contain(c => c.GetProperty("codigo").GetString() == "CodigoEsperado");
+```
+
+Con los mensajes de bus aplica igual: si el arrange publica N mensajes que se consumen por separado, la condicion espera el efecto de los N (N eventos persistidos, N elementos en la vista), nunca el del primero.
+
 **Esa eventualidad no cambia el status del POST que origino los datos.** El comando ya respondio su codigo de exito contractual cuando el evento quedo durable en el event store (MEF-ADR-0004); que la proyeccion `Async` tarde en materializarse es una propiedad del read-side, no una razon para que el smoke test del POST espere `202 Accepted`. El polling de arriba pertenece al test del GET, nunca al del POST que lo origino (MEF-ADR-0013, seccion "Persistencia del write-side vs. materializacion del read-side").
 
 Este Skill viene **precargado** en este agente, no se dispara por contenido (MEF-ADR-0033 seccion 3). Si el issue es puramente write-side, su doctrina no aplica y el flujo generico de "Endpoint GET (consultar)" arriba queda intacto.
@@ -531,6 +560,8 @@ Esto permite que:
 - **NO modificar codigo de produccion** - si algo no funciona, informa al usuario
 - **NO usar `Skip.When()`** - no existe en xUnit v3, usa `Assert.SkipWhen()`
 - **NO filtrar eventos por posicion** (`eventos[^1]`) - siempre filtrar por campo identificador unico
+- **NO ignorar el resultado de `WaitUntilTrueAsync`** - devuelve `false` al agotar el timeout sin excepcion de por medio; afirmalo siempre con `.Should().BeTrue("<motivo>")` antes de las aserciones (MEF-ADR-0013, seccion "Polling de un arrange con varias ocurrencias")
+- **NO cortar el polling con la primera ocurrencia** - si el arrange produce N ocurrencias (eventos agregados, mensajes de bus, dias de una solicitud), la condicion espera las N en el estado que deja el arrange, no la primera aparicion ni lo que el test verifica (MEF-ADR-0013, misma seccion)
 - **NO escribir un test que genera una operacion exitosa sin verificar todos sus efectos secundarios** - una respuesta exitosa sin verificar los eventos publicados es cobertura incompleta, sin importar el status code. Lee el command handler para identificar todos los efectos (`PublishAsync`, `StartStream`, `AppendToStream`) y verificalos en el test
 - **NO omitir el no-op de un PUT/DELETE nuevo o migrado** - prepara o ejecuta el cambio, repite la misma intencion sobre el estado ya alcanzado, asierta el codigo declarado y demuestra cero eventos y publicaciones adicionales correlacionados con la corrida. No aplica al POST de creacion ni convierte en alcance un endpoint preexistente fuera del issue
 - **NO usar conteos globales ni una mera existencia de evento para el no-op** - compara el inventario, conteo o version del stream de la corrida antes y despues del Act 2, usando la consulta del `PostgresFixture` real. Para Service Bus, purga solo antes del Act 1, consume los mensajes de este y asierta `Assert.ThrowsAsync<TimeoutException>` sobre una espera corta correlacionada despues del Act 2; no aceptes cualquier excepcion como prueba de ausencia

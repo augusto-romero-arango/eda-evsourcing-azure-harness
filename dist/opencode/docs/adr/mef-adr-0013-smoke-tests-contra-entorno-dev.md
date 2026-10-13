@@ -433,21 +433,28 @@ a medio materializar: falla de forma intermitente aunque la proyeccion sea corre
 4. **Las aserciones van despues**, sobre la copia completa capturada en la ultima vuelta del polling.
 
 ```csharp
-// Arrange: una solicitud de N fechas -> la proyeccion termina con N casillas
-JsonElement[] casillas = [];
+// Arrange: una solicitud de N fechas -> la proyeccion termina con N casillas en el estado del arrange
+List<JsonElement> casillas = [];
 var completo = await Polling.WaitUntilTrueAsync(async () =>
 {
-    casillas = await ConsultarCasillasAsync(solicitudId);
-    return casillas.Count(c => c.Estado == EstadoDelArrange) == fechas.Count;
+    var vista = await api.Client.GetFromJsonAsync<JsonElement>($"/api/vistas/{solicitudId}");
+    casillas = [.. vista.GetProperty("casillas").EnumerateArray()];
+    return casillas.Count(c => c.GetProperty("estado").GetString() == EstadoDelArrange) == fechas.Count;
 }, TimeSpan.FromSeconds(30));
 
 completo.Should().BeTrue($"las {fechas.Count} casillas del arrange deben estar proyectadas");
 
-casillas.Should().Contain(c => c.Codigo == "CodigoEsperado"); // Assert sobre la copia completa
+// Assert sobre la copia completa de la ultima vuelta
+casillas.Should().Contain(c => c.GetProperty("codigo").GetString() == "CodigoEsperado");
 ```
 
-La misma regla aplica a los mensajes de bus: si el arrange publica N mensajes que se consumen por
-separado, la condicion espera los N antes de que el test asierte.
+La condicion cuenta las casillas en el estado que deja el arrange, no busca `"CodigoEsperado"`: si
+la proyeccion tuviera un defecto en ese codigo, el test falla en la asercion con un mensaje claro y
+no en un timeout.
+
+La misma regla aplica a los mensajes de bus: si el arrange publica N mensajes que un consumidor
+procesa por separado, la condicion espera el efecto de los N (N eventos persistidos, N elementos en
+la vista) y su resultado se afirma antes de verificar nada.
 
 ### Integracion en el proceso de desarrollo
 
