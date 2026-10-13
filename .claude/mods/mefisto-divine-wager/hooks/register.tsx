@@ -666,7 +666,7 @@ async function choose($: EngineInterface, issue: number) {
 // Mergear desde la espera: todos o los PRs elegidos; en la opcion de texto se escriben otros numeros. Elegir en el
 // dialogo ya es la aprobacion, asi que /mefisto-merge se ejecuta de una vez.
 async function chooseMerge($: EngineInterface) {
-  const prs = ((await read($, openPrsAtom)) ?? []).filter(p => !p.isFieldNote)
+  const prs = (await read($, openPrsAtom)) ?? []
   if (prs.length === 0) return
   const options = mergeOptions(prs)
   const answer = await $.ui
@@ -1170,7 +1170,7 @@ export const register: Register = on => {
     if (!run) {
       const ready = await read($, readyAtom)
       const openPrs = (await read($, openPrsAtom)) ?? []
-      const workPrs = openPrs.filter(p => !p.isFieldNote).length
+      const workPrs = openPrs.length
       const pendingNotes = ((await read($, fieldNotesAtom)) ?? 0) + openPrs.filter(p => p.isFieldNote).length
       const changelog = await read($, changelogAtom)
       const inner = Math.max(40, (e.props.bodyColumns ?? 80) - 4)
