@@ -947,6 +947,17 @@ export function closeRowText(i: BatchIssue, st: IssueStats | undefined, titleW: 
   return { lead, trail: st ? `${padEnd(elapsedText(st.durationMs), 8)} ${fmtCost(st.costUsd)}` : '…' }
 }
 
+/** Fila `●` del issue en curso: `#N`, titulo, `PR #X` o `…`, tiempo desde `startedMs` y `…` de costo. */
+export function runningRowText(issue: number, pr: string | null, title: string | null, startedMs: number, nowMs: number, titleW: number): { lead: string; trail: string } {
+  const lead = `${padEnd(`#${issue}`, 7)} ${titleW > 0 ? `${fitTitle(title, titleW)} ` : ''}${padEnd(pr ? `PR #${pr}` : '…', 10)} `
+  return { lead, trail: `${padEnd(startedMs > 0 ? elapsedText(nowMs - startedMs) : '…', 8)} …` }
+}
+
+/** Total con el issue en curso: suma su tiempo transcurrido a los terminados; el costo sigue siendo solo el de los terminados. */
+export function totalWithRunning(total: IssueStats, startedMs: number, nowMs: number): IssueStats {
+  return startedMs > 0 ? { ...total, durationMs: total.durationMs + Math.max(0, nowMs - startedMs) } : total
+}
+
 /** Fila `total` de la tabla de cierre, alineada con las columnas de `closeRowText`. */
 export function closeTotalText(count: number, total: IssueStats, titleW: number): string {
   const titleCol = titleW > 0 ? titleW + 1 : 0

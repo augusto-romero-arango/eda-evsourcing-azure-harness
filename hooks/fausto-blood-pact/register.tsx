@@ -96,6 +96,8 @@ import {
   batchEndFromStats,
   closeRowText,
   closeTotalText,
+  runningRowText,
+  totalWithRunning,
   elapsedText,
   issueStatsFromHistory,
   statsPending,
@@ -1247,15 +1249,45 @@ export const register: Register = on => {
       const running = isBatchRunning(batch)
       const c = batchCounts(batch)
       const pr = batchPrOf(batch)
+      const { stats, endedMs } = await read($, batchStatsAtom)
+      const markColor = (s: string) => (s === 'mergeado' ? 'success' : s === 'fallido' ? 'error' : undefined)
+      const doneRows = batch.issues.filter(i => i.status === 'mergeado' || i.status === 'fallido')
+      const titleW = summaryTitleWidth(inner)
+      const startedMs = stampToMs(batch.started)
+      // Tabla a todo el ancho: terminados y, con el lote en curso, la fila `●` del issue en curso.
+      const batchTable = (() => {
+        const nowMs = Date.now()
+        const cur = running ? batchCurrentOf(batch) : null
+        const curRun = cur && batchRun && batchRun.issue === cur.issue ? batchRun : null
+        const curStartedMs = curRun ? stampToMs(curRun.started) : 0
+        const rowCount = doneRows.length + (curRun ? 1 : 0)
+        if (rowCount === 0) return null
+        const doneTotal = statsTotal(doneRows.map(i => stats[String(i.issue)]).filter((st): st is IssueStats => st !== undefined))
+        const total = curRun ? totalWithRunning(doneTotal, curStartedMs, nowMs) : doneTotal
+        return (
+          <Box flexDirection="column">
+            {doneRows.map(i => {
+              const row = closeRowText(i, stats[String(i.issue)], titleW)
+              return (
+                <Text key={`done-${i.issue}`} wrap="truncate-end" color={markColor(i.status)}>
+                  {`${batchMark(i.status)} ${row.lead}`}
+                  <Text dimColor>{row.trail}</Text>
+                </Text>
+              )
+            })}
+            {cur && curRun && (
+              <Text key={`cur-${cur.issue}`} wrap="truncate-end" color="warning">
+                {`● ${runningRowText(cur.issue, cur.pr, curRun.title ?? null, curStartedMs, nowMs, titleW).lead}`}
+                <Text dimColor>{runningRowText(cur.issue, cur.pr, curRun.title ?? null, curStartedMs, nowMs, titleW).trail}</Text>
+              </Text>
+            )}
+            {rowCount > 1 && <Text dimColor wrap="truncate-end">{closeTotalText(rowCount, total, titleW)}</Text>}
+          </Box>
+        )
+      })()
       if (!running) {
         // Cierre del lote: misma vista que la cinta interna (cabecera con acciones, cola y resumen junto a la mascota, tabla a todo el ancho).
-        const { stats, endedMs } = await read($, batchStatsAtom)
-        const markColor = (s: string) => (s === 'mergeado' ? 'success' : s === 'fallido' ? 'error' : undefined)
         const failedIssue = batch.issues.find(i => i.status === 'fallido')
-        const doneRows = batch.issues.filter(i => i.status === 'mergeado' || i.status === 'fallido')
-        const titleW = summaryTitleWidth(inner)
-        const total = statsTotal(doneRows.map(i => stats[String(i.issue)]).filter((st): st is IssueStats => st !== undefined))
-        const startedMs = stampToMs(batch.started)
         const endColor = batch.state === 'completed' ? 'success' : batch.state === 'stopped' ? 'warning' : 'error'
         return (
           <Box flexDirection="column" borderStyle="round" borderColor="claude" borderDimColor paddingX={1}>
@@ -1288,22 +1320,7 @@ export const register: Register = on => {
                 )}
               </Box>
             </Box>
-            {doneRows.length > 0 && (
-              <Box flexDirection="column">
-                {doneRows.map(i => {
-                  const row = closeRowText(i, stats[String(i.issue)], titleW)
-                  return (
-                    <Text key={`done-${i.issue}`} wrap="truncate-end" color={markColor(i.status)}>
-                      {`${batchMark(i.status)} ${row.lead}`}
-                      <Text dimColor>{row.trail}</Text>
-                    </Text>
-                  )
-                })}
-                {doneRows.length > 1 && (
-                  <Text dimColor wrap="truncate-end">{closeTotalText(doneRows.length, total, titleW)}</Text>
-                )}
-              </Box>
-            )}
+            {batchTable}
           </Box>
         )
       }
@@ -1355,6 +1372,7 @@ export const register: Register = on => {
               ))}
             </Box>
           </Box>
+          {batchTable}
         </Box>
       )
     }

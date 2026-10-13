@@ -37,6 +37,8 @@ import {
   batchEndFromStats,
   closeRowText,
   closeTotalText,
+  runningRowText,
+  totalWithRunning,
   fmtCost,
   issueStatsFromHistory,
   stampToMs,
@@ -922,4 +924,20 @@ test('poseOfBatch: cada estado del lote tiene sprite, y el terminado es el revis
     const pose = poseOfBatch(batch(state))
     expect(() => sprite(pose.role, pose.state, 0)).not.toThrow()
   }
+})
+
+test('runningRowText y totalWithRunning arman la fila en curso de la tabla', () => {
+  const started = stampToMs('20260101-120000')
+  const now = started + 83_000
+  expect(runningRowText(900, null, 'Mostrar tabla', started, now, 20)).toEqual({
+    lead: `#900    ${'Mostrar tabla'.padEnd(20)} ${'…'.padEnd(10)} `,
+    trail: '01:23    …',
+  })
+  expect(runningRowText(900, '951', null, started, now, 0).lead).toBe('#900    PR #951    ')
+  expect(runningRowText(900, null, null, 0, now, 0).trail).toBe('…        …')
+  const total = statsTotal([{ durationMs: 76_000, costUsd: 4.21, title: null, finishedMs: 0 }])
+  const withRun = totalWithRunning(total, started, now)
+  expect(withRun).toMatchObject({ durationMs: 159_000, costUsd: 4.21 })
+  expect(closeTotalText(2, withRun, 0)).toContain('02:39')
+  expect(totalWithRunning(total, 0, now)).toBe(total)
 })

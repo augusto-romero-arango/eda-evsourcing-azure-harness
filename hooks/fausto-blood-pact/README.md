@@ -135,3 +135,11 @@ Con el lote terminado (MEF-ADR-0055 decisión 11, referencia `mefisto-divine-wag
 - Junto a la mascota: la cola `✓ #853 ─ ✗ #854 ─ ⏸ #855`, el resumen `✓ N mergeados · ✗ N fallidos · ⏸ N aplazados · espera Xm` y, si hay un fallido, `#N <motivo>` en rojo.
 - Tabla de cierre a todo el ancho: una fila por issue mergeado o fallido (marca, `#N`, título, `PR #X`/`sin PR`, duración y costo) y una fila `total` con más de un issue.
 - Duración y costo salen de `pipeline-history.jsonl` del consumidor (pipelines `tdd`, `tooling`, `iac`; `started`→`finished` y suma de `agents.*.metrics.estimated_cost_usd`), solo con entradas posteriores al inicio del lote; sin entrada la celda muestra `…` y el historial se relee como mucho cada 5 s.
+
+## Capacidad vigente (#2361): tabla y tiempo del issue en curso
+
+Con el lote en curso (paridad con `mefisto-divine-wager`, MEF-ADR-0055 decisión 11), debajo del bloque mascota + columna y a todo el ancho aparece la misma tabla del cierre:
+
+- Una fila por issue terminado (duración y costo de `batchStatsAtom`, que ahora se lee también mientras corre) y una fila `●` (warning) del issue en curso: `#N`, título, `PR #X` o `…`, tiempo desde el `started` de su corrida (`MM:SS` o `H:MM:SS`, mismo reloj que la cabecera, sigue contando durante una espera por rate limit) y `…` de costo.
+- La fila `total` aparece con más de una fila: cuenta la en curso y suma su tiempo, pero en costo suma solo los terminados.
+- Sin corrida del issue en curso todavía no hay fila `●`; al terminar, la fila pasa a la forma de terminado. La vista del lote terminado (#2332) no cambia.
