@@ -7,6 +7,84 @@ model: "sonnet"
 ---
 <!-- GENERADO por src/published/scripts/generate-published-adapters.sh desde src/published/agents/smoke-test-writer.md. No editar a mano. -->
 ```bash
+mefisto_claude_root=''
+mefisto_claude_canonical_contaminated=0
+mefisto_claude_root_from_candidate() {
+    local root
+    case "$mefisto_claude_candidate" in /*) ;; *) return 1 ;; esac
+    root="$(cd "$mefisto_claude_candidate" 2>/dev/null && pwd -P)" || return 1
+    jq -e '
+      .name == "mefisto" and
+      (.version | type == "string" and test("^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?(\\+[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?$"))
+    ' "$root/.claude-plugin/plugin.json" >/dev/null 2>&1 || return 1
+    jq -e --arg version "$(jq -er '.version | strings' "$root/.claude-plugin/plugin.json" 2>/dev/null)" '
+      (keys | sort) == ["commit", "runtime", "schemaVersion", "version"] and
+      .schemaVersion == 1 and .runtime == "claude" and .version == $version and
+      (.commit | type == "string" and test("^[0-9a-f]{40}$"))
+    ' "$root/mefisto-manifest.json" >/dev/null 2>&1 || return 1
+    printf '%s\n' "$root"
+}
+mefisto_claude_is_opencode_root() {
+    local root
+    case "$mefisto_claude_candidate" in /*) ;; *) return 1 ;; esac
+    root="$(cd "$mefisto_claude_candidate" 2>/dev/null && pwd -P)" || return 1
+    jq -e '
+      (keys | sort) == ["commit", "minimumRuntimeVersion", "runtime", "schemaVersion", "version"] and
+      .schemaVersion == 1 and .runtime == "opencode" and
+      (.version | type == "string" and test("^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?(\\+[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?$")) and
+      (.commit | type == "string" and test("^[0-9a-f]{40}$")) and
+      (.minimumRuntimeVersion | type == "string" and test("^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"))
+    ' "$root/mefisto-manifest.json" >/dev/null 2>&1
+}
+if [ -n "${CLAUDE_PLUGIN_ROOT:-}" ]; then
+    mefisto_claude_candidate="$CLAUDE_PLUGIN_ROOT"
+    mefisto_claude_root="$(mefisto_claude_root_from_candidate)" || {
+        printf '%s\n' 'ERROR Claude: la raiz indicada por CLAUDE_PLUGIN_ROOT es invalida; reabra o reinstale el plugin.' >&2; exit 1;
+    }
+else
+    mefisto_claude_cursor="$PWD"
+    while :; do
+        if [ -f "$mefisto_claude_cursor/.mefisto/pipeline/.plugin-root" ]; then
+            mefisto_claude_candidate="$(< "$mefisto_claude_cursor/.mefisto/pipeline/.plugin-root")"
+            if mefisto_claude_root="$(mefisto_claude_root_from_candidate)"; then break; fi
+            if mefisto_claude_is_opencode_root; then
+                mefisto_claude_canonical_contaminated=1
+                break
+            else
+                printf '%s\n' 'ERROR Claude: metadata del marker canonico invalida; reabra o reinstale el plugin.' >&2; exit 1
+            fi
+        fi
+        if [ "$mefisto_claude_cursor" = / ]; then break; fi
+        mefisto_claude_cursor="$(cd "$mefisto_claude_cursor/.." && pwd -P)"
+    done
+    if [ -z "$mefisto_claude_root" ]; then
+        mefisto_claude_cursor="$PWD"
+        while :; do
+            if [ -f "$mefisto_claude_cursor/.claude/pipeline/.plugin-root" ]; then
+                mefisto_claude_candidate="$(< "$mefisto_claude_cursor/.claude/pipeline/.plugin-root")"
+                if mefisto_claude_root="$(mefisto_claude_root_from_candidate)"; then break; fi
+                if mefisto_claude_is_opencode_root; then
+                    printf '%s\n' 'ERROR Claude: el marker Claude identifica una distribucion de otro runtime; reabra Claude o reinstale el plugin.' >&2; exit 1
+                fi
+                printf '%s\n' 'ERROR Claude: metadata del marker Claude invalida; reabra o reinstale el plugin.' >&2; exit 1
+            fi
+            if [ "$mefisto_claude_cursor" = / ]; then break; fi
+            mefisto_claude_cursor="$(cd "$mefisto_claude_cursor/.." && pwd -P)"
+        done
+    fi
+fi
+if [ -z "$mefisto_claude_root" ]; then
+    if [ "$mefisto_claude_canonical_contaminated" -eq 1 ]; then
+        printf '%s\n' 'ERROR Claude: el marker canonico identifica una distribucion OpenCode y no existe un mirror Claude valido; reabra Claude o reinstale el plugin.' >&2
+    else
+        printf '%s\n' 'ERROR Claude: no se encontro una raiz Claude valida; reabra o reinstale el plugin.' >&2
+    fi
+    exit 1
+fi
+MEFISTO_PACKAGE_ROOT="$mefisto_claude_root"
+export MEFISTO_PACKAGE_ROOT
+```
+```bash
 if [ -f "AGENTS.md" ]; then
     if [ -f "CLAUDE.md" ]; then
         printf '%s\n' 'AVISO: se usara AGENTS.md; se ignora el legacy CLAUDE.md. Migra o elimina conscientemente el archivo legacy para evitar divergencias.' >&2
@@ -321,13 +399,26 @@ Para descubrir la estructura del payload:
 5. **Lee los records de comandos** para entender la estructura de los payloads
 6. **Crea la carpeta del feature** si no existe (ej: `CrearTurnoFunction/`)
 7. **Escribe los tests** siguiendo las convenciones -- una sola clase por comando con todos sus efectos
-8. **Compila** con `dotnet build tests/<RootNamespace>.{Dominio}.SmokeTests/`
+8. **Compila** con `dotnet build tests/<RootNamespace>.{Dominio}.SmokeTests/` y aplica "Cero warnings nuevos (MEF-ADR-0056)" (abajo)
 9. **Ejecuta contra dev** con `dotnet test --project tests/<RootNamespace>.{Dominio}.SmokeTests/`
 10. **Commitea** los tests
 
+### Cero warnings nuevos (MEF-ADR-0056)
+
+Despues de compilar (paso 8) y antes del commit del stage, corre desde la raiz del consumidor:
+
+```bash
+${MEFISTO_PACKAGE_ROOT}/scripts/warnings-diff.sh --toolchain dotnet
+```
+
+Sin `--base`: el helper compara contra el punto de partida de la rama del issue. Remedia en el codigo cada linea `NEW` que reporte (una supresion anadida aparece con codigo `SUPPRESSION`) y vuelve a correrlo hasta que salga con `warnings nuevos: 0` o solo queden los que no puedas remediar. Exit 2 significa que hay `NEW`; exit 1 es un error del helper (p. ej. un lado no compila), no un warning: corrige la compilacion y reintenta. La primera invocacion paga el build de la base; las siguientes lo reutilizan.
+
+- **Supresiones prohibidas como remediacion**: `#pragma warning disable`, `[SuppressMessage]`, `<NoWarn>`, `<WarningLevel>` y bajar la severidad en `.editorconfig`. Suprimir con un comentario tampoco remedia (MEF-ADR-0044).
+- **No crees issues.** Un warning nuevo que no puedas remediar se registra en la seccion `## Warnings no remediados` de tu resumen de stage (`stage-2b-smoke-test-writer.md`), con el warning literal, el archivo y la razon.
+
 ### Gate de salida
 
-- El proyecto DEBE compilar sin errores ni warnings
+- El proyecto DEBE compilar sin errores y sin warnings nuevos (MEF-ADR-0056)
 - Los tests DEBEN pasar contra el entorno dev (si el entorno esta disponible)
 - Si el entorno no esta disponible, commitea los tests e informa al usuario
 

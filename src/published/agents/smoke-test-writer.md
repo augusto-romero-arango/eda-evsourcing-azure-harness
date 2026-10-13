@@ -308,13 +308,26 @@ Para descubrir la estructura del payload:
 5. **Lee los records de comandos** para entender la estructura de los payloads
 6. **Crea la carpeta del feature** si no existe (ej: `CrearTurnoFunction/`)
 7. **Escribe los tests** siguiendo las convenciones -- una sola clase por comando con todos sus efectos
-8. **Compila** con `dotnet build tests/<RootNamespace>.{Dominio}.SmokeTests/`
+8. **Compila** con `dotnet build tests/<RootNamespace>.{Dominio}.SmokeTests/` y aplica "Cero warnings nuevos (MEF-ADR-0056)" (abajo)
 9. **Ejecuta contra dev** con `dotnet test --project tests/<RootNamespace>.{Dominio}.SmokeTests/`
 10. **Commitea** los tests
 
+### Cero warnings nuevos (MEF-ADR-0056)
+
+Despues de compilar (paso 8) y antes del commit del stage, corre desde la raiz del consumidor:
+
+```bash
+{{mefisto:package-root}}/scripts/warnings-diff.sh --toolchain dotnet
+```
+
+Sin `--base`: el helper compara contra el punto de partida de la rama del issue. Remedia en el codigo cada linea `NEW` que reporte (una supresion anadida aparece con codigo `SUPPRESSION`) y vuelve a correrlo hasta que salga con `warnings nuevos: 0` o solo queden los que no puedas remediar. Exit 2 significa que hay `NEW`; exit 1 es un error del helper (p. ej. un lado no compila), no un warning: corrige la compilacion y reintenta. La primera invocacion paga el build de la base; las siguientes lo reutilizan.
+
+- **Supresiones prohibidas como remediacion**: `#pragma warning disable`, `[SuppressMessage]`, `<NoWarn>`, `<WarningLevel>` y bajar la severidad en `.editorconfig`. Suprimir con un comentario tampoco remedia (MEF-ADR-0044).
+- **No crees issues.** Un warning nuevo que no puedas remediar se registra en la seccion `## Warnings no remediados` de tu resumen de stage (`stage-2b-smoke-test-writer.md`), con el warning literal, el archivo y la razon.
+
 ### Gate de salida
 
-- El proyecto DEBE compilar sin errores ni warnings
+- El proyecto DEBE compilar sin errores y sin warnings nuevos (MEF-ADR-0056)
 - Los tests DEBEN pasar contra el entorno dev (si el entorno esta disponible)
 - Si el entorno no esta disponible, commitea los tests e informa al usuario
 

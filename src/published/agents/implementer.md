@@ -1288,7 +1288,7 @@ Antes de escribir, entiende el dominio:
 Reemplaza los `throw new NotImplementedException()` con logica real. Sigue el principio de **minima implementacion**: solo lo necesario para pasar los tests.
 
 Despues de cada cambio significativo:
-1. Corre `dotnet build` para detectar errores y warnings del compilador en los archivos modificados
+1. Corre `dotnet build` para detectar errores del compilador; los warnings nuevos se verifican con `warnings-diff.sh` (ver "Cero warnings nuevos (MEF-ADR-0056)", paso 7)
 2. Corre los tests:
 
 ```bash
@@ -1396,6 +1396,19 @@ Formatea los archivos `.cs` que creaste o modificaste en `src/` con:
 ```bash
 dotnet format
 ```
+
+### Cero warnings nuevos (MEF-ADR-0056)
+
+Despues de `dotnet format` y antes del commit del stage, corre desde la raiz del consumidor:
+
+```bash
+{{mefisto:package-root}}/scripts/warnings-diff.sh --toolchain dotnet
+```
+
+Sin `--base`: el helper compara contra el punto de partida de la rama del issue. Remedia en el codigo cada linea `NEW` que reporte (una supresion anadida aparece con codigo `SUPPRESSION`) y vuelve a correrlo hasta que salga con `warnings nuevos: 0` o solo queden los que no puedas remediar. Exit 2 significa que hay `NEW`; exit 1 es un error del helper (p. ej. un lado no compila), no un warning: corrige la compilacion y reintenta. La primera invocacion paga el build de la base; las siguientes lo reutilizan.
+
+- **Supresiones prohibidas como remediacion**: `#pragma warning disable`, `[SuppressMessage]`, `<NoWarn>`, `<WarningLevel>` y bajar la severidad en `.editorconfig`. Suprimir con un comentario tampoco remedia (MEF-ADR-0044).
+- **No crees issues.** Un warning nuevo que no puedas remediar se registra en la seccion `## Warnings no remediados` de tu resumen de stage (`stage-2-implementer.md`), con el warning literal, el archivo y la razon.
 
 ### 8. Hacer commit
 
