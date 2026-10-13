@@ -600,7 +600,7 @@ previene.
 ### 5. Revisar calidad del codigo de produccion
 
 Con el objetivo de elegancia como guia, consulta primero los diagnosticos de la toolchain:
-- Corre `${MEFISTO_PACKAGE_ROOT}/scripts/warnings-diff.sh --toolchain dotnet` (diferencial de warnings contra la base, MEF-ADR-0056) en lugar de leer todos los warnings del build. Remedia cada warning `NEW` (nullability, miembros obsoletos, codigo inalcanzable, variables sin usar). Lee ademas la seccion `## Warnings no remediados` de los resumenes `.mefisto/pipeline/summaries/stage-1-*.md`, `stage-2-*.md` y `stage-2b-*.md` (este ultimo es el del `smoke-test-writer`) para recuperar la razon que dejaron los escritores. El diferencial sigue siendo la fuente de verdad de que warnings quedan.
+- Corre `${MEFISTO_PACKAGE_ROOT}/scripts/warnings-diff.sh --toolchain dotnet` (diferencial de warnings contra la base, MEF-ADR-0056) en lugar de leer todos los warnings del build. Remedia cada warning `NEW` (nullability, miembros obsoletos, codigo inalcanzable, variables sin usar; una supresion anadida aparece con codigo `SUPPRESSION`) y vuelve a correrlo. Exit 2 significa que quedan `NEW`; exit 1 es un error del helper (p. ej. un lado no compila), no un warning. Lee ademas la seccion `## Warnings no remediados` de los resumenes `.mefisto/pipeline/summaries/stage-1-*.md`, `stage-2-*.md` y `stage-2b-*.md` (este ultimo es el del `smoke-test-writer`) para recuperar la razon que dejaron los escritores. El diferencial sigue siendo la fuente de verdad de que warnings quedan.
 - **Prohibido suprimir como remediacion**: `#pragma warning disable`, `SuppressMessage`, `NoWarn`, `WarningLevel` o bajar la severidad en `.editorconfig` no remedian nada.
 - Corre `dotnet format --verify-no-changes` sobre los proyectos del diff — señala imports innecesarios y desviaciones de estilo/naming segun el `.editorconfig` del repo
 - Usa `Grep` sobre el nombre de cada tipo publico nuevo para verificar que su uso en el resto del proyecto es el esperado (y que no quedo huerfano)
@@ -645,7 +645,7 @@ Luego revisa manualmente buscando:
      --label "estado:borrador" --label "warning" --label "<tipo:X>" --label "<dom:X>" \
      --body "<warning literal, archivo, issue y rama origen, y la razon por la que no se pudo remediar>"
    ```
-3. Escribe un `#N` por linea en `.mefisto/pipeline/warnings-remanentes.txt`; el pipeline lo enlaza en el PR (tu no publicas nada).
+3. Escribe un `#N` por linea en `.mefisto/pipeline/warnings-remanentes.txt` (sin commitearlo); el pipeline lo enlaza en el PR (tu no publicas nada).
 4. Si `gh issue create` falla (p. ej. el consumidor no tiene el label `warning`), anota el warning y el error de `gh` en tu resumen de stage y sigue.
 
 ---
@@ -831,6 +831,11 @@ Si el implementer cito precedentes del codigo en su resumen de fase verde, verif
 - [Tests de casos borde que se agregaron durante la revision]
 - [Tests de contrato: igualdad (IgualdadTestBase<T>) y serializacion round-trip, si aplica]
 - [Si no se agregaron, indicarlo]
+
+### Warnings remanentes (MEF-ADR-0056)
+- [Cada warning `NEW` que no pudiste remediar: warning literal, archivo, razon e issue creado o reutilizado (`#N`)]
+- [Cada fallo de `gh issue create`: warning literal y error de `gh`]
+- [Si `warnings-diff.sh` termino con `warnings nuevos: 0`, indicarlo]
 ```
 
 **Importante:** NO incluyas este archivo en el commit. Es un artefacto del pipeline.
