@@ -27,7 +27,8 @@ import {
   fitTitle,
   summaryTitleWidth,
   statsPending,
-  statsTotal,
+  currentRowParts,
+  totalRowText,
   issueMark,
   mascotPose,
   isReleasePrompt,
@@ -1080,7 +1081,11 @@ export const register: Register = on => {
       const stats = batch.stats ?? {}
       const titleW = summaryTitleWidth(inner)
       const titleCol = titleW > 0 ? titleW + 1 : 0
-      const total = statsTotal(doneRows.map(i => stats[i.issue]).filter(st => st !== undefined))
+      const doneStats = doneRows.map(i => stats[i.issue]).filter(st => st !== undefined)
+      const currentRun =
+        isRunning && run && run.issue === batch.current && !run.finishedMs && !doneRows.some(i => i.issue === run.issue) ? run : null
+      const currentMs = currentRun ? Math.max(0, (now || Date.now()) - currentRun.startedMs) : null
+      const currentParts = currentRun ? currentRowParts(currentRun.issue, currentRun.title, prNumber(currentRun.pr), currentMs ?? 0, titleW) : null
       return (
         <Box flexDirection="column" borderStyle="round" borderColor="claude" borderDimColor paddingX={1}>
           <Box justifyContent="space-between">
@@ -1133,7 +1138,7 @@ export const register: Register = on => {
               )}
             </Box>
           </Box>
-          {doneRows.length > 0 && (
+          {(doneRows.length > 0 || currentParts) && (
             <Box flexDirection="column">
               {doneRows.map(i => {
                 const st = stats[i.issue]
@@ -1145,9 +1150,15 @@ export const register: Register = on => {
                   </Text>
                 )
               })}
-              {doneRows.length > 1 && (
+              {currentParts && (
+                <Text wrap="truncate-end" color="warning">
+                  {currentParts.head}
+                  <Text dimColor>{currentParts.tail}</Text>
+                </Text>
+              )}
+              {doneRows.length + (currentParts ? 1 : 0) > 1 && (
                 <Text dimColor wrap="truncate-end">
-                  {`  total ${padEnd(String(doneRows.length), 12 + titleCol)} ${padEnd(elapsed(total.durationMs), 8)} ${fmtCost(total.costUsd)}`}
+                  {totalRowText(doneStats, currentMs, titleW)}
                 </Text>
               )}
             </Box>
