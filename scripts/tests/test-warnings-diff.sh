@@ -125,8 +125,8 @@ fi
 
 echo "[CA-4] toolchain y guard"
 R=$(new_repo)
-OUT=$(run_wd "$R" --toolchain dotnet --base HEAD); RC=$?
-if [ "$RC" -eq 1 ] && echo "$OUT" | grep -q 'toolchain no soportada: dotnet' && echo "$OUT" | grep -q 'Uso:'; then pass "dotnet -> exit 1 con uso"; else fail "dotnet (rc=$RC): $OUT"; fi
+OUT=$(run_wd "$R" --toolchain terraform --base HEAD); RC=$?
+if [ "$RC" -eq 1 ] && echo "$OUT" | grep -q 'toolchain no soportada: terraform' && echo "$OUT" | grep -q 'Uso:'; then pass "toolchain no registrada -> exit 1 con uso"; else fail "terraform (rc=$RC): $OUT"; fi
 OUT=$(run_wd "$R"); RC=$?
 if [ "$RC" -eq 1 ] && echo "$OUT" | grep -q 'Uso:'; then pass "sin --toolchain -> exit 1 con uso"; else fail "sin toolchain (rc=$RC): $OUT"; fi
 OUT=$(cd "$REPO_ROOT" && "$REAL_SCRIPT" --toolchain shell 2>&1); RC=$?
@@ -141,6 +141,38 @@ printf '%s\n' 'a.sh:2:1: warning: foo appears unused. Verify use (or export if u
 OUT=$(cd "$R" && WARNINGS_DIFF_FIXTURE_DIR="$FX" "$REAL_SCRIPT" --toolchain shell --base "$BASE" 2>&1); RC=$?
 if [ "$RC" -eq 2 ] && echo "$OUT" | grep -q '^NEW shell a.sh SC2034 bar appears unused' && echo "$OUT" | grep -q '^warnings nuevos: 1$'; then
     pass "fixture dir: parser + diff"; else fail "fixture (rc=$RC): $OUT"; fi
+
+echo "[dotnet] fixtures del file logger"
+FXD="$SCRIPT_DIR/fixtures/warnings-diff"
+dn() { # fixture-dir
+    (cd "$R" && WARNINGS_DIFF_FIXTURE_DIR="$1" "$REAL_SCRIPT" --toolchain dotnet --base "$BASE" 2>&1)
+}
+R=$(new_repo); BASE=$(git -C "$R" rev-parse HEAD)
+OUT=$(dn "$FXD/dotnet"); RC=$?
+if [ "$RC" -eq 2 ] && echo "$OUT" | grep -q '^NEW dotnet Poc/Class1.cs CS0168 The variable' && echo "$OUT" | grep -q '^warnings nuevos: 1$'; then
+    pass "CA-1: CS0168 solo en el actual -> NEW + exit 2"; else fail "CA-1 (rc=$RC): $OUT"; fi
+MV=$(mktemp -d); TMPS+=("$MV")
+cp "$FXD/dotnet/current.out" "$MV/base.out"; cp "$FXD/dotnet/moved.out" "$MV/current.out"
+OUT=$(dn "$MV"); RC=$?
+[ "$RC" -eq 0 ] && pass "CA-1: mismos warnings en otras lineas -> exit 0" || fail "CA-1 movidos (rc=$RC): $OUT"
+OUT=$(dn "$FXD/dotnet-abs"); RC=$?
+[ "$RC" -eq 0 ] && pass "CA-2: prefijo de nodo y rutas absolutas distintas -> misma clave" || fail "CA-2 (rc=$RC): $OUT"
+OUT=$(dn "$FXD/dotnet-fail-base"); RC=$?
+[ "$RC" -eq 1 ] && echo "$OUT" | grep -q 'la base no compila' && pass "CA-4: base fallida -> exit 1" || fail "CA-4 base (rc=$RC): $OUT"
+OUT=$(dn "$FXD/dotnet-fail-current"); RC=$?
+[ "$RC" -eq 1 ] && echo "$OUT" | grep -q 'el arbol actual no compila' && pass "CA-4: actual fallido -> exit 1" || fail "CA-4 actual (rc=$RC): $OUT"
+
+echo "[dotnet] supresiones"
+R=$(new_repo); BASE=$(git -C "$R" rev-parse HEAD)
+printf '#pragma warning disable CS0168\n' > "$R/A.cs"
+printf '<Project><PropertyGroup><NoWarn>CS0168</NoWarn></PropertyGroup></Project>\n' > "$R/P.csproj"
+printf 'dotnet_diagnostic.CS0168.severity = none\n' > "$R/.editorconfig"
+OUT=$(dn "$FXD/dotnet-abs"); RC=$?
+if [ "$RC" -eq 2 ] && echo "$OUT" | grep -q '^NEW dotnet A.cs SUPPRESSION ' && echo "$OUT" | grep -q '^NEW dotnet P.csproj SUPPRESSION ' && echo "$OUT" | grep -q '^NEW dotnet .editorconfig SUPPRESSION '; then
+    pass "CA-3: pragma, NoWarn y editorconfig reportados"; else fail "CA-3 (rc=$RC): $OUT"; fi
+
+echo "[CA-5] cabecera documenta las opciones obligatorias"
+grep -q -- '--no-incremental' "$REAL_SCRIPT" && grep -q 'warningsonly' "$REAL_SCRIPT" && pass "cabecera dotnet documentada" || fail "cabecera sin --no-incremental/warningsonly"
 
 echo "----------------------------------------"
 echo "Resultado: $PASS pass, $FAIL fail"
