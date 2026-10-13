@@ -4,6 +4,19 @@ Todo cambio notable a este proyecto se documenta aquí. Sigue [Keep a Changelog]
 
 ## [Unreleased]
 
+## [0.52.0] - 2026-10-13
+
+### Added
+
+- La tabla del sequential de `mefisto-divine-wager` muestra una fila `●` del issue en curso (titulo, PR o `…`, tiempo transcurrido y costo `…`) y el `total` la incluye (#2360).
+- La banda de `fausto-blood-pact` muestra, con el sequential en curso, la tabla de issues con una fila `●` del issue en curso (titulo, PR o `…`, tiempo transcurrido, costo `…`) y el `total` la incluye (#2361).
+
+### Changed
+
+- Los smoke tests ya no validan tamano de pagina ni topes de cantidad (clamp de `Take`, maximo de valores de un filtro, ventana de fechas): MEF-ADR-0013 y MEF-ADR-0048 lo declaran, `smoke-test-writer` no los genera, `reviewer` los reporta como hallazgo menor y `planner` manda esas reglas a unit/endpoint test.
+- fausto-blood-pact: `2: PRs N` cuenta todos los PRs abiertos no borradores, incluidos los de field notes (`docs/planner-field-notes-*`), de modo que la banda coincide con lo que mergea "Todos" (`--all`); `3: bitácora N` no cambia. Se elimina `workPrsOf`.
+- mefisto-divine-wager: `2: PRs N` cuenta todos los PRs abiertos no borradores, incluidos los de field notes, y `--all` de la cinta de merge los lista todos; `3: bitácora N` no cambia.
+
 ## [0.51.0] - 2026-10-12
 
 ### Added
@@ -3505,7 +3518,8 @@ Y reemplazar referencias en `CLAUDE.md` del proyecto: `/eda-evsourcing-azure-har
 - Los agentes `reviewer` e `implementer` mantienen el placeholder literal `ADR-XXXX` en sus plantillas de reporte (no es un bug; el agente lo sustituye en tiempo de ejecución por el número real del ADR aplicable).
 - Los ejemplos de código en `test-writer.md`, `implementer.md` y `smoke-test-writer.md` conservan nombres concretos de un proyecto consumidor (`Programacion`, `ControlHoras`) anotados en el "Contrato con el consumidor" de cada agente como ejemplos pedagógicos.
 
-[Unreleased]: https://github.com/augusto-romero-arango/mefisto/compare/v0.51.0...HEAD
+[Unreleased]: https://github.com/augusto-romero-arango/mefisto/compare/v0.52.0...HEAD
+[0.52.0]: https://github.com/augusto-romero-arango/mefisto/compare/v0.51.0...v0.52.0
 [0.51.0]: https://github.com/augusto-romero-arango/mefisto/compare/v0.50.0...v0.51.0
 [0.50.0]: https://github.com/augusto-romero-arango/mefisto/compare/v0.49.0...v0.50.0
 [0.49.0]: https://github.com/augusto-romero-arango/eda-evsourcing-azure-harness/compare/v0.48.2...v0.49.0
