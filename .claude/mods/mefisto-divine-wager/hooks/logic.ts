@@ -782,12 +782,12 @@ export function mergePromptArgs(text: string): string | null {
 }
 
 /**
- * Los PRs que va a coser /mefisto-merge: con --all, los abiertos sin los de field notes (los mismos que cuenta la
+ * Los PRs que va a coser /mefisto-merge: con --all, todos los abiertos (los mismos que cuenta la
  * tecla 2); si no, los numeros de los argumentos, con el titulo que se conozca de los abiertos.
  */
 export function mergePrsOf(args: string, open: OpenPr[]): MergePr[] {
   const pending = (num: string, title: string): MergePr => ({ num, title, estado: 'pendiente' })
-  if (/(^|\s)--all(\s|$)/.test(args)) return open.filter(p => !p.isFieldNote).map(p => pending(String(p.number), p.title))
+  if (/(^|\s)--all(\s|$)/.test(args)) return open.map(p => pending(String(p.number), p.title))
   const nums = [...new Set(args.match(/\d+/g) ?? [])]
   return nums.map(n => pending(n, open.find(p => String(p.number) === n)?.title ?? ''))
 }

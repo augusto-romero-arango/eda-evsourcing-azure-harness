@@ -224,7 +224,7 @@ test('el merge desde la banda ofrece todos o los PRs mas recientes y arma los ar
   ]))
   expect(prs?.map(p => p.number)).toEqual([2097, 2089, 2085, 2084, 1994])
   expect(prs?.filter(p => p.isFieldNote).map(p => p.number)).toEqual([2084])
-  expect(mergeOptions((prs ?? []).filter(p => !p.isFieldNote))).toEqual(['Todos (--all)', '#2097 A', '#2089 B', '#2085 C'])
+  expect(mergeOptions(prs ?? [])).toEqual(['Todos (--all)', '#2097 A', '#2089 B', '#2085 C'])
   expect(mergeOptions([{ number: 7, title: 'X', isFieldNote: false }])).toEqual(['#7 X', 'Cancelar'])
   const options = ['Todos (--all)', '#2097 field note 2026-10-08-1848', '#2089 B']
   expect(mergeArgsOf('Todos (--all), #2097 field note 2026-10-08-1848', options)).toBe('--all')
@@ -300,7 +300,7 @@ test('la cinta de merge toma los PRs de los argumentos de /mefisto-merge', async
   expect(mergePromptArgs('/mefisto-merge')).toBe('')
   expect(mergePromptArgs('/mefisto-merges 1')).toBe(null)
   expect(mergePromptArgs('mergea /mefisto-merge 1')).toBe(null)
-  expect(mergePrsOf('--all', open).map(p => p.num)).toEqual(['30', '28'])
+  expect(mergePrsOf('--all', open).map(p => p.num)).toEqual(['30', '29', '28'])
   expect(mergePrsOf('30 #99 30', open)).toEqual([
     { num: '30', title: 'Coser la cinta', estado: 'pendiente' },
     { num: '99', title: '', estado: 'pendiente' },

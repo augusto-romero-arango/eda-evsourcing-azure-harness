@@ -35,7 +35,7 @@ sesiones `-p` no los cargan. Para probar una copia suelta: `claude --plugin-dir 
   `3` (`bitácora N`: field notes en `docs/bitacora/field-notes/` mas las de PRs sin mergear) pide integrarlas y le
   encarga a Claude mergear esos PRs, poner `main` al dia y correr `/mefisto-bitacora`. `4` (`release N`: issues con
   fragmentos en `changelog.d/`) ofrece `/mefisto-release` con el bump que sugiere SemVer (`minor` si hay `added`)
-  o solo preparar el PR, y lo ejecuta al aceptar. Los PRs de field notes no cuentan en `PRs`.
+  o solo preparar el PR, y lo ejecuta al aceptar. `PRs` cuenta todos los abiertos no borradores, incluidos los de field notes.
   `/mefisto-divine-wager refresh` la actualiza a mano.
 - `/clear`, `/resume` y `/branch` reinician el estado de la sesion: la banda vuelve sola a reposo en menos de un
   segundo con los listos, `PRs N`, `bitácora N` y `release N` recargados en el acto, sin esperar al siguiente minuto.
@@ -88,7 +88,7 @@ sesiones `-p` no los cargan. Para probar una copia suelta: `claude --plugin-dir 
   - **Fallo:** si faltaron fases, la fase en curso queda con `✗` y el encabezado dice `falló en <fase>`.
 - Mientras corre `/mefisto-merge` (lanzado con `2`, con `1` desde la corrida o escrito a mano), la banda de espera
   muestra la cinta: el hilo de la rama y el de `main` bajan y se cierran como una cremallera, `cosiendo N PRs MM:SS` y una
-  linea `● #N título` por PR pendiente (con `--all`, los abiertos sin los de field notes). Un PR sale de la lista al
+  linea `● #N título` por PR pendiente (con `--all`, todos los abiertos). Un PR sale de la lista al
   quedar mergeado: lo dice la salida del Bash (`gh pr merge N` con exit 0, o el aviso de `gh`) y, como respaldo,
   `gh pr view N --json state` cada 5 s; si su merge falla queda con `✗`. Al terminar el turno lo que siga pendiente
   cuenta como fallido, la cremallera queda cerrada y la cabecera dice `N mergeados` (y los fallidos); se limpia sola
