@@ -208,7 +208,10 @@ para el detalle completo, sin duplicarlo aqui.
 
 ### Enmienda issue #2394: `Cosmos.*` 3.1.0, Marten 9.23.0, WolverineFx 6.27.1
 
-Los siete paquetes `Cosmos.*` pasan a `3.1.0`, que arrastra Marten `9.23.0` y WolverineFx `6.27.1`.
+Los siete paquetes `Cosmos.*` pasan a `3.1.0`, que arrastra Marten `9.23.0` y WolverineFx `6.27.1`
+(nuspec real en api.nuget.org: `Cosmos.EventSourcing.CritterStack` 3.1.0 declara `Marten` 9.23.0 y
+`WolverineFx.Marten` 6.27.1; `Cosmos.EventDriven.CritterStack` 3.1.0 declara `WolverineFx` 6.27.1;
+`Cosmos.EventSourcing.Testing.Utilities` 3.1.0 trae `AwesomeAssertions` 9.5.0).
 Cierra [GHSA-rfx3-98h7-v3xp](https://github.com/advisories/GHSA-rfx3-98h7-v3xp) (CVE-2026-75513),
 que afectaba a Marten 9.12.0 (referencia de campo: commit `64d289c1` de Bitakora.ControlAsistencia).
 Es ademas prerrequisito de `ProjectionOptions.SkipStaleGapsDespiteLiveTransactionsAfter`
