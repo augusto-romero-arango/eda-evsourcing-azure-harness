@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { RELEASE_STEPS, bumpVersion, currentReleaseStep, finishRelease, isConsolidated, releaseBranchOf, releaseChecklist, releaseHeader, releaseInvocationOf, releaseIssuesOf, releasePlan, releaseTagOf, withObservedSteps, bitacoraPrOf, fieldNoteNamesOf, pendingNotes, processedDirsOf, withProcessedNotes, finishMerge, ghMergeNumbersOf, isGhMergeRun, mergeCounts, mergeHeader, mergeOutcomesOf, mergePromptArgs, mergePrsOf, withMergeOutcomes, agentFlagOf, historianFrom, isAgentActive, liveTape, isReleasePrompt, isReleaseRun, holdOf, holdText, bitacoraPrompt, changelogOf, fieldNotesIn, releaseArgsOf, releaseOptions, mergeArgsOf, mergeOptions, parseOpenPrs, withoutHeredocs, fmtCost, issueStatsFromHistory, statsPending, fitTitle, summaryTitleWidth, statsTotal, batchFromStatus, batchIssuesOf, batchPr, batchSummary, issueMark, newlyMerged, readyRows, titlesOf, toolingOf, waitingFace, cropGrid, pageOf, parseNextOrder, sequentialOf, finishedFromHistory, mascotPose, parseEvent, usedColumns, relative, pickEventsFile, steps, stampToMs, toolingIssueOf, withModUi } from './logic'
+import { RELEASE_STEPS, bumpVersion, currentReleaseStep, finishRelease, isConsolidated, releaseBranchOf, releaseChecklist, releaseHeader, releaseInvocationOf, releaseIssuesOf, releasePlan, releaseTagOf, withObservedSteps, bitacoraPrOf, fieldNoteNamesOf, pendingNotes, processedDirsOf, withProcessedNotes, finishMerge, ghMergeNumbersOf, isGhMergeRun, mergeCounts, mergeHeader, mergeOutcomesOf, mergePromptArgs, mergePrsOf, withMergeOutcomes, agentFlagOf, historianFrom, isAgentActive, liveTape, isReleasePrompt, isReleaseRun, holdOf, holdText, bitacoraPrompt, changelogOf, fieldNotesIn, releaseArgsOf, releaseOptions, mergeArgsOf, mergeOptions, parseOpenPrs, withoutHeredocs, fmtCost, issueStatsFromHistory, statsPending, fitTitle, summaryTitleWidth, statsTotal, currentRowParts, totalRowText, batchFromStatus, batchIssuesOf, batchPr, batchSummary, issueMark, newlyMerged, readyRows, titlesOf, toolingOf, waitingFace, cropGrid, pageOf, parseNextOrder, sequentialOf, finishedFromHistory, mascotPose, parseEvent, usedColumns, relative, pickEventsFile, steps, stampToMs, toolingIssueOf, withModUi } from './logic'
 
 test('detecta el lanzamiento de /mefisto-tooling', async () => {
   expect(toolingIssueOf('MEFISTO_RUNTIME=claude ./.claude/scripts/mefisto-tmux-pipeline.sh --tooling 2059')).toBe('2059')
@@ -458,4 +458,18 @@ test('una cinta terminada vence tras su *_DONE_MS; en curso o con PR pendiente n
   const bitacora = { startedMs: 0, finishedMs: 1_000, notes: [], pr: { number: 7, title: 'bitacora' } }
   expect(liveTape(bitacora, 8_000, 10_000_000, true)).toBe(bitacora)
   expect(liveTape(null, 8_000, 0)).toBe(null)
+})
+
+test('la fila del issue en curso y el total que la incluye', async () => {
+  const sinPr = currentRowParts('2360', 'Mostrar el tiempo', null, 125_000, 20)
+  expect(sinPr.head).toBe(`● #2360   ${'Mostrar el tiempo'.padEnd(20)} …          `)
+  expect(sinPr.tail).toBe('02:05    …')
+  const conPr = currentRowParts('2360', 'x'.repeat(30), '2399', 3_725_000, 10)
+  expect(conPr.head).toBe(`● #2360   ${'x'.repeat(9)}… PR #2399   `)
+  expect(conPr.tail).toBe('1:02:05  …')
+  expect(currentRowParts('1', 'titulo', null, 0, 0).head).toBe('● #1      …          ')
+  const done = [{ durationMs: 300_000, costUsd: 0.35, title: 'a' }]
+  expect(totalRowText(done, 60_000, 0)).toBe(`  total ${'2'.padEnd(12)} 06:00    $0.35`)
+  expect(totalRowText(done, null, 0)).toBe(`  total ${'1'.padEnd(12)} 05:00    $0.35`)
+  expect(totalRowText([], 60_000, 0)).toBe(`  total ${'1'.padEnd(12)} 01:00    $?`)
 })

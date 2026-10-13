@@ -528,6 +528,26 @@ export function statsTotal(stats: IssueStats[]): IssueStats {
   }
 }
 
+/** Fila `●` del issue en curso: mismas columnas que los terminados; costo `…` (solo se conoce al escribirse el historial). */
+export function currentRowParts(
+  issue: string,
+  title: string | null | undefined,
+  pr: string | null,
+  elapsedMs: number,
+  titleW: number,
+): { head: string; tail: string } {
+  const head = `● ${padEnd(`#${issue}`, 7)} ${titleW > 0 ? `${fitTitle(title, titleW)} ` : ''}${padEnd(pr ? `PR #${pr}` : '…', 10)} `
+  return { head, tail: `${padEnd(elapsed(elapsedMs), 8)} …` }
+}
+
+/** Fila `total` con el issue en curso: cuenta todas las filas, suma su tiempo y, en costo, solo los terminados. */
+export function totalRowText(done: IssueStats[], currentMs: number | null, titleW: number): string {
+  const total = statsTotal(done)
+  const count = done.length + (currentMs === null ? 0 : 1)
+  const duration = total.durationMs + (currentMs ?? 0)
+  return `  total ${padEnd(String(count), 12 + (titleW > 0 ? titleW + 1 : 0))} ${padEnd(elapsed(duration), 8)} ${fmtCost(total.costUsd)}`
+}
+
 /**
  * PRs abiertos (`gh pr list --json number,title,isDraft,headRefName`) sin los borradores, el mas reciente primero.
  * Los de field notes (rama `docs/<agente>-field-note-<sesion>` de mefisto-field-note.sh) se marcan aparte.
