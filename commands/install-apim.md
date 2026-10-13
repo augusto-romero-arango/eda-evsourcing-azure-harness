@@ -99,7 +99,7 @@ fi
 export MEFISTO_INSTRUCTIONS_PATH
 ```
 
-Instala/actualiza el gateway APIM (Azure API Management) delante de las Function Apps del BC, fiel a MEF-ADR-0032: invoca el agente `apim-gateway-scaffolder` (issue #335) para generar/actualizar los modulos Terraform `api-management`/`apim-function-api` de forma aditiva por dominio, cablea `TF_VAR_workos_client_id` desde la GitHub variable `WORKOS_CLIENT_ID` (la que registro `/mefisto:install-workos`), y ejecuta la **transicion a->b de tenancy** (MEF-ADR-0028 seccion 4, issue #337, enmendada por el issue #802): flip de `tenancy.strategy` a `"multi-tenant-header"`, scaffold de la biblioteca `src/{RootNamespace}.TenantResolver/` (patron AsyncLocal + middleware, issue #803) y migracion del `ITenantResolver` de **todos** los dominios ya scaffoldeados del BC -- incluidos los que quedaron en el hibrido `AgregarTenantResolverHibrido()` probado roto en Azure Functions isolated worker (issue #802) -- a esa biblioteca. Ademas **detecta automaticamente los servidores MCP del BC** (`src/{RootNamespace}.Mcp.*`, issue #820) y los expone en el mismo flip a->b con el modulo `apim-mcp-api` (gate OAuth de la variante MCP/Connect, MEF-ADR-0032 seccion 9), cableando `Mcp__ResourceUri`/`Mcp__AuthorizationServer` del servidor a la URL real de APIM. Es la capa de **borde** de la auth (segunda tras `/mefisto:install-workos`): APIM se monta delante de Function Apps existentes, asi que exige infra base + al menos un dominio ya scaffoldeado. Comunicate en **espanol**.
+Instala/actualiza el gateway APIM (Azure API Management) delante de las Function Apps del BC, fiel a MEF-ADR-0032: invoca el agente `apim-gateway-scaffolder` (issue #335) para generar/actualizar los modulos Terraform `api-management`/`apim-function-api` de forma aditiva por dominio, cablea `TF_VAR_workos_client_id` desde la GitHub variable `WORKOS_CLIENT_ID` (la que registro `/mefisto:install-workos`), y ejecuta la **transicion a->b de tenancy** (MEF-ADR-0028 seccion 4, issue #337, enmendada por el issue #802): flip de `tenancy.strategy` a `"multi-tenant-header"`, scaffold de la biblioteca `src/{RootNamespace}.TenantResolver/` (patron AsyncLocal + middleware, issue #803) y migracion del `ITenantContext` de **todos** los dominios ya scaffoldeados del BC -- incluidos los que quedaron en el hibrido `AgregarTenantResolverHibrido()` probado roto en Azure Functions isolated worker (issue #802) -- a esa biblioteca. Ademas **detecta automaticamente los servidores MCP del BC** (`src/{RootNamespace}.Mcp.*`, issue #820) y los expone en el mismo flip a->b con el modulo `apim-mcp-api` (gate OAuth de la variante MCP/Connect, MEF-ADR-0032 seccion 9), cableando `Mcp__ResourceUri`/`Mcp__AuthorizationServer` del servidor a la URL real de APIM. Es la capa de **borde** de la auth (segunda tras `/mefisto:install-workos`): APIM se monta delante de Function Apps existentes, asi que exige infra base + al menos un dominio ya scaffoldeado. Comunicate en **espanol**.
 
 Antes de continuar, aborta si existe `src/internal/scripts/generate-internal-adapters.sh`: ese directorio es el repositorio de Mefisto, no un consumidor.
 
@@ -129,7 +129,7 @@ Si falta `--domain`, responde con el uso exacto y detente sin ejecutar nada.
 | GitHub **variable** (dominio AuthKit del entorno, issue #820) | `WORKOS_AUTHORIZATION_SERVER_URL` | No secreta (MEF-ADR-0032 seccion 6, mismo estatus que `WORKOS_CLIENT_ID`); requerida sin default por `apim-mcp-prm.tf` (`var.mcp_authorization_server_url`), solo la primera vez que este skill detecta al menos un servidor MCP (`${MEFISTO_PACKAGE_ROOT}/agents/apim-gateway-scaffolder.md` Paso 3c). |
 | Token en `.mefisto/harness.config.json` | `tenancy.strategy = "multi-tenant-header"` | Flip que ejecuta CA-4 (MEF-ADR-0028 seccion 4). El legacy solo es fallback de lectura. |
 | Biblioteca de tenancy scaffoldeada | `src/<RootNamespace>.TenantResolver/` | `TenantExecutionContext` + `TenantContextMiddleware`, patron AsyncLocal + middleware (MEF-ADR-0028 seccion 4, enmendada por el issue #802). Una sola por BC, referenciada por todos los dominios migrados. |
-| Registro de `ITenantResolver` que reemplaza el transitorio (o el hibrido roto) | `services.AgregarTenantResolverAsyncLocal()` | Extension de la biblioteca scaffoldeada de arriba -- ya no de `Cosmos.MultiTenancy.CritterStack` (issue #802). |
+| Registro de `ITenantContext` que reemplaza el transitorio (o el hibrido roto) | `services.AgregarTenantResolverAsyncLocal()` | Extension de la biblioteca scaffoldeada de arriba -- ya no de `Cosmos.MultiTenancy.CritterStack` (issue #802). |
 | Middleware del worker que puebla la identidad | `builder.UsarTenantContextMiddleware()` | Invocado en `Program.cs` de cada dominio migrado, antes de `builder.Build()` (MEF-ADR-0028 seccion 4). |
 
 ## Proceso
@@ -183,7 +183,7 @@ Se va a instalar/actualizar el gateway APIM en el entorno "<env>" para: <lista d
   3. TRANSICION DE TENANCY (a)->(b) (MEF-ADR-0028 seccion 4, enmendada por el issue #802): flip de
      tenancy.strategy a "multi-tenant-header" + scaffold (si falta) de la biblioteca
      src/<RootNamespace>.TenantResolver/ (TenantExecutionContext + TenantContextMiddleware, patron
-     AsyncLocal + middleware) + migracion del ITenantResolver de TODOS los dominios ya scaffoldeados
+     AsyncLocal + middleware) + migracion del ITenantContext de TODOS los dominios ya scaffoldeados
      del BC (no solo los de arriba) -- incluidos los que hoy quedaron en el hibrido roto
      AgregarTenantResolverHibrido() de una corrida previa de este skill (issue #802) -- a
      services.AgregarTenantResolverAsyncLocal() + builder.UsarTenantContextMiddleware(), eliminando
@@ -371,10 +371,10 @@ rm -f "src/<RootNamespace>.TenantResolver/Class1.cs"
   </PropertyGroup>
 
   <ItemGroup>
-    <!-- Contrato ITenantResolver (MEF-ADR-0028). Aqui SI hace falta explicito -- a diferencia del
+    <!-- Contrato ITenantContext (MEF-ADR-0028). Aqui SI hace falta explicito -- a diferencia del
          Function App de un dominio, esta biblioteca no referencia Cosmos.EventSourcing.CritterStack
-         (que lo trae transitivo), asi que ITenantResolver no llegaria de otra forma. -->
-    <PackageReference Include="Cosmos.MultiTenancy" Version="2.1.0" />
+         (que lo trae transitivo), asi que ITenantContext no llegaria de otra forma. -->
+    <PackageReference Include="Cosmos.MultiTenancy" Version="3.1.0" />
     <!-- FunctionContext, IFunctionsWorkerMiddleware, BindInputAsync, UseMiddleware<T>
          (Microsoft.Azure.Functions.Worker.Core, transitivo de este metapaquete). Mismo pin que el
          Function App de cada dominio (issue #263). -->
@@ -407,10 +407,11 @@ namespace <RootNamespace>.TenantResolver;
 // fluye con la cadena logica async y por eso sigue visible dentro del IServiceScope hijo que
 // construye Wolverine (JasperFx LazyServiceLocationFrame) -- a diferencia del estado por-instancia,
 // que se perderia al cruzar ese scope.
-public sealed class TenantExecutionContext : ITenantResolver
+public sealed class TenantExecutionContext : ITenantContext
 {
     private static readonly AsyncLocal<string?> TenantIdActual = new();
     private static readonly AsyncLocal<string?> UserIdActual = new();
+    private static readonly AsyncLocal<string?> OrganizationMembershipIdActual = new();
 
     // Getter ruidoso (MEF-ADR-0028 seccion 4): lanza si se lee antes de que TenantContextMiddleware
     // puebla la identidad para esta invocacion, o si el trigger no trae identidad del gateway y
@@ -426,14 +427,22 @@ public sealed class TenantExecutionContext : ITenantResolver
         "TenantContextMiddleware no corrio todavia, o el trigger no trae identidad del gateway y " +
         "nadie llamo SetDerivedIdentity() antes de esta lectura.");
 
+    // Cosmos.* 3.1.0 (issue #2394): UnitOfWorkMiddleware y los senders estampan este valor en cada
+    // append/mensaje, asi que se lee siempre -- mismo getter estricto que TenantId/UserId.
+    public string OrganizationMembershipId => OrganizationMembershipIdActual.Value ?? throw new InvalidOperationException(
+        "TenantExecutionContext.OrganizationMembershipId sin identidad poblada para esta invocacion: " +
+        "TenantContextMiddleware no corrio todavia, o el trigger no trae identidad del gateway y " +
+        "nadie llamo SetDerivedIdentity() antes de esta lectura.");
+
     // Puebla la identidad de la invocacion en curso. La usa TenantContextMiddleware (headers HTTP o
     // ApplicationProperties de Service Bus); tambien queda publica para que un handler sin gateway
     // por delante (p. ej. un timer trigger, o un Service Bus trigger de un evento interno sin claim
     // de usuario) derive y fije su propia identidad antes de que el codigo de negocio la lea.
-    public static void SetDerivedIdentity(string? tenantId, string? userId)
+    public static void SetDerivedIdentity(string? tenantId, string? userId, string? organizationMembershipId)
     {
         TenantIdActual.Value = tenantId;
         UserIdActual.Value = userId;
+        OrganizationMembershipIdActual.Value = organizationMembershipId;
     }
 }
 ```
@@ -452,13 +461,15 @@ namespace <RootNamespace>.TenantResolver;
 // FunctionExecutionMiddleware -- Microsoft Learn, UseMiddleware<T>/IFunctionsWorkerMiddleware):
 // exactamente lo que resuelve el catch-22 de ProxyTenantResolver que documenta MEF-ADR-0028 seccion
 // 4 ("Contexto") -- para cuando ICommandRouter/IPrivateEventSender/IPrivateEventRouter resuelven
-// ITenantResolver, el AsyncLocal ya tiene el valor correcto.
+// ITenantContext, el AsyncLocal ya tiene el valor correcto.
 public sealed class TenantContextMiddleware : IFunctionsWorkerMiddleware
 {
     private const string HeaderTenantId = "X-Tenant-Id";
     private const string HeaderUserId = "X-User-Id";
+    private const string HeaderOrganizationMembershipId = "X-Organization-Membership-Id";
     private const string PropiedadTenantId = "tenant-id";
     private const string PropiedadUserId = "user_id";
+    private const string PropiedadOrganizationMembershipId = "organization_membership_id";
 
     public async Task Invoke(FunctionContext context, FunctionExecutionDelegate next)
     {
@@ -479,7 +490,8 @@ public sealed class TenantContextMiddleware : IFunctionsWorkerMiddleware
                     var httpContext = context.GetHttpContext();
                     TenantExecutionContext.SetDerivedIdentity(
                         httpContext?.Request.Headers[HeaderTenantId].FirstOrDefault(),
-                        httpContext?.Request.Headers[HeaderUserId].FirstOrDefault());
+                        httpContext?.Request.Headers[HeaderUserId].FirstOrDefault(),
+                        httpContext?.Request.Headers[HeaderOrganizationMembershipId].FirstOrDefault());
                     break;
 
                 case "serviceBusTrigger":
@@ -487,7 +499,8 @@ public sealed class TenantContextMiddleware : IFunctionsWorkerMiddleware
                     var propiedades = mensaje.Value?.ApplicationProperties;
                     TenantExecutionContext.SetDerivedIdentity(
                         LeerPropiedad(propiedades, PropiedadTenantId),
-                        LeerPropiedad(propiedades, PropiedadUserId));
+                        LeerPropiedad(propiedades, PropiedadUserId),
+                        LeerPropiedad(propiedades, PropiedadOrganizationMembershipId));
                     break;
 
                 // Cualquier otro trigger (timer, etc.) no trae identidad del gateway: queda sin poblar
@@ -519,13 +532,13 @@ namespace <RootNamespace>.TenantResolver;
 public static class TenantResolverServiceCollectionExtensions
 {
     // Singleton, no scoped: el estado real vive en el AsyncLocal, no en el ciclo de vida de DI
-    // (MEF-ADR-0028 seccion 4). RemoveAll<ITenantResolver>() hace este metodo seguro de invocar
+    // (MEF-ADR-0028 seccion 4). RemoveAll<ITenantContext>() hace este metodo seguro de invocar
     // sobre CUALQUIER registro previo -- mono-tenant transitorio (etapa a) o el hibrido roto
     // AgregarTenantResolverHibrido() (issue #802) -- sin dejar dos implementaciones registradas.
     public static IServiceCollection AgregarTenantResolverAsyncLocal(this IServiceCollection services)
     {
-        services.RemoveAll<ITenantResolver>();
-        services.AddSingleton<ITenantResolver, TenantExecutionContext>();
+        services.RemoveAll<ITenantContext>();
+        services.AddSingleton<ITenantContext, TenantExecutionContext>();
         return services;
     }
 }
@@ -590,25 +603,26 @@ namespace <RootNamespace>.TenantResolver.Tests;
 public class TenantExecutionContextTests
 {
     [Fact]
-    public void TenantIdYUserId_SinIdentidadPoblada_LanzanInvalidOperationException()
+    public void TenantIdUserIdYMembresia_SinIdentidadPoblada_LanzanInvalidOperationException()
     {
         // Limpia explicitamente antes de leer: el getter debe fallar tanto si el middleware nunca
         // corrio como si corrio con un header ausente (mismo tratamiento, MEF-ADR-0028 seccion 4).
-        TenantExecutionContext.SetDerivedIdentity(null, null);
+        TenantExecutionContext.SetDerivedIdentity(null, null, null);
         var resolver = new TenantExecutionContext();
 
         Assert.Throws<InvalidOperationException>(() => resolver.TenantId);
         Assert.Throws<InvalidOperationException>(() => resolver.UserId);
+        Assert.Throws<InvalidOperationException>(() => resolver.OrganizationMembershipId);
     }
 
     [Fact]
     public async Task SetDerivedIdentity_CruzaAwaitYScopeHijoDeWolverine_SigueVisible()
     {
         var proveedor = new ServiceCollection()
-            .AddSingleton<ITenantResolver, TenantExecutionContext>()
+            .AddSingleton<ITenantContext, TenantExecutionContext>()
             .BuildServiceProvider();
 
-        TenantExecutionContext.SetDerivedIdentity("tenant-cruce", "user-cruce");
+        TenantExecutionContext.SetDerivedIdentity("tenant-cruce", "user-cruce", "membresia-cruce");
         await Task.Yield();
 
         // Simula el IServiceScope hijo que Wolverine crea para construir sus handlers (JasperFx
@@ -616,10 +630,11 @@ public class TenantExecutionContextTests
         // DI, asi que el valor sigue visible aunque el resolver se resuelva desde un scope distinto
         // al que lo poblo -- justo lo que rompia a ProxyTenantResolver (issue #802).
         using var scopeHijo = proveedor.CreateScope();
-        var resolver = scopeHijo.ServiceProvider.GetRequiredService<ITenantResolver>();
+        var resolver = scopeHijo.ServiceProvider.GetRequiredService<ITenantContext>();
 
         Assert.Equal("tenant-cruce", resolver.TenantId);
         Assert.Equal("user-cruce", resolver.UserId);
+        Assert.Equal("membresia-cruce", resolver.OrganizationMembershipId);
     }
 }
 ```
@@ -658,7 +673,7 @@ ls src/<RootNamespace>.*/Infraestructura/ComposicionServicios*.cs 2>/dev/null
 Por cada archivo encontrado (dominio `{PascalCase}`, proyecto `src/<RootNamespace>.{PascalCase}/`):
 
 - **Si ya contiene `services.AgregarTenantResolverAsyncLocal()`**: ya migrado al patron nuevo (en una corrida previa de este skill, o -- a futuro -- scaffoldeado directo en etapa b por `domain-scaffolder`, issue #804). Omite y reporta.
-- **Si contiene exactamente `services.AddScoped<ITenantResolver, TenantResolverMonoTenantPorDefecto>();`** (el registro que emite `domain-scaffolder` en etapa a, MEF-ADR-0028 seccion 2): migralo (pasos siguientes).
+- **Si contiene exactamente `services.AddScoped<ITenantContext, TenantResolverMonoTenantPorDefecto>();` o, en un dominio scaffoldeado sobre `Cosmos.*` 2.x, `services.AddScoped<ITenantResolver, TenantResolverMonoTenantPorDefecto>();`** (el registro que emite `domain-scaffolder` en etapa a, MEF-ADR-0028 seccion 2; el segundo es el contrato anterior a `Cosmos.*` 3.1.0, issue #2394): migralo (pasos siguientes).
 - **Si contiene `services.AgregarTenantResolverHibrido();`** (el hibrido de `Cosmos.MultiTenancy.CritterStack` que emitia la version anterior de este skill, probado roto en Azure Functions isolated worker -- issue #802): **tambien migralo** (pasos siguientes). Este es el cambio de esta reescritura (issue #803) frente a la version anterior del skill, que lo daba por "ya migrado" y lo omitia -- un dominio en este estado esta roto para HTTP (toda request cae en la rama Wolverine de `ProxyTenantResolver`, ver MEF-ADR-0028 "Contexto"), no migrado con exito.
 - **Si no contiene ninguno de los tres** (un resolver custom, o una forma no estandar de un dominio anterior a MEF-ADR-0028): **no lo toques**. Repórtalo como pendiente de revision manual -- el limite manual de MEF-ADR-0028 seccion 3 sigue vigente para cualquier forma que no sea una de las tres exactas de arriba.
 
@@ -678,7 +693,7 @@ Para cada dominio a migrar:
   using <RootNamespace>.TenantResolver;
   ```
 
-- Reemplaza la linea de registro (`services.AddScoped<ITenantResolver, TenantResolverMonoTenantPorDefecto>();` o `services.AgregarTenantResolverHibrido();`, segun cual tenia el dominio) -- y el comentario de tenancy que la precede, sea cual sea -- por:
+- Reemplaza la linea de registro (`services.AddScoped<ITenantContext, TenantResolverMonoTenantPorDefecto>();`, su forma anterior con `ITenantResolver`, o `services.AgregarTenantResolverHibrido();`, segun cual tenia el dominio) -- y el comentario de tenancy que la precede, sea cual sea -- por:
 
   ```csharp
         // Tenancy (MEF-ADR-0028 etapa b, migrado por /install-apim -- issue #337/#802/#803): resolver real
@@ -822,7 +837,7 @@ Resumen claro y en orden:
 - **Nunca migres un dominio fuera de los descubiertos en el paso 9.4** (todo `src/<RootNamespace>.*/Infraestructura/ComposicionServicios*.cs`) -- la migracion aplica a **todo** el BC, no solo a los `--domain` de esta corrida, pero nunca a una forma de registro que no sea exactamente la mono-tenant transitoria de MEF-ADR-0028 seccion 2 o el hibrido roto `AgregarTenantResolverHibrido()` que esta migracion reemplaza (issue #802) -- un resolver custom sigue siendo revision manual, nunca auto-migrado.
 - **Nunca dejes un dominio commiteado con el contenedor DI sin construir** (gate MEF-ADR-0029): `TenantExecutionContext` no depende de `IHttpContextAccessor` ni de ningun otro servicio registrado -- si el test de composicion no pasa, revierte ese dominio completo antes de commitear (ya no hay ningun wiring adicional que probar primero).
 - **Nunca migres ni referencies un dominio contra la biblioteca `src/<RootNamespace>.TenantResolver/` sin que el paso 9.3 la haya compilado y testeado en verde** -- una biblioteca sin verificar rompe la compilacion de todo dominio que la referencie.
-- **Nunca dupliques** un `PackageReference`, un `using`, o un registro de `ITenantResolver` ya presente -- verifica antes de escribir (mismo criterio de idempotencia que el resto del harness).
+- **Nunca dupliques** un `PackageReference`, un `using`, o un registro de `ITenantContext` ya presente -- verifica antes de escribir (mismo criterio de idempotencia que el resto del harness).
 - **Nunca trabajes contra `main` directo.** Crea la rama compartida del paso 4 antes de invocar el agente o de tocar cualquier archivo.
 - **Nunca hagas push si el agente omitio un dominio pedido o si algun dominio quedo degradado** en la migracion de tenancy (paso 11) -- deja la reconciliacion pendiente explicita en el reporte.
 - Si `$ARGUMENTS` no trae al menos un `--domain`, responde con el uso exacto y detente -- no adivines dominios.

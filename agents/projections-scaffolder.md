@@ -409,7 +409,7 @@ rm -f tests/<RootNamespace>.Projections.Tests/UnitTest1.cs
 
   <ItemGroup>
     <PackageReference Include="AwesomeAssertions" Version="9.5.0" />
-    <PackageReference Include="Marten" Version="9.12.0" />
+    <PackageReference Include="Marten" Version="9.23.0" />
     <PackageReference Include="xunit.v3.mtp-v2" Version="3.2.2" />
   </ItemGroup>
 

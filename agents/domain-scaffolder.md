@@ -178,7 +178,7 @@ jq -r '.tenancy.strategy // "mono-tenant-transitorio"' "${MEFISTO_CONFIG_PATH}" 
 
 El token `tenancy.strategy` (opcional en `harness.config.json`; ausente equivale a `"mono-tenant-transitorio"`) declara en cual de las dos etapas de MEF-ADR-0028 esta el proyecto. **No lo sondees en codigo** -- no hay señal fiable (el harness no referencia ningun tipo `Cosmos.MultiTenancy.*`/autenticacion); es un token declarado por el humano, el mismo que escribe /mefisto:onboard bajo confirmacion. Dos valores:
 
-- **`mono-tenant-transitorio`** (etapa a, default): genera el `ITenantResolver` mono-tenant transitorio de #318, **sin ningun cambio**. Ver el detalle en el punto 10f del Paso 1.
+- **`mono-tenant-transitorio`** (etapa a, default): genera el `ITenantContext` mono-tenant transitorio de #318, **sin ningun cambio**. Ver el detalle en el punto 10f del Paso 1.
 - **`multi-tenant-header`** (etapa b): en vez del default transitorio, referencia la biblioteca scaffoldeada `src/<RootNamespace>.TenantResolver/` (patron AsyncLocal + middleware, MEF-ADR-0028 seccion 4, creada por `/install-apim`) si ya existe en el repo consumidor -- con verificacion de presencia obligatoria y fallback a "proponer" si todavia no existe. Ver el detalle completo (incluida la verificacion CA-6 y el fallback CA-7) en el punto 10f del Paso 1.
 
 Un valor no reconocido en `tenancy.strategy` (ni `mono-tenant-transitorio` ni `multi-tenant-header`) es un error de config: informa al usuario y trata el caso como si el campo estuviera ausente (etapa a, el default seguro) hasta que lo corrija.
@@ -269,11 +269,11 @@ Elimina estas lineas del `.csproj`:
 <!-- func init YA genera este metapaquete: ACTUALIZA su version a 2.52.0. NO lo agregues como segunda referencia (ver nota "Actualizar, no duplicar" tras el bloque). -->
 <PackageReference Include="Microsoft.Azure.Functions.Worker" Version="2.52.0" />
 <PackageReference Include="Microsoft.Azure.Functions.Worker.Extensions.ServiceBus" Version="5.24.0" />
-<PackageReference Include="Cosmos.EventDriven.Abstractions" Version="2.1.0" />
-<PackageReference Include="Cosmos.EventDriven.CritterStack" Version="2.1.0" />
-<PackageReference Include="Cosmos.EventDriven.CritterStack.AzureServiceBus" Version="2.1.0" />
-<PackageReference Include="Cosmos.EventSourcing.Abstractions" Version="2.1.0" />
-<PackageReference Include="Cosmos.EventSourcing.CritterStack" Version="2.1.0" />
+<PackageReference Include="Cosmos.EventDriven.Abstractions" Version="3.1.0" />
+<PackageReference Include="Cosmos.EventDriven.CritterStack" Version="3.1.0" />
+<PackageReference Include="Cosmos.EventDriven.CritterStack.AzureServiceBus" Version="3.1.0" />
+<PackageReference Include="Cosmos.EventSourcing.Abstractions" Version="3.1.0" />
+<PackageReference Include="Cosmos.EventSourcing.CritterStack" Version="3.1.0" />
 <PackageReference Include="Microsoft.Azure.Functions.Worker.OpenTelemetry" Version="1.2.0" />
 <PackageReference Include="OpenTelemetry.Extensions.Hosting" Version="1.15.3" />
 <PackageReference Include="Azure.Monitor.OpenTelemetry.Exporter" Version="1.8.2" />
@@ -313,7 +313,7 @@ rm -f src/<RootNamespace>.PublicEvents/Class1.cs
        la condicion que permite empaquetarlo como NuGet propio si el producto decide compartirlo
        entre repos de distintos BCs (decision local del producto, no una prescripcion del marco).
        El marker IPublicEvent viene de este paquete. -->
-  <PackageReference Include="Cosmos.EventDriven.Abstractions" Version="2.1.0" />
+  <PackageReference Include="Cosmos.EventDriven.Abstractions" Version="3.1.0" />
 </ItemGroup>
 ```
 
@@ -330,7 +330,7 @@ rm -f src/<RootNamespace>.PrivateEvents/Class1.cs
   <!-- Cero ProjectReference (MEF-ADR-0039 decision 2, tres islas): PrivateEvents no referencia
        PublicEvents ni ningun {Dominio}.DomainEvents -- mismo motivo que el comentario en el .csproj
        de PublicEvents. El marker IPrivateEvent viene del mismo paquete que PublicEvents. -->
-  <PackageReference Include="Cosmos.EventDriven.Abstractions" Version="2.1.0" />
+  <PackageReference Include="Cosmos.EventDriven.Abstractions" Version="3.1.0" />
 </ItemGroup>
 ```
 
@@ -518,7 +518,7 @@ public static class EnrutamientoEventos{PascalCase}
 
 Si el Paso 0 no resolvio ningun alias `serviceBus.external` con `alcance == "compartido"`, omite la constante `BrokerCosmos` (y su linea de ejemplo). Si hay mas de uno, declara una constante por alias, siempre en minusculas.
 
-**Verificacion de la mecanica de enrutamiento (issue #1804, CA-1)**, por decompilacion de los paquetes pinneados (`Cosmos.EventDriven.*` 2.1.0, que arrastra `WolverineFx` 6.16.0) y por experimento local sobre el mismo wiring de este agente:
+**Verificacion de la mecanica de enrutamiento (issue #1804, CA-1)**, por decompilacion de los paquetes pinneados (`Cosmos.EventDriven.*` 3.1.0, que arrastra `WolverineFx` 6.27.1; reverificado contra esos pines en #2394) y por experimento local sobre el mismo wiring de este agente:
 - `MessageBus.PublishAsync<T>` resuelve `Runtime.RoutingFor(message.GetType()).RouteForPublish(...)` y, si no hay envelopes, solo llama `MessageTracking.NoRoutesFor` (una linea de log) y devuelve `ValueTask.CompletedTask`: **no lanza**. `SendAsync`, en cambio, si falla sin ruta: `EmptyMessageRouter<T>.RouteForSend` lanza `IndeterminateRoutesException`.
 - `WolverinePrivateEventSender`/`WolverinePublicEventSender` delegan en `IMessageBus.PublishAsync<IPrivateEvent|IPublicEvent>` sin ninguna verificacion propia ni opcion de modo estricto. No hay alternativa en el paquete; el unico guardrail disponible es el de composicion (Paso 2 punto 9).
 - `IWolverineRuntime.RoutingFor(type).Routes` se resuelve sobre el `ServiceProvider` sin arrancar el host y sin red. `Describe().Endpoint` da `asb://topic/{topic}` en el broker default y `{clave}://topic/{topic}` en el nombrado.
@@ -629,7 +629,7 @@ public static class ComposicionServicios{PascalCase}
         // (TenantExecutionContext, AsyncLocal + middleware, biblioteca propia del BC en
         // src/<RootNamespace>.TenantResolver/) cuando esa autenticacion exista -- ver el TODO en
         // Infraestructura/TenantResolverMonoTenantPorDefecto.cs.
-        services.AddScoped<ITenantResolver, TenantResolverMonoTenantPorDefecto>();
+        services.AddScoped<ITenantContext, TenantResolverMonoTenantPorDefecto>();
 
         // Ratio de sampling (MEF-ADR-0038 seccion 1): politica de costos del CONSUMIDOR, nunca del
         // marco -- el marco solo garantiza que el wiring de abajo lo respete. Default 1.0 (sin
@@ -756,7 +756,7 @@ public static class ComposicionServicios{PascalCase}
 
 Si el Paso 0 no resolvio ningun alias `serviceBus.external` con `alcance == "compartido"`, omite el parametro `serviceBusCosmos` y la linea `AgregarAzureServiceBusNombradoServerless` (el `foreach` sobre `EnrutamientoEventos{PascalCase}.EventosPublicados` se conserva siempre); deja solo el broker default y un comentario: `// Backbone compartido: sin alias "compartido" declarado en serviceBus.external todavia (MEF-ADR-0024 decision #4). Agrega su broker nombrado cuando el BC publique/consuma su primer evento publico.` Si hay mas de un alias, repite el par parametro + linea de registro por cada uno (y su argumento correspondiente en la llamada de `Program.cs` y en el test de composicion, Paso 2 punto 9). No wirees ningun alias con `alcance == "externo"` (integracion verdaderamente externa, diferida por MEF-ADR-0024 decision #5, default-off).
 
-Si el Paso 0 resolvio `tenancy.strategy = "multi-tenant-header"` (etapa b, MEF-ADR-0028), **reemplaza** la linea `services.AddScoped<ITenantResolver, TenantResolverMonoTenantPorDefecto>();` (y el `using Cosmos.MultiTenancy;` de arriba) por el registro del resolver `TenantExecutionContext` (biblioteca `src/<RootNamespace>.TenantResolver/`) -- ver el detalle completo (verificacion de presencia obligatoria, CA-6, y el fallback a "proponer", CA-7) en el punto 10f del Paso 1.
+Si el Paso 0 resolvio `tenancy.strategy = "multi-tenant-header"` (etapa b, MEF-ADR-0028), **reemplaza** la linea `services.AddScoped<ITenantContext, TenantResolverMonoTenantPorDefecto>();` (y el `using Cosmos.MultiTenancy;` de arriba) por el registro del resolver `TenantExecutionContext` (biblioteca `src/<RootNamespace>.TenantResolver/`) -- ver el detalle completo (verificacion de presencia obligatoria, CA-6, y el fallback a "proponer", CA-7) en el punto 10f del Paso 1.
 
 > **CA-9 — Aviso sobre el helper bulk `PublicarEventosServerless`**: No uses `PublicarEventosServerless(nombreConexion, topicName, Assembly contratos)` con el assembly completo de contratos para registrar eventos. Ese helper filtra por `IsAssignableTo(typeof(IEvent))` y captura tanto `IPrivateEvent` como `IPublicEvent` juntos, enrutando todo al mismo broker y rompiendo la separacion privado/publico (MEF-ADR-0024 decision #2, #4). El registro debe hacerse **por tipo**, separando explicitamente privados de publicos:
 > - `IPrivateEvent`: `options.PublicarEventoServerless<TEvento>(topic)` → broker default → namespace interno
@@ -1003,7 +1003,7 @@ public abstract class ServiceBusSessionEndpointBase(ILogger logger)
 
 **10e. Crear el `PrivateEventEndpointBase.cs` en `Infraestructura/`:**
 
-Contraparte de `ServiceBusEndpointBase<TEvento>` para el patron EventHandler directo (issue #313, `Cosmos.EventDriven` 2.1.0): cuando un dominio reacciona a un evento privado y el comando equivalente seria un espejo del evento, el endpoint no traduce a comando -- rutea el evento **directamente** via `IPrivateEventRouter` a su `IPrivateEventHandlerAsync<TEvent>`. Mismo manejo de fallos (complete/lock-lost/dead-letter) que `ServiceBusEndpointBase`; solo cambia el router inyectado y el tipo restringido a `IPrivateEvent`.
+Contraparte de `ServiceBusEndpointBase<TEvento>` para el patron EventHandler directo (issue #313, `Cosmos.EventDriven`, introducido en 2.1.0): cuando un dominio reacciona a un evento privado y el comando equivalente seria un espejo del evento, el endpoint no traduce a comando -- rutea el evento **directamente** via `IPrivateEventRouter` a su `IPrivateEventHandlerAsync<TEvent>`. Mismo manejo de fallos (complete/lock-lost/dead-letter) que `ServiceBusEndpointBase`; solo cambia el router inyectado y el tipo restringido a `IPrivateEvent`.
 
 ```csharp
 using Azure.Messaging.ServiceBus;
@@ -1049,14 +1049,14 @@ public abstract class PrivateEventEndpointBase<TPrivateEvent>(IPrivateEventRoute
 }
 ```
 
-**10f. Resolver el `ITenantResolver` segun la etapa de tenancy (MEF-ADR-0028, issue #323):**
+**10f. Resolver el `ITenantContext` segun la etapa de tenancy (MEF-ADR-0028, issue #323):**
 
 El Paso 0 ya resolvio `tenancy.strategy`. Aplica **una sola** de las dos ramas siguientes -- nunca ambas.
 
 ### Etapa (a) -- `tenancy.strategy` ausente o `"mono-tenant-transitorio"` (default, issue #318)
 
 Crea el `TenantResolverMonoTenantPorDefecto.cs` en `Infraestructura/`: implementacion mono-tenant
-**transitoria** del `ITenantResolver` de `Cosmos.MultiTenancy` (ya disponible transitivamente via
+**transitoria** del `ITenantContext` de `Cosmos.MultiTenancy` (ya disponible transitivamente via
 `Cosmos.EventSourcing.CritterStack`, sin paquete nuevo que agregar). Cubre el greenfield sin
 autenticacion instalada y **no** debe sobrevivir a la instalacion de una autenticacion que produzca un
 `TenantContext` (etapa b, ver el TODO). Contenido **sin ningun cambio** respecto a #318:
@@ -1071,16 +1071,18 @@ namespace <RootNamespace>.{PascalCase}.Infraestructura;
 // TenantExecutionContext (AsyncLocal + middleware, biblioteca propia del BC en
 // src/<RootNamespace>.TenantResolver/, MEF-ADR-0028 seccion 4) -- o correr /install-apim si el
 // camino es WorkOS+APIM. No dejar este default una vez que exista esa autenticacion.
-public class TenantResolverMonoTenantPorDefecto : ITenantResolver
+public class TenantResolverMonoTenantPorDefecto : ITenantContext
 {
     public string TenantId => JasperFx.StorageConstants.DefaultTenantId;
 
     public string UserId => "usuario-no-autenticado";
+
+    public string OrganizationMembershipId => "membresia-no-autenticada";
 }
 ```
 
 El registro en `Infraestructura/ComposicionServicios{PascalCase}.cs` (Paso 6b) es
-`services.AddScoped<ITenantResolver, TenantResolverMonoTenantPorDefecto>();`, como ya fija #318.
+`services.AddScoped<ITenantContext, TenantResolverMonoTenantPorDefecto>();`, como ya fija #318.
 
 ### Etapa (b) -- `tenancy.strategy = "multi-tenant-header"`
 
@@ -1093,7 +1095,7 @@ registrado -- ver "Coherencia con el test de composicion" al final de esta rama.
 **CA-6 — verificacion de presencia obligatoria antes de referenciar.** MEF-ADR-0028 seccion 4
 (enmendada por el issue #802) fija que la transicion (a)->(b) del camino WorkOS+APIM scaffoldea una
 biblioteca propia del repo consumidor, `src/<RootNamespace>.TenantResolver/`
-(`TenantExecutionContext : ITenantResolver` respaldado por `AsyncLocal` estatico +
+(`TenantExecutionContext : ITenantContext` respaldado por `AsyncLocal` estatico +
 `TenantContextMiddleware : IFunctionsWorkerMiddleware` + las extensiones
 `AgregarTenantResolverAsyncLocal()`/`UsarTenantContextMiddleware()`), creada por `/install-apim` (issue
 #803/#810). A diferencia de la version anterior de esta seccion (que cableaba
@@ -1123,13 +1125,13 @@ Si procede el auto-cableo (biblioteca presente, CA-6 satisfecho):
    (Paso 1, punto 3c, el mismo `<ItemGroup>` que ya suma `PublicEvents`/`PrivateEvents`/
    `{PascalCase}.DomainEvents`): `<ProjectReference Include="..\<RootNamespace>.TenantResolver\<RootNamespace>.TenantResolver.csproj" />`.
    **No** agregues ningun `PackageReference` de `Cosmos.MultiTenancy.*` al `.csproj` del dominio: el
-   contrato `ITenantResolver` sigue llegando transitivo via `Cosmos.EventSourcing.CritterStack` (igual
+   contrato `ITenantContext` sigue llegando transitivo via `Cosmos.EventSourcing.CritterStack` (igual
    que en la etapa a), y la biblioteca lo declara explicito por su cuenta porque ella no referencia ese
    paquete (ver su `.csproj` en `commands/install-apim.md`, paso 9.3b).
 2. **En `Infraestructura/ComposicionServicios{PascalCase}.cs`** (Paso 6b), reemplaza el `using
-   Cosmos.MultiTenancy;` por `using <RootNamespace>.TenantResolver;` (el tipo `ITenantResolver` ya no
+   Cosmos.MultiTenancy;` por `using <RootNamespace>.TenantResolver;` (el tipo `ITenantContext` ya no
    se referencia por nombre en el archivo) y sustituye la linea
-   `services.AddScoped<ITenantResolver, TenantResolverMonoTenantPorDefecto>();` por:
+   `services.AddScoped<ITenantContext, TenantResolverMonoTenantPorDefecto>();` por:
 
    ```csharp
    // Tenancy (MEF-ADR-0028 etapa b, enmendada por el issue #802): resolver real basado en
@@ -1161,18 +1163,18 @@ Si procede el auto-cableo (biblioteca presente, CA-6 satisfecho):
 `ComposicionContenedorTests` que generas en el Paso 2 (punto 9) es un **gate duro** (si falla, no haces
 commit): invoca `AgregarServicios{PascalCase}` con `BuildServiceProvider(ValidateOnBuild: true,
 ValidateScopes: true)` y ademas resuelve los tres routers (`ICommandRouter`, `IPrivateEventSender`,
-`IPrivateEventRouter`), cada uno de los cuales **depende de `ITenantResolver` en su constructor**
-(MEF-ADR-0029). En etapa (b), `ITenantResolver` pasa a ser `TenantExecutionContext` (registro singleton
+`IPrivateEventRouter`), cada uno de los cuales **depende de `ITenantContext` en su constructor**
+(MEF-ADR-0029). En etapa (b), `ITenantContext` pasa a ser `TenantExecutionContext` (registro singleton
 via `AgregarTenantResolverAsyncLocal()`), que **no depende de `IHttpContextAccessor` ni de ningun otro
 servicio registrado** -- a diferencia del hibrido descartado (`ProxyTenantResolver`, issue #802), no
 hay ningun wiring adicional que agregar para que el test de composicion quede verde:
 `TenantExecutionContext` construye sin argumentos.
 
 **El fallback CA-7 tambien debe dejar el contenedor construible.** Si degradas a "proponer" (la
-biblioteca no existe todavia), **no** dejes `ITenantResolver` sin registrar: seria exactamente el
+biblioteca no existe todavia), **no** dejes `ITenantContext` sin registrar: seria exactamente el
 incidente #318 que MEF-ADR-0029 existe para atrapar -- el test de composicion quedaria en rojo y el
 dominio naceria roto. En ese caso genera el `TenantResolverMonoTenantPorDefecto.cs` de la etapa (a) como
-placeholder registrado (`services.AddScoped<ITenantResolver, TenantResolverMonoTenantPorDefecto>();`, con
+placeholder registrado (`services.AddScoped<ITenantContext, TenantResolverMonoTenantPorDefecto>();`, con
 el `using Cosmos.MultiTenancy;`): el contenedor construye y el dominio arranca atribuyendo a `*DEFAULT*`
 mientras documentas el snippet de `AgregarTenantResolverAsyncLocal()` + el `ProjectReference` pendiente
 como el paso manual pendiente (correr `/install-apim`), avisando al usuario de que el resolver real no
@@ -1403,7 +1405,7 @@ rm -f tests/<RootNamespace>.{PascalCase}.Tests/UnitTest1.cs
 Y agregar en su lugar (en el mismo `<ItemGroup>` o en uno nuevo):
 
 ```xml
-<PackageReference Include="Cosmos.EventSourcing.Testing.Utilities" Version="2.1.0" />
+<PackageReference Include="Cosmos.EventSourcing.Testing.Utilities" Version="3.1.0" />
 <PackageReference Include="xunit.v3.mtp-v2" Version="3.2.2" />
 <PackageReference Include="OpenTelemetry.Exporter.InMemory" Version="1.15.3" />
 ```
@@ -3096,7 +3098,7 @@ Si ese archivo ya existe -- re-corrida del mismo scaffold --, el registro ya est
 **2. Agregar la referencia a `Marten` en el `.csproj` del worker (si falta).** `projections-scaffolder` (issue #367) solo agrega `Microsoft.Extensions.Hosting` al worker -- `AddMartenStore<T>`, `IDocumentStore` y `DaemonMode` todavia no estan declarados porque hasta ahora ningun dominio registraba un named store. Los tres los aporta el paquete `Marten`, pero **no todos en el namespace `Marten`**: `IDocumentStore`/`AddMartenStore<T>`/`AddAsyncDaemon` viven en `Marten`, mientras `DaemonMode` vive en **`JasperFx.Events.Daemon`** (paquete transitivo `JasperFx.Events`, no hace falta referenciarlo aparte). Verificado por compilacion contra `Marten` 9.12.0 con SDK .NET 10: `using Marten.Events.Daemon;` **compila** (el namespace existe) pero deja `DaemonMode` sin resolver -- `error CS0103: El nombre 'DaemonMode' no existe en el contexto actual` --, asi que el error no se detecta leyendo los `using`, solo construyendo. Reverifica el namespace si subes la version del paquete. Lee `src/<RootNamespace>.Projections/<RootNamespace>.Projections.csproj`: si ya tiene un `PackageReference Include="Marten"` (lo agrego un dominio anterior), no lo dupliques. Si no lo tiene, agregalo al `<ItemGroup>` de paquetes en la misma version `9.12.0` que fija MEF-ADR-0003 (la que ya arrastra `Cosmos.EventSourcing.CritterStack` 2.1.0 en el write-side -- mismo paquete, mismo lockstep de version, sin reintroducir GHSA-vmw2-qwm8-x84c/CVE-2026-45288):
 
 ```xml
-<PackageReference Include="Marten" Version="9.12.0" />
+<PackageReference Include="Marten" Version="9.23.0" />
 ```
 
 **3. Agregar la `ProjectReference` del worker hacia `{PascalCase}.DomainEvents` (issue #548 CA-1).** El worker necesita ver en compilacion los tipos de evento persistidos de este dominio para que las clases de proyeccion (`projection-implementer`, issue `tipo:projection` posterior) puedan declarar `Create`/`Apply` sobre ellos -- sin esta referencia, el `EventGraph` del named store dependeria del fallback por `mt_dotnet_type` al leer streams preexistentes (el defecto que el consumidor de referencia pago en su issue #277, documentado en MEF-ADR-0036). `dotnet add reference` es idempotente -- verificado con SDK 10.0.201: sobre una referencia ya declarada imprime `El proyecto ya tiene una referencia a "..."` y sale con codigo 0, sin duplicar el `<ProjectReference>` en el `.csproj`:
@@ -4065,7 +4067,7 @@ Si el que falla es uno de los dos guardrails del durability agent (MEF-ADR-0038 
 - `...ApagaLaRecoleccionDeMetricasDeDurabilidad` en rojo: o la linea `options.Durability.DurabilityMetricsEnabled = false;` no quedo dentro del callback del Paso 6b, o un upgrade de `Cosmos.EventSourcing.CritterStack` empezo a reasignar tambien esa bandera despues del callback (hasta 2.3.1 solo reasigna `Mode`). Lo primero se corrige en el codigo de produccion; lo segundo es exactamente el hallazgo que este guardrail existe para producir -- reverifica por decompilacion cual es el nuevo punto de wiring valido e informa al usuario. En ninguno de los dos casos se borra el test.
 - `...ConservaLaDurabilidadReal` en rojo por `Mode`: **no** lo "arregles" fijando `Mode` desde el callback (se pisa en silencio, es el gotcha que documenta la receta) ni relajando la asercion. Significa que el paquete ya no fija `Solo` despues del callback: reverifica contra la version instalada, actualiza el literal y deja anotada la version contra la que lo verificaste.
 - `...ConservaLaDurabilidadReal` en rojo por `DurabilityAgentEnabled`: se apago la durabilidad real (recovery, scheduled jobs, dead letters) creyendo apagar solo las metricas. Es un defecto del codigo de produccion, no del test.
-- Error de compilacion (`CS1061`) en `Durability.DurabilityMetricsEnabled` o en `DurabilityMode`: la version de Wolverine instalada ya no expone esos miembros -- verificados en `Wolverine` 6.16.0, la que arrastra `Cosmos.EventSourcing.CritterStack` 2.3.1 (MEF-ADR-0038 seccion 6). Reverifica contra la fuente de la version instalada antes de tocar nada e informa al usuario.
+- Error de compilacion (`CS1061`) en `Durability.DurabilityMetricsEnabled` o en `DurabilityMode`: la version de Wolverine instalada ya no expone esos miembros -- reverificados contra `Wolverine` 6.27.1, la que arrastra `Cosmos.EventSourcing.CritterStack` 3.1.0 (MEF-ADR-0038 seccion 6, issue #2394). Reverifica contra la fuente de la version instalada antes de tocar nada e informa al usuario.
 
 **Validacion de Terraform:**
 
@@ -4142,7 +4144,7 @@ Scaffold completado para el dominio "{kebab}":
     Infraestructura/ComposicionServicios{PascalCase}.cs - Unica fuente de verdad del wiring de DI (Wolverine con las metricas del durability agent apagadas en origen, Marten, routers, tenancy, OpenTelemetry con sampler post-exporter y drop total de metricas + fallback de connection string, validacion, probe de readiness) - MEF-ADR-0029/MEF-ADR-0038/MEF-ADR-0031
     Infraestructura/RequestValidator.cs    - IRequestValidator + implementacion
     Infraestructura/EventStoreReadinessProbe.cs - IEventStoreReadinessProbe + implementacion: fuerza la materializacion de storage de Marten via FetchStreamStateAsync sobre un stream centinela, sin cache del positivo (MEF-ADR-0031 seccion 6)
-    Infraestructura/TenantResolverMonoTenantPorDefecto.cs - ITenantResolver mono-tenant transitorio (MEF-ADR-0028). Solo en etapa (a) y en el fallback CA-7 de etapa (b); el auto-cableo de etapa (b) no lo genera (referencia src/<RootNamespace>.TenantResolver/ en su lugar)
+    Infraestructura/TenantResolverMonoTenantPorDefecto.cs - ITenantContext mono-tenant transitorio (MEF-ADR-0028). Solo en etapa (a) y en el fallback CA-7 de etapa (b); el auto-cableo de etapa (b) no lo genera (referencia src/<RootNamespace>.TenantResolver/ en su lugar)
     Infraestructura/EnrutamientoEventos{PascalCase}.cs - Eventos de bus publicados con su topic y clave de broker (lista vacia al nacer, alimenta PublicarEventoServerless<T>) - issue #1804
     Infraestructura/ServiceBusDeserializador.cs - Helper de deserializacion case-insensitive
     Infraestructura/ServiceBusEndpointBase.cs   - Clase base para endpoints de ServiceBus (topic+subscription)
@@ -4217,7 +4219,7 @@ Scaffold completado para el dominio "{kebab}":
   src/<RootNamespace>.Projections/Infraestructura/ConfiguracionMartenProjections.cs
                                              - Editado: ConfigurarEventos ahora encadena Configurar{PascalCase}
   src/<RootNamespace>.Projections/<RootNamespace>.Projections.csproj
-                                             - PackageReference Marten 9.12.0 agregado si faltaba (MEF-ADR-0003)
+                                             - PackageReference Marten 9.23.0 agregado si faltaba (MEF-ADR-0003)
                                                + ProjectReference hacia <RootNamespace>.{PascalCase}.DomainEvents:
                                                el unico camino del worker a los tipos de evento persistidos del
                                                dominio, verificado contra el Function App (MEF-ADR-0039 decisiones
