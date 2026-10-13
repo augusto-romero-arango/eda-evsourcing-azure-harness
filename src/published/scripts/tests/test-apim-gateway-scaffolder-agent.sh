@@ -86,6 +86,8 @@ contains "$body" '${var.claim_organization_membership_id}' 'politica usa el clai
 contains "$body" 'variable "claim_organization_membership_id"' 'declara la variable claim_organization_membership_id'
 contains "$body" 'default     = "organization_membership_id"' 'default organization_membership_id'
 contains "$body" 'los tres `<set-header>`' 'nota B10 habla de tres set-header'
+contains "$body" 'variable "apim_claim_organization_membership_id"' 'apim.tf del entorno declara apim_claim_organization_membership_id'
+contains "$body" 'claim_organization_membership_id = var.apim_claim_organization_membership_id' 'apim.tf cablea la variable al modulo'
 
 printf 'RESULTADO: %s pasaron, %s fallaron\n' "$PASS" "$FAIL"
 exit "$FAIL"

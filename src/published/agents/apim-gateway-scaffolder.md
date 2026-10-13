@@ -984,6 +984,12 @@ variable "apim_claim_tenant_id" {
   default     = "tenant_id"
 }
 
+variable "apim_claim_organization_membership_id" {
+  description = "Nombre EXACTO del claim del JWT mapeado a X-Organization-Membership-Id (B10 -- confirmar decodificando un token real antes de aceptar el default; exige el JWT Template de WorkOS)"
+  type        = string
+  default     = "organization_membership_id"
+}
+
 # B9: '<name>.azure-api.net' es unico en TODO Azure. La unicidad la da la composicion
 # {app}-{env}-{region}-{seq} de local.prefix -- sin sufijo random, el nombre es predecible antes
 # de aplicar (MEF-ADR-0045 seccion 2; mismo patron que postgresql/service-bus/key-vault en
@@ -999,8 +1005,9 @@ module "api_management" {
 
   cors_allowed_origins = var.cors_allowed_origins
   workos_client_id     = var.workos_client_id
-  claim_user_id        = var.apim_claim_user_id
-  claim_tenant_id      = var.apim_claim_tenant_id
+  claim_user_id                    = var.apim_claim_user_id
+  claim_tenant_id                  = var.apim_claim_tenant_id
+  claim_organization_membership_id = var.apim_claim_organization_membership_id
 
   tags = local.tags
 }
@@ -1361,7 +1368,7 @@ Imprime un resumen claro:
 - **GitHub variables requeridas** (no secretas, *Settings > Secrets and variables > Actions > Variables*), a crear manualmente por un admin si la instancia se genero por primera vez: `WORKOS_CLIENT_ID` (el client_id resuelto en el Paso 0) y `CORS_ALLOWED_ORIGINS` (JSON list de origenes).
 - **Gates de verificacion empirica pendientes (MEF-ADR-0032 seccion 8, obligatorios antes de un `apply` real)**:
   - B5 (issuer/`jwks_uri`): resultado del Paso 0.3 (`VERIFICADO` contra el discovery doc en vivo, o `NO VERIFICADO -- reconfirmar antes de aplicar`).
-  - B10 (nombres de claim): si `claim_user_id`/`claim_tenant_id` quedaron en su default (`user_email`/`tenant_id`, el mapeo confirmado en ControlPlane) o si el invocador ya los confirmo decodificando un token real de este proyecto WorkOS. Si quedaron en default sin confirmar, decilo explicito: "pendiente de decodificar un token real antes de ir a produccion".
+  - B10 (nombres de claim): si `claim_user_id`/`claim_tenant_id`/`claim_organization_membership_id` quedaron en su default (`user_email`/`tenant_id`, el mapeo confirmado en ControlPlane; `organization_membership_id`, el del JWT Template de la doc oficial de WorkOS que guia `{{mefisto:command install-workos}}` paso 5.g) o si el invocador ya los confirmo decodificando un token real de este proyecto WorkOS. Si quedaron en default sin confirmar, decilo explicito: "pendiente de decodificar un token real antes de ir a produccion".
 - **Configuracion externa a documentar** (MEF-ADR-0032 seccion 6/D, el operador humano la aplica fuera de Terraform): en el dashboard de WorkOS, registrar el redirect URI del SPA, habilitar el metodo de auth y el/los origen(es) de CORS; separar credenciales si el proyecto WorkOS de login difiere del proyecto de negocio (el client_id de login va en la politica del gateway que acabas de generar, el API key de negocio va en la Function App que lo consuma -- nunca al reves).
 - **Servidores MCP (issue #820), si el Paso 0.4 recibio al menos uno**:
   - Modulo `apim-mcp-api` creado u omitido (ya existia); enrutador compartido `apim-mcp-prm.tf` creado (primera vez) u omitido (CA-6); provider `azapi` agregado a `providers.tf` o ya presente.
