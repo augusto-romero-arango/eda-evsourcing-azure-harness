@@ -519,6 +519,21 @@ else
     fail "la ausencia del config no produjo un diagnóstico conservador y accionable"
 fi
 
+# Issue #2384 (CA-2/CA-4): el fixture tiene infra/environments/ y no tiene
+# .mefisto/appinsights.env -> fila FALTA, paso manual en "Proximos pasos" y exit 0.
+OUT=$(cd "$ONBOARD_REPO" && PATH="$ONBOARD_BIN:$PATH" bash "$REPO_ROOT/scripts/onboard-diagnose.sh" 2>&1)
+RC=$?
+PASOS=$(printf '%s\n' "$OUT" | sed -n '/^Proximos pasos/,$p')
+if [ "$RC" -eq 0 ] \
+    && printf '%s\n' "$OUT" | grep -Fq "[FALTA        ] .mefisto/appinsights.env no existe" \
+    && printf '%s\n' "$PASOS" | grep -Fq "Crea .mefisto/appinsights.env con las cinco claves" \
+    && printf '%s\n' "$PASOS" | grep -Fq "/bug, /health-check y /purge-store lo requieren" \
+    && [ ! -e "$ONBOARD_REPO/.mefisto/appinsights.env" ]; then
+    pass "diagnostico integrado: appinsights.env ausente da FALTA, paso manual y exit 0 sin escribir"
+else
+    fail "diagnostico integrado de appinsights.env (rc=$RC)"
+fi
+
 echo ""
 echo "[S-6] _claude_version_meets() y _check_claude_version() (sin invocar claude)"
 _claude_version_meets "2.1.287 (Claude Code)" 2.1.287 && pass "igual cumple" || fail "igual deberia cumplir"

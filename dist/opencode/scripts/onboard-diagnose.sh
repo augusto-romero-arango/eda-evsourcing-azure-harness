@@ -587,6 +587,8 @@ main() {
         FALTA)
             row FALTA "$APPINSIGHTS_ENV_DETAIL"
             PA_APPINSIGHTS_ENV_FALTA=1
+            ACTIONS="${ACTIONS}  - Crea .mefisto/appinsights.env (solo nombres de recursos, sin secretos, versionable) con APPINSIGHTS_APP, APPINSIGHTS_RG, SERVICEBUS_NAMESPACE, SERVICEBUS_RG y FUNCTIONAPP_NAMES (separadas por coma).
+"
             ;;
         *) row NV "$APPINSIGHTS_ENV_DETAIL" ;;
     esac
