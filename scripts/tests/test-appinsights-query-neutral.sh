@@ -5,7 +5,9 @@
 # (b) exceptions usa APPINSIGHTS_APP/RG del consumidor; (c) custom audita en
 # .mefisto/pipeline/kql-audit.log sin crear archivos junto al script;
 # (d) plan-sites/plan-metrics solo invocan az de lectura y rechazan ids mal
-# formados; (e) la copia en dist/opencode/scripts/ funciona igual.
+# formados; (e) la copia en dist/opencode/scripts/ funciona igual;
+# (a2/b0) aviso de solo lectura ante un scripts/.env legacy del consumidor
+# (issue #2386), con el script ejecutado desde fuera del repo como en una instalacion real.
 #
 # Uso: scripts/tests/test-appinsights-query-neutral.sh
 
@@ -49,6 +51,8 @@ make_repo() {
 }
 
 run() { (cd "$1" && shift && PATH="$STUB_BIN:$PATH" bash scripts/appinsights-query.sh "$@" 2>&1); }
+# El plugin instalado vive fuera del repo del consumidor: su scripts/ no es el del consumidor.
+run_from() { local repo="$1" script="$2"; shift 2; (cd "$repo" && PATH="$STUB_BIN:$PATH" bash "$script" "$@" 2>&1); }
 
 REPO="$TMP/consumer"
 make_repo "$REPO" "$REPO_ROOT/scripts"
@@ -65,25 +69,31 @@ echo "$out" | grep -q ".mefisto/appinsights.env" && pass "cita la ruta exacta" |
 echo "$out" | grep -q "template" && fail "cita un template" || pass "sin citar templates"
 
 check_legacy() {
-    local repo="$1" label="$2" before after
+    local repo="$1" src_dir="$2" label="$3" plugin before after
     echo "[a2] aviso legacy ($label)"
+    plugin="$TMP/plugin-$label"
+    mkdir -p "$plugin"
+    cp "$src_dir/appinsights-query.sh" "$src_dir/_pipeline-common.sh" "$plugin/"
     echo "OTRA=1" > "$repo/scripts/.env"
-    out=$(run "$repo" exceptions); rc=$?
+    out=$(run_from "$repo" "$plugin/appinsights-query.sh" exceptions); rc=$?
     [ "$rc" -ne 0 ] && ! echo "$out" | grep -q "legacy" && pass "CA-3 .env ajeno sin aviso" || fail "CA-3 .env ajeno"
     echo "APPINSIGHTS_APP=app-legacy" > "$repo/scripts/.env"
     before=$(cd "$repo" && find . -path ./.git -prune -o -type f -print | sort | xargs cksum)
-    out=$(run "$repo" exceptions); rc=$?
+    out=$(run_from "$repo" "$plugin/appinsights-query.sh" exceptions); rc=$?
     after=$(cd "$repo" && find . -path ./.git -prune -o -type f -print | sort | xargs cksum)
-    [ "$rc" -ne 0 ] && echo "$out" | grep -q "scripts/.env" \
+    [ "$rc" -ne 0 ] && echo "$out" | grep -qF "$repo/scripts/.env" \
         && echo "$out" | grep -qF "mkdir -p .mefisto && mv scripts/.env .mefisto/appinsights.env" \
         && echo "$out" | grep -q "APPINSIGHTS_RG" \
-        && pass "CA-1 avisa y da el comando" || fail "CA-1 sin aviso legacy"
+        && pass "CA-1 avisa con la ruta del legacy y el comando" || fail "CA-1 sin aviso legacy"
     [ "$before" = "$after" ] && pass "CA-2 arbol intacto" || fail "CA-2 el arbol cambio"
     rm -f "$repo/scripts/.env"
-    out=$(run "$repo" exceptions)
+    out=$(run_from "$repo" "$plugin/appinsights-query.sh" exceptions)
     echo "$out" | grep -q "legacy" && fail "CA-3 aviso sin scripts/.env" || pass "CA-3 sin scripts/.env sin aviso"
 }
-check_legacy "$REPO" "scripts/"
+check_legacy "$REPO" "$REPO_ROOT/scripts" "fuente"
+if [ -f "$REPO_ROOT/dist/opencode/scripts/appinsights-query.sh" ]; then
+    check_legacy "$REPO" "$REPO_ROOT/dist/opencode/scripts" "dist-opencode"
+fi
 
 mkdir -p "$REPO/.mefisto"
 cat > "$REPO/.mefisto/appinsights.env" <<'EOF'
