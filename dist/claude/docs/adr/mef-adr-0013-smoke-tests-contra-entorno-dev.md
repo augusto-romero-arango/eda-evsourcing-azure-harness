@@ -416,6 +416,46 @@ El helper `Polling` captura excepciones transitorias dentro del loop de retry en
 primer error. Si el timeout se agota, reporta la ultima excepcion en el `TimeoutException`. Esto
 maneja casos como tablas de Marten que aun no existen en la primera consulta.
 
+### Polling de un arrange con varias ocurrencias: esperar todas, afirmar el resultado
+
+Cuando el arrange produce **varias ocurrencias** que llegan por separado y con consistencia eventual
+(N eventos que una proyeccion agrega en un mismo documento, N mensajes de bus que un consumidor procesa
+uno a uno, N dias de una misma solicitud), cortar con la primera deja al test afirmando sobre una vista
+a medio materializar: falla de forma intermitente aunque la proyeccion sea correcta. Cuatro reglas:
+
+1. **La condicion espera el estado completo que produce el arrange**: todas las ocurrencias reflejadas
+   (p. ej. "7 casillas en el estado esperado"), no la primera aparicion del documento.
+2. **La condicion describe el arrange, no lo que el test verifica**: si esperara lo verificado, un
+   defecto se volveria timeout en vez de una asercion clara.
+3. **El resultado del polling siempre se afirma**: `Polling.WaitUntilTrueAsync` devuelve `false` al
+   agotar el timeout sin excepcion de por medio; ignorarlo convierte un timeout claro en una asercion
+   confusa. El contrato `bool` de la plantilla `Polling` se mantiene.
+4. **Las aserciones van despues**, sobre la copia completa capturada en la ultima vuelta del polling.
+
+```csharp
+// Arrange: una solicitud de N fechas -> la proyeccion termina con N casillas en el estado del arrange
+List<JsonElement> casillas = [];
+var completo = await Polling.WaitUntilTrueAsync(async () =>
+{
+    var vista = await api.Client.GetFromJsonAsync<JsonElement>($"/api/vistas/{solicitudId}");
+    casillas = [.. vista.GetProperty("casillas").EnumerateArray()];
+    return casillas.Count(c => c.GetProperty("estado").GetString() == EstadoDelArrange) == fechas.Count;
+}, TimeSpan.FromSeconds(30));
+
+completo.Should().BeTrue($"las {fechas.Count} casillas del arrange deben estar proyectadas");
+
+// Assert sobre la copia completa de la ultima vuelta
+casillas.Should().Contain(c => c.GetProperty("codigo").GetString() == "CodigoEsperado");
+```
+
+La condicion cuenta las casillas en el estado que deja el arrange, no busca `"CodigoEsperado"`: si
+la proyeccion tuviera un defecto en ese codigo, el test falla en la asercion con un mensaje claro y
+no en un timeout.
+
+La misma regla aplica a los mensajes de bus: si el arrange publica N mensajes que un consumidor
+procesa por separado, la condicion espera el efecto de los N (N eventos persistidos, N elementos en
+la vista) y su resultado se afirma antes de verificar nada.
+
 ### Integracion en el proceso de desarrollo
 
 La infraestructura del proyecto de smoke tests (csproj, fixtures, appsettings, workflow) la crea el
@@ -600,3 +640,7 @@ en el repo (idempotente; ver "Integracion en el proceso de desarrollo").
   Bitakora.ControlAsistencia (issue #955): un smoke esperaba 422 con mas de 200 identificaciones despues
   de que se eliminara ese tope a proposito, y la revision de la suite hallo 20 smoke de tamano de pagina
   y de topes de ventana.
+- 2026-10-13 (issue #2378): enmienda con la subseccion "Polling de un arrange con varias ocurrencias".
+  Caso del consumidor Bitakora.ControlAsistencia (issue #984): un smoke cortaba el polling con la primera
+  casilla proyectada de una solicitud de 7 dias e ignoraba el resultado de `WaitUntilTrueAsync`; afirmaba
+  sobre casillas aun sin proyectar y rompio tres deploys seguidos aunque la proyeccion era correcta.
