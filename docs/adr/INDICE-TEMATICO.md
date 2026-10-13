@@ -159,3 +159,4 @@ no necesita estar residente en cada sesión, solo cuando se busca en qué ADR vi
 | Paridad de mods por dimension de experiencia (ubicacion, lo que ve el usuario, como se pide input, teclas, mascota) y deber de estudiar el par antes de proponer (enmienda de la superficie de observacion por mods) | MEF-ADR-0055 |
 | Default de `repoSlug` tras renombrar el repo a `augusto-romero-arango/mefisto`; el nombre previo resuelve por redireccion (enmienda del routing cross-repo) | MEF-ADR-0019 |
 | Smoke tests: tamano de pagina y topes de cantidad fuera del smoke | MEF-ADR-0013, MEF-ADR-0048 |
+| Polling de arrange con varias ocurrencias en smoke tests (enmienda) | MEF-ADR-0013 |

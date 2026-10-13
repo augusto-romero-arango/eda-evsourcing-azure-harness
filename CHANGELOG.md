@@ -4,6 +4,17 @@ Todo cambio notable a este proyecto se documenta aquí. Sigue [Keep a Changelog]
 
 ## [Unreleased]
 
+## [0.52.1] - 2026-10-13
+
+### Changed
+
+- MEF-ADR-0013 y los agentes `smoke-test-writer` y `reviewer`: el polling de un arrange con varias ocurrencias espera todas (no la primera), el resultado de `WaitUntilTrueAsync` siempre se afirma, y ignorarlo o cortar con la primera es hallazgo mayor del reviewer (#2378, origen Bitakora #984).
+
+### Fixed
+
+- La asercion de rutas de bloqueo de `test-tdd-agents.sh` deja de exigir un conteo exacto de menciones: agentes sin bloqueo exigen 0 y con bloqueo al menos 1, con regresion sobre una copia temporal (nightly #1908).
+- El writer y el reviewer de `mefisto-tooling` buscan tests tambien en `src/published/scripts/tests/` (la suite real detras de los shims de `scripts/tests/`), con test que fija ambos bloques del prompt (#2377).
+
 ## [0.52.0] - 2026-10-13
 
 ### Added
@@ -3518,7 +3529,8 @@ Y reemplazar referencias en `CLAUDE.md` del proyecto: `/eda-evsourcing-azure-har
 - Los agentes `reviewer` e `implementer` mantienen el placeholder literal `ADR-XXXX` en sus plantillas de reporte (no es un bug; el agente lo sustituye en tiempo de ejecución por el número real del ADR aplicable).
 - Los ejemplos de código en `test-writer.md`, `implementer.md` y `smoke-test-writer.md` conservan nombres concretos de un proyecto consumidor (`Programacion`, `ControlHoras`) anotados en el "Contrato con el consumidor" de cada agente como ejemplos pedagógicos.
 
-[Unreleased]: https://github.com/augusto-romero-arango/mefisto/compare/v0.52.0...HEAD
+[Unreleased]: https://github.com/augusto-romero-arango/mefisto/compare/v0.52.1...HEAD
+[0.52.1]: https://github.com/augusto-romero-arango/mefisto/compare/v0.52.0...v0.52.1
 [0.52.0]: https://github.com/augusto-romero-arango/mefisto/compare/v0.51.0...v0.52.0
 [0.51.0]: https://github.com/augusto-romero-arango/mefisto/compare/v0.50.0...v0.51.0
 [0.50.0]: https://github.com/augusto-romero-arango/mefisto/compare/v0.49.0...v0.50.0
