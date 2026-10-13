@@ -35,7 +35,7 @@ sesiones `-p` no los cargan. Para probar una copia suelta: `claude --plugin-dir 
   `3` (`bitácora N`: field notes en `docs/bitacora/field-notes/` mas las de PRs sin mergear) pide integrarlas y le
   encarga a Claude mergear esos PRs, poner `main` al dia y correr `/mefisto-bitacora`. `4` (`release N`: issues con
   fragmentos en `changelog.d/`) ofrece `/mefisto-release` con el bump que sugiere SemVer (`minor` si hay `added`)
-  o solo preparar el PR, y lo ejecuta al aceptar. `PRs` cuenta todos los abiertos no borradores, incluidos los de field notes.
+  o solo preparar el PR, y lo ejecuta al aceptar. `PRs` incluye los de field notes, como `--all`.
   `/mefisto-divine-wager refresh` la actualiza a mano.
 - `/clear`, `/resume` y `/branch` reinician el estado de la sesion: la banda vuelve sola a reposo en menos de un
   segundo con los listos, `PRs N`, `bitácora N` y `release N` recargados en el acto, sin esperar al siguiente minuto.
