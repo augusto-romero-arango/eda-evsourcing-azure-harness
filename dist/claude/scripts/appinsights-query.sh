@@ -63,6 +63,13 @@ else
     echo "    SERVICEBUS_NAMESPACE=<namespace de Service Bus>"
     echo "    SERVICEBUS_RG=<resource group de Service Bus>"
     echo "    FUNCTIONAPP_NAMES=<function apps separadas por coma>"
+    LEGACY_ENV="$CONSUMER_TOP/scripts/.env"
+    if [ -f "$LEGACY_ENV" ] && grep -q '^APPINSIGHTS_APP=' "$LEGACY_ENV"; then
+        echo ""
+        warn "Se encontro una configuracion legacy en $LEGACY_ENV (ya no se lee desde 0.40.0)."
+        echo "  Muevela con (el script no la mueve ni la copia por ti):"
+        echo "    mkdir -p .mefisto && mv scripts/.env .mefisto/appinsights.env"
+    fi
     exit 1
 fi
 
