@@ -65,6 +65,14 @@ check_order '¿Quieres que lo configure ahora? [si/no]' 'bootstrap-backend.sh --
 check_order '¿Quieres que lo configure ahora? [si/no]' 'setup-github-ci.sh <subscription-id>}}'
 check_order '¿Confirmas? [si/no]' 'ESTRATEGIA="<'
 check_order '¿Quieres que corra' 'command-doc scaffold-projections}}'
+check_order 'pregunta si desea aplicar **ese contenido exacto**' 'onboard-provision-appinsights.sh --apply}}'
+check_order 'onboard-provision-appinsights.sh --preview}}' 'onboard-provision-appinsights.sh --apply}}'
+contains "$body" 'Provision opt-in de `.mefisto/appinsights.env`' 'paso de provision de appinsights.env'
+contains "$body" 'FALTA` para `.mefisto/appinsights.env`' 'el paso solo se ofrece ante FALTA'
+for rt in claude opencode; do
+    out="$claude_body"; [ "$rt" = opencode ] && out="$opencode_body"
+    contains "$out" "MEFISTO_RUNTIME=$rt \"\${MEFISTO_PACKAGE_ROOT}/scripts/onboard-provision-appinsights.sh\"" "$rt invoca onboard-provision-appinsights.sh"
+done
 
 echo '[f] mirror y salidas'
 if cmp -s "$MIRROR" "$CLAUDE"; then pass 'mirror Claude coincide byte a byte'; else fail 'mirror Claude diverge'; fi

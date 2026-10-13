@@ -587,7 +587,7 @@ main() {
         FALTA)
             row FALTA "$APPINSIGHTS_ENV_DETAIL"
             PA_APPINSIGHTS_ENV_FALTA=1
-            ACTIONS="${ACTIONS}  - Crea .mefisto/appinsights.env (solo nombres de recursos, sin secretos, versionable) con APPINSIGHTS_APP, APPINSIGHTS_RG, SERVICEBUS_NAMESPACE, SERVICEBUS_RG y FUNCTIONAPP_NAMES (separadas por coma).
+            ACTIONS="${ACTIONS}  - Crea .mefisto/appinsights.env (solo nombres de recursos, sin secretos, versionable) con APPINSIGHTS_APP, APPINSIGHTS_RG, SERVICEBUS_NAMESPACE, SERVICEBUS_RG y FUNCTIONAPP_NAMES (separadas por coma); /onboard lo provisiona opt-in descubriendo los nombres con az (paso "Provision opt-in de .mefisto/appinsights.env").
 "
             ;;
         *) row NV "$APPINSIGHTS_ENV_DETAIL" ;;
@@ -846,6 +846,7 @@ main() {
             PA_STEP=$((PA_STEP + 1))
             echo "  $PA_STEP. Crea .mefisto/appinsights.env con las cinco claves (solo nombres, sin secretos): APPINSIGHTS_APP,"
             echo "     APPINSIGHTS_RG, SERVICEBUS_NAMESPACE, SERVICEBUS_RG y FUNCTIONAPP_NAMES (coma). /bug, /health-check y /purge-store lo requieren."
+            echo "     Provision opt-in desde /onboard (paso \"Provision opt-in de .mefisto/appinsights.env\"): descubre los nombres con az."
         fi
         if [ "$PA_CONFIG_FALTA" -eq 1 ]; then
             PA_STEP=$((PA_STEP + 1))

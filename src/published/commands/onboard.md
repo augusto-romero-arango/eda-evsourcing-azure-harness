@@ -28,6 +28,8 @@ Diagnostica el onboarding del consumidor: valida el `harness.config.json` efecti
 9. **Worker de proyecciones** (`projections.enabled`, MEF-ADR-0034, issue #369, informativo): si el BC declaro que adopta proyecciones y, si lo declaro, si el worker `<RootNamespace>.Projections` ya existe. Usa `HARNESS_PROJECTIONS_ENABLED` (`load_harness_config`) y consulta el token original en el config efectivo para conservar su presencia: `false` explícito reporta **`OK`** como opt-out válido; ausente o `null` conserva `NO VERIFICADO` informativo. Nunca sondea codigo mas alla de la existencia del csproj. Si esta en `true` y el worker ya existe, reporta `OK`; si esta en `true` pero el worker no existe todavia, reporta `NO VERIFICADO` y habilita el paso opt-in 7 (encadenar `{{mefisto:command scaffold-projections}}`).
 10. **Configuracion de App Insights** (`.mefisto/appinsights.env`, MEF-ADR-0053, issue #2384; en la seccion "Estado operativo de Mefisto"): el archivo que lee `appinsights-query.sh` y que requieren `{{mefisto:command bug}}` (ruta desplegada), `{{mefisto:command health-check}}` y `{{mefisto:command purge-store}}`. Se parsea linea a linea (nunca con `source`). `OK` si declara `APPINSIGHTS_APP`, `APPINSIGHTS_RG`, `SERVICEBUS_NAMESPACE` y `SERVICEBUS_RG` con valor; `FALTA` si falta (y existe `infra/environments/`) o si le faltan claves (las lista), con la accion manual de crearlo con las cinco claves; `NO VERIFICADO` si falta y no hay `infra/environments/` (greenfield). `FUNCTIONAPP_NAMES` ausente o vacio no es `FALTA`: se reporta una fila `INFO` porque `function-errors` no funcionara.
 
+La provision de **`.mefisto/appinsights.env`** (paso 9, descubre los nombres con `az` y escribe solo ese archivo, sin sobrescribir uno existente) tambien es opt-in, bajo su propia confirmacion explicita.
+
 La migración de **directivas** (paso 3), la provision de **labels** (paso 4), la del **CI** hacia Azure (paso 5), la escritura de la **estrategia de tenancy** (paso 6, la bifurcacion de caminos de auth) y encadenar **`{{mefisto:command scaffold-projections}}`** (paso 7, cuando el worker de proyecciones falta) las ofrece `{{mefisto:command onboard}}` como pasos **opt-in**, bajo confirmacion explicita e independiente. La migración de directivas nunca mueve ni elimina doctrina legacy; el script de labels es destructivo (borra los labels default de GitHub); el de CI crea recursos reales en Azure (app de Entra, role assignments, federated credential -- OIDC, MEF-ADR-0022); el de tenancy escribe el config declarado; y el de proyecciones genera codigo nuevo (invoca al agente `projections-scaffolder`). El diagnostico en si sigue siendo de solo lectura: sin confirmacion no se crea, borra, escribe, genera ni provisiona nada.
 
 Al cerrar el reporte, `{{mefisto:command onboard}}` imprime un bloque **"Proximos pasos"**: deriva del mismo diagnostico ya hecho (sin re-verificar nada) la migración de directivas, siempre en este orden y mostrando solo las acciones aplicables: completar `AGENTS.md`, dejar el puente `CLAUDE.md` -> `@AGENTS.md`, y, por separado, limpiar manualmente las secciones contractuales legacy duplicadas; después enumera configuración, labels, CI, infraestructura, secretos, auth y proyecciones según corresponda. Es **puramente informativo**: no ejecuta `gh`/`az`, no provisiona ni copia, borra o reescribe doctrina.
@@ -184,6 +186,21 @@ Aplica este paso **solo si** la sección de activación por repositorio reportó
 ```
 
 4. Recuerda que debe commitear los archivos que el script nombra y llevarlos a `main`. El script solo fusiona las claves de habilitación y escribe el cargador si falta o está desactualizado; no toca nada más ni commitea.
+
+### 9. Provision opt-in de `.mefisto/appinsights.env`
+
+Aplica este paso **solo si** el punto 10 del diagnostico reporto `FALTA` para `.mefisto/appinsights.env` (no existe o le faltan claves). Con `NO VERIFICADO` (greenfield sin `infra/environments/`) u `OK`, omitelo. Descubre los nombres con `az` (sesion activa) en el resource group del entorno, sin pedirselos al usuario (MEF-ADR-0045); escribe solo `.mefisto/appinsights.env` (MEF-ADR-0053) y nunca sobrescribe uno existente.
+
+1. Muestra primero el plan, sin escribir nada (entorno `dev` por defecto; `--env <env>` lo cambia):
+
+```bash
+{{mefisto:run onboard-provision-appinsights.sh --preview}}
+```
+
+2. Si aborta por ambiguedad (mas de un App Insights o namespace), muestra los candidatos, pregunta cual usar y repite el preview con `--appinsights-app <nombre>` / `--servicebus-namespace <nombre>`. Si aborta por otra causa (sin `az`, sin sesion, sin resource group, sin App Insights o Service Bus), muestra la causa y no ofrezcas aplicar.
+3. Si imprime las cinco claves, pregunta si desea aplicar **ese contenido exacto**. Sin un `si` explicito, no ejecutes ninguna escritura.
+4. Solo tras el `si`, ejecuta `{{mefisto:run onboard-provision-appinsights.sh --apply}}` con los mismos flags del preview. Si el archivo ya existe, el script se niega: indica editarlo o borrarlo a mano.
+5. Recuerda que el archivo solo contiene nombres de recursos (sin secretos) y debe commitearse.
 
 ## Reglas
 
