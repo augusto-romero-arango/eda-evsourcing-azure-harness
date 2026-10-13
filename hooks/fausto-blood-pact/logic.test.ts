@@ -37,6 +37,9 @@ import {
   batchEndFromStats,
   closeRowText,
   closeTotalText,
+  nextCurrentRow,
+  runningRowText,
+  totalWithRunning,
   fmtCost,
   issueStatsFromHistory,
   stampToMs,
@@ -922,4 +925,33 @@ test('poseOfBatch: cada estado del lote tiene sprite, y el terminado es el revis
     const pose = poseOfBatch(batch(state))
     expect(() => sprite(pose.role, pose.state, 0)).not.toThrow()
   }
+})
+
+test('runningRowText y totalWithRunning arman la fila en curso de la tabla', () => {
+  const started = stampToMs('20260101-120000')
+  const now = started + 83_000
+  expect(runningRowText(900, null, 'Mostrar tabla', started, now, 20)).toEqual({
+    lead: `#900    ${'Mostrar tabla'.padEnd(20)} ${'…'.padEnd(10)} `,
+    trail: '01:23    …',
+  })
+  expect(runningRowText(900, '951', null, started, now, 0).lead).toBe('#900    PR #951    ')
+  expect(runningRowText(900, null, null, 0, now, 0).trail).toBe('…        …')
+  const total = statsTotal([{ durationMs: 76_000, costUsd: 4.21, title: null, finishedMs: 0 }])
+  const withRun = totalWithRunning(total, started, now)
+  expect(withRun).toMatchObject({ durationMs: 159_000, costUsd: 4.21 })
+  expect(closeTotalText(2, withRun, 0)).toContain('02:39')
+  expect(totalWithRunning(total, 0, now)).toBe(total)
+})
+
+test('nextCurrentRow: corrida activa del eslabon y, al esperar su merge, tiempo congelado', () => {
+  const b = parseBatchStatus(batchRaw())!
+  const live = parseStatus('pipeline-status-tdd-13.json', JSON.stringify({ issue: 13, started: '20261009-100000', updated: '2026-10-09T10:01:00', stage: '2-implementer', state: 'running' }))!
+  const row = nextCurrentRow(b, live, null, 1_000)
+  expect(row).toEqual({ run: live, endMs: null })
+  const frozen = nextCurrentRow(b, null, row, 5_000)
+  expect(frozen).toEqual({ run: live, endMs: 5_000 })
+  expect(nextCurrentRow(b, null, frozen, 9_000)).toBe(frozen)
+  const other = parseStatus('pipeline-status-tdd-40.json', JSON.stringify({ issue: 40, started: '20261009-100000', stage: '2-implementer', state: 'running' }))!
+  expect(nextCurrentRow(b, null, { run: other, endMs: null }, 5_000)).toBeNull()
+  expect(nextCurrentRow(parseBatchStatus(batchRaw({ state: 'completed' }))!, live, row, 5_000)).toBeNull()
 })

@@ -122,6 +122,8 @@ declare module 'claude-code' {
         stats: Record<string, { durationMs: number; costUsd: number | null; title: string | null; finishedMs: number }>
         endedMs: number | null
       }
+      /** Fila `●` del sequential en curso: su corrida y, si espera el merge, el instante en que se congela su tiempo (#2361). */
+      pactBatchCurrent: { run: PipelineRun; endMs: number | null } | null
       pactMerge: PactMerge | null
       pactLogLines: PaneLine[]
       pactPaneRun: PipelineRun | null
