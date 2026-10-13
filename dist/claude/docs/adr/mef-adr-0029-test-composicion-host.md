@@ -12,7 +12,7 @@ de DI real del host de Azure Functions. Un registro faltante en ese contenedor n
 ningun test unitario -- solo revienta cuando el host arranca de verdad.
 
 Eso paso en el consumidor Bitakora.ControlAsistencia: un upgrade de
-`Cosmos.EventSourcing.CritterStack` dejo de auto-registrar `ITenantResolver` (refs #207 upgrade,
+`Cosmos.EventSourcing.CritterStack` dejo de auto-registrar `ITenantContext` (refs #207 upgrade,
 #219 fix). El build compilo limpio y los tests unitarios quedaron en verde -- ninguno construye el
 grafo de DI -- y el problema solo se detecto **post-deploy**, en los smoke tests contra el entorno
 dev (issue #221, guardrail creado en el consumidor). El feedback loop para un registro de DI
@@ -22,7 +22,7 @@ suite.
 
 Este ADR hornea ese guardrail en el scaffold de Mefisto (issue #319) para que todo dominio nuevo lo
 tenga por defecto, en vez de reintroducirlo repo por repo. Depende de MEF-ADR-0028 (issue #318):
-resolver los routers del dominio arrastra `ITenantResolver` en sus constructores (ver "Verificacion
+resolver los routers del dominio arrastra `ITenantContext` en sus constructores (ver "Verificacion
 empirica" abajo), asi que el test de composicion solo puede quedar en verde sobre un scaffold que ya
 registra ese resolver.
 
@@ -48,18 +48,18 @@ Decompilando (`ilspycmd`) los ensamblados `Cosmos.EventSourcing.CritterStack` 2.
 
 Las tres son registros **por tipo mapeado** (`AddScoped<TService, TImplementation>`), no por
 factory-lambda. Y las tres implementaciones concretas dependen **directamente** de
-`ITenantResolver` en su constructor:
+`ITenantContext` en su constructor:
 
 ```csharp
-public class WolverineCommandRouter(IMessageBus messageBus, ITenantResolver tenantResolver) : ICommandRouter
-public class WolverinePrivateEventSender(IMessageBus messageBus, ITenantResolver tenantResolver) : IPrivateEventSender
-public class WolverinePrivateEventRouter(IMessageBus messageBus, ITenantResolver tenantResolver) : IPrivateEventRouter
+public class WolverineCommandRouter(IMessageBus messageBus, ITenantContext tenantContext) : ICommandRouter
+public class WolverinePrivateEventSender(IMessageBus messageBus, ITenantContext tenantContext) : IPrivateEventSender
+public class WolverinePrivateEventRouter(IMessageBus messageBus, ITenantContext tenantContext) : IPrivateEventRouter
 ```
 
-Esta es exactamente la forma del incidente que origina este ADR: si `ITenantResolver` no esta
+Esta es exactamente la forma del incidente que origina este ADR: si `ITenantContext` no esta
 registrado, construir cualquiera de estos tres tipos falla. Por tratarse de registros por tipo
 mapeado, `ValidateOnBuild` ya recorre su arbol de constructor y detecta la ausencia de
-`ITenantResolver` sin necesidad de resolver nada explicitamente (ver seccion siguiente). La
+`ITenantContext` sin necesidad de resolver nada explicitamente (ver seccion siguiente). La
 resolucion explicita de los tres routers (CA-3) es un complemento deliberado, no una compensacion
 de un hueco de cobertura de `ValidateOnBuild` sobre estos tipos puntuales -- ver "Decision, punto 3"
 para el motivo real por el que se mantiene.
@@ -72,7 +72,7 @@ para el motivo real por el que se mantiene.
 `AgregarServicios{Dominio}(this IServiceCollection, string martenConnectionString, string
 serviceBusInterno, string serviceBus<Alias> (uno por alias del backbone compartido), bool isDev)`.
 Ahi vive **todo** el wiring que antes eran top-level statements de `Program.cs`: Wolverine, Marten,
-los tres routers, el `ITenantResolver` transitorio (MEF-ADR-0028), OpenTelemetry y la
+los tres routers, el `ITenantContext` transitorio (MEF-ADR-0028), OpenTelemetry y la
 configuracion de JSON/validacion. `Program.cs` pasa a invocar unicamente ese metodo -- una sola
 fuente de verdad del wiring, sin duplicacion entre `Program.cs` y el test.
 
@@ -217,7 +217,7 @@ registro no cambie en una version futura del paquete.
   que este ADR extrae a un metodo de extension compartido con el test.
   MEF-ADR-0014 (coverage gate): el test de composicion y el archivo de wiring que ejercita quedan
   fuera del alcance medido por el gate.
-- MEF-ADR-0028 (estrategia de tenancy): el `ITenantResolver` que este ADR verifica que este
+- MEF-ADR-0028 (estrategia de tenancy): el `ITenantContext` que este ADR verifica que este
   registrado es el que fija ese ADR; sin el, el test de composicion se pondria rojo sobre un
   dominio recien scaffoldeado (dependencia del issue #319 sobre el issue #318).
 - Bitakora.ControlAsistencia issues #207 (upgrade que rompio el registro), #219 (fix del incidente)
@@ -229,3 +229,4 @@ registro no cambie en una version futura del paquete.
   un metodo de extension compartido entre `Program.cs` y el test, el test de composicion con
   `BuildServiceProvider(ValidateOnBuild, ValidateScopes)` + resolucion explicita de los tres
   routers, y delimita la categoria frente a MEF-ADR-0002 y MEF-ADR-0014.
+- 2026-10-13: enmendado (issue #2399) para alinear el cuerpo con el renombre `ITenantResolver` -> `ITenantContext` de `Cosmos.MultiTenancy` 3.1.0 (issue #2394), sin cambiar ninguna decision.

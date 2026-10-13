@@ -149,7 +149,7 @@ Algunos sintomas no son de deploy, de codigo de dominio ni de contencion de recu
 
 ### Firma del sintoma
 
-La firma diagnostica es **"compila + unit tests verdes pero revienta en runtime"**: nada en la superficie publica del paquete cambio (mismos metodos, misma firma), pero el registro interno de servicios en el contenedor DI si cambio entre versiones. El caso de origen: `InvalidOperationException: Unable to resolve service for type 'Cosmos.MultiTenancy.ITenantResolver'` -> HTTP 500 en todos los endpoints tras actualizar `Cosmos.Event*` de 0.1.9 a 2.1.0 (Bitakora.ControlAsistencia, ver #207/#219).
+La firma diagnostica es **"compila + unit tests verdes pero revienta en runtime"**: nada en la superficie publica del paquete cambio (mismos metodos, misma firma), pero el registro interno de servicios en el contenedor DI si cambio entre versiones. El caso de origen: `InvalidOperationException: Unable to resolve service for type 'Cosmos.MultiTenancy.ITenantContext'` -> HTTP 500 en todos los endpoints tras actualizar `Cosmos.Event*` de 0.1.9 a 2.1.0 (Bitakora.ControlAsistencia, ver #207/#219).
 
 ### Como confirmarlo
 

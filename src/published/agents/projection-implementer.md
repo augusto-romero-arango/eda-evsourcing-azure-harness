@@ -61,13 +61,13 @@ El seam `ConfiguracionMartenProjections{Dominio}.Configurar{Dominio}` registra e
 
 ### 3. Functions HTTP GET (`Obtener{X}`/`Listar{X}s`)
 
-Sigue el naming y la organizacion vertical de `naming.md` (una carpeta por query, sin sufijo `Function`) y la via de consulta que corresponda de `read-apis.md` -- (a) proyeccion materializada es el default; (b1)/(b2) solo si el issue lo pide explicitamente. Abre la `QuerySession` **acotada al tenant que resolvio `ITenantResolver`** (MEF-ADR-0028), **nunca** a un tenant id que llegue en la ruta, el query string o el body -- mitigacion BOLA/IDOR no negociable.
+Sigue el naming y la organizacion vertical de `naming.md` (una carpeta por query, sin sufijo `Function`) y la via de consulta que corresponda de `read-apis.md` -- (a) proyeccion materializada es el default; (b1)/(b2) solo si el issue lo pide explicitamente. Abre la `QuerySession` **acotada al tenant que resolvio `ITenantContext`** (MEF-ADR-0028), **nunca** a un tenant id que llegue en la ruta, el query string o el body -- mitigacion BOLA/IDOR no negociable.
 
 **El `id` de ruta se parsea tipado una sola vez antes de tocar `LoadAsync` (MEF-ADR-0037, doctrina completa en `read-apis.md` -- no la duplico aqui)**: nunca lo reenvies crudo. Caso comun -- identidad nacida `Guid` --: `Guid.TryParse` con `400` explicito si falla, y `ToString()` sin argumentos como unica salida a string:
 
 ```csharp
 // ObtenerSeguimientoTurno/FunctionEndpoint.cs
-public class FunctionEndpoint(IDocumentStore store, ITenantResolver tenantResolver)
+public class FunctionEndpoint(IDocumentStore store, ITenantContext tenantContext)
 {
     [Function("ObtenerSeguimientoTurno")]
     public async Task<IActionResult> Run(
@@ -79,7 +79,7 @@ public class FunctionEndpoint(IDocumentStore store, ITenantResolver tenantResolv
         if (!Guid.TryParse(id, out var turnoId))
             return new BadRequestObjectResult("El id del turno no es un Guid valido");
 
-        await using var session = store.QuerySession(tenantResolver.TenantId);
+        await using var session = store.QuerySession(tenantContext.TenantId);
         var seguimiento = await session.LoadAsync<SeguimientoTurno>(turnoId.ToString(), ct);   // unico ToString(), sin argumentos
         return seguimiento is null ? new NotFoundResult() : new OkObjectResult(seguimiento);
     }
@@ -98,7 +98,7 @@ Registra el `FunctionEndpoint` y sus dependencias en `ComposicionServicios{Domin
 
 - Modificar o eliminar tests. Si un test de `projection-test-writer` parece incorrecto, implementa igual y documenta la duda en el commit message.
 - Registrar una proyeccion como `Inline` en el worker sin justificacion explicita del issue -- excepcion opt-in, MEF-ADR-0034.
-- Abrir una `QuerySession` con un tenant id que no venga de `ITenantResolver`.
+- Abrir una `QuerySession` con un tenant id que no venga de `ITenantContext`.
 - Duplicar la doctrina del Skill `projections` en este archivo.
 - Recibir el segmento de la ruta del GET como `string` y pasarlo sin el parseo tipado de MEF-ADR-0037 a `LoadAsync`/`AggregateStreamAsync`/`FetchStreamAsync` -- sea la identidad de uno o de varios componentes. Y, cuando son varios, aceptar la clave **ya concatenada** en un unico segmento en vez de un segmento por componente.
 - Emitir `Create`/`Apply(TEvento, TId)` -- firma no reconocida por el source generator; el evento se descarta de `EventTypes` en silencio (`modelos-marten.md`).

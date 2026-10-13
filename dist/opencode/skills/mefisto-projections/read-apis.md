@@ -28,12 +28,12 @@ Fuente: MEF-ADR-0035 secciones 3-5 (superficie de consulta); MEF-ADR-0041 decisi
 
 ## Patron de seguridad: sesion acotada al tenant resuelto, nunca al id de la ruta
 
-Toda `QuerySession` de un endpoint de lectura se abre **acotada al tenant que resolvio `ITenantResolver`** (MEF-ADR-0028) -- **nunca** a un tenant id que llegue en la ruta, el query string o el body de la request:
+Toda `QuerySession` de un endpoint de lectura se abre **acotada al tenant que resolvio `ITenantContext`** (MEF-ADR-0028) -- **nunca** a un tenant id que llegue en la ruta, el query string o el body de la request:
 
 ```csharp
 // CORRECTO: el tenant viene del resolver, no de la request.
-// ITenantResolver expone TenantId/UserId como PROPIEDADES, no metodos (MEF-ADR-0028 seccion 1).
-await using var session = store.QuerySession(tenantResolver.TenantId);
+// ITenantContext expone TenantId/UserId como PROPIEDADES, no metodos (MEF-ADR-0028 seccion 1).
+await using var session = store.QuerySession(tenantContext.TenantId);
 var seguimiento = await session.LoadAsync<SeguimientoTurno>(turnoId.ToString()); // turnoId SI viene de la ruta -- es el recurso, no el tenant
                                                         // (ya parseado tipado -- MEF-ADR-0037, seccion de abajo)
 
@@ -61,7 +61,7 @@ public async Task<IActionResult> Run(
     if (!Guid.TryParse(id, out var turnoId))
         return new BadRequestObjectResult("El id del turno no es un Guid valido");
 
-    await using var session = store.QuerySession(tenantResolver.TenantId);
+    await using var session = store.QuerySession(tenantContext.TenantId);
     var seguimiento = await session.LoadAsync<SeguimientoTurno>(turnoId.ToString(), ct);   // unico ToString(), sin argumentos
     return seguimiento is null ? new NotFoundResult() : new OkObjectResult(seguimiento);
 }
@@ -83,7 +83,7 @@ public async Task<IActionResult> Run(
     if (!Identificacion.TryParse(identificacion, out var identificacionTipada))
         return new BadRequestObjectResult("La identificacion no es valida");
 
-    await using var session = store.QuerySession(tenantResolver.TenantId);
+    await using var session = store.QuerySession(tenantContext.TenantId);
     var ficha = await session.LoadAsync<FichaColaborador>(identificacionTipada.ToString(), ct);   // unico ToString(), del propio tipo
     return ficha is null ? new NotFoundResult() : new OkObjectResult(ficha);
 }
@@ -107,7 +107,7 @@ public async Task<IActionResult> Run(
         return new BadRequestObjectResult("La ruta lleva un empleadoId o una fecha invalidos");
 
     var streamId = AsistenciaAggregateRoot.ComputarStreamId(empleadoIdTipado, fechaTipada);
-    await using var session = store.QuerySession(tenantResolver.TenantId);
+    await using var session = store.QuerySession(tenantContext.TenantId);
     var resumen = await session.LoadAsync<ResumenAsistenciaDiaria>(streamId, ct);
     return resumen is null ? new NotFoundResult() : new OkObjectResult(resumen);
 }
@@ -165,7 +165,7 @@ public async Task<IActionResult> Run(
             { StatusCode = StatusCodes.Status422UnprocessableEntity };   // RFC 10008 seccion 2.1: 422
 
     // Sesion acotada al tenant del resolver -- identico al GET (MEF-ADR-0028), nunca a un tenant del body.
-    await using var session = store.QuerySession(tenantResolver.TenantId);
+    await using var session = store.QuerySession(tenantContext.TenantId);
     IQueryable<SeguimientoTurno> query = session.Query<SeguimientoTurno>();
     if (filtro.Estado is not null) query = query.Where(t => t.Estado == filtro.Estado);          // AND por defecto -- MEF-ADR-0042
     if (filtro.Estados is { Count: > 0 }) query = query.Where(t => filtro.Estados.Contains(t.Estado)); // OR explicito: campo propio

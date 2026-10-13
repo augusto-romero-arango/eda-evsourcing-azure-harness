@@ -2,15 +2,15 @@
 
 - **Fecha**: 2026-07-19
 - **Estado**: aceptado
-- **Aplica a**: doctrina de tenancy del marco; gobierna al `domain-scaffolder` (registro del `ITenantResolver` en el `Program.cs` que genera, ramificado por etapa), a `/onboard` (diagnostico informativo y escritura opt-in del token de deteccion) y a la familia `/install-workos` (issue #339, implementado)/`/install-apim` (issue #340, implementado: ejecuta la migracion automatizada (a)->(b) que fija la seccion 4, introducida por la enmienda del issue #337 y actualizada por la enmienda del issue #802 al patron `AsyncLocal` + middleware -- reescritura del paso pendiente en el issue #803)/`/install-auth` (issue #342, implementado: orquesta a los dos anteriores con un gate humano en medio). Cross-referencia MEF-ADR-0003 (stack ES Marten+Wolverine), MEF-ADR-0021 (infraestructura base), MEF-ADR-0023 (Bounded Context/topologia de ASB) y MEF-ADR-0032 (identidad y autenticacion en el borde WorkOS+APIM, fuente del insight de normalizacion de claims que habilita la seccion 4).
+- **Aplica a**: doctrina de tenancy del marco; gobierna al `domain-scaffolder` (registro del `ITenantContext` en el `Program.cs` que genera, ramificado por etapa), a `/onboard` (diagnostico informativo y escritura opt-in del token de deteccion) y a la familia `/install-workos` (issue #339, implementado)/`/install-apim` (issue #340, implementado: ejecuta la migracion automatizada (a)->(b) que fija la seccion 4, introducida por la enmienda del issue #337 y actualizada por la enmienda del issue #802 al patron `AsyncLocal` + middleware -- reescritura del paso pendiente en el issue #803)/`/install-auth` (issue #342, implementado: orquesta a los dos anteriores con un gate humano en medio). Cross-referencia MEF-ADR-0003 (stack ES Marten+Wolverine), MEF-ADR-0021 (infraestructura base), MEF-ADR-0023 (Bounded Context/topologia de ASB) y MEF-ADR-0032 (identidad y autenticacion en el borde WorkOS+APIM, fuente del insight de normalizacion de claims que habilita la seccion 4).
 
 ## Contexto
 
 Un dominio scaffoldeado con los building blocks `Cosmos.Event*` actuales nace roto si su `Program.cs`
-no registra un `ITenantResolver`: en el consumidor Bitakora.ControlAsistencia, el upgrade de
+no registra un `ITenantContext`: en el consumidor Bitakora.ControlAsistencia, el upgrade de
 `Cosmos.EventSourcing.CritterStack` `0.1.9 -> 2.1.0` dejo de auto-registrarlo y **toda** activacion de
 funcion fallo con `InvalidOperationException: Unable to resolve service for type
-'Cosmos.MultiTenancy.ITenantResolver'` -> HTTP 500, detectado solo post-deploy por smoke tests (refs
+'Cosmos.MultiTenancy.ITenantContext'` -> HTTP 500, detectado solo post-deploy por smoke tests (refs
 consumidor: #207 upgrade, #219 fix).
 
 Verificado decompilando (`ilspycmd`) los ensamblados vigentes de los paquetes `Cosmos.MultiTenancy*`
@@ -20,22 +20,23 @@ propio ensamblado):
 - **`Cosmos.MultiTenancy`** (namespace `Cosmos.MultiTenancy`) define el contrato, sin implementacion:
 
   ```csharp
-  public interface ITenantResolver
+  public interface ITenantContext
   {
       string TenantId { get; }
       string UserId { get; }
+      string OrganizationMembershipId { get; }
   }
   ```
 
 - **`Cosmos.MultiTenancy.AspNetCore`** aporta `TrustedHeadersTenantResolver` (lee `X-Tenant-Id`/
   `X-User-Id` de `IHttpContextAccessor`, lanza `InvalidOperationException` si el header falta) y la
   extension `AgregarTenantResolverConHeadersConfiables()` que registra
-  `services.AddScoped<ITenantResolver, TrustedHeadersTenantResolver>()`.
+  `services.AddScoped<ITenantContext, TrustedHeadersTenantResolver>()`.
 - **`Cosmos.MultiTenancy.CritterStack`** aporta `ProxyTenantResolver` (delega en
   `WolverineMessageContextTenantResolver` cuando corre dentro de un handler de Wolverine sin
   `HttpContext`, o en `TrustedHeadersTenantResolver` cuando si lo hay -- el hibrido HTTP + daemon de
   Wolverine) y la extension `AgregarTenantResolverHibrido()` que registra
-  `services.AddScoped<ITenantResolver, ProxyTenantResolver>()`. **Ambos exigen que el header o el
+  `services.AddScoped<ITenantContext, ProxyTenantResolver>()`. **Ambos exigen que el header o el
   `IMessageContext.TenantId` esten presentes**: si faltan, lanzan `InvalidOperationException` en vez
   de degradar a un default. Esa eleccion de rama, segun el hallazgo posterior del issue #802 (mas abajo
   en esta misma seccion), se toma **una sola vez, en el constructor** de `ProxyTenantResolver` -- no
@@ -43,7 +44,7 @@ propio ensamblado):
 
 `Cosmos.EventSourcing.CritterStack` 2.1.0 depende transitivamente de `Cosmos.MultiTenancy` 2.1.0 (su
 `.nuspec` declara `<dependency id="Cosmos.MultiTenancy" version="2.1.0" .../>`), asi que el contrato
-`ITenantResolver` ya esta disponible en el `.csproj` que genera `domain-scaffolder` sin agregar
+`ITenantContext` ya esta disponible en el `.csproj` que genera `domain-scaffolder` sin agregar
 ninguna referencia nueva -- lo que falta es **registrar una implementacion**.
 
 Un proyecto recien scaffoldeado (greenfield) todavia no tiene autenticacion instalada: no existe
@@ -66,7 +67,7 @@ Sedes en proporcion similar), `POST` respondiendo `409` con codigos `Guid.Create
 Decompilando (`ilspycmd`) `Cosmos.MultiTenancy.CritterStack`/`Cosmos.MultiTenancy.AspNetCore` 2.3.0 se
 confirmo la causa raiz: `ProxyTenantResolver` decide la rama HTTP/Wolverine **en su constructor**, no
 por-request. En Azure Functions isolated worker, la cadena `FunctionEndpoint -> ICommandRouter ->
-ITenantResolver` se resuelve **antes** de que el `HttpContext` quede adjunto al scope de DI de la
+ITenantContext` se resuelve **antes** de que el `HttpContext` quede adjunto al scope de DI de la
 invocacion (`IHttpContextAccessor.HttpContext` es null en ese instante), y Wolverine ademas genera sus
 handlers en un `IServiceScope` propio, hijo de la raiz (`JasperFx LazyServiceLocationFrame`) -- ni
 siquiera comparte el scope donde el framework de Functions si adjunta el `HttpContext`. El resultado:
@@ -74,7 +75,7 @@ siquiera comparte el scope donde el framework de Functions si adjunta el `HttpCo
 presentes.
 
 Es ademas un catch-22 estructural para HTTP, no solo un problema de orden de resolucion:
-`WolverineCommandRouter.InvokeAsync` invoca `TenancyDelivery.Build(tenantResolver)` para **construir**
+`WolverineCommandRouter.InvokeAsync` invoca `TenancyDelivery.Build(tenantContext)` para **construir**
 el envelope inicial del comando -- el `IMessageContext` no puede tener `TenantId` todavia en ese punto,
 asi que ni siquiera esperar a que el pipeline avance un paso mas resolveria el problema: el resolver
 debe conocer el tenant *antes* de que exista ningun envelope o `IMessageContext` del que leerlo.
@@ -89,10 +90,10 @@ Bitakora.ControlAsistencia el patron de referencia de Cosmos.ControlPlane
 
 ### 1. Modelo de dos etapas
 
-El `ITenantResolver` de un dominio del marco vive en una de dos etapas, nunca en ambas a la vez:
+El `ITenantContext` de un dominio del marco vive en una de dos etapas, nunca en ambas a la vez:
 
 - **(a) Mono-tenant transitorio (greenfield, sin autenticacion instalada)**: un resolver propio del
-  dominio, de valores fijos, que implementa `Cosmos.MultiTenancy.ITenantResolver` sin depender de
+  dominio, de valores fijos, que implementa `Cosmos.MultiTenancy.ITenantContext` sin depender de
   `HttpContext` ni de `IMessageContext`. Es el que fija este ADR y el que genera `domain-scaffolder`
   por defecto.
 - **(b) Resolver real basado en `TenantContext` de autenticacion**: cuando el proyecto instala una
@@ -113,10 +114,11 @@ la autenticacion ya sabe distinguir tenants reales).
 ```csharp
 namespace <RootNamespace>.{PascalCase}.Infraestructura;
 
-public class TenantResolverMonoTenantPorDefecto : ITenantResolver
+public class TenantResolverMonoTenantPorDefecto : ITenantContext
 {
     public string TenantId => JasperFx.StorageConstants.DefaultTenantId;
     public string UserId => "usuario-no-autenticado";
+    public string OrganizationMembershipId => "membresia-no-autenticada";
 }
 ```
 
@@ -128,13 +130,14 @@ public class TenantResolverMonoTenantPorDefecto : ITenantResolver
   dependencia transitiva del scaffold via `Marten` 9.12.0 <- `Cosmos.EventSourcing.CritterStack`
   2.1.0: no agrega ninguna referencia nueva al `.csproj`. Usar el mismo default de Marten evita
   introducir un segundo tenant id inventado que solo confundiria en el event store.
+- **`OrganizationMembershipId`**: se fija a la constante `"membresia-no-autenticada"`, por la misma razon que `UserId`: en greenfield no hay membresia que resolver. CritterStack 3.1.0 lee la propiedad en cada append (`UnitOfWorkMiddleware.Before()`) y en cada mensaje publicado, asi que el resolver de la etapa (a) debe devolver un valor, nunca lanzar.
 - **`UserId`**: se fija al valor descriptivo `"usuario-no-autenticado"` -- no una persona real, sino
   una marca explicita en la metadata de eventos de que el evento se origino sin autenticacion. Encaja
   con que en greenfield, por definicion, aun no hay usuario autenticado que resolver.
-- **Registro** (`Program.cs`, MEF-ADR-0021): `builder.Services.AddScoped<ITenantResolver,
+- **Registro** (`Program.cs`, MEF-ADR-0021): `builder.Services.AddScoped<ITenantContext,
   TenantResolverMonoTenantPorDefecto>();`, mismo lifetime (`Scoped`) que usan
   `AgregarTenantResolverConHeadersConfiables()`/`AgregarTenantResolverHibrido()` para su propia
-  implementacion -- consistente con el resto del contrato `ITenantResolver`, sin fijar un lifetime
+  implementacion -- consistente con el resto del contrato `ITenantContext`, sin fijar un lifetime
   distinto para el caso transitorio.
 - El resolver **no** usa `AgregarTenantResolverHibrido()` ni `ProxyTenantResolver`/
   `TrustedHeadersTenantResolver`: esos mecanismos exigen headers/`IMessageContext.TenantId` y lanzan
@@ -167,7 +170,7 @@ y CI) que pregunta al usuario la estrategia vigente y **escribe/actualiza** `ten
 config, solo tras confirmacion explicita: `/onboard` no sondea codigo ni infiere la etapa por su cuenta.
 
 **`domain-scaffolder`** lee `tenancy.strategy` inline con `jq` en su Paso 0 (mismo patron ya usado para
-`serviceBus.external`, MEF-ADR-0024) y rama la generacion del `ITenantResolver` que registra en
+`serviceBus.external`, MEF-ADR-0024) y rama la generacion del `ITenantContext` que registra en
 `Infraestructura/ComposicionServicios{Dominio}.cs`:
 
 - **Etapa (a)** (ausente o `"mono-tenant-transitorio"`): genera `TenantResolverMonoTenantPorDefecto.cs`
@@ -197,9 +200,9 @@ config, solo tras confirmacion explicita: `/onboard` no sondea codigo ni infiere
   seccion 4 fija que `TenantContextMiddleware` ya sabe leer los headers canonicos `X-Tenant-Id`/
   `X-User-Id` (HTTP) y las `ApplicationProperties` `tenant-id`/`user_id` (Service Bus) sin parsing
   adicional por dominio, igual que ya explicaba MEF-ADR-0032 seccion 5 para el patron previo. En
-  cualquiera de las dos ramas (referenciar la biblioteca o fallback a "proponer") el `ITenantResolver`
+  cualquiera de las dos ramas (referenciar la biblioteca o fallback a "proponer") el `ITenantContext`
   debe quedar **registrado y construible**: el test de composicion del contenedor (MEF-ADR-0029) resuelve
-  los tres routers, que dependen de `ITenantResolver` en su constructor, y es un gate duro del scaffold --
+  los tres routers, que dependen de `ITenantContext` en su constructor, y es un gate duro del scaffold --
   si el fallback deja el contrato sin registrar, ese test revienta (reintroduciendo el incidente #318).
   El fallback registra el resolver transitorio de la etapa (a) como placeholder para no romperlo.
 
@@ -235,7 +238,7 @@ biblioteca propia scaffoldeada por dominio consumidor.
   empaqueta como NuGet (decision de la sesion de planeacion del issue #802), igual que el hotfix real
   del consumidor (PR #546), que porto el codigo de referencia de Cosmos.ControlPlane
   (`src/Cosmos.ControlPlane.TenantResolver/`) con sus tests. Componentes:
-  - **`TenantExecutionContext : ITenantResolver`**: singleton **sin estado de instancia** -- respalda
+  - **`TenantExecutionContext : ITenantContext`**: singleton **sin estado de instancia** -- respalda
     `TenantId`/`UserId` en campos `AsyncLocal<string>` **estaticos**, no en campos de instancia, porque
     `AsyncLocal` fluye con la cadena logica de ejecucion asincrona, no con el `IServiceScope` de DI: a
     diferencia de `ProxyTenantResolver`, no importa que Wolverine construya sus handlers en un
@@ -243,7 +246,7 @@ biblioteca propia scaffoldeada por dominio consumidor.
     viaja con el `async`/`await` del request, no con el contenedor. Los getters **fallan ruidosamente**
     (lanzan si se leen antes de que el middleware los puebla) en vez de degradar en silencio a un
     default -- mismo principio de fail-fast que ya fijaba este ADR para `ProxyTenantResolver`/
-    `TrustedHeadersTenantResolver` en "Contexto". Expone `SetDerivedIdentity(tenantId, userId)` para
+    `TrustedHeadersTenantResolver` en "Contexto". `OrganizationMembershipId` es estricto igual que `TenantId`/`UserId`: lanza si nadie lo poblo, porque CritterStack 3.1.0 lo lee en cada append (`UnitOfWorkMiddleware.Before()`) y cada mensaje publicado. Expone `SetDerivedIdentity(tenantId, userId, organizationMembershipId)` -- el tercer parametro es obligatorio -- para
     triggers sin identidad del gateway (p. ej. un timer trigger, o un Service Bus trigger de un evento
     interno sin claim de usuario): el propio handler deriva y fija la identidad antes de que el codigo
     de negocio la lea.
@@ -256,10 +259,10 @@ biblioteca propia scaffoldeada por dominio consumidor.
     Bus, lee las `ApplicationProperties` `tenant-id`/`user_id` del mensaje via
     `BindInputAsync<ServiceBusReceivedMessage>()`. Al correr como middleware del *worker* (no del
     request pipeline de ASP.NET Core), se ejecuta antes de que `FunctionEndpoint -> ICommandRouter ->
-    ITenantResolver` resuelva nada -- el `AsyncLocal` ya tiene el valor correcto para cuando cualquier
-    router lo lee, incluido dentro de `TenancyDelivery.Build(tenantResolver)`.
+    ITenantContext` resuelva nada -- el `AsyncLocal` ya tiene el valor correcto para cuando cualquier
+    router lo lee, incluido dentro de `TenancyDelivery.Build(tenantContext)`.
   - **Dos extensiones**: `AgregarTenantResolver...()` (seam de composicion, registra
-    `TenantExecutionContext` como `ITenantResolver` -- singleton, no scoped: el estado real vive en el
+    `TenantExecutionContext` como `ITenantContext` -- singleton, no scoped: el estado real vive en el
     `AsyncLocal`, no en el ciclo de vida de DI) y `UsarTenantContextMiddleware()` (extension sobre
     `IFunctionsWorkerApplicationBuilder`, azucar sobre `UseMiddleware<TenantContextMiddleware>()` [3],
     invocada desde `Program.cs` sobre el `FunctionsApplicationBuilder` antes de `builder.Build()`).
@@ -274,7 +277,7 @@ biblioteca propia scaffoldeada por dominio consumidor.
   2. **Scaffold de la biblioteca** `src/{RootNamespace}.TenantResolver/` (si no existe ya en el BC).
   3. **Migracion del resolver en todos los dominios ya scaffoldeados** del BC: cada
      `Infraestructura/ComposicionServicios{Dominio}.cs` que registraba
-     `services.AddScoped<ITenantResolver, TenantResolverMonoTenantPorDefecto>()` (seccion 2)
+     `services.AddScoped<ITenantContext, TenantResolverMonoTenantPorDefecto>()` (seccion 2)
      pasa a invocar `services.AgregarTenantResolver...()` (bullet anterior), cada `.csproj` de dominio
      suma el `ProjectReference` a la biblioteca y cada `Program.cs` agrega
      `builder.UsarTenantContextMiddleware()` antes de `builder.Build()`; se elimina el archivo
@@ -293,9 +296,9 @@ biblioteca propia scaffoldeada por dominio consumidor.
 - **El gate no se relaja, y por que MEF-ADR-0029 no atrapo este fallo**: el test de composicion del
   contenedor DI (MEF-ADR-0029) sigue siendo un gate duro despues de la migracion -- resuelve los tres
   routers (`ICommandRouter`, `IPrivateEventSender`, `IPrivateEventRouter`), que dependen de
-  `ITenantResolver` en su constructor, y debe seguir en verde en cada dominio migrado. `/install-apim`
+  `ITenantContext` en su constructor, y debe seguir en verde en cada dominio migrado. `/install-apim`
   migra el resolver de forma que el contrato quede **registrado y construible** en el mismo commit, sin
-  ninguna ventana donde el contenedor quede sin `ITenantResolver` resuelto. **MEF-ADR-0029 no atrapo el
+  ninguna ventana donde el contenedor quede sin `ITenantContext` resuelto. **MEF-ADR-0029 no atrapo el
   fallo de `ProxyTenantResolver`** (issue #802) porque es un gate de **composicion** (¿el grafo de DI
   construye? ¿los tres routers resuelven sin excepcion?), no un gate de **comportamiento en runtime**:
   en el test de composicion, `IHttpContextAccessor` esta registrado y `ProxyTenantResolver` se
@@ -316,7 +319,7 @@ biblioteca propia scaffoldeada por dominio consumidor.
 
 ## Alternativas consideradas
 
-### Alt 1: no registrar ningun `ITenantResolver` por defecto, documentar que el consumidor debe hacerlo
+### Alt 1: no registrar ningun `ITenantContext` por defecto, documentar que el consumidor debe hacerlo
 
 **Descartada**: es el estado actual que origino el incidente en Bitakora.ControlAsistencia -- un
 dominio scaffoldeado nace roto (`InvalidOperationException` en la primera invocacion, HTTP 500) y el
@@ -350,7 +353,7 @@ proyecto matura de (a) a (b), que es precisamente lo que el token declarativo `t
 
 ### Positivas
 
-- **Un dominio recien scaffoldeado arranca sin `InvalidOperationException` de `ITenantResolver`**: CA-2
+- **Un dominio recien scaffoldeado arranca sin `InvalidOperationException` de `ITenantContext`**: CA-2
   del issue #318 queda satisfecho por construccion.
 - **La eleccion de etapa queda explicita y visible**: una unica linea de registro en `Program.cs` y un
   tipo concreto en `Infraestructura/`, sin logica condicional oculta.
@@ -394,7 +397,7 @@ proyecto matura de (a) a (b), que es precisamente lo que el token declarativo `t
   https://learn.microsoft.com/dotnet/api/microsoft.extensions.hosting.middlewareworkerapplicationbuilderextensions.usemiddleware
   y https://learn.microsoft.com/azure/azure-functions/dotnet-isolated-process-guide#middleware
 - `Cosmos.MultiTenancy` / `Cosmos.MultiTenancy.AspNetCore` / `Cosmos.MultiTenancy.CritterStack` 2.1.0:
-  paquetes privados del marco sin documentacion publica; el contrato `ITenantResolver` y las
+  paquetes privados del marco sin documentacion publica; el contrato `ITenantContext` y las
   implementaciones `TrustedHeadersTenantResolver`/`ProxyTenantResolver`/
   `WolverineMessageContextTenantResolver` citados en este ADR se verificaron decompilando con
   `ilspycmd` los ensamblados de la version 2.1.0 (misma version que fija MEF-ADR-0003/issue #312 para
@@ -498,3 +501,4 @@ proyecto matura de (a) a (b), que es precisamente lo que el token declarativo `t
   issue #804 (rama etapa (b) y fallback CA-7 de `domain-scaffolder`).
   Se alinea ademas la seccion 5 de MEF-ADR-0032, que describia la etapa (b) de este ADR como cableada con
   el hibrido -- descripcion que la enmienda vuelve falsa --, sin cambiar ninguna decision de ese ADR.
+- 2026-10-13: enmendado (issue #2399) para alinear la doctrina con `Cosmos.MultiTenancy` 3.1.0 (issue #2394): `ITenantResolver` pasa a `ITenantContext` en todo el cuerpo y la seccion 4 fija la semantica de `OrganizationMembershipId` (getter estricto, `SetDerivedIdentity` de tres parametros, constante `"membresia-no-autenticada"` en la etapa (a) y su motivo).
