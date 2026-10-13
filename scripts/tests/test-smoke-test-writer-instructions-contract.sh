@@ -60,7 +60,7 @@ echo "[2] Ambas salidas generadas resuelven RootNamespace desde el archivo efect
 
 for pair in "Claude:$CLAUDE_AGENT" "OpenCode:$OPENCODE_AGENT"; do
     runtime="${pair%%:*}"; agent_file="${pair#*:}"
-    script="$(extract_bash_block "$agent_file" 1)"
+    script="$(extract_bash_block "$agent_file" 2)"
     if [ -z "$script" ]; then
         fail "$runtime: no se pudo extraer el bloque de resolucion de instrucciones"
         continue
