@@ -2381,6 +2381,11 @@ $COV_REMEDIATION_SUMMARY
             fi
         fi
 
+        WARNING_REMNANTS_SECTION="$(render_warning_remnants_section "$WORKTREE_PATH")"
+        [ -n "$WARNING_REMNANTS_SECTION" ] && WARNING_REMNANTS_SECTION="${WARNING_REMNANTS_SECTION}
+
+"
+
         PR_URL=$(gh pr create \
             --title "$ISSUE_TITLE" \
             --body "$(cat <<EOF
@@ -2404,7 +2409,7 @@ ${RV_SUMMARY}
 
 </details>
 
-${SMOKE_ANOMALY_SECTION}${COVERAGE_SECTION}## Commits
+${SMOKE_ANOMALY_SECTION}${COVERAGE_SECTION}${WARNING_REMNANTS_SECTION}## Commits
 
 $COMMITS_LIST
 

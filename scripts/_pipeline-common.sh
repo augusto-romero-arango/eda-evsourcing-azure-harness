@@ -1076,6 +1076,34 @@ list_reviewer_touched_tests() {
     git -C "$worktree" diff --name-only --diff-filter=MDR "$base" HEAD -- 'tests/' 2>/dev/null
 }
 
+# render_warning_remnants_section <worktree>
+#
+# Issue #2408 (MEF-ADR-0056): imprime la seccion "## Warnings remanentes" con una
+# linea "- Relacionado: <ref>" por referencia distinta (orden de primera aparicion),
+# leida de <worktree>/.mefisto/pipeline/warnings-remanentes.txt. Acepta "#N", "N" (se
+# normaliza a "#N") y "owner/repo#N"; ignora el resto. Sin archivo o sin referencias
+# no imprime nada.
+render_warning_remnants_section() {
+    local file="$1/.mefisto/pipeline/warnings-remanentes.txt"
+    [ -f "$file" ] || return 0
+    local refs
+    refs=$(awk '
+        {
+            gsub(/\r/, ""); gsub(/^[ \t]+|[ \t]+$/, "")
+            if ($0 ~ /^#[0-9]+$/) ref = $0
+            else if ($0 ~ /^[0-9]+$/) ref = "#" $0
+            else if ($0 ~ /^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+#[0-9]+$/) ref = $0
+            else next
+            if (!(ref in seen)) { seen[ref] = 1; print ref }
+        }' "$file")
+    [ -n "$refs" ] || return 0
+    printf '## Warnings remanentes\n\n'
+    while IFS= read -r ref; do
+        printf -- '- Relacionado: %s\n' "$ref"
+    done <<< "$refs"
+    printf '\n'
+}
+
 # create_reviewer_tests_review_issue <repo_slug> <issue_num> <pr_url> <worktree> <base_head> <files> <g2_output> <report_file>
 #
 # Issue #2062: crea en el repo consumidor un issue (sin labels) pidiendo revisar
