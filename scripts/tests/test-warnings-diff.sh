@@ -8,6 +8,7 @@
 #   [CA-2] supresiones (.sh y .shellcheckrc)
 #   [CA-3] cache sin worktree y limpieza del worktree temporal
 #   [CA-4] toolchain no soportada / ausente / guard en Mefisto
+#   [path] --path acota el analisis
 #   [fix]  WARNINGS_DIFF_FIXTURE_DIR
 
 set -uo pipefail
@@ -87,22 +88,48 @@ R=$(new_repo); BASE=$(git -C "$R" rev-parse HEAD)
 run_wd "$R" --toolchain shell --base "$BASE" >/dev/null
 CACHE="$R/.mefisto/pipeline/warnings-baseline/shell-$BASE-all.txt"
 [ -f "$CACHE" ] && pass "cache creado" || fail "cache ausente: $CACHE"
-# Una segunda corrida sin posibilidad de crear worktrees prueba que usa el cache.
-OUT=$(cd "$R" && GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=alias.worktree GIT_CONFIG_VALUE_0='!false' "$REAL_SCRIPT" --toolchain shell --base "$BASE" 2>&1); RC=$?
-[ "$RC" -eq 0 ] && pass "segunda invocacion reutiliza el cache" || fail "cache no reutilizado (rc=$RC): $OUT"
+# Shim de git en PATH que registra cada invocacion: la segunda corrida no debe
+# llamar 'git worktree add' (un alias no sirve: git ignora aliases que ocultan
+# subcomandos nativos).
+SHIM=$(mktemp -d); TMPS+=("$SHIM")
+GITLOG="$SHIM/git.log"
+printf '#!/bin/sh\nprintf "%%s\\n" "$*" >> "%s"\nexec "%s" "$@"\n' "$GITLOG" "$(command -v git)" > "$SHIM/git"
+chmod +x "$SHIM/git"
+OUT=$(cd "$R" && PATH="$SHIM:$PATH" "$REAL_SCRIPT" --toolchain shell --base "$BASE" 2>&1); RC=$?
+if [ "$RC" -eq 0 ] && [ -f "$GITLOG" ] && ! grep -q 'worktree add' "$GITLOG"; then
+    pass "segunda invocacion reutiliza el cache sin crear worktree"; else fail "cache no reutilizado (rc=$RC): $OUT"; fi
 [ "$(git -C "$R" worktree list | wc -l | tr -d ' ')" -eq 1 ] && pass "sin worktrees temporales tras salir" || fail "worktree residual"
-rm -f "$CACHE"
 run_wd "$R" --toolchain shell --base deadbeef >/dev/null; RC=$?
-[ "$RC" -eq 1 ] && [ "$(git -C "$R" worktree list | wc -l | tr -d ' ')" -eq 1 ] && pass "error -> exit 1 sin worktree residual" || fail "error (rc=$RC)"
+[ "$RC" -eq 1 ] && [ "$(git -C "$R" worktree list | wc -l | tr -d ' ')" -eq 1 ] && pass "base invalida -> exit 1 sin worktree residual" || fail "base invalida (rc=$RC)"
+# Error a mitad: sin cache, el worktree se crea y run_shell falla porque
+# falta shellcheck en PATH; el trap debe eliminar el worktree igual.
+rm -f "$CACHE" "$GITLOG"
+NOSC=$(mktemp -d); TMPS+=("$NOSC")
+cp "$SHIM/git" "$NOSC/git"
+for c in bash env mktemp cat grep sort sed tr rm mkdir cp comm awk basename wc; do
+    p=$(command -v "$c") && ln -s "$p" "$NOSC/$c"
+done
+OUT=$(cd "$R" && PATH="$NOSC" "$REAL_SCRIPT" --toolchain shell --base "$BASE" 2>&1); RC=$?
+if [ "$RC" -eq 1 ] && grep -q 'worktree add' "$GITLOG" && [ "$(git -C "$R" worktree list | wc -l | tr -d ' ')" -eq 1 ]; then
+    pass "error tras crear el worktree -> exit 1 y trap lo elimina"; else fail "error a mitad (rc=$RC): $OUT"; fi
+
+echo "[path] --path acota el analisis"
+R=$(new_repo); BASE=$(git -C "$R" rev-parse HEAD)
+mkdir -p "$R/sub"
+printf '#!/usr/bin/env bash\nqux=1\n' > "$R/sub/c.sh"
+printf 'bar=2\n' >> "$R/a.sh"
+OUT=$(run_wd "$R" --toolchain shell --base "$BASE" --path sub); RC=$?
+if [ "$RC" -eq 2 ] && echo "$OUT" | grep -q '^NEW shell sub/c.sh SC2034 ' && ! echo "$OUT" | grep -q ' a.sh ' && echo "$OUT" | grep -q '^warnings nuevos: 1$'; then
+    pass "--path ignora warnings fuera del subdirectorio"; else fail "--path (rc=$RC): $OUT"; fi
 fi
 
 echo "[CA-4] toolchain y guard"
 R=$(new_repo)
 OUT=$(run_wd "$R" --toolchain dotnet --base HEAD); RC=$?
-if [ "$RC" -eq 1 ] && echo "$OUT" | grep -q 'toolchain no soportada: dotnet'; then pass "dotnet -> exit 1"; else fail "dotnet (rc=$RC): $OUT"; fi
+if [ "$RC" -eq 1 ] && echo "$OUT" | grep -q 'toolchain no soportada: dotnet' && echo "$OUT" | grep -q 'Uso:'; then pass "dotnet -> exit 1 con uso"; else fail "dotnet (rc=$RC): $OUT"; fi
 OUT=$(run_wd "$R"); RC=$?
 if [ "$RC" -eq 1 ] && echo "$OUT" | grep -q 'Uso:'; then pass "sin --toolchain -> exit 1 con uso"; else fail "sin toolchain (rc=$RC): $OUT"; fi
-OUT=$("$REAL_SCRIPT" --toolchain shell 2>&1); RC=$?
+OUT=$(cd "$REPO_ROOT" && "$REAL_SCRIPT" --toolchain shell 2>&1); RC=$?
 if [ "$RC" -eq 1 ] && echo "$OUT" | grep -q "plugin publicado y solo aplica al consumidor"; then pass "guard en repo de Mefisto"; else fail "guard (rc=$RC): $OUT"; fi
 
 echo "[fix] WARNINGS_DIFF_FIXTURE_DIR"

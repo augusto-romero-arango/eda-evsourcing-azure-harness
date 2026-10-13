@@ -20,7 +20,9 @@
 #
 # Extensibilidad: cada toolchain <t> aporta run_<t> <raiz> <lado> <salida>,
 # parse_<t> (stdin crudo -> claves normalizadas) y suppression_patterns_<t>
-# (regex ERE, uno por linea). Con WARNINGS_DIFF_FIXTURE_DIR, run_<t> lee la
+# (regex ERE, uno por linea, evaluados contra '<archivo>:<linea anadida>' para
+# que una toolchain acote un patron a un archivo sin que el nucleo lo sepa).
+# Registrar una toolchain es definir esas tres funciones. Con WARNINGS_DIFF_FIXTURE_DIR, run_<t> lee la
 # salida cruda de <dir>/<lado>.out (base.out / current.out) en vez de ejecutar
 # la herramienta (y no se usa worktree ni cache).
 #
@@ -97,19 +99,25 @@ parse_shell() {
 }
 
 suppression_patterns_shell() {
-    printf '%s\n' 'shellcheck[[:space:]]+disable=' '^disable=.*@@shellcheckrc'
+    # Cada patron se evalua contra '<archivo>:<linea anadida>'.
+    printf '%s\n' 'shellcheck[[:space:]]+disable=' '(^|/)\.shellcheckrc:disable='
 }
 
 # -------- Validacion de toolchain --------
 
-if [ "$TOOLCHAIN" != "shell" ]; then
+toolchain_ok=1
+if [[ "$TOOLCHAIN" =~ ^[a-z0-9_]+$ ]]; then
+    for fn in run_"$TOOLCHAIN" parse_"$TOOLCHAIN" suppression_patterns_"$TOOLCHAIN"; do
+        declare -F "$fn" >/dev/null || toolchain_ok=0
+    done
+else
+    toolchain_ok=0
+fi
+if [ "$toolchain_ok" -ne 1 ]; then
     echo "ERROR: toolchain no soportada: $TOOLCHAIN" >&2
     usage
     exit 1
 fi
-for fn in run_"$TOOLCHAIN" parse_"$TOOLCHAIN" suppression_patterns_"$TOOLCHAIN"; do
-    declare -F "$fn" >/dev/null || { echo "ERROR: toolchain no soportada: $TOOLCHAIN" >&2; exit 1; }
-done
 
 # -------- Resolucion de la base --------
 
@@ -180,36 +188,35 @@ LC_ALL=C comm -13 "$BASE_KEYS" "$TMP_WORK/current.keys" > "$TMP_WORK/new.keys"
 PATTERNS="$TMP_WORK/patterns"
 suppression_patterns_"$TOOLCHAIN" > "$PATTERNS"
 
-# scan_added_lines: lee 'archivo<TAB>linea' de las lineas anadidas.
+# scan_suppressions: lee 'archivo<TAB>linea' de las lineas anadidas y evalua
+# cada patron contra '<archivo>:<linea>' (match nativo de bash, sin subprocesos).
 scan_suppressions() {
-    local file line pat kind regex
+    local file line pat msg
+    local -a pats=()
+    while IFS= read -r pat; do
+        [ -n "$pat" ] && pats+=("$pat")
+    done < "$PATTERNS"
+    [ "${#pats[@]}" -gt 0 ] || { cat >/dev/null; return 0; }
     while IFS=$'\t' read -r file line; do
         [ -n "$file" ] || continue
-        while IFS= read -r pat; do
-            [ -n "$pat" ] || continue
-            regex="$pat"
-            kind=""
-            case "$pat" in
-                *@@shellcheckrc) regex="${pat%@@shellcheckrc}"; kind="rc" ;;
-            esac
-            if [ "$kind" = "rc" ] && [ "$(basename "$file")" != ".shellcheckrc" ]; then
-                continue
-            fi
-            if printf '%s\n' "$line" | grep -Eq -- "$regex"; then
-                local msg
-                msg=$(printf '%s' "$line" | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//')
+        for pat in "${pats[@]}"; do
+            if [[ "$file:$line" =~ $pat ]]; then
+                msg="${line#"${line%%[![:space:]]*}"}"
+                msg="${msg%"${msg##*[![:space:]]}"}"
                 printf '%s|%s|SUPPRESSION|%s\n' "$TOOLCHAIN" "$file" "supresion anadida: $msg"
                 break
             fi
-        done < "$PATTERNS"
+        done
     done
 }
 
 {
     git -C "$REPO_ROOT" diff "$BASE_SHA" -U0 --no-color --no-ext-diff -- "${SCOPE_PATH:-.}" 2>/dev/null |
         awk '
-            /^\+\+\+ / { f = substr($0, 5); if (f == "/dev/null") f = ""; else sub(/^b\//, "", f); next }
-            /^\+/ { if (f != "") printf "%s\t%s\n", f, substr($0, 2) }
+            /^diff --git / { inhunk = 0; f = ""; next }
+            /^@@/ { inhunk = 1; next }
+            !inhunk && /^\+\+\+ / { f = substr($0, 5); if (f == "/dev/null") f = ""; else sub(/^b\//, "", f); next }
+            inhunk && /^\+/ { if (f != "") printf "%s\t%s\n", f, substr($0, 2) }
         '
     # Archivos nuevos sin commitear: todas sus lineas son anadidas.
     while IFS= read -r nf; do
