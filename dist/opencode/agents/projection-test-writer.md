@@ -132,7 +132,7 @@ Sigue la plantilla exacta de `config-test.md` (`ServiceCollection` + connection 
 
 ### 3. Composicion de la Function GET
 
-Un test de composicion, hermano del `ComposicionContenedorTests` de MEF-ADR-0029, que verifique que el `FunctionEndpoint` de cada query (`Obtener{X}`/`Listar{X}s`) resuelve sus dependencias (`IDocumentStore`, `ITenantResolver`) desde el contenedor DI del write-side sin excepcion.
+Un test de composicion, hermano del `ComposicionContenedorTests` de MEF-ADR-0029, que verifique que el `FunctionEndpoint` de cada query (`Obtener{X}`/`Listar{X}s`) resuelve sus dependencias (`IDocumentStore`, `ITenantContext`) desde el contenedor DI del write-side sin excepcion.
 
 ### 4. Evaluar si la fase roja es alcanzable (señal no-red)
 

@@ -113,7 +113,7 @@ disfrazada -- indica de donde vino la decision, no que decision rige el codigo p
 ```csharp
 // Antes
 // MEF-ADR-0028
-public class TenantResolverHibrido : ITenantResolver
+public class TenantResolverHibrido : ITenantContext
 {
     ...
 }
@@ -121,7 +121,7 @@ public class TenantResolverHibrido : ITenantResolver
 
 ```csharp
 // Despues
-public class TenantResolverHibrido : ITenantResolver
+public class TenantResolverHibrido : ITenantContext
 {
     ...
 }

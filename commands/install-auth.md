@@ -168,7 +168,7 @@ Se va a instalar el camino completo de auth (WorkOS + APIM, MEF-ADR-0032) para e
     6. Cableado de TF_VAR_workos_client_id (y TF_VAR_cors_allowed_origins la primera vez) en infra-cd.yml.
     7. TRANSICION DE TENANCY (a)->(b) (MEF-ADR-0028 seccion 4, enmendada por el issue #802): flip de
        tenancy.strategy + scaffold de la biblioteca src/<RootNamespace>.TenantResolver/ (patron
-       AsyncLocal + middleware) + migracion del ITenantResolver de TODOS los dominios ya
+       AsyncLocal + middleware) + migracion del ITenantContext de TODOS los dominios ya
        scaffoldeados del BC a esa biblioteca.
 
 El apply real (el que provisiona recursos en Azure y siembra el Key Vault) corre en CI al mergear
