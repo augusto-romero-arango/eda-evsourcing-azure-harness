@@ -9,13 +9,14 @@
 Un dominio scaffoldeado con los building blocks `Cosmos.Event*` actuales nace roto si su `Program.cs`
 no registra un `ITenantContext`: en el consumidor Bitakora.ControlAsistencia, el upgrade de
 `Cosmos.EventSourcing.CritterStack` `0.1.9 -> 2.1.0` dejo de auto-registrarlo y **toda** activacion de
-funcion fallo con `InvalidOperationException: Unable to resolve service for type
-'Cosmos.MultiTenancy.ITenantContext'` -> HTTP 500, detectado solo post-deploy por smoke tests (refs
+funcion fallo con `InvalidOperationException: Unable to resolve service for type ...` sobre el
+contrato de tenancy de `Cosmos.MultiTenancy` (el que en 3.1.0 es `ITenantContext`, MEF-ADR-0003) -> HTTP 500, detectado solo post-deploy por smoke tests (refs
 consumidor: #207 upgrade, #219 fix).
 
-Verificado decompilando (`ilspycmd`) los ensamblados vigentes de los paquetes `Cosmos.MultiTenancy*`
-2.1.0 (paquetes privados del marco, sin documentacion publica -- la unica fuente verificable es el
-propio ensamblado):
+Verificado decompilando (`ilspycmd`) los ensamblados de los paquetes `Cosmos.MultiTenancy*` 2.1.0
+(paquetes privados del marco, sin documentacion publica -- la unica fuente verificable es el propio
+ensamblado); el contrato se muestra en su forma vigente de 3.1.0, que lo renombra a `ITenantContext` y
+le suma `OrganizationMembershipId` (delta de API medido en MEF-ADR-0003, issue #2394):
 
 - **`Cosmos.MultiTenancy`** (namespace `Cosmos.MultiTenancy`) define el contrato, sin implementacion:
 
@@ -42,8 +43,8 @@ propio ensamblado):
   en esta misma seccion), se toma **una sola vez, en el constructor** de `ProxyTenantResolver` -- no
   por-request -- lo que lo vuelve inservible para HTTP en Azure Functions isolated worker.
 
-`Cosmos.EventSourcing.CritterStack` 2.1.0 depende transitivamente de `Cosmos.MultiTenancy` 2.1.0 (su
-`.nuspec` declara `<dependency id="Cosmos.MultiTenancy" version="2.1.0" .../>`), asi que el contrato
+`Cosmos.EventSourcing.CritterStack` 3.1.0 depende transitivamente de `Cosmos.MultiTenancy` 3.1.0 (su
+`.nuspec` declara `<dependency id="Cosmos.MultiTenancy" version="3.1.0" .../>`), asi que el contrato
 `ITenantContext` ya esta disponible en el `.csproj` que genera `domain-scaffolder` sin agregar
 ninguna referencia nueva -- lo que falta es **registrar una implementacion**.
 
@@ -127,8 +128,8 @@ public class TenantResolverMonoTenantPorDefecto : ITenantContext
   either via policies, mappings, scoped sessions or overloads, Marten will default to
   `StorageConstants.DefaultTenantId` with a constant value of `*DEFAULT*`" [1]. `JasperFx` (paquete
   publico, `DefaultTenantId = "*DEFAULT*"` verificado decompilando `JasperFx.dll` 2.18.1 [2]) ya es
-  dependencia transitiva del scaffold via `Marten` 9.12.0 <- `Cosmos.EventSourcing.CritterStack`
-  2.1.0: no agrega ninguna referencia nueva al `.csproj`. Usar el mismo default de Marten evita
+  dependencia transitiva del scaffold via `Marten` 9.23.0 <- `Cosmos.EventSourcing.CritterStack`
+  3.1.0: no agrega ninguna referencia nueva al `.csproj`. Usar el mismo default de Marten evita
   introducir un segundo tenant id inventado que solo confundiria en el event store.
 - **`OrganizationMembershipId`**: se fija a la constante `"membresia-no-autenticada"`, por la misma razon que `UserId`: en greenfield no hay membresia que resolver. CritterStack 3.1.0 lee la propiedad en cada append (`UnitOfWorkMiddleware.Before()`) y en cada mensaje publicado, asi que el resolver de la etapa (a) debe devolver un valor, nunca lanzar.
 - **`UserId`**: se fija al valor descriptivo `"usuario-no-autenticado"` -- no una persona real, sino
@@ -255,8 +256,9 @@ biblioteca propia scaffoldeada por dominio consumidor.
     ninguna de las dependencias que el codigo de la funcion resuelve, porque el activador de la funcion
     corre en el ultimo middleware del pipeline del worker (`FunctionExecutionMiddleware` [3]) --
     exactamente lo que resuelve el catch-22 documentado en "Contexto": para requests HTTP, lee los
-    headers `X-Tenant-Id`/`X-User-Id` de `FunctionContext.GetHttpContext()`; para triggers de Service
-    Bus, lee las `ApplicationProperties` `tenant-id`/`user_id` del mensaje via
+    headers `X-Tenant-Id`/`X-User-Id`/`X-Organization-Membership-Id` de `FunctionContext.GetHttpContext()`;
+    para triggers de Service Bus, lee las `ApplicationProperties` `tenant-id`/`user_id`/
+    `organization_membership_id` del mensaje via
     `BindInputAsync<ServiceBusReceivedMessage>()`. Al correr como middleware del *worker* (no del
     request pipeline de ASP.NET Core), se ejecuta antes de que `FunctionEndpoint -> ICommandRouter ->
     ITenantContext` resuelva nada -- el `AsyncLocal` ya tiene el valor correcto para cuando cualquier
@@ -401,7 +403,9 @@ proyecto matura de (a) a (b), que es precisamente lo que el token declarativo `t
   implementaciones `TrustedHeadersTenantResolver`/`ProxyTenantResolver`/
   `WolverineMessageContextTenantResolver` citados en este ADR se verificaron decompilando con
   `ilspycmd` los ensamblados de la version 2.1.0 (misma version que fija MEF-ADR-0003/issue #312 para
-  el resto del stack `Cosmos.Event*`).
+  el resto del stack `Cosmos.Event*`). El renombre a `ITenantContext` y la propiedad
+  `OrganizationMembershipId` de la version 3.1.0 vigente se midieron por diff de API publica en
+  MEF-ADR-0003 (issue #2394).
 - MEF-ADR-0003 (stack ES Marten+Wolverine): fija Marten como event store del marco; este ADR reusa su
   constante de tenant por defecto.
 - MEF-ADR-0021 (infraestructura base): el registro del resolver vive en el `Program.cs` que genera

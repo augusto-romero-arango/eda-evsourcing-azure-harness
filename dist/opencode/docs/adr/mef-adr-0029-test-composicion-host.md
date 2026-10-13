@@ -12,7 +12,7 @@ de DI real del host de Azure Functions. Un registro faltante en ese contenedor n
 ningun test unitario -- solo revienta cuando el host arranca de verdad.
 
 Eso paso en el consumidor Bitakora.ControlAsistencia: un upgrade de
-`Cosmos.EventSourcing.CritterStack` dejo de auto-registrar `ITenantContext` (refs #207 upgrade,
+`Cosmos.EventSourcing.CritterStack` dejo de auto-registrar el contrato de tenancy (hoy `ITenantContext`, MEF-ADR-0028) (refs #207 upgrade,
 #219 fix). El build compilo limpio y los tests unitarios quedaron en verde -- ninguno construye el
 grafo de DI -- y el problema solo se detecto **post-deploy**, en los smoke tests contra el entorno
 dev (issue #221, guardrail creado en el consumidor). El feedback loop para un registro de DI
@@ -48,7 +48,8 @@ Decompilando (`ilspycmd`) los ensamblados `Cosmos.EventSourcing.CritterStack` 2.
 
 Las tres son registros **por tipo mapeado** (`AddScoped<TService, TImplementation>`), no por
 factory-lambda. Y las tres implementaciones concretas dependen **directamente** de
-`ITenantContext` en su constructor:
+`ITenantContext` en su constructor (la firma se muestra en su forma vigente de 3.1.0, que renombra el
+contrato de tenancy; delta de API medido en MEF-ADR-0003):
 
 ```csharp
 public class WolverineCommandRouter(IMessageBus messageBus, ITenantContext tenantContext) : ICommandRouter
@@ -210,7 +211,9 @@ registro no cambie en una version futura del paquete.
   `AgregarWolverineEventSender()`, `AgregarWolverinePrivateEventRouter()` y los constructores de
   `WolverineCommandRouter`/`WolverinePrivateEventSender`/`WolverinePrivateEventRouter` citados en
   este ADR se verificaron decompilando con `ilspycmd` los ensamblados de la version 2.1.0 (misma
-  version que fija MEF-ADR-0003/issue #312 para el resto del stack `Cosmos.Event*`).
+  version que fija MEF-ADR-0003/issue #312 para el resto del stack `Cosmos.Event*`). La dependencia
+  de los tres routers sobre `ITenantContext` en la version 3.1.0 vigente sale del delta de API de
+  MEF-ADR-0003 (issue #2394).
 - MEF-ADR-0002 (estrategia de testing ES): el test de composicion es una categoria distinta y
   complementaria; no sustituye el DSL Given/When/Then.
 - MEF-ADR-0003 (stack ES Marten+Wolverine): documenta el patron de configuracion en `Program.cs`
