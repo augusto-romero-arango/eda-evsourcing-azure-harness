@@ -95,6 +95,27 @@ Efectos secundarios conocidos y como verificarlos:
 Los tests que no generan operaciones exitosas (400, 404) no producen efectos secundarios y no necesitan
 verificarlos.
 
+**Que queda fuera del smoke: tamano de pagina y topes de cantidad.** Un smoke test no valida el
+tamano de una pagina ni un tope de cantidad, aunque afirme un mensaje de error:
+
+- el clamp de `Take` y un `Take` por encima del maximo;
+- el maximo de valores en un filtro de lista (p. ej. mas de 200 identificaciones);
+- la ventana de fechas (p. ej. el recorte a 35 dias o el mensaje de ventana excedida).
+
+Esas reglas son logica pura del endpoint o de la tool y se prueban solo en tests unitarios o de
+endpoint (MEF-ADR-0042 es la fuente de los topes). En smoke cargan la base de dev -- sobre todo cuando
+el test siembra o programa toda la ventana --, alargan el job de CI en cada corrida sin dar una senal de
+despliegue que el unit no de, y quedan obsoletos cuando la regla cambia (p. ej. se elimina un tope), con
+lo que fallan en el deploy.
+
+**Que sigue en el smoke:**
+
+- una llamada real por endpoint o tool;
+- el recorrido con cursor de una pagina a otra;
+- la validacion de forma de la entrada (cursor invalido -> 422/400, formato de fecha o identificador,
+  largo de un texto);
+- el error path canonico `.resx` de MEF-ADR-0048 (verificacion 4).
+
 ### Codigo de exito esperado: viene del contrato HTTP del issue, nunca de un default
 
 El status code que un smoke test asierta para el camino feliz no es un valor memorizado por el
@@ -574,3 +595,8 @@ en el repo (idempotente; ver "Integracion en el proceso de desarrollo").
   dominios scaffoldeados en ramas separadas desde el mismo `origin/main` ya no compiten por el mismo
   archivo, lo que hace viable el scaffold en paralelo. Se elimina del cuerpo la descripcion del array
   compartido (secciones "Integracion en el proceso de desarrollo" y "CI/CD").
+- 2026-10-13 (issue #2366): enmienda la seccion "Alcance de un smoke test" con las dos listas de lo que
+  queda fuera y lo que sigue en el smoke (tamano de pagina y topes de cantidad). Caso del consumidor
+  Bitakora.ControlAsistencia (issue #955): un smoke esperaba 422 con mas de 200 identificaciones despues
+  de que se eliminara ese tope a proposito, y la revision de la suite hallo 20 smoke de tamano de pagina
+  y de topes de ventana.
