@@ -1,0 +1,1 @@
+{"format_version":"1.0","valid":true,"warning_count":1,"error_count":0,"diagnostics":[{"severity":"warning","summary":"Deprecated attribute","detail":"The attribute \"x\" is deprecated.","range":{"filename":"main.tf","start":{"line":19,"column":3,"byte":10},"end":{"line":19,"column":8,"byte":15}}}]}

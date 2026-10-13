@@ -1,0 +1,1 @@
+{"valid":false,"warning_count":0,"error_count":1,"diagnostics":[{"severity":"error","summary":"Reference to undeclared input variable","detail":"An input variable with the name \"y\" has not been declared.","range":{"filename":"main.tf","start":{"line":2,"column":1,"byte":1},"end":{"line":2,"column":5,"byte":5}}}]}
