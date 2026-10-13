@@ -72,7 +72,7 @@ Fuera de alcance: mergear PRs que la sesión no vio terminar y resolver comentar
 
 ## Capacidad vigente (incremento 6): mergear PRs abiertos desde el reposo
 
-En reposo (listos visibles), si hay PRs abiertos, la primera línea suma, a la derecha, `2: PRs N` (`gh pr list --state open`, sin borradores ni los de field notes `docs/planner-field-notes-*`, que van a la bitácora, incremento 9; se refresca con los listos y tras cada merge). Sin PRs abiertos el botón no aparece.
+En reposo (listos visibles), si hay PRs abiertos, la primera línea suma, a la derecha, `2: PRs N` (`gh pr list --state open`, sin borradores; incluye los de field notes `docs/planner-field-notes-*`, que además suman en la bitácora, incremento 9; se refresca con los listos y tras cada merge). Sin PRs abiertos el botón no aparece.
 
 - `2`: con un solo PR, `$.ui.ask` con `#N título` y "Cancelar"; con varios, selección múltiple: "Todos" y los 3 más recientes (otros números, en la opción de texto). Ejecuta `/mefisto:merge` con `$.command.run`, anunciado con un toast. "Todos" ejecuta `/mefisto:merge --all` (`pr-sync.sh --all` toma todo PR abierto, borradores incluidos). Cancelar o no elegir no ejecuta nada.
 - `/fausto-blood-pact prs`: lo mismo sin teclas.
@@ -119,7 +119,7 @@ Cuando el agente lanza `pr-sync.sh <PRs> --merge` (o `--all --merge`) tras un `/
 
 ## Capacidad vigente (incremento 9): la bitácora
 
-En reposo, arriba a la derecha y junto a `2: PRs N`, aparece `3: bitácora N`. N suma los `.md` de `docs/bitacora/field-notes/` (sin bajar a `procesadas/`) y los PRs abiertos de rama `docs/planner-field-notes-*`. Con N = 0 o con el historiador escribiendo, el botón se oculta. `2: PRs N` ya no cuenta ni lista esos PRs (aunque "Todos" sigue siendo `--all`). El conteo se refresca al ritmo de los listos.
+En reposo, arriba a la derecha y junto a `2: PRs N`, aparece `3: bitácora N`. N suma los `.md` de `docs/bitacora/field-notes/` (sin bajar a `procesadas/`) y los PRs abiertos de rama `docs/planner-field-notes-*`. Con N = 0 o con el historiador escribiendo, el botón se oculta. `2: PRs N` también cuenta y lista esos PRs ("Todos" es `--all`, que los mergea), así que un PR de field notes suma en los dos botones. El conteo se refresca al ritmo de los listos.
 
 - `3`: `$.ui.ask` "¿Integrar la bitácora? X field notes en main y Y en PRs sin mergear" con `Mergear sus Y PRs e integrar` (o `Integrar` si Y = 0) y `Cancelar`. Al aceptar envía como prompt del usuario (`$.prompt.submit({ asUser: true })`): `Integra la bitacora: mergea los PRs de field notes #… con /mefisto:merge, pon el checkout en main al dia (git switch main && git pull --ff-only) y luego corre /mefisto:bitacora.` No se modifica `/mefisto:bitacora`.
 - Detección del historiador: se sondea `$.agent.list()` buscando un agente activo cuyo tipo cumpla `/(^|:)historiador$/` (el nombre lleva el prefijo del plugin).
