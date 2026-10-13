@@ -25,11 +25,15 @@ Se adoptan los siguientes paquetes para todos los dominios de ControlAsistencias
 
 | Paquete | Version | Rol |
 |---------|---------|-----|
-| `Cosmos.EventSourcing.CritterStack` | 2.1.0 | Configura Marten como event store |
-| `Cosmos.EventSourcing.Abstractions` | 2.1.0 | Interfaces de event sourcing (IEventStore, etc.) |
-| `Cosmos.EventDriven.CritterStack` | 2.1.0 | Configura Wolverine como mediador de comandos |
-| `Cosmos.EventDriven.CritterStack.AzureServiceBus` | 2.1.0 | Integra Wolverine con Azure Service Bus |
-| `Cosmos.EventDriven.Abstractions` | 2.1.0 | Interfaces de mensajeria (ICommandRouter, IPublicEventSender, etc.) |
+| `Cosmos.EventSourcing.CritterStack` | 3.1.0 | Configura Marten como event store |
+| `Cosmos.EventSourcing.Abstractions` | 3.1.0 | Interfaces de event sourcing (IEventStore, etc.) |
+| `Cosmos.EventDriven.CritterStack` | 3.1.0 | Configura Wolverine como mediador de comandos |
+| `Cosmos.EventDriven.CritterStack.AzureServiceBus` | 3.1.0 | Integra Wolverine con Azure Service Bus |
+| `Cosmos.EventDriven.Abstractions` | 3.1.0 | Interfaces de mensajeria (ICommandRouter, IPublicEventSender, etc.) |
+| `Cosmos.EventSourcing.Testing.Utilities` | 3.1.0 | DSL Given/When/Then de tests (MEF-ADR-0002) |
+| `Cosmos.MultiTenancy` | 3.1.0 | Contrato `ITenantContext` (`TenantId`, `UserId`, `OrganizationMembershipId`); antes `ITenantResolver` |
+| `Marten` | 9.23.0 | Event store; la version que arrastra `Cosmos.EventSourcing.CritterStack` 3.1.0 |
+| `WolverineFx` | 6.27.1 | Mediador de comandos; la version que arrastra `Cosmos.EventDriven.CritterStack` 3.1.0 |
 | `Microsoft.Azure.Functions.Worker` | 2.52.0 | Metapaquete del worker aislado; fijado en lockstep con `Worker.OpenTelemetry` para evitar desalineamiento Core/Grpc |
 | `Microsoft.Azure.Functions.Worker.OpenTelemetry` | 1.2.0 | Defaults de OpenTelemetry para el worker aislado de Functions |
 | `OpenTelemetry.Extensions.Hosting` | 1.15.3 | SDK de hosting de OpenTelemetry del write-side; el limite efectivo lo impone `Azure.Monitor.OpenTelemetry.Exporter` 1.8.2, no solo `Worker.OpenTelemetry` |
@@ -202,6 +206,33 @@ para el detalle completo, sin duplicarlo aqui.
 - NuGet.org: [metadata de `Azure.Monitor.OpenTelemetry.Exporter` 1.8.2](https://api.nuget.org/v3/registration5-gz-semver2/azure.monitor.opentelemetry.exporter/index.json) -- declara `OpenTelemetry.Extensions.Hosting >= 1.15.3`.
 - GitHub Advisory Database: [GHSA-g94r-2vxg-569j](https://github.com/advisories/GHSA-g94r-2vxg-569j) -- `OpenTelemetry.Api` corregido desde 1.15.3.
 
+### Enmienda issue #2394: `Cosmos.*` 3.1.0, Marten 9.23.0, WolverineFx 6.27.1
+
+Los siete paquetes `Cosmos.*` pasan a `3.1.0`, que arrastra Marten `9.23.0` y WolverineFx `6.27.1`
+(nuspec real en api.nuget.org: `Cosmos.EventSourcing.CritterStack` 3.1.0 declara `Marten` 9.23.0 y
+`WolverineFx.Marten` 6.27.1; `Cosmos.EventDriven.CritterStack` 3.1.0 declara `WolverineFx` 6.27.1;
+`Cosmos.EventSourcing.Testing.Utilities` 3.1.0 trae `AwesomeAssertions` 9.5.0).
+Cierra [GHSA-rfx3-98h7-v3xp](https://github.com/advisories/GHSA-rfx3-98h7-v3xp) (CVE-2026-75513),
+que afectaba a Marten 9.12.0 (referencia de campo: commit `64d289c1` de Bitakora.ControlAsistencia).
+Es ademas prerrequisito de `ProjectionOptions.SkipStaleGapsDespiteLiveTransactionsAfter`
+(tolerancia a huecos del daemon, #2390), inexistente en 9.12.0.
+
+Delta de API 2.1.0 -> 3.1.0, medido con `MetadataLoadContext` sobre las DLL de la cache NuGet:
+sin cambios en `EventDriven.Abstractions`, `EventDriven.CritterStack`,
+`EventDriven.CritterStack.AzureServiceBus`, `EventSourcing.Abstractions` y
+`EventSourcing.Testing.Utilities`; solo aditivo en `EventSourcing.CritterStack` (sobrecarga de
+`AgregarWolverineParaComandosServerless(..., Action<WolverineOptions>)` y
+`UnitOfWorkMiddleware.Before()`); **ruptura** en `Cosmos.MultiTenancy`: `ITenantResolver` pasa a
+`ITenantContext`, que suma `OrganizationMembershipId`, y aparece `TenancyHeaders.OrganizationMembershipId`.
+El rename y el bump son atomicos: CritterStack 2.1.0 consume `ITenantResolver` desde DI y 3.1.0
+consume `ITenantContext`; no existe version que acepte ambos. `OrganizationMembershipId` se lee
+siempre (`UnitOfWorkMiddleware.Before()` estampa `user_id` y `organization_membership_id` en cada
+append; los senders lo estampan en cada mensaje).
+
+Reverificado por ejecucion contra Marten 9.23.0 y Wolverine 6.27.1: los namespaces del seam del
+worker no cambian y `Durability.DurabilityMetricsEnabled` existe. Los consumidores existentes no se
+migran desde el scaffold (migracion manual en el changelog).
+
 ## Control de cambios
 
 - 2026-07-01: enmendado (issue #162, mandato de MEF-ADR-0024) para reemplazar el wiring fijo de dos brokers por Bounded Context (namespace interno como broker default + namespace de integracion como named broker `"integracion"`) por broker interno por defecto (siempre) mas N brokers nombrados (backbone compartido y, si aplica, externos), uno por ASB, por cadena de conexion custodiada.
@@ -211,3 +242,4 @@ para el detalle completo, sin duplicarlo aqui.
 - 2026-07-29: enmendado (issue #457) para sumar a la tabla de paquetes las dos filas read-side del worker de proyecciones (`OpenTelemetry.Extensions.Hosting` 1.17.0, `Azure.Monitor.OpenTelemetry.Exporter` 1.8.3) que genera `projections-scaffolder` (MEF-ADR-0034 seccion 10, nueva) -- pin independiente del trio write-side de arriba, verificado contra NuGet.org al momento del cambio. Sin cambios en la seccion "Observabilidad" (write-side): sigue describiendo unicamente el trio de Functions.
 - 2026-08-04: enmendado (issue #463) para mudar integra la seccion "Observabilidad" a MEF-ADR-0038 (control de volumen de telemetria), criterio fijado al abrir el draft de ese issue durante el refinamiento de #457: si el marco llegaba a tener una MEF-ADR de observabilidad, la doctrina de esta seccion naceria ahi en una sola mudanza, en vez de quedar fragmentada entre dos documentos. Esta seccion queda como referencia sin doctrina duplicada; ningun paquete ni version de la tabla de arriba cambia.
 - 2026-09-12: enmendado (issue #1245) para corregir el canon OpenTelemetry del write-side: `Azure.Monitor.OpenTelemetry.Exporter` 1.8.2 exige `OpenTelemetry.Extensions.Hosting >= 1.15.3`, por lo que el pin previo 1.13.1 causaba NU1605 cuando este se trata como error. Se fija `OpenTelemetry.Extensions.Hosting` y el exporter exclusivo de tests `OpenTelemetry.Exporter.InMemory` en 1.15.3; esta version es tambien la primera correccion de `OpenTelemetry.Api` para GHSA-g94r-2vxg-569j.
+- 2026-10-13: enmendado (issue #2394) para subir los siete paquetes `Cosmos.*` a `3.1.0`, Marten a `9.23.0` y WolverineFx a `6.27.1`, con el delta de API medido (ruptura `ITenantResolver` -> `ITenantContext` en `Cosmos.MultiTenancy`) y el cierre de GHSA-rfx3-98h7-v3xp / CVE-2026-75513.
