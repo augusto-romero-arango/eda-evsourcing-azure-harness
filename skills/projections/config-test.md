@@ -93,6 +93,18 @@ var provider = services.BuildServiceProvider();
 
    **Esta guarda no cubre toda la compatibilidad write-side/read-side** (MEF-ADR-0034 seccion 6, issue #447): el paquete `Cosmos.EventSourcing.CritterStack` fija diez atributos de Marten del lado write, no solo estos tres. La verificacion completa -- los otros siete atributos y el par read models/query-side -- es responsabilidad del **reviewer**, bajo el gate y las tablas de clasificacion que fija `agents/reviewer.md` ("Proyecciones y read-side").
 
+4. **Guarda de tolerancia a huecos del daemon, por named store** (MEF-ADR-0034 seccion 12, issue #2395): que cada named store tenga `SkipStaleGapsDespiteLiveTransactionsAfter` igual a `ConfiguracionDaemonProjections.TopeHuecosDeSecuencia` (la fuente unica del worker), nunca `null`. Sin ella, con varios stores en la misma base un hueco de secuencia detiene el daemon de forma indefinida (hold de Marten #4953, Marten >= 9.23). Una guarda por store, con su propio marker:
+
+   ```csharp
+   var store = provider.GetRequiredService<IVentasProjectionStore>();
+
+   Assert.Equal(
+       ConfiguracionDaemonProjections.TopeHuecosDeSecuencia,
+       ((DocumentStore)store).Options.Projections.SkipStaleGapsDespiteLiveTransactionsAfter);
+   ```
+
+   **Downcast verificado por ejecucion** (Marten `9.23.0`, SDK .NET 10): `IDocumentStore.Options` es `IReadOnlyStoreOptions` y no expone `Projections` (`CS1061`), por eso hace falta `(DocumentStore)store`. El marker resuelto desde DI hereda de `DocumentStore`, asi que el cast es seguro; el valor leido es `00:05:00`. `DocumentStore` vive en el namespace `Marten`.
+
 ## Plantilla del par espejo (issue #722)
 
 Los tres puntos de arriba verifican la configuracion **interna** del worker; ninguno la compara contra la del write-side. Esa comparacion es el **par 2** de compatibilidad Marten (MEF-ADR-0034 seccion 6: worker que materializa los documentos -> query-side del Function App), y necesita su propia guarda siempre-activa porque el gate del reviewer no se dispara con un PR que solo agrega una Function GET nueva (exactamente el PR que introduce el defecto tipico: Bitakora.ControlAsistencia issues #294 y #448). Con la tercera instancia conocida del par 2 verificada en el consumidor de referencia -- `mt_version` y tabla/tenancy/id, las dos que traen par espejo propio, sobre la de tenancy documental que el par 2 ya tenia enumerada --, el patron "oraculo literal espejo" que introdujo el issue #718 deja de ser una receta puntual y se generaliza a **plantilla**.
