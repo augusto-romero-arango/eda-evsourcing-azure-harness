@@ -243,8 +243,10 @@ run_terraform() {
 }
 
 parse_terraform() {
+    # '|' separa los campos de la salida: se neutraliza en archivo y summary.
     jq -r '.diagnostics[]? | select(.severity == "warning")
-        | ["terraform", (.range.filename // "-"), .summary, (.detail // "")]
+        | ["terraform", (.range.filename // "-" | gsub("\\|"; "/")),
+           (.summary // "-" | gsub("\\|"; "/")), (.detail // "")]
         | map(gsub("[\r\n]+"; " ")) | join("|")'
 }
 
