@@ -94,7 +94,7 @@ Aplica este paso **solo si** la seccion "Labels de GitHub" del diagnostico repor
 MEFISTO_RUNTIME=opencode "${MEFISTO_PACKAGE_ROOT}/scripts/setup-github-labels.sh" 2>&1
 ```
 
-Si el script sale con error, las causas tipicas son: `gh` no autenticado (corre `gh auth login` y reintenta); o un label `tipo:*`/`estado:*`/`bloqueado` que YA existia (el script los crea sin `--force` y aborta por `set -e`; solo es idempotente en `bug` y `dom:*`): borra el/los label(s) en conflicto, o crea a mano los que falten con `gh label create`, y reintenta. En caso de exito, sugiere volver a correr /mefisto:onboard para ver el diagnostico en verde.
+Si el script sale con error, la causa tipica es `gh` sin autenticar o sin permiso de escritura sobre el repo: corre `gh auth login` (o pide acceso de escritura) y reintenta. El script es idempotente -- crea cada label con `--force` y tolera los labels default ya borrados --, asi que reintentarlo es seguro. En caso de exito, sugiere volver a correr /mefisto:onboard para ver el diagnostico en verde.
 
 4. **Reporta el resultado al usuario** tal como lo imprimio el bloque. Si fallo, no abortes ni reescribas el resto del flujo: el diagnostico (pasos 1-2) ya se mostro y sus otras secciones (config, CI) son independientes de los labels. En ambos casos sugiere volver a correr `/mefisto:onboard` para confirmar el estado real tras la provision.
 
