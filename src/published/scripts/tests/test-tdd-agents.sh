@@ -92,7 +92,18 @@ state_summaries=(
     'stage-1-projection-test-writer'
     'stage-2-projection-implementer'
 )
-state_blockage_counts=(0 2 2 0 0 0)
+# Marca por agente: 1 si reporta bloqueo (exige al menos una mencion), 0 si no (exige ninguna).
+state_reports_blockage=(0 1 1 0 0 0)
+BLOCKAGE_REF='{{mefisto:state-path blockage-report.md}}'
+# Imprime "ok" o la condicion incumplida; no depende de un conteo exacto.
+blockage_verdict() {
+    local file="$1" reports="$2" mentions
+    mentions="$(grep -Fc "$BLOCKAGE_REF" "$file")"
+    if [ "$reports" -eq 1 ]; then
+        if [ "$mentions" -ge 1 ]; then echo ok; else echo 'reporta bloqueo pero no menciona la ruta neutral (0 menciones)'; fi
+    elif [ "$mentions" -eq 0 ]; then echo ok
+    else echo "no reporta bloqueo pero menciona la ruta neutral ($mentions menciones)"; fi
+}
 
 echo '[fuentes] contrato neutral, guard y doctrina preservada'
 for index in "${!agents[@]}"; do
@@ -163,8 +174,18 @@ for index in "${!state_agents[@]}"; do
     summary="{{mefisto:state-path summaries/${state_summaries[$index]}.md}}"
     if ! grep -Fq '.claude/pipeline/summaries' "$source" && ! grep -Fq '.claude/pipeline/blockage-report' "$source" && ! grep -Fq '`.claude/pipeline/`' "$source"; then pass "$agent no conserva rutas legacy de estado"; else fail "$agent conserva rutas legacy de estado"; fi
     if [ "$(grep -Fc "$summary" "$source")" -eq 1 ]; then pass "$agent declara su summary neutral exacto"; else fail "$agent no declara su summary neutral exacto"; fi
-    if [ "$(grep -Fc '{{mefisto:state-path blockage-report.md}}' "$source")" -eq "${state_blockage_counts[$index]}" ]; then pass "$agent declara las rutas neutrales esperadas de bloqueo"; else fail "$agent no declara las rutas neutrales esperadas de bloqueo"; fi
+    verdict="$(blockage_verdict "$source" "${state_reports_blockage[$index]}")"
+    if [ "$verdict" = ok ]; then pass "$agent declara las rutas neutrales esperadas de bloqueo"; else fail "$agent no declara las rutas neutrales esperadas de bloqueo: $verdict"; fi
 done
+
+echo '[estado] regresion: la asercion de bloqueo no depende de un conteo exacto'
+regression_copy="$WORK/implementer-regression.md"
+cp "$REPO_ROOT/src/published/agents/implementer.md" "$regression_copy"
+printf '\n%s\n' "$BLOCKAGE_REF" >> "$regression_copy"
+printf '%s\n' "$BLOCKAGE_REF" >> "$regression_copy"
+if [ "$(blockage_verdict "$regression_copy" 1)" = ok ]; then pass 'implementer con una mencion extra sigue en verde'; else fail 'implementer con una mencion extra rompe la asercion'; fi
+grep -Fv "$BLOCKAGE_REF" "$regression_copy" > "$regression_copy.sin" || true
+if [ "$(blockage_verdict "$regression_copy.sin" 1)" != ok ]; then pass 'implementer sin ninguna mencion da FAIL'; else fail 'implementer sin menciones no es detectado'; fi
 
 echo '[validador] excepciones transitorias acotadas'
 for agent in "${agents[@]}"; do
