@@ -138,6 +138,15 @@ Guia del dashboard de WorkOS AuthKit (https://dashboard.workos.com):
      documenta para vos mismo cual client_id/API key corresponde a cada proyecto (login vs
      negocio) antes de pegarlos en cualquier lado -- este comando no puede detectar el error si los
      invertis.
+
+  g. JWT Template (claim organization_membership_id): este claim NO es uno de los claims por
+     defecto de AuthKit; la politica del gateway APIM lo propaga como X-Organization-Membership-Id
+     y CritterStack 3.x lo exige. En el dashboard, del entorno que usas, crea un JWT Template con:
+         { "organization_membership_id": "{{ organization_membership.id }}" }
+     El claim se agrega "alongside the default claims". Limite: el template renderizado no puede
+     superar 3072 bytes. Despues decodifica un token real y confirma el nombre del claim (B10).
+     Fuentes: WorkOS Docs, "AuthKit + FGA" (https://workos.com/docs/fga/authkit-integration) y
+     "Token claims" (https://workos.com/docs/authkit/connect/token-claims).
 ```
 
 Estas URLs y roles/labels de UI son correctos al momento de escribir este comando; si el dashboard de WorkOS cambio de UI, reconcilia contra la doc vigente antes de asumir un paso obsoleto (regla de "Verificacion de fuentes" de `AGENTS.md`).

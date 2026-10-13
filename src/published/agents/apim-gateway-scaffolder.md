@@ -177,6 +177,12 @@ variable "claim_tenant_id" {
   default     = "tenant_id"
 }
 
+variable "claim_organization_membership_id" {
+  description = "Nombre EXACTO del claim del JWT mapeado a X-Organization-Membership-Id. B10: NO se adivina -- se confirma decodificando un token real del proyecto WorkOS concreto. No es un claim por defecto de AuthKit: exige un JWT Template en el entorno de WorkOS ('organization_membership_id': '{{ organization_membership.id }}'). Default = el del template de la doc oficial de WorkOS; reverificar por consumidor."
+  type        = string
+  default     = "organization_membership_id"
+}
+
 variable "tags" {
   description = "Tags comunes del proyecto"
   type        = map(string)
@@ -238,7 +244,7 @@ resource "azurerm_api_management" "this" {
 #   B6: orden estricto openid-config -> issuers -> required-claims dentro de <validate-jwt>.
 #   B10: los <set-header> de identidad van DESPUES de </validate-jwt> (usan context.Variables["jwt"],
 #        capturado por output-token-variable-name="jwt") y SIEMPRE con exists-action="override"
-#        (anti-spoofing: sin override, un cliente que manda su propio X-User-Id/X-Tenant-Id lo
+#        (anti-spoofing: sin override, un cliente que manda su propio X-User-Id/X-Tenant-Id/X-Organization-Membership-Id lo
 #        cuela intacto hasta el backend).
 #
 # B7 (diagnostico): si `terraform apply` falla aca con un 400 ValidationError generico/truncado
@@ -288,6 +294,9 @@ resource "azurerm_api_management_policy" "global" {
     <set-header name="X-Tenant-Id" exists-action="override">
       <value>@(((Jwt)context.Variables["jwt"]).Claims.GetValueOrDefault("${var.claim_tenant_id}", ""))</value>
     </set-header>
+    <set-header name="X-Organization-Membership-Id" exists-action="override">
+      <value>@(((Jwt)context.Variables["jwt"]).Claims.GetValueOrDefault("${var.claim_organization_membership_id}", ""))</value>
+    </set-header>
   </inbound>
   <backend>
     <forward-request />
@@ -321,7 +330,7 @@ output "principal_id" {
 
 **Notas de fidelidad al catalogo, para vos (no van en el HCL de arriba, ya estan como comentarios donde correspondia):**
 
-- **B1** -- sin `<base/>` en ninguna seccion de esta politica global. **B2** -- `<backend>` lleva `<forward-request />`, nunca vacio: sin eso, APIM responde `200`/`Content-Length: 0` y **no llama al backend** (el bug mas traicionero del catalogo, confirmado por ausencia total de requests en App Insights). **B3** -- `<cors>` es el primer hijo de `<inbound>`, antes de `<validate-jwt>`, y su `<allowed-methods>` enumera explicitamente `GET`/`POST`/`PUT`/`DELETE`/`OPTIONS`/`QUERY`, nunca `*` (issue #608): QUERY (RFC 10008) no es CORS-safelisted y sin ese metodo un SPA que lo use se cae en el preflight. **B4** -- ningun `<audiences>`; la "audiencia" se valida con `<required-claims>` sobre `client_id`. **B6** -- orden estricto `openid-config -> issuers -> required-claims` dentro de `<validate-jwt>`, sin `<!-- -->` interpuestos. **B10** -- los dos `<set-header>` van despues de `</validate-jwt>` (necesitan `context.Variables["jwt"]`, capturado por `output-token-variable-name="jwt"`), con `exists-action="override"` obligatorio (anti-spoofing: sin esto, un cliente que manda su propio `X-User-Id`/`X-Tenant-Id` lo hace pasar intacto hasta el backend).
+- **B1** -- sin `<base/>` en ninguna seccion de esta politica global. **B2** -- `<backend>` lleva `<forward-request />`, nunca vacio: sin eso, APIM responde `200`/`Content-Length: 0` y **no llama al backend** (el bug mas traicionero del catalogo, confirmado por ausencia total de requests en App Insights). **B3** -- `<cors>` es el primer hijo de `<inbound>`, antes de `<validate-jwt>`, y su `<allowed-methods>` enumera explicitamente `GET`/`POST`/`PUT`/`DELETE`/`OPTIONS`/`QUERY`, nunca `*` (issue #608): QUERY (RFC 10008) no es CORS-safelisted y sin ese metodo un SPA que lo use se cae en el preflight. **B4** -- ningun `<audiences>`; la "audiencia" se valida con `<required-claims>` sobre `client_id`. **B6** -- orden estricto `openid-config -> issuers -> required-claims` dentro de `<validate-jwt>`, sin `<!-- -->` interpuestos. **B10** -- los tres `<set-header>` (`X-User-Id`, `X-Tenant-Id`, `X-Organization-Membership-Id`) van despues de `</validate-jwt>` (necesitan `context.Variables["jwt"]`, capturado por `output-token-variable-name="jwt"`), con `exists-action="override"` obligatorio (anti-spoofing: sin esto, un cliente que manda su propio `X-User-Id`/`X-Tenant-Id`/`X-Organization-Membership-Id` lo hace pasar intacto hasta el backend).
 
 ---
 

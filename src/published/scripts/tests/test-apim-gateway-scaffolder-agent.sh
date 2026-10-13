@@ -80,5 +80,12 @@ for inventory in "$REPO_ROOT/dist/claude/.mefisto-generated-assets.json" "$REPO_
 done
 if "$GENERATOR" --check >/dev/null; then pass 'generate-published-adapters --check esta al dia'; else fail 'generate-published-adapters --check detecto divergencias'; fi
 
+echo '[org-membership] header X-Organization-Membership-Id (issue #2397)'
+contains "$body" '<set-header name="X-Organization-Membership-Id" exists-action="override">' 'politica emite set-header X-Organization-Membership-Id con override'
+contains "$body" '${var.claim_organization_membership_id}' 'politica usa el claim de la variable'
+contains "$body" 'variable "claim_organization_membership_id"' 'declara la variable claim_organization_membership_id'
+contains "$body" 'default     = "organization_membership_id"' 'default organization_membership_id'
+contains "$body" 'los tres `<set-header>`' 'nota B10 habla de tres set-header'
+
 printf 'RESULTADO: %s pasaron, %s fallaron\n' "$PASS" "$FAIL"
 exit "$FAIL"

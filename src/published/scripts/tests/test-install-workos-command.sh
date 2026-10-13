@@ -77,5 +77,10 @@ for runtime in claude opencode; do
 done
 if "$GENERATOR" --check >/dev/null; then pass 'generate-published-adapters --check esta al dia'; else fail 'generate-published-adapters --check detecto divergencias'; fi
 
+echo '[jwt-template] paso 5 guia el JWT Template (issue #2397)'
+contains "$body" '"organization_membership_id": "{{ organization_membership.id }}"' 'guia el JWT Template con organization_membership_id'
+contains "$body" 'https://workos.com/docs/fga/authkit-integration' 'cita la doc oficial de WorkOS'
+contains "$body" '3072 bytes' 'advierte el limite de 3072 bytes'
+
 printf 'RESULTADO: %s pasaron, %s fallaron\n' "$PASS" "$FAIL"
 exit "$FAIL"
