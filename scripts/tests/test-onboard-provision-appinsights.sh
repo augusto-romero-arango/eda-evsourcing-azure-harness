@@ -74,9 +74,17 @@ FAKE_SB="" check_fail "cero namespaces" "ningun namespace" --apply
 FAKE_AI="appi-a appi-b" check_fail "ambiguedad de App Insights lista candidatos" "- appi-b" --apply
 FAKE_SB="sb-a sb-b" check_fail "ambiguedad de namespace lista candidatos" "- sb-b" --apply
 FAKE_AI="appi-a appi-b" check_fail "flag fuera de candidatos" "no esta entre los candidatos" --apply --appinsights-app appi-z
-# sin az en PATH
-OUT=$(cd "$R" && PATH="/usr/bin:/bin" bash -c 'command -v az >/dev/null && exit 99; exec bash "$0" --apply' "$SCRIPT" 2>&1); RC=$?
-if [ "$RC" -ne 0 ] && [ "$RC" -ne 99 ] && [ ! -e "$R/.mefisto/appinsights.env" ]; then pass "sin az aborta sin escribir"; elif [ "$RC" -eq 99 ]; then pass "sin az: omitido (az del sistema en PATH base)"; else fail "sin az (rc=$RC): $OUT"; fi
+# sin az en PATH: solo git y jq enlazados sobre el PATH base del sistema.
+mkdir -p "$TMP/noaz"
+for b in git jq; do ln -sf "$(command -v "$b")" "$TMP/noaz/$b"; done
+if [ -x /usr/bin/az ] || [ -x /bin/az ]; then
+    pass "sin az: omitido (az del sistema en el PATH base)"
+else
+    OUT=$(cd "$R" && PATH="$TMP/noaz:/usr/bin:/bin" bash "$SCRIPT" --apply 2>&1); RC=$?
+    if [ "$RC" -ne 0 ] && [ ! -e "$R/.mefisto/appinsights.env" ] && printf '%s' "$OUT" | grep -Fq "'az' no esta instalado"; then
+        pass "sin az aborta nombrando la causa y sin escribir"
+    else fail "sin az (rc=$RC): $OUT"; fi
+fi
 
 echo "[P-4] flag valido desambigua y cero Function Apps no aborta"
 OUT=$(FAKE_AI="appi-a appi-b" FAKE_FUNCS="" run "$R" --apply --appinsights-app appi-b); RC=$?
