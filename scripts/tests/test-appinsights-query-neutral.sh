@@ -64,6 +64,27 @@ done
 echo "$out" | grep -q ".mefisto/appinsights.env" && pass "cita la ruta exacta" || fail "no cita la ruta"
 echo "$out" | grep -q "template" && fail "cita un template" || pass "sin citar templates"
 
+check_legacy() {
+    local repo="$1" label="$2" before after
+    echo "[a2] aviso legacy ($label)"
+    echo "OTRA=1" > "$repo/scripts/.env"
+    out=$(run "$repo" exceptions); rc=$?
+    [ "$rc" -ne 0 ] && ! echo "$out" | grep -q "legacy" && pass "CA-3 .env ajeno sin aviso" || fail "CA-3 .env ajeno"
+    echo "APPINSIGHTS_APP=app-legacy" > "$repo/scripts/.env"
+    before=$(cd "$repo" && find . -path ./.git -prune -o -type f -print | sort | xargs cksum)
+    out=$(run "$repo" exceptions); rc=$?
+    after=$(cd "$repo" && find . -path ./.git -prune -o -type f -print | sort | xargs cksum)
+    [ "$rc" -ne 0 ] && echo "$out" | grep -q "scripts/.env" \
+        && echo "$out" | grep -qF "mkdir -p .mefisto && mv scripts/.env .mefisto/appinsights.env" \
+        && echo "$out" | grep -q "APPINSIGHTS_RG" \
+        && pass "CA-1 avisa y da el comando" || fail "CA-1 sin aviso legacy"
+    [ "$before" = "$after" ] && pass "CA-2 arbol intacto" || fail "CA-2 el arbol cambio"
+    rm -f "$repo/scripts/.env"
+    out=$(run "$repo" exceptions)
+    echo "$out" | grep -q "legacy" && fail "CA-3 aviso sin scripts/.env" || pass "CA-3 sin scripts/.env sin aviso"
+}
+check_legacy "$REPO" "scripts/"
+
 mkdir -p "$REPO/.mefisto"
 cat > "$REPO/.mefisto/appinsights.env" <<'EOF'
 APPINSIGHTS_APP=app-consumidor
@@ -73,6 +94,12 @@ SERVICEBUS_RG=rg-sb
 FUNCTIONAPP_NAMES=fa1
 EOF
 BEFORE=$(ls -A "$REPO/scripts" | sort | tr '\n' ' ')
+
+echo "[b0] CA-4 con env presente no hay aviso aunque exista scripts/.env"
+echo "APPINSIGHTS_APP=app-legacy" > "$REPO/scripts/.env"
+out=$(run "$REPO" exceptions); rc=$?
+[ "$rc" -eq 0 ] && ! echo "$out" | grep -q "legacy" && pass "CA-4 sin aviso" || fail "CA-4 cambio el comportamiento"
+rm -f "$REPO/scripts/.env"
 
 echo "[b] exceptions"
 : > "$AZ_LOG"
