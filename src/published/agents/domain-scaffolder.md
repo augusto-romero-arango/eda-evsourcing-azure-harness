@@ -3059,7 +3059,7 @@ Si el archivo existe, continua con los puntos 1-8.
 
 **1. Idempotencia (issue #370 CA-4):**
 
-> **Las citas de criterio de aceptacion de este paso llevan el numero de issue a proposito.** El Paso 3b acumula dos issues (#370, que lo creo, y #548, que le agrego los puntos 3 y 4) y sus numeraciones de CA se solapan: "CA-1" y "CA-4" significan cosas distintas segun el issue. No quites el `issue #NNN` al transcribir ni al enmendar este paso.
+> **Las citas de criterio de aceptacion de este paso llevan el numero de issue a proposito.** El Paso 3b acumula tres issues (#370, que lo creo; #548, que le agrego los puntos 3 y 4; y #2395, que le agrego el punto 4b) y sus numeraciones de CA se solapan: "CA-1" y "CA-4" significan cosas distintas segun el issue. No quites el `issue #NNN` al transcribir ni al enmendar este paso.
 
 ```bash
 REPO_ROOT=$(git -C /ruta-conocida rev-parse --show-toplevel)
@@ -3075,6 +3075,8 @@ Si ese archivo ya existe -- re-corrida del mismo scaffold --, el registro ya est
 ```xml
 <PackageReference Include="Marten" Version="9.23.0" />
 ```
+
+> **Marten >= 9.23 es requisito de la tolerancia a huecos (issue #2395, MEF-ADR-0034 seccion 12)**: la extension `AplicarToleranciaAHuecosDeSecuencia` del punto 5 usa `StoreOptions.Projections.SkipStaleGapsDespiteLiveTransactionsAfter`, que no existe en `Marten` 9.12.0 (`CS1061`). El `PackageReference` que este punto agrega usa la version que fijo #2394 (`9.23.0`); si el worker ya tiene `Marten` por debajo de `9.23`, subelo a esa version, no lo dupliques.
 
 **3. Agregar la `ProjectReference` del worker hacia `{PascalCase}.DomainEvents` (issue #548 CA-1).** El worker necesita ver en compilacion los tipos de evento persistidos de este dominio para que las clases de proyeccion (`projection-implementer`, issue `tipo:projection` posterior) puedan declarar `Create`/`Apply` sobre ellos -- sin esta referencia, el `EventGraph` del named store dependeria del fallback por `mt_dotnet_type` al leer streams preexistentes (el defecto que el consumidor de referencia pago en su issue #277, documentado en MEF-ADR-0036). `dotnet add reference` es idempotente -- verificado con SDK 10.0.201: sobre una referencia ya declarada imprime `El proyecto ya tiene una referencia a "..."` y sale con codigo 0, sin duplicar el `<ProjectReference>` en el `.csproj`:
 
@@ -3107,6 +3109,35 @@ fi
 **La verificacion se afirma como allowlist, no como blacklist del dominio que estas scaffoldeando** -- es la forma que pide MEF-ADR-0039 seccion 10 punto 2 ("ningun `.csproj` de `Projections` contiene una `<ProjectReference>` hacia el `.csproj` de ningun `<RootNamespace>.{Dominio}`", sin acotar a un dominio): buscar solo el nombre del Function App de **este** dominio dejaria pasar en silencio la referencia al Function App de un dominio anterior, o una a `PublicEvents`/`PrivateEvents` -- que la decision 2 tambien prohibe en el worker (esos dos ensamblados no entran al read-side). La allowlist las atrapa todas sin enumerar prohibiciones.
 
 Dos detalles del comando que no debes simplificar al transcribirlo: el `test -f` previo esta porque un `grep` sobre un archivo inexistente sale con codigo 2, y la forma corta `grep ... && echo VIOLACION || echo OK` imprimiria "OK" en ese caso -- un falso verde justo antes del commit; y el filtro ancla en `"$` porque `grep -o` recorta cada `Include="..."` terminando en la comilla, de modo que `<RootNamespace>.{PascalCase}.DomainEvents.csproj` calza el patron permitido y no produce un falso positivo. El comando es line-based: si algun `ProjectReference` quedo partido en varias lineas (`dotnet add reference` del punto 3 nunca lo hace, pero una edicion a mano si), reformatealo a una sola linea antes de correrlo. Si el `grep` encuentra intrusos, no los corrijas en silencio -- es la misma politica que ya aplica el `grep` de aislamiento del Paso 7: detente e informa.
+
+**4b. Crear la fuente unica `Infraestructura/ConfiguracionDaemonProjections.cs` si falta (issue #2395 CA-1, MEF-ADR-0034 seccion 12, MEF-ADR-0018).** El mismo tope de tolerancia a huecos de secuencia aplica a todos los named stores del worker; vive en un solo archivo. Idempotente, como el `PackageReference` del punto 2: pruebalo con `test -f` y, si existe, no lo modifiques ni lo dupliques.
+
+```bash
+REPO_ROOT=$(git -C /ruta-conocida rev-parse --show-toplevel)
+test -f "$REPO_ROOT/src/<RootNamespace>.Projections/Infraestructura/ConfiguracionDaemonProjections.cs" && echo "EXISTE (no tocar)" || echo "FALTA (crear)"
+```
+
+Si falta, crealo con este contenido:
+
+```csharp
+using Marten;
+
+namespace <RootNamespace>.Projections.Infraestructura;
+
+/// <summary>
+/// Configuracion del daemon compartida por todos los named stores del worker (MEF-ADR-0034 seccion 12).
+/// </summary>
+public static class ConfiguracionDaemonProjections
+{
+    public static readonly TimeSpan TopeHuecosDeSecuencia = TimeSpan.FromMinutes(5);
+
+    public static StoreOptions AplicarToleranciaAHuecosDeSecuencia(this StoreOptions opts)
+    {
+        opts.Projections.SkipStaleGapsDespiteLiveTransactionsAfter = TopeHuecosDeSecuencia;
+        return opts;
+    }
+}
+```
 
 **5. Crear `Infraestructura/ConfiguracionMartenProjections{PascalCase}.cs`** en `src/<RootNamespace>.Projections/` (issue #370 CA-2/CA-3 -- el archivo y su registro; issue #548 CA-2/CA-3 -- la linea `AddEventTypes` y el comentario-guia de serializacion) -- el marker del named store y el seam de composicion de proyecciones del dominio, hermano read-side de `ComposicionServicios{PascalCase}` (MEF-ADR-0029, Paso 6b) y con el naming que fija MEF-ADR-0006 (enmienda issue #363):
 
@@ -3146,6 +3177,9 @@ public static class ConfiguracionMartenProjections{PascalCase}
             opts.Events.MetadataConfig.CorrelationIdEnabled = true;
             opts.Events.MetadataConfig.CausationIdEnabled = true;
             opts.Events.MetadataConfig.HeadersEnabled = true;
+
+            // Tolerancia a huecos de secuencia del daemon (MEF-ADR-0034 seccion 12).
+            opts.AplicarToleranciaAHuecosDeSecuencia();
 
             // Identidad del evento persistido (MEF-ADR-0036): registra los tipos de este dominio en
             // el EventGraph del named store ANTES de la primera lectura -- espejo read-side del
@@ -3218,7 +3252,7 @@ else
 fi
 ```
 
-Si el proyecto existe y el test falla, lee el error y corrige antes de continuar. El caso mas probable es que el config-test enumere los dominios del BC uno por uno (`config-test.md`, punto 1: un `Configurar{Dominio}` por dominio conocido) y todavia no incluya al recien nacido -- **ese archivo es un test y no lo tocas tu**: reportalo en tu resumen para que el issue `tipo:projection` del dominio lo cubra. Lo que si te corresponde ya esta hecho: las verificaciones de ese test dependen del seam que emitiste en el punto 5 **de este paso**, y ese seam sale sin ninguna proyeccion `Inline` (habilita la segunda verificacion de `config-test.md`) y con la configuracion de metadata ya replicada (habilita la tercera, que es un subconjunto de la compatibilidad Marten write-side/read-side -- la completa la verifica el reviewer bajo gate, MEF-ADR-0034 seccion 6).
+Si el proyecto existe y el test falla, lee el error y corrige antes de continuar. El caso mas probable es que el config-test enumere los dominios del BC uno por uno (`config-test.md`, punto 1: un `Configurar{Dominio}` por dominio conocido) y todavia no incluya al recien nacido -- **ese archivo es un test y no lo tocas tu**: reportalo en tu resumen para que el issue `tipo:projection` del dominio lo cubra. Lo que si te corresponde ya esta hecho: las verificaciones de ese test dependen del seam que emitiste en el punto 5 **de este paso**, y ese seam sale sin ninguna proyeccion `Inline` (habilita la segunda verificacion de `config-test.md`) y con la configuracion de metadata ya replicada (habilita la tercera, que es un subconjunto de la compatibilidad Marten write-side/read-side -- la completa la verifica el reviewer bajo gate, MEF-ADR-0034 seccion 6) y con la tolerancia a huecos de secuencia ya invocada desde la fuente unica del punto 4b (habilita la guarda 5, MEF-ADR-0034 seccion 12).
 
 ---
 
@@ -4091,6 +4125,7 @@ if [ -f "src/<RootNamespace>.Projections/Infraestructura/ConfiguracionMartenProj
   git add \
     "src/<RootNamespace>.Projections/Infraestructura/ConfiguracionMartenProjections.cs" \
     "src/<RootNamespace>.Projections/Infraestructura/ConfiguracionMartenProjections{PascalCase}.cs" \
+    "src/<RootNamespace>.Projections/Infraestructura/ConfiguracionDaemonProjections.cs" \
     "src/<RootNamespace>.Projections/<RootNamespace>.Projections.csproj"
 fi
 
@@ -4189,8 +4224,13 @@ Scaffold completado para el dominio "{kebab}":
                                              - Marker I{PascalCase}ProjectionStore + seam Configurar{PascalCase}:
                                                AddMartenStore sobre el mismo schema del write-side, daemon HotCold,
                                                replica de Events.MetadataConfig (MEF-ADR-0034 seccion 6 punto 3),
+                                               tolerancia a huecos via AplicarToleranciaAHuecosDeSecuencia
+                                               (MEF-ADR-0034 seccion 12),
                                                sin ninguna proyeccion concreta todavia -- las agrega el flujo
                                                read-side (issue tipo:projection) sobre este mismo archivo
+  src/<RootNamespace>.Projections/Infraestructura/ConfiguracionDaemonProjections.cs
+                                             - Fuente unica del tope de huecos de secuencia (5 min) de todos
+                                               los named stores; creado solo si faltaba (issue #2395)
   src/<RootNamespace>.Projections/Infraestructura/ConfiguracionMartenProjections.cs
                                              - Editado: ConfigurarEventos ahora encadena Configurar{PascalCase}
   src/<RootNamespace>.Projections/<RootNamespace>.Projections.csproj
@@ -4230,4 +4270,4 @@ Proximos pasos:
 
 - Si `terraform validate` falla, lee el error y corrige el bloque HCL que agregaste. No hagas commit hasta que la validacion pase (o terraform no este instalado).
 
-- Si el `dotnet build` del worker de proyecciones (Paso 3b, punto 7) falla despues de agregar `ConfiguracionMartenProjections{PascalCase}.cs`, revisa primero que el `PackageReference Marten` del punto 2 haya quedado en el `.csproj` (sin duplicarlo si ya lo tenia un dominio anterior) y que la `ProjectReference` del punto 3 hacia `{PascalCase}.DomainEvents` se haya agregado. Si el error es `CS0103: El nombre 'DaemonMode' no existe en el contexto actual`, el `using` esta equivocado: `DaemonMode` vive en **`JasperFx.Events.Daemon`**, no en `Marten.Events.Daemon` (que existe, por eso el `using` malo no da error propio). No hagas commit hasta que compile.
+- Si el `dotnet build` del worker de proyecciones (Paso 3b, punto 7) falla despues de agregar `ConfiguracionMartenProjections{PascalCase}.cs`, revisa primero que el `PackageReference Marten` del punto 2 haya quedado en el `.csproj` (sin duplicarlo si ya lo tenia un dominio anterior) y que la `ProjectReference` del punto 3 hacia `{PascalCase}.DomainEvents` se haya agregado. Si el error es `CS0103: El nombre 'DaemonMode' no existe en el contexto actual`, el `using` esta equivocado: `DaemonMode` vive en **`JasperFx.Events.Daemon`**, no en `Marten.Events.Daemon` (que existe, por eso el `using` malo no da error propio). Si el error es `CS1061` sobre `SkipStaleGapsDespiteLiveTransactionsAfter` en `ConfiguracionDaemonProjections.cs`, el worker tiene `Marten` por debajo de `9.23`: sube el `PackageReference` del punto 2 a `9.23.0`. No hagas commit hasta que compile.
