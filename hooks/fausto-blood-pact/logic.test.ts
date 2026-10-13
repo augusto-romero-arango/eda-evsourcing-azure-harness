@@ -37,6 +37,7 @@ import {
   batchEndFromStats,
   closeRowText,
   closeTotalText,
+  nextCurrentRow,
   runningRowText,
   totalWithRunning,
   fmtCost,
@@ -940,4 +941,17 @@ test('runningRowText y totalWithRunning arman la fila en curso de la tabla', () 
   expect(withRun).toMatchObject({ durationMs: 159_000, costUsd: 4.21 })
   expect(closeTotalText(2, withRun, 0)).toContain('02:39')
   expect(totalWithRunning(total, 0, now)).toBe(total)
+})
+
+test('nextCurrentRow: corrida activa del eslabon y, al esperar su merge, tiempo congelado', () => {
+  const b = parseBatchStatus(batchRaw())!
+  const live = parseStatus('pipeline-status-tdd-13.json', JSON.stringify({ issue: 13, started: '20261009-100000', updated: '2026-10-09T10:01:00', stage: '2-implementer', state: 'running' }))!
+  const row = nextCurrentRow(b, live, null, 1_000)
+  expect(row).toEqual({ run: live, endMs: null })
+  const frozen = nextCurrentRow(b, null, row, 5_000)
+  expect(frozen).toEqual({ run: live, endMs: 5_000 })
+  expect(nextCurrentRow(b, null, frozen, 9_000)).toBe(frozen)
+  const other = parseStatus('pipeline-status-tdd-40.json', JSON.stringify({ issue: 40, started: '20261009-100000', stage: '2-implementer', state: 'running' }))!
+  expect(nextCurrentRow(b, null, { run: other, endMs: null }, 5_000)).toBeNull()
+  expect(nextCurrentRow(parseBatchStatus(batchRaw({ state: 'completed' }))!, live, row, 5_000)).toBeNull()
 })

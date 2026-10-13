@@ -142,4 +142,4 @@ Con el lote en curso (paridad con `mefisto-divine-wager`, MEF-ADR-0055 decisión
 
 - Una fila por issue terminado (duración y costo de `batchStatsAtom`, que ahora se lee también mientras corre) y una fila `●` (warning) del issue en curso: `#N`, título, `PR #X` o `…`, tiempo desde el `started` de su corrida (`MM:SS` o `H:MM:SS`, mismo reloj que la cabecera, sigue contando durante una espera por rate limit) y `…` de costo.
 - La fila `total` aparece con más de una fila: cuenta la en curso y suma su tiempo, pero en costo suma solo los terminados.
-- Sin corrida del issue en curso todavía no hay fila `●`; al terminar, la fila pasa a la forma de terminado. La vista del lote terminado (#2332) no cambia.
+- Sin corrida del issue en curso todavía no hay fila `●`. Si su corrida termina y el issue espera su merge, la fila sigue con el tiempo congelado (como la cinta interna); al quedar mergeado o fallido pasa a la forma de terminado, sin duplicarse. La vista del lote terminado (#2332) no cambia.

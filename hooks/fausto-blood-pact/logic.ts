@@ -953,6 +953,21 @@ export function runningRowText(issue: number, pr: string | null, title: string |
   return { lead, trail: `${padEnd(startedMs > 0 ? elapsedText(nowMs - startedMs) : '…', 8)} …` }
 }
 
+/** Corrida de la fila `●` y, si ya termino, el instante en que se congela su tiempo. */
+export type CurrentRow = { run: PipelineRun; endMs: number | null }
+
+/**
+ * Fila `●` del lote en curso: la corrida activa del eslabon; si su status ya no esta activo mientras el issue
+ * espera su merge, la ultima vista, con el tiempo congelado en `nowMs` (como la cinta interna). Null sin lote en curso.
+ */
+export function nextCurrentRow(b: BatchStatus, live: PipelineRun | null, prev: CurrentRow | null, nowMs: number): CurrentRow | null {
+  if (!isBatchRunning(b)) return null
+  if (live) return { run: live, endMs: null }
+  const cur = batchCurrentOf(b)
+  if (!prev || !cur || prev.run.issue !== cur.issue || stampToMs(prev.run.started) < stampToMs(b.started)) return null
+  return prev.endMs === null ? { run: prev.run, endMs: nowMs } : prev
+}
+
 /** Total con el issue en curso: suma su tiempo transcurrido a los terminados; el costo sigue siendo solo el de los terminados. */
 export function totalWithRunning(total: IssueStats, startedMs: number, nowMs: number): IssueStats {
   return startedMs > 0 ? { ...total, durationMs: total.durationMs + Math.max(0, nowMs - startedMs) } : total

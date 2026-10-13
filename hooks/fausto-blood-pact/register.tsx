@@ -6,7 +6,7 @@ import type { Role } from '../sprites'
 import { cropGrid, numberWidth, padEnd, reasonOf, usedColumns } from '../logic'
 import type { BoardList, Historian, PaneLine, PactMerge, PipelineResult, PipelineRun } from '../types'
 import type { IssueStats } from './logic'
-import type { BatchStatus, LastEvent, LaunchKind, LaunchPlan, MascotPose, OpenPr } from './logic'
+import type { BatchStatus, CurrentRow, LastEvent, LaunchKind, LaunchPlan, MascotPose, OpenPr } from './logic'
 import {
   BAND_FETCH_ROWS,
   BAND_LOG_ROWS,
@@ -96,6 +96,7 @@ import {
   batchEndFromStats,
   closeRowText,
   closeTotalText,
+  nextCurrentRow,
   runningRowText,
   totalWithRunning,
   elapsedText,
@@ -162,6 +163,7 @@ const openPrsAtom = atom({ plugin: 'mefisto', key: 'pactOpenPrs' } as const, [] 
 const batchAtom = atom({ plugin: 'mefisto', key: 'pactBatch' } as const, null as BatchStatus | null)
 type BatchStats = { stats: Record<string, IssueStats>; endedMs: number | null }
 const batchStatsAtom = atom({ plugin: 'mefisto', key: 'pactBatchStats' } as const, { stats: {}, endedMs: null } as BatchStats)
+const batchCurrentAtom = atom({ plugin: 'mefisto', key: 'pactBatchCurrent' } as const, null as CurrentRow | null)
 const mergeAtom = atom({ plugin: 'mefisto', key: 'pactMerge' } as const, null as PactMerge | null)
 const fieldNotesAtom = atom({ plugin: 'mefisto', key: 'pactFieldNotes' } as const, null as number | null)
 const historianAtom = atom({ plugin: 'mefisto', key: 'pactHistorian' } as const, null as Historian | null)
@@ -323,6 +325,7 @@ async function refreshBatch($: EngineInterface) {
   const batch = await readBatch($)
   if (!batch) {
     lastBatchIssues = null
+    await update($, batchCurrentAtom, () => null)
     await update($, batchAtom, () => null)
     return
   }
@@ -346,6 +349,9 @@ async function refreshBatch($: EngineInterface) {
   else batchSeenEndedMs ??= Date.now()
   const endedMs = isBatchRunning(batch) ? null : (batchEndFromStats(stats) ?? batchSeenEndedMs)
   if (stats !== known.stats || endedMs !== known.endedMs) await update($, batchStatsAtom, () => ({ stats, endedMs }))
+  const prevRow = await read($, batchCurrentAtom)
+  const nextRow = nextCurrentRow(batch, batchRunOf(batch, await read($, runsAtom)), prevRow, Date.now())
+  if (nextRow !== prevRow) await update($, batchCurrentAtom, () => nextRow)
   const closed = !isBatchRunning(batch) && (await readDismissed($)).includes(batchDismissKey(runsRepo, batch))
   await update($, batchAtom, () => (closed ? null : batch))
 }
@@ -1254,16 +1260,19 @@ export const register: Register = on => {
       const doneRows = batch.issues.filter(i => i.status === 'mergeado' || i.status === 'fallido')
       const titleW = summaryTitleWidth(inner)
       const startedMs = stampToMs(batch.started)
+      const currentRow = await read($, batchCurrentAtom)
       // Tabla a todo el ancho: terminados y, con el lote en curso, la fila `●` del issue en curso.
       const batchTable = (() => {
-        const nowMs = Date.now()
         const cur = running ? batchCurrentOf(batch) : null
-        const curRun = cur && batchRun && batchRun.issue === cur.issue ? batchRun : null
+        const curRow = cur && currentRow && currentRow.run.issue === cur.issue && !doneRows.some(i => i.issue === cur.issue) ? currentRow : null
+        const curRun = curRow ? curRow.run : null
+        const nowMs = curRow?.endMs ?? Date.now()
         const curStartedMs = curRun ? stampToMs(curRun.started) : 0
-        const rowCount = doneRows.length + (curRun ? 1 : 0)
+        const curText = cur && curRun ? runningRowText(cur.issue, cur.pr, curRun.title ?? null, curStartedMs, nowMs, titleW) : null
+        const rowCount = doneRows.length + (curText ? 1 : 0)
         if (rowCount === 0) return null
         const doneTotal = statsTotal(doneRows.map(i => stats[String(i.issue)]).filter((st): st is IssueStats => st !== undefined))
-        const total = curRun ? totalWithRunning(doneTotal, curStartedMs, nowMs) : doneTotal
+        const total = curText ? totalWithRunning(doneTotal, curStartedMs, nowMs) : doneTotal
         return (
           <Box flexDirection="column">
             {doneRows.map(i => {
@@ -1275,10 +1284,10 @@ export const register: Register = on => {
                 </Text>
               )
             })}
-            {cur && curRun && (
+            {cur && curText && (
               <Text key={`cur-${cur.issue}`} wrap="truncate-end" color="warning">
-                {`● ${runningRowText(cur.issue, cur.pr, curRun.title ?? null, curStartedMs, nowMs, titleW).lead}`}
-                <Text dimColor>{runningRowText(cur.issue, cur.pr, curRun.title ?? null, curStartedMs, nowMs, titleW).trail}</Text>
+                {`● ${curText.lead}`}
+                <Text dimColor>{curText.trail}</Text>
               </Text>
             )}
             {rowCount > 1 && <Text dimColor wrap="truncate-end">{closeTotalText(rowCount, total, titleW)}</Text>}
