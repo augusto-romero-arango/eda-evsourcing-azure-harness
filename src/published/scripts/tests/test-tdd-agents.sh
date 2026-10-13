@@ -182,10 +182,13 @@ echo '[estado] regresion: la asercion de bloqueo no depende de un conteo exacto'
 regression_copy="$WORK/implementer-regression.md"
 cp "$REPO_ROOT/src/published/agents/implementer.md" "$regression_copy"
 printf '\n%s\n' "$BLOCKAGE_REF" >> "$regression_copy"
-printf '%s\n' "$BLOCKAGE_REF" >> "$regression_copy"
 if [ "$(blockage_verdict "$regression_copy" 1)" = ok ]; then pass 'implementer con una mencion extra sigue en verde'; else fail 'implementer con una mencion extra rompe la asercion'; fi
 grep -Fv "$BLOCKAGE_REF" "$regression_copy" > "$regression_copy.sin" || true
 if [ "$(blockage_verdict "$regression_copy.sin" 1)" != ok ]; then pass 'implementer sin ninguna mencion da FAIL'; else fail 'implementer sin menciones no es detectado'; fi
+regression_silent="$WORK/test-writer-regression.md"
+cp "$REPO_ROOT/src/published/agents/test-writer.md" "$regression_silent"
+printf '\n%s\n' "$BLOCKAGE_REF" >> "$regression_silent"
+if [ "$(blockage_verdict "$regression_silent" 0)" != ok ]; then pass 'test-writer con una mencion de bloqueo da FAIL'; else fail 'test-writer con una mencion de bloqueo no es detectado'; fi
 
 echo '[validador] excepciones transitorias acotadas'
 for agent in "${agents[@]}"; do
