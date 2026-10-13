@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # test-tooling-scope-prompt-config-path.sh -- Contrato de config canonico en los
 # prompts de ALCANCE PERMITIDO de tooling-pipeline.sh (#1512), y ruta exacta
-# .github/dependabot.yml en ambos prompts sin abrir .github/ completo (#1782).
+# .github/dependabot.yml en ambos prompts sin abrir .github/ completo (#1782), y
+# ruta exacta .mefisto/appinsights.env sin abrir .mefisto/ completo (#2385).
 #
-# El gate real (is_path_in_consumer_blocklist) no bloquea ninguna de las dos
+# El gate real (is_path_in_consumer_blocklist) no bloquea ninguna de estas
 # rutas de config: lo que decide que archivo toca el agente es el texto del
 # prompt. Por eso el contrato se verifica prompt por prompt (writer y reviewer
 # por separado, anclados en su encabezado), no por conteo global de
@@ -145,6 +146,33 @@ else
     fail "escenario dependabot.yml no reconocido"
 fi
 rm -rf "$TMP7"
+
+echo "[8] .mefisto/appinsights.env declarado en writer y reviewer, sin abrir .mefisto/ completo (#2385)"
+W8=$(bloque_desde '^ALCANCE PERMITIDO de escritura:$' 14)
+R8=$(bloque_desde '^ALCANCE PERMITIDO de escritura (igual al del writer):$' 4)
+for quien in W8:writer R8:reviewer; do
+    var="${quien%%:*}"; nombre="${quien##*:}"
+    if printf '%s\n' "${!var}" | grep -Fq '.mefisto/appinsights.env'; then
+        pass "el $nombre declara .mefisto/appinsights.env"
+    else
+        fail "el $nombre no declara .mefisto/appinsights.env"
+    fi
+    if printf '%s\n' "${!var}" | grep -Eq '(^|[ ,-])\.mefisto/($|[ ,(])'; then
+        fail "el $nombre declara .mefisto/ completo"
+    else
+        pass "el $nombre no declara .mefisto/ completo"
+    fi
+done
+if printf '%s\n' "$W8" | grep -F '.mefisto/appinsights.env' | grep -q 'sin secretos'; then
+    pass "el writer describe appinsights.env como configuracion sin secretos"
+else
+    fail "el writer no describe appinsights.env como configuracion sin secretos"
+fi
+if is_path_in_consumer_blocklist ".mefisto/appinsights.env"; then
+    fail "el gate bloquea .mefisto/appinsights.env"
+else
+    pass "el gate no bloquea .mefisto/appinsights.env"
+fi
 
 echo "----------------------------------------"
 echo "  Resumen: $PASS pass, $FAIL fail"
