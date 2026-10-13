@@ -60,6 +60,7 @@ gh label create "estado:listo"    --color "B60205" --description "Refinado y lis
 echo ""
 echo "Creando labels especiales..."
 gh label create "bloqueado" --color "D93F0B" --description "Depende de otro issue aun no cerrado" --force
+gh label create "warning" --color "E4E669" --description "Warning nuevo que el pipeline no pudo remediar (MEF-ADR-0056)" --force
 
 echo ""
 echo "Listo. Labels actuales:"

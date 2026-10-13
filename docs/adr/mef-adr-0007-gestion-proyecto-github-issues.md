@@ -23,7 +23,7 @@ Reemplazar los 9 labels default de GitHub con un esquema por facetas:
 - **Origen** — indica por que existe el issue (`bug`)
 - **Dominio** (`dom:programacion`, `dom:contracts`, `dom:asistencia`, + nuevos conforme crecen)
 - **Estado** (`estado:borrador`, `estado:listo`)
-- **Especiales** (`bloqueado`, `epic`)
+- **Especiales** (`bloqueado`, `epic`, `warning`)
 
 El label `bug` es ortogonal al `tipo:`: un issue de bug siempre lleva un `tipo:` que indica que pipeline lo implementa (ej: `bug` + `tipo:refactor` + `dom:asistencia`).
 
@@ -71,3 +71,4 @@ Sin GitHub Projects (overhead excesivo para solo dev). En cambio:
 ## Control de cambios
 
 - 2026-07-26: sumado `tipo:projection` al eje **Tipo** (issue #373), para issues de lectura/consulta (proyecciones Marten y sus Functions GET). `scripts/setup-github-labels.sh` lo provisiona junto al resto de `tipo:*` y `/onboard` lo diagnostica; su Definition of Ready es la columna `projection` de MEF-ADR-0011. El eje sigue siendo uno de los 4 dimensionales; no cambia ninguna otra decision de este ADR.
+- 2026-10-13: sumado `warning` al eje **Especiales** (issue #2406, MEF-ADR-0056), para los issues `estado:borrador` que la ultima instancia de la politica de cero warnings nuevos deja cuando no logra remediar un warning. `scripts/setup-github-labels.sh` lo provisiona junto a `bloqueado` y `/onboard` lo diagnostica; no cambia ninguna otra decision de este ADR.

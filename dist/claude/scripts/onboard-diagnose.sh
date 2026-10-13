@@ -604,7 +604,7 @@ main() {
 "
     else
         MISSING=""
-        for lbl in tipo:feature tipo:infra tipo:refactor tipo:tooling tipo:projection estado:borrador estado:listo bug bloqueado; do
+        for lbl in tipo:feature tipo:infra tipo:refactor tipo:tooling tipo:projection estado:borrador estado:listo bug bloqueado warning; do
             printf '%s\n' "$EXISTING" | grep -Fqx "$lbl" || MISSING="$MISSING $lbl"
         done
         if [ -n "${HARNESS_DOMAIN_LABELS:-}" ]; then
@@ -613,7 +613,7 @@ main() {
             done
         fi
         if [ -z "$MISSING" ]; then
-            row OK "esquema completo (tipo:*, estado:*, dom:*, bug, bloqueado)"
+            row OK "esquema completo (tipo:*, estado:*, dom:*, bug, bloqueado, warning)"
         else
             row FALTA "faltan labels:$MISSING"
             PA_LABELS_FALTA=1

@@ -305,6 +305,7 @@ cat > "$ONBOARD_BIN/gh" <<'GH'
 #!/usr/bin/env bash
 if [ "$1" = "label" ]; then
     printf '%s\n' tipo:feature tipo:infra tipo:refactor tipo:tooling tipo:projection estado:borrador estado:listo bug bloqueado dom:dominio1
+    if [ -z "${GH_LABELS_SIN_WARNING:-}" ]; then echo warning; fi
 elif [ "$1" = "api" ]; then
     case "${GH_API_MODE:-mefisto}" in
         mefisto) printf '{"name":"mefisto"}\n' ;;
@@ -399,6 +400,18 @@ else
     SUCCESS_FALTA=""
     SUCCESS_NV=""
     fail "la corrida exitosa no emitió el resumen de conteos esperado"
+fi
+
+if printf '%s\n' "$OUT" | grep -Fqx '  [OK           ] esquema completo (tipo:*, estado:*, dom:*, bug, bloqueado, warning)'; then
+    pass "con warning en el stub, la fila de labels sale OK con el esquema completo"
+else
+    fail "la fila de labels no salio OK con warning presente"
+fi
+OUT_NOWARN=$(cd "$ONBOARD_REPO" && GH_LABELS_SIN_WARNING=1 PATH="$ONBOARD_BIN:$PATH" bash "$REPO_ROOT/scripts/onboard-diagnose.sh" 2>&1)
+if printf '%s\n' "$OUT_NOWARN" | grep -Fqx '  [FALTA        ] faltan labels: warning'; then
+    pass "sin warning en el stub, se reporta 'faltan labels: warning'"
+else
+    fail "la ausencia de warning no produjo 'faltan labels: warning'"
 fi
 
 OUT_ABSENT=$(cd "$ONBOARD_REPO" && AZ_APP_MODE=absent PATH="$ONBOARD_BIN:$PATH" bash "$REPO_ROOT/scripts/onboard-diagnose.sh" 2>&1)
