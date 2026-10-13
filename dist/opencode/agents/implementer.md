@@ -6,6 +6,26 @@ tools: {"microsoft-learn_*":false,"terraform_*":false}
 ---
 <!-- GENERADO por src/published/scripts/generate-published-adapters.sh desde src/published/agents/implementer.md. No editar a mano. -->
 ```bash
+# Cada llamada bash que use ${MEFISTO_PACKAGE_ROOT} debe incluir este bloque antes de sus comandos: no se asume estado de shell persistente entre llamadas.
+if [ -n "${XDG_DATA_HOME:-}" ]; then mefisto_opencode_launcher="$XDG_DATA_HOME/mefisto/active/bin/mefisto-opencode"
+elif [ "${OSTYPE%%[0-9.]*}" = darwin ]; then mefisto_opencode_launcher="$HOME/Library/Application Support/mefisto/active/bin/mefisto-opencode"
+else mefisto_opencode_launcher="$HOME/.local/share/mefisto/active/bin/mefisto-opencode"; fi
+if [ ! -f "$mefisto_opencode_launcher" ] || [ -L "$mefisto_opencode_launcher" ] || [ ! -x "$mefisto_opencode_launcher" ]; then
+    printf '%s\n' 'ERROR OpenCode: no hay una release activa valida; instale o active la release OpenCode.' >&2; exit 1
+fi
+MEFISTO_PACKAGE_ROOT="$("$mefisto_opencode_launcher" package-root)" || {
+    printf '%s\n' 'ERROR OpenCode: no se pudo resolver la release activa; instale o active la release OpenCode.' >&2; exit 1;
+}
+case "$MEFISTO_PACKAGE_ROOT" in
+    /*) ;;
+    *) printf '%s\n' 'ERROR OpenCode: la release activa no devolvio una raiz absoluta; reinstale o active la release OpenCode.' >&2; exit 1 ;;
+esac
+MEFISTO_PACKAGE_ROOT="$(cd -P "$MEFISTO_PACKAGE_ROOT" 2>/dev/null && printf '%s\n' "$PWD")" || {
+    printf '%s\n' 'ERROR OpenCode: la release activa no existe; reinstale o active la release OpenCode.' >&2; exit 1;
+}
+export MEFISTO_PACKAGE_ROOT
+```
+```bash
 if [ -f "AGENTS.md" ]; then
     if [ -f "CLAUDE.md" ]; then
         printf '%s\n' 'AVISO: se usara AGENTS.md; se ignora el legacy CLAUDE.md. Migra o elimina conscientemente el archivo legacy para evitar divergencias.' >&2
@@ -1301,7 +1321,7 @@ Antes de escribir, entiende el dominio:
 Reemplaza los `throw new NotImplementedException()` con logica real. Sigue el principio de **minima implementacion**: solo lo necesario para pasar los tests.
 
 Despues de cada cambio significativo:
-1. Corre `dotnet build` para detectar errores y warnings del compilador en los archivos modificados
+1. Corre `dotnet build` para detectar errores del compilador; los warnings nuevos se verifican con `warnings-diff.sh` (ver "Cero warnings nuevos (MEF-ADR-0056)", paso 7)
 2. Corre los tests:
 
 ```bash
@@ -1409,6 +1429,19 @@ Formatea los archivos `.cs` que creaste o modificaste en `src/` con:
 ```bash
 dotnet format
 ```
+
+### Cero warnings nuevos (MEF-ADR-0056)
+
+Despues de `dotnet format` y antes del commit del stage, corre desde la raiz del consumidor:
+
+```bash
+${MEFISTO_PACKAGE_ROOT}/scripts/warnings-diff.sh --toolchain dotnet
+```
+
+Sin `--base`: el helper compara contra el punto de partida de la rama del issue. Remedia en el codigo cada linea `NEW` que reporte y vuelve a correrlo hasta que `warnings nuevos: 0`. La primera invocacion paga el build de la base; las siguientes lo reutilizan.
+
+- **Supresiones prohibidas como remediacion**: `#pragma warning disable`, `[SuppressMessage]`, `<NoWarn>`, `<WarningLevel>` y bajar la severidad en `.editorconfig`. Suprimir con un comentario tampoco remedia (MEF-ADR-0044).
+- **No crees issues.** Un warning nuevo que no puedas remediar se registra en la seccion `## Warnings no remediados` de `.mefisto/pipeline/summaries/stage-2-implementer.md`, con el warning literal, el archivo y la razon.
 
 ### 8. Hacer commit
 

@@ -254,13 +254,26 @@ Si los tests referencian tipos que no existen, crealos con `throw new NotImpleme
 2. Consulta el Skill `projections` (ya precargado) y abre el recurso de Nivel 3 que resuelva tu duda concreta -- naming exacto, arbol de decision, plantilla del config-test, o las read APIs.
 3. Explora convenciones existentes del dominio (`ls src/<RootNamespace>.ReadModels/`, `ls src/<RootNamespace>.Projections/`, `ls tests/<RootNamespace>.Projections.Tests/`), igual que `test-writer.md` -- los tres proyectos que toca un issue read-side: el record en `ReadModels`, la clase de proyeccion en el worker y tus tests.
 4. Escribe los tests de "Que escribes" y los stubs minimos que compilen. Si el punto 4 de esa seccion aplica (fase roja estructuralmente inalcanzable), crea la señal no-red antes de continuar.
-5. Verifica que compila (`dotnet build`). **No** corras `dotnet test` -- si no hay señal no-red, ya sabes que fallara.
+5. Verifica que compila (`dotnet build`). **No** corras `dotnet test` -- si no hay señal no-red, ya sabes que fallara. Luego aplica "Cero warnings nuevos (MEF-ADR-0056)" (abajo).
 6. Commitea:
    ```bash
    git add tests/ src/
    git commit -m "test(hu-XX): tests read-side para [descripcion breve] (fase roja)"
    ```
 7. Escribe el resumen en `.mefisto/pipeline/summaries/stage-1-projection-test-writer.md` -- el pipeline lo recolecta como `stage-<etapa>-<nombre del agente>.md`, asi que el nombre lleva **tu** nombre de agente, no el del generalista (mismo formato que `test-writer.md`: tests creados, estructura elegida, stubs creados, cobertura de criterios, señal no-red si aplica, desviaciones del plan del planner). No lo incluyas en el commit.
+
+## Cero warnings nuevos (MEF-ADR-0056)
+
+Despues de compilar (paso 5) y antes del commit del stage, corre desde la raiz del consumidor:
+
+```bash
+${MEFISTO_PACKAGE_ROOT}/scripts/warnings-diff.sh --toolchain dotnet
+```
+
+Sin `--base`: el helper compara contra el punto de partida de la rama del issue. Remedia en el codigo cada linea `NEW` que reporte y vuelve a correrlo hasta que `warnings nuevos: 0`. La primera invocacion paga el build de la base; las siguientes lo reutilizan.
+
+- **Supresiones prohibidas como remediacion**: `#pragma warning disable`, `[SuppressMessage]`, `<NoWarn>`, `<WarningLevel>` y bajar la severidad en `.editorconfig`. Suprimir con un comentario tampoco remedia (MEF-ADR-0044).
+- **No crees issues.** Un warning nuevo que no puedas remediar se registra en la seccion `## Warnings no remediados` de `.mefisto/pipeline/summaries/stage-1-projection-test-writer.md`, con el warning literal, el archivo y la razon.
 
 ## Reglas absolutas
 
