@@ -144,7 +144,6 @@ import {
   orderedNotes,
   pendingNotes,
   withProcessedNotes,
-  workPrsOf,
 } from './logic'
 import { shouldRearm, versionLabel } from '../logic'
 import type { ResultPr } from './logic'
@@ -687,10 +686,10 @@ async function refreshOpenPrs($: EngineInterface) {
   }
 }
 
-// Reposo: la lista es de los PRs abiertos que no son borradores ni de field notes (esos van a la bitacora); "Todos" pasa `--all`.
+// Reposo: la lista es de los PRs abiertos que no son borradores (field notes incluidos); "Todos" pasa `--all`.
 async function mergeOpenPrs($: EngineInterface): Promise<string> {
   await refreshOpenPrs($)
-  const prs = workPrsOf(await read($, openPrsAtom))
+  const prs = await read($, openPrsAtom)
   if (prs.length === 0) return 'No hay PRs abiertos.'
   const options = openPrOptions(prs)
   const answer = await $.ui
@@ -1532,7 +1531,6 @@ export const register: Register = on => {
     const numWidth = numberWidth(visible)
     const afterWidth = Math.min(16, Math.max(0, ...visible.map(i => reasonOf(i).length)))
     const titleWidth = Math.max(12, body - 3 - 2 - numWidth - 1 - (afterWidth > 0 ? afterWidth + 2 : 0))
-    const workPrs = workPrsOf(openPrs)
     const notesCount = bitacoraCount(await read($, fieldNotesAtom), openPrs)
     const footerRest = list ? footerRestOf(list, Boolean(list.launch || list.parallel?.launch)) : ''
     const hasFooter = Boolean(list?.launch || list?.parallel?.launch || footerRest !== '' || pages > 1)
@@ -1540,10 +1538,10 @@ export const register: Register = on => {
       <Box flexDirection="column" borderStyle="round" borderColor="claude" borderDimColor paddingX={1}>
         <Box justifyContent="space-between">
           {head(null, 'pact-head')}
-          {(workPrs.length > 0 || notesCount > 0) && (
+          {(openPrs.length > 0 || notesCount > 0) && (
             <Box gap={2}>
-              {workPrs.length > 0 && (
-                <Button key="pact-open-prs" hotkey="2" plain dimColor label={`PRs ${workPrs.length}`}
+              {openPrs.length > 0 && (
+                <Button key="pact-open-prs" hotkey="2" plain dimColor label={`PRs ${openPrs.length}`}
                   onPress={() => void mergeOpenPrs($)} />
               )}
               {notesCount > 0 && (

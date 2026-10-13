@@ -634,9 +634,6 @@ export type OpenPr = { number: string; title: string; isFieldNote: boolean }
 /** Rama de los PRs de field notes del planner: `docs/planner-field-notes-*`. */
 export const isFieldNoteBranch = (branch: string): boolean => /^docs\/planner-field-notes-/.test(branch)
 
-/** Los PRs que cuenta `2: PRs N`: los de field notes vuelven a la bitacora. */
-export const workPrsOf = (prs: readonly OpenPr[]): OpenPr[] => prs.filter(p => !p.isFieldNote)
-
 /** PRs abiertos que no son borradores (field notes marcadas con `isFieldNote`); el mas reciente (numero mayor) primero. Vacio si no es JSON. */
 export function parseOpenPrs(raw: string): OpenPr[] {
   let rows: unknown

@@ -21,7 +21,6 @@ import {
   orderedNotes,
   pendingNotes,
   withProcessedNotes,
-  workPrsOf,
   finishMerge,
   isMergeRibbonExpired,
   mergeRunArgsOf,
@@ -694,14 +693,17 @@ test('el lote de sequential ocupa la banda antes que la cinta de merge', () => {
 
 // ---- Incremento 9: la bitacora ----
 
-test('bitacoraCount: field notes de main mas PRs de field notes; PRs N no los cuenta', () => {
-  const prs = [
-    ...[948, 947, 946, 945, 944, 943, 942, 941, 933].map(n => ({ number: String(n), title: 'nota', isFieldNote: true })),
-    { number: '900', title: 'trabajo', isFieldNote: false },
-  ]
+test('bitacoraCount: field notes de main mas PRs de field notes; PRs N cuenta todos los abiertos', () => {
+  const raw = JSON.stringify([
+    ...[948, 947, 946, 945, 944, 943, 942, 941, 933].map(n => ({ number: n, title: 'nota', isDraft: false, headRefName: `docs/planner-field-notes-${n}` })),
+    { number: 900, title: 'trabajo', isDraft: false, headRefName: 'worktree-issue-900-x' },
+    { number: 950, title: 'borrador', isDraft: true, headRefName: 'docs/planner-field-notes-950' },
+  ])
+  const prs = parseOpenPrs(raw)
   expect(fieldNotesIn(['a.md', 'b.md', 'c.md', 'd.md', 'procesadas'])).toBe(4)
   expect(bitacoraCount(4, prs)).toBe(13)
-  expect(workPrsOf(prs).map(p => p.number)).toEqual(['900'])
+  expect(prs.length).toBe(10)
+  expect(openPrOptions(prs)).toEqual(['Todos', '#948 nota', '#947 nota', '#946 nota'])
   expect(bitacoraCount(0, [{ number: '900', title: 'trabajo', isFieldNote: false }])).toBe(0)
   expect(bitacoraCount(null, [])).toBe(0)
 })
