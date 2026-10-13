@@ -190,6 +190,12 @@ variable "claim_tenant_id" {
   default     = "tenant_id"
 }
 
+variable "claim_organization_membership_id" {
+  description = "Nombre EXACTO del claim del JWT mapeado a X-Organization-Membership-Id. B10: NO se adivina -- se confirma decodificando un token real del proyecto WorkOS concreto. No es un claim por defecto de AuthKit: exige un JWT Template en el entorno de WorkOS ('organization_membership_id': '{{ organization_membership.id }}'). Default = el del template de la doc oficial de WorkOS; reverificar por consumidor."
+  type        = string
+  default     = "organization_membership_id"
+}
+
 variable "tags" {
   description = "Tags comunes del proyecto"
   type        = map(string)
@@ -251,7 +257,7 @@ resource "azurerm_api_management" "this" {
 #   B6: orden estricto openid-config -> issuers -> required-claims dentro de <validate-jwt>.
 #   B10: los <set-header> de identidad van DESPUES de </validate-jwt> (usan context.Variables["jwt"],
 #        capturado por output-token-variable-name="jwt") y SIEMPRE con exists-action="override"
-#        (anti-spoofing: sin override, un cliente que manda su propio X-User-Id/X-Tenant-Id lo
+#        (anti-spoofing: sin override, un cliente que manda su propio X-User-Id/X-Tenant-Id/X-Organization-Membership-Id lo
 #        cuela intacto hasta el backend).
 #
 # B7 (diagnostico): si `terraform apply` falla aca con un 400 ValidationError generico/truncado
@@ -301,6 +307,9 @@ resource "azurerm_api_management_policy" "global" {
     <set-header name="X-Tenant-Id" exists-action="override">
       <value>@(((Jwt)context.Variables["jwt"]).Claims.GetValueOrDefault("${var.claim_tenant_id}", ""))</value>
     </set-header>
+    <set-header name="X-Organization-Membership-Id" exists-action="override">
+      <value>@(((Jwt)context.Variables["jwt"]).Claims.GetValueOrDefault("${var.claim_organization_membership_id}", ""))</value>
+    </set-header>
   </inbound>
   <backend>
     <forward-request />
@@ -334,7 +343,7 @@ output "principal_id" {
 
 **Notas de fidelidad al catalogo, para vos (no van en el HCL de arriba, ya estan como comentarios donde correspondia):**
 
-- **B1** -- sin `<base/>` en ninguna seccion de esta politica global. **B2** -- `<backend>` lleva `<forward-request />`, nunca vacio: sin eso, APIM responde `200`/`Content-Length: 0` y **no llama al backend** (el bug mas traicionero del catalogo, confirmado por ausencia total de requests en App Insights). **B3** -- `<cors>` es el primer hijo de `<inbound>`, antes de `<validate-jwt>`, y su `<allowed-methods>` enumera explicitamente `GET`/`POST`/`PUT`/`DELETE`/`OPTIONS`/`QUERY`, nunca `*` (issue #608): QUERY (RFC 10008) no es CORS-safelisted y sin ese metodo un SPA que lo use se cae en el preflight. **B4** -- ningun `<audiences>`; la "audiencia" se valida con `<required-claims>` sobre `client_id`. **B6** -- orden estricto `openid-config -> issuers -> required-claims` dentro de `<validate-jwt>`, sin `<!-- -->` interpuestos. **B10** -- los dos `<set-header>` van despues de `</validate-jwt>` (necesitan `context.Variables["jwt"]`, capturado por `output-token-variable-name="jwt"`), con `exists-action="override"` obligatorio (anti-spoofing: sin esto, un cliente que manda su propio `X-User-Id`/`X-Tenant-Id` lo hace pasar intacto hasta el backend).
+- **B1** -- sin `<base/>` en ninguna seccion de esta politica global. **B2** -- `<backend>` lleva `<forward-request />`, nunca vacio: sin eso, APIM responde `200`/`Content-Length: 0` y **no llama al backend** (el bug mas traicionero del catalogo, confirmado por ausencia total de requests en App Insights). **B3** -- `<cors>` es el primer hijo de `<inbound>`, antes de `<validate-jwt>`, y su `<allowed-methods>` enumera explicitamente `GET`/`POST`/`PUT`/`DELETE`/`OPTIONS`/`QUERY`, nunca `*` (issue #608): QUERY (RFC 10008) no es CORS-safelisted y sin ese metodo un SPA que lo use se cae en el preflight. **B4** -- ningun `<audiences>`; la "audiencia" se valida con `<required-claims>` sobre `client_id`. **B6** -- orden estricto `openid-config -> issuers -> required-claims` dentro de `<validate-jwt>`, sin `<!-- -->` interpuestos. **B10** -- los tres `<set-header>` (`X-User-Id`, `X-Tenant-Id`, `X-Organization-Membership-Id`) van despues de `</validate-jwt>` (necesitan `context.Variables["jwt"]`, capturado por `output-token-variable-name="jwt"`), con `exists-action="override"` obligatorio (anti-spoofing: sin esto, un cliente que manda su propio `X-User-Id`/`X-Tenant-Id`/`X-Organization-Membership-Id` lo hace pasar intacto hasta el backend).
 
 ---
 
@@ -988,6 +997,12 @@ variable "apim_claim_tenant_id" {
   default     = "tenant_id"
 }
 
+variable "apim_claim_organization_membership_id" {
+  description = "Nombre EXACTO del claim del JWT mapeado a X-Organization-Membership-Id (B10 -- confirmar decodificando un token real antes de aceptar el default; exige el JWT Template de WorkOS)"
+  type        = string
+  default     = "organization_membership_id"
+}
+
 # B9: '<name>.azure-api.net' es unico en TODO Azure. La unicidad la da la composicion
 # {app}-{env}-{region}-{seq} de local.prefix -- sin sufijo random, el nombre es predecible antes
 # de aplicar (MEF-ADR-0045 seccion 2; mismo patron que postgresql/service-bus/key-vault en
@@ -1003,8 +1018,9 @@ module "api_management" {
 
   cors_allowed_origins = var.cors_allowed_origins
   workos_client_id     = var.workos_client_id
-  claim_user_id        = var.apim_claim_user_id
-  claim_tenant_id      = var.apim_claim_tenant_id
+  claim_user_id                    = var.apim_claim_user_id
+  claim_tenant_id                  = var.apim_claim_tenant_id
+  claim_organization_membership_id = var.apim_claim_organization_membership_id
 
   tags = local.tags
 }
@@ -1365,7 +1381,7 @@ Imprime un resumen claro:
 - **GitHub variables requeridas** (no secretas, *Settings > Secrets and variables > Actions > Variables*), a crear manualmente por un admin si la instancia se genero por primera vez: `WORKOS_CLIENT_ID` (el client_id resuelto en el Paso 0) y `CORS_ALLOWED_ORIGINS` (JSON list de origenes).
 - **Gates de verificacion empirica pendientes (MEF-ADR-0032 seccion 8, obligatorios antes de un `apply` real)**:
   - B5 (issuer/`jwks_uri`): resultado del Paso 0.3 (`VERIFICADO` contra el discovery doc en vivo, o `NO VERIFICADO -- reconfirmar antes de aplicar`).
-  - B10 (nombres de claim): si `claim_user_id`/`claim_tenant_id` quedaron en su default (`user_email`/`tenant_id`, el mapeo confirmado en ControlPlane) o si el invocador ya los confirmo decodificando un token real de este proyecto WorkOS. Si quedaron en default sin confirmar, decilo explicito: "pendiente de decodificar un token real antes de ir a produccion".
+  - B10 (nombres de claim): si `claim_user_id`/`claim_tenant_id`/`claim_organization_membership_id` quedaron en su default (`user_email`/`tenant_id`, el mapeo confirmado en ControlPlane; `organization_membership_id`, el del JWT Template de la doc oficial de WorkOS que guia `/mefisto:install-workos` paso 5.g) o si el invocador ya los confirmo decodificando un token real de este proyecto WorkOS. Si quedaron en default sin confirmar, decilo explicito: "pendiente de decodificar un token real antes de ir a produccion".
 - **Configuracion externa a documentar** (MEF-ADR-0032 seccion 6/D, el operador humano la aplica fuera de Terraform): en el dashboard de WorkOS, registrar el redirect URI del SPA, habilitar el metodo de auth y el/los origen(es) de CORS; separar credenciales si el proyecto WorkOS de login difiere del proyecto de negocio (el client_id de login va en la politica del gateway que acabas de generar, el API key de negocio va en la Function App que lo consuma -- nunca al reves).
 - **Servidores MCP (issue #820), si el Paso 0.4 recibio al menos uno**:
   - Modulo `apim-mcp-api` creado u omitido (ya existia); enrutador compartido `apim-mcp-prm.tf` creado (primera vez) u omitido (CA-6); provider `azapi` agregado a `providers.tf` o ya presente.
