@@ -11,6 +11,7 @@
 #   [path] --path acota el analisis
 #   [fix]  WARNINGS_DIFF_FIXTURE_DIR
 #   [dotnet] toolchain dotnet con fixtures del file logger (issue #2417)
+#   [terraform] toolchain terraform con fixtures y stub (issue #2418)
 
 set -uo pipefail
 
@@ -126,8 +127,8 @@ fi
 
 echo "[CA-4] toolchain y guard"
 R=$(new_repo)
-OUT=$(run_wd "$R" --toolchain terraform --base HEAD); RC=$?
-if [ "$RC" -eq 1 ] && echo "$OUT" | grep -q 'toolchain no soportada: terraform' && echo "$OUT" | grep -q 'Uso:'; then pass "toolchain no registrada -> exit 1 con uso"; else fail "terraform (rc=$RC): $OUT"; fi
+OUT=$(run_wd "$R" --toolchain nope --base HEAD); RC=$?
+if [ "$RC" -eq 1 ] && echo "$OUT" | grep -q 'toolchain no soportada: nope' && echo "$OUT" | grep -q 'Uso:'; then pass "toolchain no registrada -> exit 1 con uso"; else fail "nope (rc=$RC): $OUT"; fi
 OUT=$(run_wd "$R"); RC=$?
 if [ "$RC" -eq 1 ] && echo "$OUT" | grep -q 'Uso:'; then pass "sin --toolchain -> exit 1 con uso"; else fail "sin toolchain (rc=$RC): $OUT"; fi
 OUT=$(cd "$REPO_ROOT" && "$REAL_SCRIPT" --toolchain shell 2>&1); RC=$?
@@ -180,6 +181,51 @@ if [ "$RC" -eq 2 ] && echo "$OUT" | grep -q '^NEW dotnet A.cs SUPPRESSION ' && e
 
 echo "[CA-5] cabecera documenta las opciones obligatorias"
 grep -q -- '--no-incremental' "$REAL_SCRIPT" && grep -q 'warningsonly' "$REAL_SCRIPT" && pass "cabecera dotnet documentada" || fail "cabecera sin --no-incremental/warningsonly"
+
+echo "[terraform] fixtures"
+if ! command -v jq >/dev/null 2>&1; then
+    echo "  SKIP: jq no instalado; casos terraform omitidos"
+else
+FXT="$SCRIPT_DIR/fixtures/warnings-diff/terraform"
+tf() { # fixture-dir
+    (cd "$R" && WARNINGS_DIFF_FIXTURE_DIR="$1" "$REAL_SCRIPT" --toolchain terraform --base "$BASE" --path infra/environments/dev 2>&1)
+}
+R=$(new_repo); BASE=$(git -C "$R" rev-parse HEAD)
+OUT=$(tf "$FXT/new"); RC=$?
+if [ "$RC" -eq 2 ] && echo "$OUT" | grep -q '^NEW terraform main.tf Deprecated attribute ' && echo "$OUT" | grep -q '^warnings nuevos: 1$'; then
+    pass "CA-1: warning solo en el actual -> NEW + exit 2"; else fail "CA-1 (rc=$RC): $OUT"; fi
+OUT=$(tf "$FXT/moved"); RC=$?
+[ "$RC" -eq 0 ] && pass "CA-1: mismo warning en otra linea -> exit 0" || fail "CA-1 movido (rc=$RC): $OUT"
+OUT=$(tf "$FXT/errors-only"); RC=$?
+[ "$RC" -eq 0 ] && pass "CA-2: diagnosticos error no cuentan como warnings" || fail "CA-2 error ignorado (rc=$RC): $OUT"
+OUT=$(tf "$FXT/invalid"); RC=$?
+if [ "$RC" -eq 1 ] && echo "$OUT" | grep -q 'valid=false' && echo "$OUT" | grep -q 'Reference to undeclared input variable'; then
+    pass "CA-2: valid=false -> exit 1 con los errores"; else fail "CA-2 invalid (rc=$RC): $OUT"; fi
+OUT=$(run_wd "$R" --toolchain terraform --base "$BASE"); RC=$?
+if [ "$RC" -eq 1 ] && echo "$OUT" | grep -q -- '--path' && echo "$OUT" | grep -q 'Uso:'; then pass "CA-3: sin --path -> exit 1 con uso"; else fail "CA-3 (rc=$RC): $OUT"; fi
+
+echo "[terraform] TF_PLUGIN_CACHE_DIR (stub)"
+STUB=$(mktemp -d); TMPS+=("$STUB")
+cat > "$STUB/terraform" <<'STUBEOF'
+#!/usr/bin/env bash
+echo "$1 cache=${TF_PLUGIN_CACHE_DIR:-UNSET} pwd=$(basename "$PWD")" >> "$STUB_LOG"
+[ "$1" = validate ] && echo '{"valid":true,"warning_count":0,"error_count":0,"diagnostics":[]}'
+exit 0
+STUBEOF
+chmod +x "$STUB/terraform"
+R=$(new_repo); BASE=$(git -C "$R" rev-parse HEAD)
+mkdir -p "$R/infra/environments/dev"; echo '# tf' > "$R/infra/environments/dev/main.tf"
+git -C "$R" add -A; git -C "$R" commit -q -m infra; BASE=$(git -C "$R" rev-parse HEAD)
+LOG="$STUB/log1"; : > "$LOG"
+OUT=$(cd "$R" && env -u TF_PLUGIN_CACHE_DIR PATH="$STUB:$PATH" STUB_LOG="$LOG" "$REAL_SCRIPT" --toolchain terraform --base "$BASE" --path infra/environments/dev 2>&1); RC=$?
+if [ "$RC" -eq 0 ] && [ -d "$R/.mefisto/pipeline/terraform-plugin-cache" ] \
+    && grep -q 'init cache=.*/.mefisto/pipeline/terraform-plugin-cache pwd=dev' "$LOG" && grep -q '^validate ' "$LOG"; then
+    pass "CA-4: sin TF_PLUGIN_CACHE_DIR -> lo exporta y crea el directorio"; else fail "CA-4 default (rc=$RC): $OUT $(cat "$LOG")"; fi
+LOG="$STUB/log2"; : > "$LOG"; rm -rf "$R/.mefisto"
+OUT=$(cd "$R" && PATH="$STUB:$PATH" STUB_LOG="$LOG" TF_PLUGIN_CACHE_DIR="$STUB/mi-cache" "$REAL_SCRIPT" --toolchain terraform --base "$BASE" --path infra/environments/dev 2>&1); RC=$?
+if [ "$RC" -eq 0 ] && grep -q "init cache=$STUB/mi-cache " "$LOG" && [ ! -d "$R/.mefisto/pipeline/terraform-plugin-cache" ]; then
+    pass "CA-4: TF_PLUGIN_CACHE_DIR definido se conserva"; else fail "CA-4 respeto (rc=$RC): $OUT $(cat "$LOG")"; fi
+fi
 
 echo "----------------------------------------"
 echo "Resultado: $PASS pass, $FAIL fail"

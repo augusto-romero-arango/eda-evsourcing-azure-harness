@@ -5,10 +5,11 @@
 # Uso:
 #   scripts/warnings-diff.sh --toolchain <t> [--base <sha>] [--path <dir>]
 #
-#   --toolchain  Obligatorio. 'shell' (shellcheck) y 'dotnet' (dotnet build, #2417).
-#                'terraform' la registra otro issue apoyandose en este nucleo.
+#   --toolchain  Obligatorio. 'shell' (shellcheck), 'dotnet' (dotnet build, #2417)
+#                y 'terraform' (terraform validate, #2418).
 #   --base       Commit base. Default: git merge-base HEAD origin/main.
 #   --path       Acota el analisis a un subdirectorio relativo a la raiz del repo.
+#                Obligatorio con terraform: es el directorio del entorno.
 #
 # Lado "antes": worktree temporal en --base (se elimina siempre via trap).
 # Lado "despues": el arbol de trabajo actual (incluye .sh nuevos sin commitear).
@@ -36,6 +37,17 @@
 # la consola duplica cada warning aun con -clp:NoSummary, mientras el file
 # logger 'warningsonly' lo escribe una sola vez. Si un lado no compila, sale
 # con 1: nunca se inventa una baseline.
+#
+# Toolchain terraform: --path es obligatorio (directorio del entorno, p. ej.
+# infra/environments/dev). En cada lado corre, dentro de --path, 'terraform init
+# -backend=false -input=false' y 'terraform validate -json' (nunca plan:
+# MEF-ADR-0021/0022). Cuenta los diagnosticos severity=warning; la clave es
+# 'terraform|<range.filename o ->|<summary>|<detail>' (Terraform no emite codigo,
+# summary ocupa su lugar). Si un lado trae valid=false sale con 1 y lista los
+# errores. TF_PLUGIN_CACHE_DIR se respeta; si no, apunta a
+# <raiz>/.mefisto/pipeline/terraform-plugin-cache (evita descargar los providers
+# dos veces). Terraform no tiene mecanismo nativo para suprimir warnings de
+# validate y el marco no usa tflint: no hay patrones de supresion.
 #
 # Exit codes: 0 sin warnings nuevos; 1 error; 2 hay warnings nuevos.
 
@@ -186,6 +198,62 @@ suppression_patterns_dotnet() {
         'dotnet_diagnostic\.[^.]+\.severity[[:space:]]*=[[:space:]]*(none|silent|suggestion)'
 }
 
+# -------- Toolchain: terraform --------
+
+run_terraform() {
+    local root="$1" side="$2" out="$3"
+    if [ -n "${WARNINGS_DIFF_FIXTURE_DIR:-}" ]; then
+        cat "$WARNINGS_DIFF_FIXTURE_DIR/$side.out" > "$out" 2>/dev/null || : > "$out"
+    else
+        if ! command -v terraform >/dev/null 2>&1; then
+            echo "ERROR: terraform no esta instalado" >&2
+            return 1
+        fi
+        if [ -z "${TF_PLUGIN_CACHE_DIR:-}" ]; then
+            export TF_PLUGIN_CACHE_DIR="$REPO_ROOT/.mefisto/pipeline/terraform-plugin-cache"
+        fi
+        mkdir -p "$TF_PLUGIN_CACHE_DIR"
+        local dir="$root/$SCOPE_PATH"
+        if [ ! -d "$dir" ]; then
+            echo "ERROR: --path no existe en el lado $side: $SCOPE_PATH" >&2
+            return 1
+        fi
+        if ! (cd "$dir" && terraform init -backend=false -input=false >"$TMP_WORK/tf-init-$side.log" 2>&1); then
+            echo "ERROR: terraform init fallo en el lado $side:" >&2
+            cat "$TMP_WORK/tf-init-$side.log" >&2
+            return 1
+        fi
+        # validate sale con 1 si el HCL es invalido, pero igual emite el JSON.
+        (cd "$dir" && terraform validate -json -no-color) > "$out" 2>/dev/null || true
+    fi
+    if ! command -v jq >/dev/null 2>&1; then
+        echo "ERROR: jq no esta instalado" >&2
+        return 1
+    fi
+    if ! jq -e '.valid != null' "$out" >/dev/null 2>&1; then
+        echo "ERROR: terraform validate no devolvio JSON valido en el lado $side" >&2
+        return 1
+    fi
+    if [ "$(jq -r '.valid' "$out")" != "true" ]; then
+        echo "ERROR: terraform validate reporta valid=false en el lado $side; corrige el HCL antes de medir warnings:" >&2
+        jq -r '.diagnostics[]? | select(.severity == "error") | "  error: \(.range.filename // "-"): \(.summary): \(.detail // "")" | gsub("\n"; " ")' "$out" >&2
+        return 1
+    fi
+    return 0
+}
+
+parse_terraform() {
+    # '|' separa los campos de la salida: se neutraliza en archivo y summary.
+    jq -r '.diagnostics[]? | select(.severity == "warning")
+        | ["terraform", (.range.filename // "-" | gsub("\\|"; "/")),
+           (.summary // "-" | gsub("\\|"; "/")), (.detail // "")]
+        | map(gsub("[\r\n]+"; " ")) | join("|")'
+}
+
+suppression_patterns_terraform() {
+    :
+}
+
 # -------- Validacion de toolchain --------
 
 toolchain_ok=1
@@ -198,6 +266,12 @@ else
 fi
 if [ "$toolchain_ok" -ne 1 ]; then
     echo "ERROR: toolchain no soportada: $TOOLCHAIN" >&2
+    usage
+    exit 1
+fi
+
+if [ "$TOOLCHAIN" = terraform ] && [ -z "$SCOPE_PATH" ]; then
+    echo "ERROR: --toolchain terraform requiere --path <directorio del entorno>" >&2
     usage
     exit 1
 fi
