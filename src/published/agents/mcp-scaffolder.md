@@ -369,8 +369,8 @@ namespace <RootNamespace>.Mcp.{Proposito}.Infraestructura;
 
 /// <summary>
 /// DelegatingHandler compartido por todos los HttpClients tipados del servidor (MEF-ADR-0047
-/// decision 6): inyecta X-Tenant-Id/X-User-Id/X-Organization-Membership-Id en cada request saliente hacia una Function App del
-/// BC -- los mismos headers canonicos que TenantContextMiddleware ya sabe leer sin parsing
+/// decision 6): inyecta X-Tenant-Id/X-User-Id/X-Organization-Membership-Id en cada request
+/// saliente hacia una Function App del BC -- los mismos headers canonicos que TenantContextMiddleware ya sabe leer sin parsing
 /// adicional (MEF-ADR-0028 seccion 4). Un unico handler compartido, no un Headers.Add(...)
 /// repetido por cliente tipado: ningun HttpClient nuevo puede "olvidar" propagar identidad.
 /// </summary>
@@ -2014,16 +2014,18 @@ ningun proyecto del BC.
 ## Identidad y gate OAuth (MEF-ADR-0047 decisiones 6-7, MEF-ADR-0032 seccion 9)
 
 - **Propagador de identidad, siempre activo**: cada HttpClient tipado hacia una Function App del
-  BC inyecta `X-Tenant-Id`/`X-User-Id` via `PropagadorIdentidadTenantHandler`. Sin `Authorization`
-  Bearer (smoke con system key, desarrollo local) el valor es el fallback explicito fijo por app
-  settings (`Identidad__TenantIdInterino`/`Identidad__UserIdInterino`,
+  BC inyecta `X-Tenant-Id`/`X-User-Id`/`X-Organization-Membership-Id` via
+  `PropagadorIdentidadTenantHandler`. Sin `Authorization` Bearer (smoke con system key, desarrollo
+  local) el valor es el fallback explicito fijo por app settings (`Identidad__TenantIdInterino`/
+  `Identidad__UserIdInterino`/`Identidad__OrganizationMembershipIdInterino`,
   `Infraestructura/ConfiguracionIdentidadTenant.cs`).
 - **Identidad derivada del token** (solo si al scaffoldear este servidor `tenancy.strategy` ya era
   `multi-tenant-header`): `IdentidadTenantMcpMiddleware` lee el Bearer del transporte HTTP de
   `ToolInvocationContext` (no de `HttpContext`), lo valida con `ValidadorTokenAuthKit` y
-  `DerivadorIdentidadTenantMcp` deriva `org_id` -> tenant, `sub` -> usuario y `organization_membership_id` -> membership. Publica en el mismo
-  punto la identidad ambiente (`TenantExecutionContext`) y la sesion (`SesionUsuario`: correo,
-  organizacion, `sid`). Un Bearer no validable, o sin `org_id`/`sub`/`organization_membership_id`, **rechaza** la invocacion:
+  `DerivadorIdentidadTenantMcp` deriva `org_id` -> tenant, `sub` -> usuario y
+  `organization_membership_id` -> membership. Publica en el mismo punto la identidad ambiente
+  (`TenantExecutionContext`) y la sesion (`SesionUsuario`: correo, organizacion, `sid`). Un Bearer
+  no validable, o sin `org_id`/`sub`/`organization_membership_id`, **rechaza** la invocacion:
   nunca cae al tenant fijo. La tool `obtener_sesion` responde `origen: "sesion"` (correo y
   organizacion) u `origen: "tenant_fijo"`. Es la unica `ProjectReference` permitida: la biblioteca
   `<RootNamespace>.TenantResolver` (MEF-ADR-0047 decision 3). Con `mono-tenant-transitorio` queda
@@ -2225,8 +2227,9 @@ done
 Cada linea `WIRE` produce una entrada `Api__{pascal}__BaseUrl = "https://${module.function_app_{snake}.default_hostname}"`
 del `app_settings` de abajo. **El bloque `app_settings` nunca se omite entero** -- a diferencia de
 un dominio, este servidor siempre lleva la identidad interina (`Identidad__TenantIdInterino`/
-`Identidad__UserIdInterino`, CA-1 del issue #819) y los settings OAuth app-side (`Mcp__ResourceUri`/
-`Mcp__AuthorizationServer`, CA-4), asi que el mapa nunca queda vacio. Si ningun dominio tiene
+`Identidad__UserIdInterino`/`Identidad__OrganizationMembershipIdInterino`, CA-1 del issue #819)
+y los settings OAuth app-side (`Mcp__ResourceUri`/`Mcp__AuthorizationServer`, CA-4), asi que el
+mapa nunca queda vacio. Si ningun dominio tiene
 Terraform todavia (BC recien creado), omite solo las lineas `Api__{pascal}__BaseUrl` y deja una
 nota en el resumen final avisando que ningun dominio quedo wireado y que agregar uno despues
 requiere editar este archivo a mano (la idempotencia del Paso 6b no lo va a regenerar).
@@ -2360,11 +2363,12 @@ module "function_app_mcp_{proposito_snake}" {
   # apim-mcp-api que scaffoldea el gateway APIM. Mientras sigan en PENDIENTE-... el PRM responde
   # 503 y el validador de token rechaza todo (degradacion deliberada, nunca fallo de arranque).
   app_settings = {
-    Api__{DominioPascal}__BaseUrl = "https://${module.function_app_{dominio_snake}.default_hostname}"
-    Identidad__TenantIdInterino   = "tenant-interino-mcp-{proposito-kebab}"
-    Identidad__UserIdInterino     = "mcp-sin-usuario-autenticado"
-    Mcp__ResourceUri              = "PENDIENTE-URL-APIM-DEL-SERVIDOR-MCP"
-    Mcp__AuthorizationServer      = "PENDIENTE-DOMINIO-AUTHKIT-DEL-ENTORNO"
+    Api__{DominioPascal}__BaseUrl               = "https://${module.function_app_{dominio_snake}.default_hostname}"
+    Identidad__TenantIdInterino                 = "tenant-interino-mcp-{proposito-kebab}"
+    Identidad__UserIdInterino                   = "mcp-sin-usuario-autenticado"
+    Identidad__OrganizationMembershipIdInterino = "mcp-sin-membership-autenticada"
+    Mcp__ResourceUri                            = "PENDIENTE-URL-APIM-DEL-SERVIDOR-MCP"
+    Mcp__AuthorizationServer                    = "PENDIENTE-DOMINIO-AUTHKIT-DEL-ENTORNO"
   }
   always_on = module.service_plan_mcp_{proposito_snake}.always_on
   tags      = local.tags
@@ -2394,7 +2398,7 @@ resource "azurerm_role_assignment" "function_app_mcp_{proposito_snake}_storage_t
 Sustituye `{proposito-kebab}` por el kebab del proposito, `{proposito_snake}` por ese mismo kebab
 con `_` en vez de `-`, `{mcp-storage}` por el `mcp_id` (truncado si aplico) resuelto arriba, y
 repite la linea `Api__{DominioPascal}__BaseUrl` una vez por cada linea `WIRE` (omitiendo solo esas
-lineas si no hubo ninguna -- las cuatro `Identidad__*`/`Mcp__*` quedan siempre).
+lineas si no hubo ninguna -- las cinco `Identidad__*`/`Mcp__*` quedan siempre).
 
 ---
 
@@ -3409,6 +3413,6 @@ Cierra el reporte con lo que queda **fuera** de tu alcance y el usuario tiene qu
    esta en `multi-tenant-header`, avisa que un humano debe reemplazarlo por un tenant real del
    entorno (el BC filtra por ese header: un tenant inexistente devuelve respuestas vacias sin
    error) y que con un Bearer valido la identidad sale del token (`org_id` -> tenant, `sub` ->
-   usuario) via `IdentidadTenantMcpMiddleware`; la tool `obtener_sesion` permite confirmar en que
+   usuario, `organization_membership_id` -> membership) via `IdentidadTenantMcpMiddleware`; la tool `obtener_sesion` permite confirmar en que
    empresa quedo la sesion. En `mono-tenant-transitorio` esa derivacion queda como propuesta
    comentada en `Program.cs`.

@@ -72,6 +72,7 @@ contains "$body" 'SetDerivedIdentity(null, null, null);' '#2398 CA-2: limpieza c
 absent "$body" 'SetDerivedIdentity(null, null);' '#2398 CA-2: sin firma de dos argumentos'
 contains "$body" 'TryAddWithoutValidation("X-Organization-Membership-Id"' '#2398 CA-3: propagador agrega X-Organization-Membership-Id'
 contains "$body" 'faltan los claims org_id, sub u organization_membership_id' '#2398 CA-4: error nombra los tres claims'
+contains "$body" 'Identidad__OrganizationMembershipIdInterino = "mcp-sin-membership-autenticada"' '#2398: Terraform declara la membership interina del camino sin Bearer'
 contains "$body" 'ObtenerSesionTool.NombreTool' 'CA-5: composicion pinnea obtener_sesion'
 contains "$body" 'ObtenerSesion_Responde_TenantFijo_CuandoSeInvocaConSystemKeySinBearer' 'CA-6: smoke obtener_sesion'
 
