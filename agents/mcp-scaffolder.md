@@ -349,9 +349,10 @@ namespace <RootNamespace>.Mcp.{Proposito}.Infraestructura;
 /// <summary>
 /// Identidad FIJA por despliegue (MEF-ADR-0047 decision 6): el fallback explicito del camino sin
 /// Authorization Bearer (smoke con system key, desarrollo local). Con un Bearer valido la
-/// identidad sale del token (org_id -> tenant, sub -> usuario) y no pasa por este record.
+/// identidad sale del token (org_id -> tenant, sub -> usuario, organization_membership_id ->
+/// membership) y no pasa por este record.
 /// </summary>
-public sealed record IdentidadTenant(string TenantId, string UserId);
+public sealed record IdentidadTenant(string TenantId, string UserId, string OrganizationMembershipId);
 ```
 
 **6b. `Infraestructura/ConfiguracionIdentidadTenant.cs`** -- seam que resuelve la identidad fija (fallback del camino sin Bearer) desde app settings y registra el propagador (MEF-ADR-0029). **Siempre se genera y se invoca**, en cualquier `tenancy.strategy` (CA-1 del issue #819): a diferencia de `TenantResolverMonoTenantPorDefecto` (que lanza si el codigo del BC lee identidad sin headers en etapa b), este seam nunca falla el arranque -- degrada a un marcador explicito si el app setting no esta declarado, porque el servidor MCP debe poder arrancar incluso antes de que el Terraform del Paso 6b se aplique con esos valores.
@@ -371,12 +372,13 @@ public static class ConfiguracionIdentidadTenant
     public static IServiceCollection ConfigurarIdentidadTenant(this IServiceCollection services, IConfiguration configuration)
     {
         // Fallback explicito del camino SIN Bearer (smoke con system key, desarrollo local,
-        // MEF-ADR-0047 decision 6): tenant y usuario fijos por despliegue, leidos de app settings.
+        // MEF-ADR-0047 decision 6): tenant, usuario y membership fijos por despliegue, leidos de app settings.
         // Con un Bearer valido la identidad se deriva del token en IdentidadTenantMcpMiddleware
         // (item 7e) y este valor no se usa; un Bearer invalido se rechaza, nunca cae aqui.
         var identidad = new IdentidadTenant(
             TenantId: configuration["Identidad:TenantIdInterino"] ?? "tenant-interino-sin-configurar",
-            UserId: configuration["Identidad:UserIdInterino"] ?? "mcp-sin-usuario-autenticado");
+            UserId: configuration["Identidad:UserIdInterino"] ?? "mcp-sin-usuario-autenticado",
+            OrganizationMembershipId: configuration["Identidad:OrganizationMembershipIdInterino"] ?? "mcp-sin-membership-autenticada");
 
         services.AddSingleton(identidad);
         services.AddTransient<PropagadorIdentidadTenantHandler>();
@@ -393,7 +395,7 @@ namespace <RootNamespace>.Mcp.{Proposito}.Infraestructura;
 
 /// <summary>
 /// DelegatingHandler compartido por todos los HttpClients tipados del servidor (MEF-ADR-0047
-/// decision 6): inyecta X-Tenant-Id/X-User-Id en cada request saliente hacia una Function App del
+/// decision 6): inyecta X-Tenant-Id/X-User-Id/X-Organization-Membership-Id en cada request saliente hacia una Function App del
 /// BC -- los mismos headers canonicos que TenantContextMiddleware ya sabe leer sin parsing
 /// adicional (MEF-ADR-0028 seccion 4). Un unico handler compartido, no un Headers.Add(...)
 /// repetido por cliente tipado: ningun HttpClient nuevo puede "olvidar" propagar identidad.
@@ -406,6 +408,8 @@ public sealed class PropagadorIdentidadTenantHandler(IdentidadTenant identidad) 
         request.Headers.TryAddWithoutValidation("X-Tenant-Id", identidad.TenantId);
         request.Headers.Remove("X-User-Id");
         request.Headers.TryAddWithoutValidation("X-User-Id", identidad.UserId);
+        request.Headers.Remove("X-Organization-Membership-Id");
+        request.Headers.TryAddWithoutValidation("X-Organization-Membership-Id", identidad.OrganizationMembershipId);
 
         return base.SendAsync(request, cancellationToken);
     }
@@ -427,6 +431,8 @@ public sealed class PropagadorIdentidadTenantHandler(
         request.Headers.TryAddWithoutValidation("X-Tenant-Id", identidad.TenantId);
         request.Headers.Remove("X-User-Id");
         request.Headers.TryAddWithoutValidation("X-User-Id", identidad.UserId);
+        request.Headers.Remove("X-Organization-Membership-Id");
+        request.Headers.TryAddWithoutValidation("X-Organization-Membership-Id", identidad.OrganizationMembershipId);
 
         return base.SendAsync(request, cancellationToken);
     }
@@ -437,7 +443,7 @@ public sealed class PropagadorIdentidadTenantHandler(
     {
         try
         {
-            return new IdentidadTenant(identidadAmbiente.TenantId, identidadAmbiente.UserId);
+            return new IdentidadTenant(identidadAmbiente.TenantId, identidadAmbiente.UserId, identidadAmbiente.OrganizationMembershipId);
         }
         catch (InvalidOperationException)
         {
@@ -758,8 +764,9 @@ public sealed record IdentidadDerivada(IdentidadTenant Identidad, SesionUsuario 
 
 /// <summary>
 /// Deriva identidad y sesion del ClaimsPrincipal ya validado (MEF-ADR-0047 decision 6): org_id es
-/// el tenant y sub es el usuario. La doctrina fija solo esos dos claims; cualquier claim adicional
-/// (p. ej. organization_membership_id) es extension local del consumidor.
+/// el tenant, sub es el usuario y organization_membership_id es la membership (claim que solo existe
+/// con el JWT Template de /install-workos, MEF-ADR-0032). Los tres son requeridos: si falta
+/// cualquiera, Derivar devuelve null.
 /// </summary>
 public static class DerivadorIdentidadTenantMcp
 {
@@ -767,12 +774,13 @@ public static class DerivadorIdentidadTenantMcp
     {
         var organizacion = principal.FindFirst("org_id")?.Value;
         var usuario = principal.FindFirst("sub")?.Value;
+        var membership = principal.FindFirst("organization_membership_id")?.Value;
 
-        if (string.IsNullOrWhiteSpace(organizacion) || string.IsNullOrWhiteSpace(usuario))
+        if (string.IsNullOrWhiteSpace(organizacion) || string.IsNullOrWhiteSpace(usuario) || string.IsNullOrWhiteSpace(membership))
             return null;
 
         return new IdentidadDerivada(
-            new IdentidadTenant(organizacion, usuario),
+            new IdentidadTenant(organizacion, usuario, membership),
             new SesionUsuario(principal.FindFirst("email")?.Value, organizacion, principal.FindFirst("sid")?.Value));
     }
 }
@@ -835,7 +843,8 @@ public sealed class IdentidadTenantMcpMiddleware(IValidadorToken validador) : IF
         var derivada = DerivadorIdentidadTenantMcp.Derivar(principal)
             ?? throw new InvalidOperationException(Mensajes.ErrorTokenSinOrganizacionOUsuario);
 
-        TenantExecutionContext.SetDerivedIdentity(derivada.Identidad.TenantId, derivada.Identidad.UserId);
+        TenantExecutionContext.SetDerivedIdentity(
+            derivada.Identidad.TenantId, derivada.Identidad.UserId, derivada.Identidad.OrganizationMembershipId);
         items[SesionUsuario.ClaveEnContexto] = derivada.Sesion;
 
         await siguiente();
@@ -867,7 +876,7 @@ public sealed class IdentidadTenantMcpMiddleware(IValidadorToken validador) : IF
     <value>No se pudo validar tu sesion. Vuelve a autenticarte e intenta de nuevo.</value>
   </data>
   <data name="ErrorTokenSinOrganizacionOUsuario" xml:space="preserve">
-    <value>Tu sesion no identifica una organizacion o un usuario. Vuelve a autenticarte eligiendo una organizacion.</value>
+    <value>Tu sesion no identifica una organizacion, un usuario o una membership (faltan los claims org_id, sub u organization_membership_id). Vuelve a autenticarte eligiendo una organizacion.</value>
   </data>
 ```
 
@@ -1547,7 +1556,7 @@ public class PropagadorIdentidadTenantHandlerTests
     public async Task Send_PropagaTenantIdYUserId_EnCadaRequestSaliente()
     {
         HttpRequestMessage? requestCapturado = null;
-        var handler = new PropagadorIdentidadTenantHandler(new IdentidadTenant("tenant-123", "usuario-456"))
+        var handler = new PropagadorIdentidadTenantHandler(new IdentidadTenant("tenant-123", "usuario-456", "membership-789"))
         {
             InnerHandler = new HandlerCapturador(r => requestCapturado = r)
         };
@@ -1558,6 +1567,7 @@ public class PropagadorIdentidadTenantHandlerTests
         requestCapturado.Should().NotBeNull();
         requestCapturado!.Headers.GetValues("X-Tenant-Id").Should().ContainSingle().Which.Should().Be("tenant-123");
         requestCapturado.Headers.GetValues("X-User-Id").Should().ContainSingle().Which.Should().Be("usuario-456");
+        requestCapturado.Headers.GetValues("X-Organization-Membership-Id").Should().ContainSingle().Which.Should().Be("membership-789");
     }
 }
 
@@ -1829,34 +1839,36 @@ public class IdentidadTenantMcpMiddlewareTests
     [Fact]
     public async Task Ejecutar_PublicaIdentidadAmbienteYSesion_CuandoElBearerEsValido()
     {
-        TenantExecutionContext.SetDerivedIdentity(null, null);
+        TenantExecutionContext.SetDerivedIdentity(null, null, null);
         var items = new Dictionary<object, object>();
-        string? tenantVisto = null, usuarioVisto = null;
+        string? tenantVisto = null, usuarioVisto = null, membershipVista = null;
         SesionUsuario? sesionVista = null;
         var middleware = new IdentidadTenantMcpMiddleware(new ValidadorFalso(Principal(
-            ("org_id", "org_123"), ("sub", "user_456"), ("email", "ana@empresa.co"), ("sid", "sesion_789"))));
+            ("org_id", "org_123"), ("sub", "user_456"), ("organization_membership_id", "om_789"), ("email", "ana@empresa.co"), ("sid", "sesion_789"))));
 
         await middleware.Ejecutar("Bearer token-valido", items, () =>
         {
             var ambiente = new TenantExecutionContext();
             tenantVisto = ambiente.TenantId;
             usuarioVisto = ambiente.UserId;
+            membershipVista = ambiente.OrganizationMembershipId;
             sesionVista = SesionUsuario.De(items);
             return Task.CompletedTask;
         }, TestContext.Current.CancellationToken);
 
         tenantVisto.Should().Be("org_123");
         usuarioVisto.Should().Be("user_456");
+        membershipVista.Should().Be("om_789");
         sesionVista.Should().Be(new SesionUsuario("ana@empresa.co", "org_123", "sesion_789"));
     }
 
     [Fact]
     public async Task Ejecutar_PropagaLaIdentidadDelToken_CuandoElBearerEsValido()
     {
-        TenantExecutionContext.SetDerivedIdentity(null, null);
+        TenantExecutionContext.SetDerivedIdentity(null, null, null);
         HttpRequestMessage? requestCapturado = null;
-        var middleware = new IdentidadTenantMcpMiddleware(new ValidadorFalso(Principal(("org_id", "org_123"), ("sub", "user_456"))));
-        var handler = new PropagadorIdentidadTenantHandler(new IdentidadTenant("tenant-fijo", "usuario-fijo"), new TenantExecutionContext())
+        var middleware = new IdentidadTenantMcpMiddleware(new ValidadorFalso(Principal(("org_id", "org_123"), ("sub", "user_456"), ("organization_membership_id", "om_789"))));
+        var handler = new PropagadorIdentidadTenantHandler(new IdentidadTenant("tenant-fijo", "usuario-fijo", "membership-fija"), new TenantExecutionContext())
         {
             InnerHandler = new HandlerCapturador(r => requestCapturado = r)
         };
@@ -1870,12 +1882,13 @@ public class IdentidadTenantMcpMiddlewareTests
 
         requestCapturado!.Headers.GetValues("X-Tenant-Id").Should().ContainSingle().Which.Should().Be("org_123");
         requestCapturado.Headers.GetValues("X-User-Id").Should().ContainSingle().Which.Should().Be("user_456");
+        requestCapturado.Headers.GetValues("X-Organization-Membership-Id").Should().ContainSingle().Which.Should().Be("om_789");
     }
 
     [Fact]
     public async Task Ejecutar_NoPublicaNada_CuandoNoHayBearer()
     {
-        TenantExecutionContext.SetDerivedIdentity(null, null);
+        TenantExecutionContext.SetDerivedIdentity(null, null, null);
         var items = new Dictionary<object, object>();
         var siguienteInvocado = false;
         var middleware = new IdentidadTenantMcpMiddleware(new ValidadorFalso(null));
@@ -1904,9 +1917,10 @@ public class IdentidadTenantMcpMiddlewareTests
     [Theory]
     [InlineData("org_id")]
     [InlineData("sub")]
+    [InlineData("organization_membership_id")]
     public async Task Ejecutar_Rechaza_CuandoElTokenNoTraeOrgIdOSub(string claimFaltante)
     {
-        var claims = new[] { ("org_id", "org_123"), ("sub", "user_456") }.Where(c => c.Item1 != claimFaltante).ToArray();
+        var claims = new[] { ("org_id", "org_123"), ("sub", "user_456"), ("organization_membership_id", "om_789") }.Where(c => c.Item1 != claimFaltante).ToArray();
         var siguienteInvocado = false;
         var middleware = new IdentidadTenantMcpMiddleware(new ValidadorFalso(Principal(claims)));
 
@@ -1919,7 +1933,7 @@ public class IdentidadTenantMcpMiddlewareTests
 }
 ```
 
-`HandlerCapturador` ya existe en `PropagadorIdentidadTenantHandlerTests.cs` (item 7, mismo namespace). En esta variante el primer test de ese archivo construye el handler con `new PropagadorIdentidadTenantHandler(new IdentidadTenant("tenant-123", "usuario-456"), new TenantExecutionContext())` (sin identidad ambiente publicada cae a la fija, que es lo que afirma).
+`HandlerCapturador` ya existe en `PropagadorIdentidadTenantHandlerTests.cs` (item 7, mismo namespace). En esta variante el primer test de ese archivo construye el handler con `new PropagadorIdentidadTenantHandler(new IdentidadTenant("tenant-123", "usuario-456", "membership-789"), new TenantExecutionContext())` (sin identidad ambiente publicada cae a la fija, que es lo que afirma).
 
 `Sesion/ObtenerSesionToolTests.cs` -- `obtener_sesion` en ambos origenes, sobre el nucleo `Responder` (nivel 1):
 
@@ -1933,7 +1947,7 @@ namespace <RootNamespace>.Mcp.{Proposito}.Tests.Sesion;
 
 public class ObtenerSesionToolTests
 {
-    private static readonly ObtenerSesionTool Tool = new(new IdentidadTenant("tenant-fijo", "usuario-fijo"));
+    private static readonly ObtenerSesionTool Tool = new(new IdentidadTenant("tenant-fijo", "usuario-fijo", "membership-fija"));
 
     [Fact]
     public void Responder_IndicaOrigenSesionConCorreoYOrganizacion_CuandoHaySesion()
@@ -2033,9 +2047,9 @@ ningun proyecto del BC.
 - **Identidad derivada del token** (solo si al scaffoldear este servidor `tenancy.strategy` ya era
   `multi-tenant-header`): `IdentidadTenantMcpMiddleware` lee el Bearer del transporte HTTP de
   `ToolInvocationContext` (no de `HttpContext`), lo valida con `ValidadorTokenAuthKit` y
-  `DerivadorIdentidadTenantMcp` deriva `org_id` -> tenant y `sub` -> usuario. Publica en el mismo
+  `DerivadorIdentidadTenantMcp` deriva `org_id` -> tenant, `sub` -> usuario y `organization_membership_id` -> membership. Publica en el mismo
   punto la identidad ambiente (`TenantExecutionContext`) y la sesion (`SesionUsuario`: correo,
-  organizacion, `sid`). Un Bearer no validable, o sin `org_id`/`sub`, **rechaza** la invocacion:
+  organizacion, `sid`). Un Bearer no validable, o sin `org_id`/`sub`/`organization_membership_id`, **rechaza** la invocacion:
   nunca cae al tenant fijo. La tool `obtener_sesion` responde `origen: "sesion"` (correo y
   organizacion) u `origen: "tenant_fijo"`. Es la unica `ProjectReference` permitida: la biblioteca
   `<RootNamespace>.TenantResolver` (MEF-ADR-0047 decision 3). Con `mono-tenant-transitorio` queda
