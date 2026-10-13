@@ -49,7 +49,7 @@ sesiones `-p` no los cargan. Para probar una copia suelta: `claude --plugin-dir 
   ultimo mergeado, `3` el log (acumula todos los issues). Al terminar: resumen (mergeados, fallidos, aplazados,
   espera por rate limit), los PRs de cada issue y `4` cierra. Un toast avisa cada merge. Bajo la cola, la tabla
   lista los terminados (duracion y costo) y, mientras corre, una fila `●` del issue en curso (titulo, `PR #N` o `…`,
-  tiempo desde su inicio con el reloj de la cabecera y costo `…`); el `total` cuenta esa fila y suma su tiempo.
+  tiempo desde su inicio con el reloj de la cabecera, congelado mientras espera su merge, y costo `…`); el `total` cuenta esa fila y suma su tiempo.
   `/mefisto-divine-wager batch <issues>` reengancha un sequential ya lanzado.
 - Mientras `/mefisto-bitacora` corre al subagente `mefisto-historiador`, la banda de espera muestra al historiador
   escribiendo (`historiador escribiendo la bitácora N/M MM:SS`) y la cinta de sus field notes: al arrancar toma las

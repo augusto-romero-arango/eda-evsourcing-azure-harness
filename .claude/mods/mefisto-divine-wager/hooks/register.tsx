@@ -1080,11 +1080,12 @@ export const register: Register = on => {
       const doneRows = batch.issues.filter(i => ['done', 'failed'].includes(issueMark(i.status)))
       const stats = batch.stats ?? {}
       const titleW = summaryTitleWidth(inner)
-      const titleCol = titleW > 0 ? titleW + 1 : 0
       const doneStats = doneRows.map(i => stats[i.issue]).filter(st => st !== undefined)
+      // Sin exigir `!run.finishedMs`: el historial se escribe antes del merge del batch, y la fila no debe desaparecer
+      // mientras el issue espera su merge; ahi su tiempo queda congelado en el fin de la corrida.
       const currentRun =
-        isRunning && run && run.issue === batch.current && !run.finishedMs && !doneRows.some(i => i.issue === run.issue) ? run : null
-      const currentMs = currentRun ? Math.max(0, (now || Date.now()) - currentRun.startedMs) : null
+        isRunning && run && run.issue === batch.current && !doneRows.some(i => i.issue === run.issue) ? run : null
+      const currentMs = currentRun ? Math.max(0, (currentRun.finishedMs ?? (now || Date.now())) - currentRun.startedMs) : null
       const currentParts = currentRun ? currentRowParts(currentRun.issue, currentRun.title, prNumber(currentRun.pr), currentMs ?? 0, titleW) : null
       return (
         <Box flexDirection="column" borderStyle="round" borderColor="claude" borderDimColor paddingX={1}>
