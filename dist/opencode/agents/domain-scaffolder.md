@@ -3085,7 +3085,7 @@ Si el archivo existe, continua con los puntos 1-8.
 
 **1. Idempotencia (issue #370 CA-4):**
 
-> **Las citas de criterio de aceptacion de este paso llevan el numero de issue a proposito.** El Paso 3b acumula dos issues (#370, que lo creo, y #548, que le agrego los puntos 3 y 4) y sus numeraciones de CA se solapan: "CA-1" y "CA-4" significan cosas distintas segun el issue. No quites el `issue #NNN` al transcribir ni al enmendar este paso.
+> **Las citas de criterio de aceptacion de este paso llevan el numero de issue a proposito.** El Paso 3b acumula tres issues (#370, que lo creo; #548, que le agrego los puntos 3 y 4; y #2395, que le agrego el punto 4b) y sus numeraciones de CA se solapan: "CA-1" y "CA-4" significan cosas distintas segun el issue. No quites el `issue #NNN` al transcribir ni al enmendar este paso.
 
 ```bash
 REPO_ROOT=$(git -C /ruta-conocida rev-parse --show-toplevel)
@@ -3278,7 +3278,7 @@ else
 fi
 ```
 
-Si el proyecto existe y el test falla, lee el error y corrige antes de continuar. El caso mas probable es que el config-test enumere los dominios del BC uno por uno (`config-test.md`, punto 1: un `Configurar{Dominio}` por dominio conocido) y todavia no incluya al recien nacido -- **ese archivo es un test y no lo tocas tu**: reportalo en tu resumen para que el issue `tipo:projection` del dominio lo cubra. Lo que si te corresponde ya esta hecho: las verificaciones de ese test dependen del seam que emitiste en el punto 5 **de este paso**, y ese seam sale sin ninguna proyeccion `Inline` (habilita la segunda verificacion de `config-test.md`) y con la configuracion de metadata ya replicada (habilita la tercera, que es un subconjunto de la compatibilidad Marten write-side/read-side -- la completa la verifica el reviewer bajo gate, MEF-ADR-0034 seccion 6).
+Si el proyecto existe y el test falla, lee el error y corrige antes de continuar. El caso mas probable es que el config-test enumere los dominios del BC uno por uno (`config-test.md`, punto 1: un `Configurar{Dominio}` por dominio conocido) y todavia no incluya al recien nacido -- **ese archivo es un test y no lo tocas tu**: reportalo en tu resumen para que el issue `tipo:projection` del dominio lo cubra. Lo que si te corresponde ya esta hecho: las verificaciones de ese test dependen del seam que emitiste en el punto 5 **de este paso**, y ese seam sale sin ninguna proyeccion `Inline` (habilita la segunda verificacion de `config-test.md`) y con la configuracion de metadata ya replicada (habilita la tercera, que es un subconjunto de la compatibilidad Marten write-side/read-side -- la completa la verifica el reviewer bajo gate, MEF-ADR-0034 seccion 6) y con la tolerancia a huecos de secuencia ya invocada desde la fuente unica del punto 4b (habilita la guarda 5, MEF-ADR-0034 seccion 12).
 
 ---
 
@@ -4151,6 +4151,7 @@ if [ -f "src/<RootNamespace>.Projections/Infraestructura/ConfiguracionMartenProj
   git add \
     "src/<RootNamespace>.Projections/Infraestructura/ConfiguracionMartenProjections.cs" \
     "src/<RootNamespace>.Projections/Infraestructura/ConfiguracionMartenProjections{PascalCase}.cs" \
+    "src/<RootNamespace>.Projections/Infraestructura/ConfiguracionDaemonProjections.cs" \
     "src/<RootNamespace>.Projections/<RootNamespace>.Projections.csproj"
 fi
 
@@ -4249,8 +4250,13 @@ Scaffold completado para el dominio "{kebab}":
                                              - Marker I{PascalCase}ProjectionStore + seam Configurar{PascalCase}:
                                                AddMartenStore sobre el mismo schema del write-side, daemon HotCold,
                                                replica de Events.MetadataConfig (MEF-ADR-0034 seccion 6 punto 3),
+                                               tolerancia a huecos via AplicarToleranciaAHuecosDeSecuencia
+                                               (MEF-ADR-0034 seccion 12),
                                                sin ninguna proyeccion concreta todavia -- las agrega el flujo
                                                read-side (issue tipo:projection) sobre este mismo archivo
+  src/<RootNamespace>.Projections/Infraestructura/ConfiguracionDaemonProjections.cs
+                                             - Fuente unica del tope de huecos de secuencia (5 min) de todos
+                                               los named stores; creado solo si faltaba (issue #2395)
   src/<RootNamespace>.Projections/Infraestructura/ConfiguracionMartenProjections.cs
                                              - Editado: ConfigurarEventos ahora encadena Configurar{PascalCase}
   src/<RootNamespace>.Projections/<RootNamespace>.Projections.csproj
@@ -4290,4 +4296,4 @@ Proximos pasos:
 
 - Si `terraform validate` falla, lee el error y corrige el bloque HCL que agregaste. No hagas commit hasta que la validacion pase (o terraform no este instalado).
 
-- Si el `dotnet build` del worker de proyecciones (Paso 3b, punto 7) falla despues de agregar `ConfiguracionMartenProjections{PascalCase}.cs`, revisa primero que el `PackageReference Marten` del punto 2 haya quedado en el `.csproj` (sin duplicarlo si ya lo tenia un dominio anterior) y que la `ProjectReference` del punto 3 hacia `{PascalCase}.DomainEvents` se haya agregado. Si el error es `CS0103: El nombre 'DaemonMode' no existe en el contexto actual`, el `using` esta equivocado: `DaemonMode` vive en **`JasperFx.Events.Daemon`**, no en `Marten.Events.Daemon` (que existe, por eso el `using` malo no da error propio). No hagas commit hasta que compile.
+- Si el `dotnet build` del worker de proyecciones (Paso 3b, punto 7) falla despues de agregar `ConfiguracionMartenProjections{PascalCase}.cs`, revisa primero que el `PackageReference Marten` del punto 2 haya quedado en el `.csproj` (sin duplicarlo si ya lo tenia un dominio anterior) y que la `ProjectReference` del punto 3 hacia `{PascalCase}.DomainEvents` se haya agregado. Si el error es `CS0103: El nombre 'DaemonMode' no existe en el contexto actual`, el `using` esta equivocado: `DaemonMode` vive en **`JasperFx.Events.Daemon`**, no en `Marten.Events.Daemon` (que existe, por eso el `using` malo no da error propio). Si el error es `CS1061` sobre `SkipStaleGapsDespiteLiveTransactionsAfter` en `ConfiguracionDaemonProjections.cs`, el worker tiene `Marten` por debajo de `9.23`: sube el `PackageReference` del punto 2 a `9.23.0`. No hagas commit hasta que compile.
