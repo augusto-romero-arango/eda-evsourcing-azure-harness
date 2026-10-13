@@ -519,6 +519,21 @@ else
     fail "la ausencia del config no produjo un diagnóstico conservador y accionable"
 fi
 
+# Issue #2384 (CA-2/CA-4): el fixture tiene infra/environments/ y no tiene
+# .mefisto/appinsights.env -> fila FALTA, paso manual en "Proximos pasos" y exit 0.
+OUT=$(cd "$ONBOARD_REPO" && PATH="$ONBOARD_BIN:$PATH" bash "$REPO_ROOT/scripts/onboard-diagnose.sh" 2>&1)
+RC=$?
+PASOS=$(printf '%s\n' "$OUT" | sed -n '/^Proximos pasos/,$p')
+if [ "$RC" -eq 0 ] \
+    && printf '%s\n' "$OUT" | grep -Fq "[FALTA        ] .mefisto/appinsights.env no existe" \
+    && printf '%s\n' "$PASOS" | grep -Fq "Crea .mefisto/appinsights.env con las cinco claves" \
+    && printf '%s\n' "$PASOS" | grep -Fq "/bug, /health-check y /purge-store lo requieren" \
+    && [ ! -e "$ONBOARD_REPO/.mefisto/appinsights.env" ]; then
+    pass "diagnostico integrado: appinsights.env ausente da FALTA, paso manual y exit 0 sin escribir"
+else
+    fail "diagnostico integrado de appinsights.env (rc=$RC)"
+fi
+
 echo ""
 echo "[S-6] _claude_version_meets() y _check_claude_version() (sin invocar claude)"
 _claude_version_meets "2.1.287 (Claude Code)" 2.1.287 && pass "igual cumple" || fail "igual deberia cumplir"
@@ -539,6 +554,65 @@ _check_claude_version opencode "1.0.0"
 [ "$CLAUDE_VERSION_STATE" = "INFO" ] && pass "runtime OpenCode es INFO" || fail "OpenCode INFO: $CLAUDE_VERSION_STATE"
 _check_claude_version opencode ""
 [ "$CLAUDE_VERSION_STATE" = "INFO" ] && pass "runtime OpenCode sin version sigue INFO" || fail "OpenCode INFO sin version"
+
+echo ""
+echo "[S-AI] _check_appinsights_env(): .mefisto/appinsights.env (issue #2384)"
+
+AI_REPO="$(mktemp -d)"
+mkdir -p "$AI_REPO/.mefisto"
+AI_ENV="$AI_REPO/.mefisto/appinsights.env"
+ai_full() { printf 'APPINSIGHTS_APP=ai\nAPPINSIGHTS_RG=rg\nSERVICEBUS_NAMESPACE=sb\nSERVICEBUS_RG=rg2\n'; }
+
+# Sin archivo y sin infra/environments -> NV
+_check_appinsights_env "$AI_REPO"
+[ "$APPINSIGHTS_ENV_STATE" = "NV" ] && pass "sin archivo y sin infra/environments: NV" || fail "NV esperado: $APPINSIGHTS_ENV_STATE"
+
+# Sin archivo y con infra/environments -> FALTA
+mkdir -p "$AI_REPO/infra/environments"
+_check_appinsights_env "$AI_REPO"
+[ "$APPINSIGHTS_ENV_STATE" = "FALTA" ] && pass "sin archivo con infra/environments: FALTA" || fail "FALTA esperado: $APPINSIGHTS_ENV_STATE"
+case "$APPINSIGHTS_ENV_DETAIL" in
+    */bug*/health-check*/purge-store*) pass "el detalle cita /bug, /health-check y /purge-store" ;;
+    *) fail "detalle sin los tres comandos: $APPINSIGHTS_ENV_DETAIL" ;;
+esac
+
+# Completo con FUNCTIONAPP_NAMES -> OK sin INFO
+{ ai_full; printf 'FUNCTIONAPP_NAMES=func-a,func-b\n'; } > "$AI_ENV"
+_check_appinsights_env "$AI_REPO"
+if [ "$APPINSIGHTS_ENV_STATE" = "OK" ] && [ -z "$APPINSIGHTS_ENV_INFO" ] && [[ "$APPINSIGHTS_ENV_DETAIL" == *appinsights.env* ]]; then
+    pass "archivo completo: OK que nombra el archivo"
+else
+    fail "OK esperado: $APPINSIGHTS_ENV_STATE / $APPINSIGHTS_ENV_INFO"
+fi
+
+# Completo sin FUNCTIONAPP_NAMES, y con FUNCTIONAPP_NAMES vacio -> OK + INFO
+ai_full > "$AI_ENV"
+_check_appinsights_env "$AI_REPO"
+[ "$APPINSIGHTS_ENV_STATE" = "OK" ] && [[ "$APPINSIGHTS_ENV_INFO" == *FUNCTIONAPP_NAMES* ]] && pass "FUNCTIONAPP_NAMES ausente: OK + INFO" || fail "OK+INFO esperado (ausente)"
+{ ai_full; printf 'FUNCTIONAPP_NAMES=\n'; } > "$AI_ENV"
+_check_appinsights_env "$AI_REPO"
+[ "$APPINSIGHTS_ENV_STATE" = "OK" ] && [[ "$APPINSIGHTS_ENV_INFO" == *FUNCTIONAPP_NAMES* ]] && pass "FUNCTIONAPP_NAMES vacio: OK + INFO" || fail "OK+INFO esperado (vacio)"
+
+# Claves ausentes o vacias -> FALTA con la lista exacta
+printf 'APPINSIGHTS_APP=ai\nAPPINSIGHTS_RG=\nSERVICEBUS_RG=rg2\nFUNCTIONAPP_NAMES=f\n' > "$AI_ENV"
+_check_appinsights_env "$AI_REPO"
+if [ "$APPINSIGHTS_ENV_STATE" = "FALTA" ] && [[ "$APPINSIGHTS_ENV_DETAIL" == *"APPINSIGHTS_RG, SERVICEBUS_NAMESPACE" ]]; then
+    pass "claves ausentes/vacias: FALTA listando exactamente APPINSIGHTS_RG, SERVICEBUS_NAMESPACE"
+else
+    fail "FALTA con lista exacta esperado: $APPINSIGHTS_ENV_STATE / $APPINSIGHTS_ENV_DETAIL"
+fi
+
+# No ejecuta el archivo (sin source) ni escribe
+AI_PROBE="$AI_REPO/ejecutado"
+{ ai_full; printf 'touch %s\n' "$AI_PROBE"; } > "$AI_ENV"
+AI_SUM_BEFORE=$(cksum < "$AI_ENV")
+_check_appinsights_env "$AI_REPO"
+if [ ! -e "$AI_PROBE" ] && [ "$(cksum < "$AI_ENV")" = "$AI_SUM_BEFORE" ]; then
+    pass "no hace source del archivo ni lo modifica"
+else
+    fail "el archivo se ejecuto o se modifico"
+fi
+rm -rf "$AI_REPO"
 
 echo ""
 echo "----------------------------------------"

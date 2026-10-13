@@ -194,6 +194,50 @@ _check_repo_activation() {
     return 0
 }
 
+# _check_appinsights_env [repo_root]
+# .mefisto/appinsights.env lo lee appinsights-query.sh (contrato desde 0.40.0, #1701) y
+# lo requieren /bug (ruta desplegada), /health-check y /purge-store. Deja
+# APPINSIGHTS_ENV_STATE (OK|FALTA|NV), APPINSIGHTS_ENV_DETAIL y APPINSIGHTS_ENV_INFO
+# (vacio salvo FUNCTIONAPP_NAMES ausente/vacio). Parsea linea a linea, sin source ni escritura.
+_check_appinsights_env() {
+    local root="${1:-}" file key line val missing=""
+    [ -n "$root" ] || root=$(git rev-parse --show-toplevel 2>/dev/null)
+    file="$root/.mefisto/appinsights.env"
+    APPINSIGHTS_ENV_STATE=""
+    APPINSIGHTS_ENV_DETAIL=""
+    APPINSIGHTS_ENV_INFO=""
+    if [ ! -f "$file" ]; then
+        if [ -d "$root/infra/environments" ]; then
+            APPINSIGHTS_ENV_STATE="FALTA"
+            APPINSIGHTS_ENV_DETAIL=".mefisto/appinsights.env no existe: /bug, /health-check y /purge-store lo requieren"
+        else
+            APPINSIGHTS_ENV_STATE="NV"
+            APPINSIGHTS_ENV_DETAIL=".mefisto/appinsights.env no existe todavia (normal en greenfield sin infra/environments/)"
+        fi
+        return 0
+    fi
+    for key in APPINSIGHTS_APP APPINSIGHTS_RG SERVICEBUS_NAMESPACE SERVICEBUS_RG; do
+        line=$(grep -E "^${key}=" "$file" 2>/dev/null | tail -n 1)
+        val="${line#*=}"
+        val="${val%$'\r'}"
+        val="${val#\"}"; val="${val%\"}"; val="${val#\'}"; val="${val%\'}"
+        [ -n "$line" ] && [ -n "${val// /}" ] || missing="${missing:+$missing, }$key"
+    done
+    if [ -n "$missing" ]; then
+        APPINSIGHTS_ENV_STATE="FALTA"
+        APPINSIGHTS_ENV_DETAIL=".mefisto/appinsights.env incompleto, faltan: $missing"
+        return 0
+    fi
+    APPINSIGHTS_ENV_STATE="OK"
+    APPINSIGHTS_ENV_DETAIL=".mefisto/appinsights.env declara APPINSIGHTS_APP, APPINSIGHTS_RG, SERVICEBUS_NAMESPACE y SERVICEBUS_RG"
+    line=$(grep -E "^FUNCTIONAPP_NAMES=" "$file" 2>/dev/null | tail -n 1)
+    val="${line#*=}"; val="${val%$'\r'}"; val="${val#\"}"; val="${val%\"}"; val="${val#\'}"; val="${val%\'}"
+    if [ -z "$line" ] || [ -z "${val// /}" ]; then
+        APPINSIGHTS_ENV_INFO="FUNCTIONAPP_NAMES ausente o vacio en .mefisto/appinsights.env: appinsights-query.sh function-errors no funcionara (normal antes del primer /scaffold)"
+    fi
+    return 0
+}
+
 # _check_consumer_directives [agents_md] [claude_md] [runtime]
 # El puente CLAUDE.md solo es requerido bajo el runtime "claude"; con cualquier
 # otro es informativo (estado INFO, nunca FALTA/NV) segun MEF-ADR-0050/0053.
@@ -378,6 +422,7 @@ main() {
     PA_INFRA_BASE_MISSING=0
     PA_AUTH_PATH=0
     PA_PROJECTIONS_MISSING=0
+    PA_APPINSIGHTS_ENV_FALTA=0
 
     # Guard defensivo (cwd != Mefisto), por si el script se invoca aislado.
     REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || {
@@ -533,6 +578,20 @@ main() {
         row FALTA ".mefisto/pipeline/ no esta excluido por .gitignore"
         ACTIONS="${ACTIONS}  - Agrega exactamente '.mefisto/pipeline/' a .gitignore. No ignores '.mefisto/' completo: .mefisto/harness.config.json debe versionarse.\n"
     fi
+    _check_appinsights_env "$REPO_ROOT"
+    case "$APPINSIGHTS_ENV_STATE" in
+        OK)
+            row OK "$APPINSIGHTS_ENV_DETAIL"
+            [ -n "$APPINSIGHTS_ENV_INFO" ] && row INFO "$APPINSIGHTS_ENV_INFO"
+            ;;
+        FALTA)
+            row FALTA "$APPINSIGHTS_ENV_DETAIL"
+            PA_APPINSIGHTS_ENV_FALTA=1
+            ACTIONS="${ACTIONS}  - Crea .mefisto/appinsights.env (solo nombres de recursos, sin secretos, versionable) con APPINSIGHTS_APP, APPINSIGHTS_RG, SERVICEBUS_NAMESPACE, SERVICEBUS_RG y FUNCTIONAPP_NAMES (separadas por coma).
+"
+            ;;
+        *) row NV "$APPINSIGHTS_ENV_DETAIL" ;;
+    esac
 
     # --- 4. Labels de GitHub (MEF-ADR-0007) ---
     echo ""
@@ -782,6 +841,11 @@ main() {
         if [ "$PA_CLAUDE_LEGACY_DUPLICATED" -eq 1 ]; then
             PA_STEP=$((PA_STEP + 1))
             echo "  $PA_STEP. Limpia manualmente de CLAUDE.md las secciones contractuales legacy duplicadas (detalle arriba)."
+        fi
+        if [ "$PA_APPINSIGHTS_ENV_FALTA" -eq 1 ]; then
+            PA_STEP=$((PA_STEP + 1))
+            echo "  $PA_STEP. Crea .mefisto/appinsights.env con las cinco claves (solo nombres, sin secretos): APPINSIGHTS_APP,"
+            echo "     APPINSIGHTS_RG, SERVICEBUS_NAMESPACE, SERVICEBUS_RG y FUNCTIONAPP_NAMES (coma). /bug, /health-check y /purge-store lo requieren."
         fi
         if [ "$PA_CONFIG_FALTA" -eq 1 ]; then
             PA_STEP=$((PA_STEP + 1))
