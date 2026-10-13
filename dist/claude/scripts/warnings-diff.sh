@@ -29,6 +29,14 @@
 # Salida: 'NEW <toolchain> <archivo> <codigo> <mensaje>' por warning nuevo y
 # una linea final 'warnings nuevos: <N>'.
 #
+# Toolchain dotnet: cada lado corre 'dotnet build <objetivo> -nologo
+# --no-incremental -tl:off -fl "-flp:logfile=<f>;warningsonly"'. Ambas opciones
+# son obligatorias: un build incremental no vuelve a emitir los warnings de los
+# proyectos ya compilados (la base y el arbol actual no serian comparables), y
+# la consola duplica cada warning aun con -clp:NoSummary, mientras el file
+# logger 'warningsonly' lo escribe una sola vez. Si un lado no compila, sale
+# con 1: nunca se inventa una baseline.
+#
 # Exit codes: 0 sin warnings nuevos; 1 error; 2 hay warnings nuevos.
 
 set -uo pipefail
@@ -104,23 +112,25 @@ suppression_patterns_shell() {
 }
 
 # -------- Toolchain: dotnet --------
-# Cuenta como warning los de 'dotnet build' (compilador y analyzers, MEF-ADR-0056).
-# Dos opciones del build son OBLIGATORIAS en ambos lados:
-#   --no-incremental: un build incremental no vuelve a emitir los warnings de los
-#     proyectos ya compilados, y la base y el arbol actual darian conteos distintos.
-#   -fl "-flp:logfile=<f>;warningsonly": el file logger escribe cada warning una
-#     sola vez; la consola duplica cada warning aun con -clp:NoSummary.
-# Si el build falla en un lado, sale con 1: nunca se inventa una baseline.
+# Warnings de 'dotnet build' (compilador y analyzers, MEF-ADR-0056); las opciones
+# obligatorias del build estan explicadas en la cabecera.
 # Con WARNINGS_DIFF_FIXTURE_DIR, <lado>.root (opcional) da la raiz absoluta a
 # relativizar y <lado>.exitcode (opcional) simula el exit code del build.
 
+# Raiz del lado a quitar de las rutas: la logica y la fisica (pwd -P), porque el
+# worktree temporal vive bajo mktemp y en macOS /var es un symlink a /private/var.
 DOTNET_PARSE_ROOT=""
+DOTNET_PARSE_ROOT_PHYS=""
 
 run_dotnet() {
     local root="$1" side="$2" out="$3" rc=0
     DOTNET_PARSE_ROOT="$root"
+    DOTNET_PARSE_ROOT_PHYS=$(cd "$root" 2>/dev/null && pwd -P) || DOTNET_PARSE_ROOT_PHYS="$root"
     if [ -n "${WARNINGS_DIFF_FIXTURE_DIR:-}" ]; then
-        [ -f "$WARNINGS_DIFF_FIXTURE_DIR/$side.root" ] && DOTNET_PARSE_ROOT=$(head -n1 "$WARNINGS_DIFF_FIXTURE_DIR/$side.root")
+        if [ -f "$WARNINGS_DIFF_FIXTURE_DIR/$side.root" ]; then
+            DOTNET_PARSE_ROOT=$(head -n1 "$WARNINGS_DIFF_FIXTURE_DIR/$side.root")
+            DOTNET_PARSE_ROOT_PHYS="$DOTNET_PARSE_ROOT"
+        fi
         cat "$WARNINGS_DIFF_FIXTURE_DIR/$side.out" > "$out" 2>/dev/null || : > "$out"
         [ -f "$WARNINGS_DIFF_FIXTURE_DIR/$side.exitcode" ] && rc=$(head -n1 "$WARNINGS_DIFF_FIXTURE_DIR/$side.exitcode")
     else
@@ -146,12 +156,14 @@ run_dotnet() {
 }
 
 parse_dotnet() {
-    local line file code msg root="${DOTNET_PARSE_ROOT%/}"
-    local re_loc='^(.*)\([0-9]+,[0-9]+(,[0-9]+,[0-9]+)?\): warning ([A-Za-z]+[0-9]+): (.*)$'
+    local line file code msg root="${DOTNET_PARSE_ROOT%/}" phys="${DOTNET_PARSE_ROOT_PHYS%/}"
+    # Ubicacion canonica de MSBuild: (l), (l,c), (l-l), (l,c-c) o (l,c,l,c).
+    local re_loc='^(.*)\([0-9]+([,-][0-9]+)*\)[[:space:]]*: warning ([A-Za-z]+[0-9]+): (.*)$'
     local re_noloc='^(.*[^[:space:]])[[:space:]]*: warning ([A-Za-z]+[0-9]+): (.*)$'
     while IFS= read -r line || [ -n "$line" ]; do
         line="${line%$'\r'}"
         if [[ "$line" =~ ^[[:space:]]*[0-9]+(:[0-9]+)?\>(.*)$ ]]; then line="${BASH_REMATCH[2]}"; fi
+        [ -n "$phys" ] && [ "$phys" != "$root" ] && line="${line//"$phys"\//}"
         [ -n "$root" ] && line="${line//"$root"\//}"
         if [[ "$line" =~ \ \[[^]]*\]$ ]]; then line="${line% \[*\]}"; fi
         if [[ "$line" =~ $re_loc ]]; then

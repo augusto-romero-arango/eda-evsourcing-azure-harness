@@ -10,6 +10,7 @@
 #   [CA-4] toolchain no soportada / ausente / guard en Mefisto
 #   [path] --path acota el analisis
 #   [fix]  WARNINGS_DIFF_FIXTURE_DIR
+#   [dotnet] toolchain dotnet con fixtures del file logger (issue #2417)
 
 set -uo pipefail
 
@@ -143,23 +144,29 @@ if [ "$RC" -eq 2 ] && echo "$OUT" | grep -q '^NEW shell a.sh SC2034 bar appears 
     pass "fixture dir: parser + diff"; else fail "fixture (rc=$RC): $OUT"; fi
 
 echo "[dotnet] fixtures del file logger"
-FXD="$SCRIPT_DIR/fixtures/warnings-diff"
+FXD="$SCRIPT_DIR/fixtures/warnings-diff/dotnet"
 dn() { # fixture-dir
     (cd "$R" && WARNINGS_DIFF_FIXTURE_DIR="$1" "$REAL_SCRIPT" --toolchain dotnet --base "$BASE" 2>&1)
 }
 R=$(new_repo); BASE=$(git -C "$R" rev-parse HEAD)
-OUT=$(dn "$FXD/dotnet"); RC=$?
+OUT=$(dn "$FXD/new"); RC=$?
 if [ "$RC" -eq 2 ] && echo "$OUT" | grep -q '^NEW dotnet Poc/Class1.cs CS0168 The variable' && echo "$OUT" | grep -q '^warnings nuevos: 1$'; then
     pass "CA-1: CS0168 solo en el actual -> NEW + exit 2"; else fail "CA-1 (rc=$RC): $OUT"; fi
-MV=$(mktemp -d); TMPS+=("$MV")
-cp "$FXD/dotnet/current.out" "$MV/base.out"; cp "$FXD/dotnet/moved.out" "$MV/current.out"
-OUT=$(dn "$MV"); RC=$?
+OUT=$(dn "$FXD/moved"); RC=$?
 [ "$RC" -eq 0 ] && pass "CA-1: mismos warnings en otras lineas -> exit 0" || fail "CA-1 movidos (rc=$RC): $OUT"
-OUT=$(dn "$FXD/dotnet-abs"); RC=$?
+OUT=$(dn "$FXD/abs"); RC=$?
 [ "$RC" -eq 0 ] && pass "CA-2: prefijo de nodo y rutas absolutas distintas -> misma clave" || fail "CA-2 (rc=$RC): $OUT"
-OUT=$(dn "$FXD/dotnet-fail-base"); RC=$?
+FXL=$(mktemp -d); TMPS+=("$FXL")
+printf '%s\n' '1:7>/w/Poc/Class1.cs(4): warning CS0168: The variable '"'x'"' is declared but never used [/w/Poc/Poc.csproj]' \
+    '1:7>/w/Poc/Poc.csproj : warning NU1603: Poc depends on X (>= 1.0.0) but X 1.0.0 was not found [/w/Poc/Poc.csproj]' > "$FXL/base.out"
+printf '%s\n' '/w/Poc/Class1.cs(14,27,14,28) : warning CS0168: The variable '"'x'"' is declared but never used [/w/Poc/Poc.csproj]' \
+    '/w/Poc/Poc.csproj : warning NU1603: Poc depends on X (>= 1.0.0) but X 1.0.0 was not found [/w/Poc/Poc.csproj]' > "$FXL/current.out"
+printf '/w\n' > "$FXL/base.root"; printf '/w\n' > "$FXL/current.root"
+OUT=$(dn "$FXL"); RC=$?
+[ "$RC" -eq 0 ] && pass "parser: ubicaciones (l) y (l,c,l,c) y warning sin linea (NU) -> misma clave" || fail "parser ubicaciones (rc=$RC): $OUT"
+OUT=$(dn "$FXD/fail-base"); RC=$?
 [ "$RC" -eq 1 ] && echo "$OUT" | grep -q 'la base no compila' && pass "CA-4: base fallida -> exit 1" || fail "CA-4 base (rc=$RC): $OUT"
-OUT=$(dn "$FXD/dotnet-fail-current"); RC=$?
+OUT=$(dn "$FXD/fail-current"); RC=$?
 [ "$RC" -eq 1 ] && echo "$OUT" | grep -q 'el arbol actual no compila' && pass "CA-4: actual fallido -> exit 1" || fail "CA-4 actual (rc=$RC): $OUT"
 
 echo "[dotnet] supresiones"
@@ -167,7 +174,7 @@ R=$(new_repo); BASE=$(git -C "$R" rev-parse HEAD)
 printf '#pragma warning disable CS0168\n' > "$R/A.cs"
 printf '<Project><PropertyGroup><NoWarn>CS0168</NoWarn></PropertyGroup></Project>\n' > "$R/P.csproj"
 printf 'dotnet_diagnostic.CS0168.severity = none\n' > "$R/.editorconfig"
-OUT=$(dn "$FXD/dotnet-abs"); RC=$?
+OUT=$(dn "$FXD/abs"); RC=$?
 if [ "$RC" -eq 2 ] && echo "$OUT" | grep -q '^NEW dotnet A.cs SUPPRESSION ' && echo "$OUT" | grep -q '^NEW dotnet P.csproj SUPPRESSION ' && echo "$OUT" | grep -q '^NEW dotnet .editorconfig SUPPRESSION '; then
     pass "CA-3: pragma, NoWarn y editorconfig reportados"; else fail "CA-3 (rc=$RC): $OUT"; fi
 
