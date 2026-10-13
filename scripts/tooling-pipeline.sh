@@ -653,6 +653,8 @@ Contexto de la tarea de tooling a implementar:
 
 $ISSUE_CONTEXT
 
+Commit base: ${SNAPSHOT_COMMIT}
+
 Tu tarea: implementa lo descrito en el issue. Esto es una tarea de TOOLING del CONSUMIDOR (workflows de GitHub Actions, configuracion local, fixtures de test, scripts ad-hoc del consumidor), NO logica de dominio y NO modificaciones al plugin Mefisto.
 
 ALCANCE PERMITIDO de escritura:
@@ -691,7 +693,8 @@ Instrucciones:
 2. Reutiliza patrones y convenciones del proyecto (mira archivos similares).
 3. Haz commits frecuentes con mensajes descriptivos en espanol.
 4. Verifica que el proyecto compila con 'dotnet build' si modificaste codigo C#.
-5. Al terminar, escribe un resumen de lo que hiciste en .mefisto/pipeline/summaries/stage-1-writer.md"
+5. Comando de verificacion permitido: scripts/warnings-diff.sh del plugin (politica de cero warnings nuevos, MEF-ADR-0056); sigue la doctrina de tu agente con --base ${SNAPSHOT_COMMIT}.
+6. Al terminar, escribe un resumen de lo que hiciste en .mefisto/pipeline/summaries/stage-1-writer.md"
 
     run_agent "1" "writer" "$STAGE1_PROMPT"
 
@@ -806,8 +809,9 @@ Instrucciones:
 2. Revisa calidad: reutilizacion de patrones existentes, naming, legibilidad.
 3. Si hay codigo C#, verifica que compila y que los tests existentes pasan.
 4. Corrige problemas que encuentres directamente (no solo los reportes).
-5. Haz commit de tus correcciones con mensajes descriptivos.
-6. Al terminar, escribe un resumen en .mefisto/pipeline/summaries/stage-2-reviewer.md"
+5. Comando de verificacion permitido: scripts/warnings-diff.sh del plugin (politica de cero warnings nuevos, MEF-ADR-0056); sigue la doctrina de tu agente con --base ${SNAPSHOT_COMMIT}.
+6. Haz commit de tus correcciones con mensajes descriptivos.
+7. Al terminar, escribe un resumen en .mefisto/pipeline/summaries/stage-2-reviewer.md"
 
     run_agent "2" "reviewer" "$STAGE2_PROMPT"
 
@@ -968,6 +972,8 @@ ${WR_SUMMARY}
 ${RV_SUMMARY}
 
 </details>
+
+$(render_warning_remnants_section "$WORKTREE_PATH")
 
 ## Commits
 
