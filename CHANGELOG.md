@@ -4,6 +4,16 @@ Todo cambio notable a este proyecto se documenta aquí. Sigue [Keep a Changelog]
 
 ## [Unreleased]
 
+## [0.53.1] - 2026-10-14
+
+### Changed
+
+- El pipeline TDD ya no crea un issue por los tests ajustados por el reviewer; la senal pasa a la seccion `## Tests ajustados por el reviewer` del body del PR (`render_reviewer_touched_tests_section`). Se elimina `create_reviewer_tests_review_issue`.
+
+### Fixed
+
+- Se corrige en MEF-ADR-0047 decision 4 el `Take = tope + 1` que perdia un elemento por pagina: catalogo y ventana temporal piden `Take = tope` y reenvian `siguienteCursor`; solo la desambiguacion pide `Take = tope + 1` (refs. #2435, Bitakora.ControlAsistencia #1057).
+
 ## [0.53.0] - 2026-10-14
 
 ### Added
@@ -3564,7 +3574,8 @@ Y reemplazar referencias en `CLAUDE.md` del proyecto: `/eda-evsourcing-azure-har
 - Los agentes `reviewer` e `implementer` mantienen el placeholder literal `ADR-XXXX` en sus plantillas de reporte (no es un bug; el agente lo sustituye en tiempo de ejecución por el número real del ADR aplicable).
 - Los ejemplos de código en `test-writer.md`, `implementer.md` y `smoke-test-writer.md` conservan nombres concretos de un proyecto consumidor (`Programacion`, `ControlHoras`) anotados en el "Contrato con el consumidor" de cada agente como ejemplos pedagógicos.
 
-[Unreleased]: https://github.com/augusto-romero-arango/mefisto/compare/v0.53.0...HEAD
+[Unreleased]: https://github.com/augusto-romero-arango/mefisto/compare/v0.53.1...HEAD
+[0.53.1]: https://github.com/augusto-romero-arango/mefisto/compare/v0.53.0...v0.53.1
 [0.53.0]: https://github.com/augusto-romero-arango/mefisto/compare/v0.52.1...v0.53.0
 [0.52.1]: https://github.com/augusto-romero-arango/mefisto/compare/v0.52.0...v0.52.1
 [0.52.0]: https://github.com/augusto-romero-arango/mefisto/compare/v0.51.0...v0.52.0
