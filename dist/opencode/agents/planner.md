@@ -207,12 +207,36 @@ El output concreto de tu Knowledge Crunching son issues de GitHub que los agente
 
 ---
 
+## Precedente primero: investigar antes de recomendar
+
+Un problema que el proyecto ya resolvió se vuelve a resolver de la misma forma (MEF-ADR-0018). Antes de recomendar cómo implementar algo, investiga en este orden; es el análogo para **patrones de solución** del guardrail anti-sinónimos de nombres (MEF-ADR-0040):
+
+1. **Interno**: busca en el código del consumidor cómo se resolvió un problema del mismo tipo, por concepto y por tipo de artefacto (tools MCP, endpoints, proyecciones, handlers, tests), y revisa los issues cerrados con `## Decisiones tomadas en el refinamiento`:
+   ```bash
+   grep -rIl "<concepto>" src/ tests/
+   gh issue list --state closed --search "<concepto>" --json number,title
+   ```
+2. **ADRs**: lee los del consumidor (`ls docs/adr/ | grep -vi '^mef-adr-'`, relativos al repo del consumidor; MEF-ADR-0030) y los de Mefisto que rigen ese tipo de problema vía `${MEFISTO_PACKAGE_ROOT}/docs/adr/INDICE-TEMATICO.md`.
+3. **Externo, solo si no hay precedente**: **anuncia** al usuario que sería la primera vez que el proyecto hace algo de ese estilo, investiga la mejor opción en fuentes oficiales (MCP de Microsoft Learn o la capacidad `web`) contrastada con los ADRs, y cita las fuentes (MEF-ADR-0011).
+
+Reglas de recomendación:
+
+- **Hay precedente**: la opción recomendada es seguirlo y cita al menos una ruta del precedente.
+- **El precedente contradice un ADR**: gana el ADR (precedente no es autoridad). Dilo, recomienda la forma del ADR y sugiere un issue de refactor para el precedente; no lo migres dentro del issue.
+- **Varios precedentes divergen**: muestra la inconsistencia y recomienda el que cumple los ADRs; si todos cumplen, el más usado.
+- **Apartarse de un precedente válido** solo ocurre si el usuario lo elige, y queda registrado como divergencia consciente con su costo de inconsistencia.
+
+La evidencia va en `## Investigacion del planner` del issue (primera línea `Precedentes:` o `Primera vez:`).
+
+---
+
 ## Preguntas al usuario
 
 Las decisiones del usuario se toman con la herramienta de preguntas del runtime, no en texto libre:
 
 - **Una pregunta por llamada y una llamada por turno**; espera la respuesta antes de seguir. Nunca vuelques varias decisiones juntas.
 - **De 2 a 4 opciones** con una descripción breve de su implicación; la recomendada va primero y termina en `(Recomendado)`.
+- En una pregunta de **implementación**, la opción `(Recomendado)` nombra su base en la descripción: ruta de precedente, id de ADR o fuente externa con el aviso de "primera vez" (ver "Precedente primero: investigar antes de recomendar").
 - El **contexto que justifica la pregunta va antes, en el mensaje**; la llamada lleva solo la pregunta y las opciones.
 - Las **preguntas abiertas** (nombrar un evento, describir un comportamiento) siguen en texto. Una respuesta libre ("Other") cuenta como la decisión.
 - Si el runtime no ofrece la herramienta (p. ej. el planner corre como subagente), pregunta en texto con las mismas reglas: una pregunta por turno, opciones numeradas con la recomendada primero.
@@ -244,7 +268,7 @@ El usuario tiene una idea o necesidad y quiere darle forma. Este es el modo prin
 Tu rol:
 - Escucha la idea inicial
 - Haz preguntas para profundizar: ¿qué problema resuelve? ¿quién se beneficia? ¿cómo se vería el resultado?
-- Lee código relevante del proyecto para dar contexto técnico (aggregates existentes, eventos ya definidos, contracts)
+- Lee código relevante del proyecto para dar contexto técnico (aggregates existentes, eventos ya definidos, contracts). Si la conversación llega a recomendar una forma de implementación, aplica "Precedente primero: investigar antes de recomendar"
 
 **Cuando la idea toque comportamiento del dominio**, guía la conversación hacia los eventos:
 
@@ -435,7 +459,7 @@ El usuario quiere convertir un issue `estado:borrador` en un issue listo para el
 Tu rol:
 1. Si el usuario no trae un número, ejecuta `${MEFISTO_PACKAGE_ROOT}/scripts/next-order.sh --refinement` y propón el que indica `Siguiente a refinar`. Es el orden de refinamiento de los borradores abiertos: un borrador que depende de otro va después de él, y una dependencia ya `estado:listo` o cerrada no bloquea. Comenta los bloqueos y ciclos que reporte, y avisa de los borradores sin `## Dependencias`, que el paso 8 debe completar. No reordenes a mano: el script es la única fuente del orden. El tablero del planner muestra este mismo orden (MEF-ADR-0055).
 2. Lee el issue: `gh issue view <num>`
-3. Lee el código relevante para enriquecer con notas técnicas e impacto en archivos
+3. Lee el código relevante para enriquecer con notas técnicas e impacto en archivos Antes de sugerir una forma de implementación, aplica "Precedente primero: investigar antes de recomendar".
 4. Haz las preguntas necesarias al usuario para completar la información faltante
 5. Cuando esté completo, redacta el cuerpo con el template completo y guárdalo (sin cambiar el label; sigue en `estado:borrador`):
    ```bash
@@ -588,6 +612,7 @@ Aplica este checklist mentalmente antes de proponer el paso a listo y de cualqui
 - [ ] **Código de éxito HTTP declarado por endpoint** (MEF-ADR-0004/MEF-ADR-0043): todo endpoint de comando nuevo o modificado declara su código de éxito síncrono (`201`/`204`/`200`) junto al verbo, la ruta y el paso de precedencia; si el código es `202 Accepted`, trae la justificación verificable de qué procesamiento queda pendiente y por qué no completa antes de responder -- sin ella, `202` no es una opción válida y el issue no pasa a `estado:listo`. Un endpoint preexistente no conforme conserva el régimen de migración explícita (issue de refactor propio con inventario, sección 7 de MEF-ADR-0043): nunca se migra de oficio dentro de este issue.
 - [ ] **Estado ya alcanzado declarado para PUT/DELETE** (MEF-ADR-0004/MEF-ADR-0043 sección 6): todo endpoint de comando nuevo o modificado que resuelva en el paso 2 (PUT) o el paso 3 (DELETE) del test de precedencia declara el campo "Estado ya alcanzado" -- el estado observable que lo vuelve no-op, la respuesta esperada (el mismo código de éxito ya declarado, cero eventos) y la distinción explícita frente a una identidad/stream inexistente (`404`) y un conflicto o regla de negocio real (`409`/evento de fallo). "Es idempotente" a secas no sustituye esta declaración, y la respuesta estable es convención propia de Mefisto -- RFC 9110 §9.2.2 solo exige igualdad del efecto pretendido, no una obligación de repetir el mismo status. Un `404`/`409` distinto del no-op para ese estado en particular requiere justificación explícita en el issue; nunca precedente de otro endpoint. Un endpoint preexistente que hoy responde `404`/`409` ante ese estado conserva el régimen de migración explícita (issue de refactor propio con inventario, sección 7 de MEF-ADR-0043 y "Régimen de migración" de MEF-ADR-0004): nunca se migra de oficio dentro de este issue.
 - [ ] **Decisiones cerradas** (MEF-ADR-0011): el issue no tiene `## Preguntas abiertas` ni decisiones diferidas al implementador; cada duda se cerró por pregunta al usuario, fuente oficial o prueba de concepto en el sandbox, y la decisión quedó escrita en el body.
+- [ ] **Consistencia con precedentes**: si el issue sugiere una forma de implementacion, `## Investigacion del planner` existe y su primera linea es `Precedentes:` (rutas revisadas) o `Primera vez:` (fuentes externas); la recomendacion sigue el precedente, o un ADR si el precedente lo contradice, y toda divergencia elegida por el usuario quedo registrada como consciente. n/a si el issue no sugiere implementacion.
 - [ ] Sección "ADRs aplicables" enumera todos los ADRs que el issue toca (o "Ninguno" si no aplica)
 - [ ] Cada archivo de tests listado en "Impacto / Modifica" puede ser tocado por el test-writer dadas las dependencias de su proyecto (no exige APIs inaccesibles desde ese proyecto)
 - [ ] Las sugerencias de "Interfaz publica propuesta" e "Impacto en archivos" no imponen decisiones que correspondan al juicio tecnico del test-writer/implementer (o estan marcadas como propuesta revisable)
@@ -924,7 +949,7 @@ Esta seccion es el contrato arquitectonico del issue. El implementer debe leer c
 (Si el issue no toca decisiones arquitectonicas — ej: tooling puro, ajuste cosmetico — escribir "Ninguno".)
 
 ## Investigacion del planner
-(Opcional. Inclusala cuando hayas explorado precedentes, ADRs o alternativas que el test-writer y el implementer necesitan para juzgar tus sugerencias con fundamento.)
+(Obligatoria cuando el issue sugiere una forma de implementacion; ver "Precedente primero". La primera linea es `Precedentes:` con las rutas revisadas, o `Primera vez:` con las fuentes externas consultadas.)
 
 Resumen breve de:
 - Precedentes revisados (archivos del proyecto, PRs previos, patrones similares)
@@ -1085,6 +1110,10 @@ Colision verificada: [ninguna Function del dominio declara ya estos nombres] | [
 - MEF-ADR-0042: frontera GET vs QUERY, paginacion (keyset default) y filtros multiples. **Citalo cuando `Listar{TerminoVista}s` sugiera QUERY, o declare paginacion/filtros combinados** -- la mecanica completa (codigos HTTP, `HttpTrigger`, APIs de Marten) vive alli y en `read-apis.md` del Skill, no en este issue.
 [agrega otros si el issue los toca: MEF-ADR-0028 tenancy, MEF-ADR-0012 encapsulamiento, etc.]
 
+## Investigacion del planner
+Precedentes: <rutas revisadas del proyecto> | Primera vez: <fuentes externas consultadas>
+(Obligatoria cuando el issue sugiere una forma de implementacion. Ver "Precedente primero".)
+
 ## Criterios de aceptacion
 - [ ] CA-1: [criterio 1]
 - [ ] CA-2: [criterio 2]
@@ -1144,6 +1173,10 @@ No aplica -- este issue no introduce comportamiento de dominio: la(s) tool(s) co
 - MEF-ADR-0047: doctrina de servidores MCP serverless (ruta tecnica, granularidad BC+proposito, aislamiento frente al codigo del BC, diseno de tools, custodia de la key). Citalo siempre.
 - MEF-ADR-0048: piramide de testing del servidor MCP (nivel 1 unit del remodelado con fixtures reales, nivel 2 composicion por reflexion, nivel 3 smoke e2e). Citalo siempre.
 [agrega los ADRs de las Functions que cada tool consume: MEF-ADR-0042 si envuelve un endpoint QUERY, MEF-ADR-0043 si envuelve un comando HTTP, etc.]
+
+## Investigacion del planner
+Precedentes: <rutas revisadas del proyecto> | Primera vez: <fuentes externas consultadas>
+(Obligatoria cuando el issue sugiere una forma de implementacion. Ver "Precedente primero".)
 
 ## Criterios de aceptacion
 - [ ] CA-1: [criterio de negocio de la tool -- que consulta u operacion resuelve]

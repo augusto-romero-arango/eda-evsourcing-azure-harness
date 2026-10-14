@@ -146,6 +146,20 @@ contains "$body" '`gh issue comment`' 'la explicacion va en comentario'
 contains "$body" 'cumpliendo la "Regla de `## Dependencias`"' 'desglosar referencia la regla'
 contains "$body" 'borra las dependencias negadas' 'refinar paso 8 borra negaciones'
 
+echo '[precedente primero] seccion, regla primera vez, checklist y templates (#2443)'
+SOURCE_TEXT="$(< "$SOURCE")"
+CLAUDE_TEXT="$(< "$CLAUDE")"
+OPENCODE_TEXT="$(< "$OPENCODE")"
+for pv in SOURCE_TEXT CLAUDE_TEXT OPENCODE_TEXT; do
+    text="${!pv}"
+    contains "$text" '## Precedente primero: investigar antes de recomendar' "$pv tiene la seccion Precedente primero"
+    contains "$text" 'sería la primera vez que el proyecto hace algo de ese estilo' "$pv conserva la regla de primera vez"
+    contains "$text" '- [ ] **Consistencia con precedentes**' "$pv checklist incluye Consistencia con precedentes"
+    n="$(printf '%s\n' "$text" | grep -c '^Precedentes: ')"
+    if [ "$n" -ge 2 ]; then pass "$pv tiene Precedentes: en los templates de proyeccion y MCP"; else fail "$pv sin Precedentes: en proyeccion y MCP"; fi
+    contains "$text" '(Obligatoria cuando el issue sugiere una forma de implementacion; ver' "$pv template de dominio con Investigacion obligatoria"
+done
+
 echo '[mirror] agents/planner.md pasa a generado'
 if cmp -s "$MIRROR" "$CLAUDE"; then pass 'mirror Claude coincide byte a byte'; else fail 'mirror Claude diverge'; fi
 contains "$(< "$MIRROR")" '<!-- GENERADO por src/published/scripts/generate-published-adapters.sh desde src/published/agents/planner.md. No editar a mano. -->' 'mirror conserva marcador generado'
