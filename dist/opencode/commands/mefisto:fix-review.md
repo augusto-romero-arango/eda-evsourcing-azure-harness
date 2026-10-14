@@ -155,7 +155,7 @@ El plan debe tener esta estructura:
 [Cambios agrupados por dependencia]
 
 ## Verificacion
-[Comandos para validar: build, tests]
+[Comandos para validar: build, tests, sin warnings nuevos (MEF-ADR-0056)]
 ```
 
 ### 2.3 Gate de aprobacion
@@ -170,6 +170,14 @@ Presenta el plan completo y detente. Exige aprobacion explicita del usuario ante
 
 ### 3.1 Aplicar cambios de codigo
 
+Antes de editar, registra la base del diferencial de warnings (HEAD justo antes de tus cambios, no la base del PR: respondes solo por los warnings que introducen tus propios cambios):
+
+```bash
+FIX_BASE=$(git rev-parse HEAD)
+```
+
+Cada bloque `bash` corre en un shell nuevo: sustituye `<FIX_BASE>` por el SHA que imprimio este bloque.
+
 Ejecuta los cambios del plan en el orden definido. Modifica los archivos existentes con la herramienta de edicion y crea archivos nuevos solo cuando el plan lo indique.
 
 ### 3.2 Verificar
@@ -180,6 +188,45 @@ dotnet test
 ```
 
 Si hay errores, corrigelos antes de continuar. Si un test falla por una razon no relacionada con tus cambios, informalo al usuario.
+
+**Cero warnings nuevos (MEF-ADR-0056).** Ademas de build y tests, corre el helper del plugin (el comando corre con `cwd` en el consumidor: usa la ruta del paquete, no `scripts/` relativo). Elige las toolchains segun los archivos tocados desde la base (`git diff --name-only <FIX_BASE>` mas los archivos sin seguimiento):
+
+- `dotnet`: si tocaste algun `*.cs`, `*.csproj`, `*.props`, `*.targets` o `.editorconfig`.
+- `terraform`: si tocaste algun `*.tf`; una corrida por cada entorno que exista en `infra/environments/<env>`.
+- `shell`: si tocaste algun `*.sh`.
+
+```bash
+${MEFISTO_PACKAGE_ROOT}/scripts/warnings-diff.sh --toolchain dotnet --base <FIX_BASE>
+${MEFISTO_PACKAGE_ROOT}/scripts/warnings-diff.sh --toolchain terraform --path infra/environments/<env> --base <FIX_BASE>
+${MEFISTO_PACKAGE_ROOT}/scripts/warnings-diff.sh --toolchain shell --base <FIX_BASE>
+```
+
+- Exit `2`: hay warnings `NEW`. Remedia cada uno antes del commit y vuelve a correrlo.
+- Exit `1`: no se pudo medir (p. ej. no compila). Informa al usuario y sigue; la politica no bloquea.
+- **Prohibido suprimir como remediacion**: `#pragma warning disable`, `SuppressMessage`, `NoWarn`, `WarningLevel`, bajar la severidad en `.editorconfig` y `# shellcheck disable=` no remedian nada.
+
+**Warning que no puedas remediar: issue remanente.** Por cada `NEW` que quede, deduplica por codigo y archivo entre los issues `warning` abiertos:
+
+```bash
+gh issue list --state open --label warning --search "<codigo> <archivo>" --json number,title
+```
+
+Si ya existe uno, comenta en el:
+
+```bash
+gh issue comment <N> --body "Reaparece en el PR #<pr> (rama <rama>): <warning literal>. Razon: <razon>"
+```
+
+Si no existe, toma el `Closes #N` del body del PR leido en la Fase 1.1 y consulta sus labels (`gh issue view <N> --json labels`). Crea el issue con los `tipo:*` y `dom:*` de ese issue mas `estado:borrador` y `warning` (MEF-ADR-0007, MEF-ADR-0011); sin `Closes`, solo `estado:borrador` y `warning`:
+
+```bash
+gh issue create \
+  --title "Remediar <codigo> en <archivo>" \
+  --label "estado:borrador" --label "warning" --label "<tipo:X>" --label "<dom:X>" \
+  --body "<warning literal, archivo, PR origen y la razon por la que no se pudo remediar>"
+```
+
+Crearlo no pide confirmacion extra. Si `gh` falla (p. ej. el consumidor no tiene el label `warning`), informa al usuario y sigue sin bloquear. Recuerda los numeros de issue: se enlazan en el comentario `## Warnings remanentes` de la Fase 4.
 
 ### 3.3 Commit y push
 
@@ -226,6 +273,14 @@ Respuesta: "Corregido en abc1234. Se agrego el parametro X al constructor..."
 Respuesta: "El patron es correcto segun MEF-ADR-0005 porque..."
 ```
 
+Si la Fase 3 dejo issues de warnings remanentes, incluye tambien el comentario general que se publicara:
+
+```
+## Warnings remanentes
+
+- Relacionado: #N
+```
+
 **Espera aprobacion del usuario antes de publicar.**
 
 ### 4.3 Publicar respuestas en GitHub
@@ -240,6 +295,19 @@ gh api repos/{owner}/{repo}/pulls/$ARGUMENTS/comments \
 
 > **Importante:** El endpoint correcto para responder a un review comment es `POST /pulls/{pr}/comments` con el parametro `in_reply_to` apuntando al ID del comentario original. NO uses el sub-endpoint `/replies` — no existe y retorna 404.
 
+Si la Fase 3 dejo issues de warnings remanentes, publica ademas el comentario general aprobado en la 4.2:
+
+```bash
+gh pr comment $ARGUMENTS --body "$(cat <<'WARNEOF'
+## Warnings remanentes
+
+- Relacionado: #<N>
+WARNEOF
+)"
+```
+
+Si `gh` falla, informa al usuario y sigue.
+
 Confirma al final:
 
 ```
@@ -247,6 +315,7 @@ Listo. PR #N:
 - N comentarios respondidos
 - N cambios aplicados (commit abc1234)
 - N issues de seguimiento creados
+- N issues de warnings remanentes
 ```
 
 ---
@@ -364,6 +433,25 @@ git symbolic-ref --short HEAD
 ```
 
 Si tras eso la rama sigue siendo `main`, aborta la Fase 5.4: no estas en la rama del PR.
+
+**Cero warnings nuevos (MEF-ADR-0056).** Los fixtures y helpers son codigo y pueden introducir warnings. Antes del primer ajuste en la rama del PR registra la base:
+
+```bash
+ADJ_BASE=$(git rev-parse HEAD)
+```
+
+Cada bloque `bash` corre en un shell nuevo: sustituye `<ADJ_BASE>` por el SHA que imprimio `git rev-parse HEAD`. Antes del commit, aplica la misma regla de la Fase 3.2 (toolchain segun los archivos tocados desde `<ADJ_BASE>`, remediar cada `NEW`, supresiones prohibidas, exit `1` informado sin bloquear), con `--base <ADJ_BASE>`. Los warnings que no puedas remediar siguen el issue remanente de la Fase 3.2 (titulo, labels, body y deduplicacion). Al terminar la 5.4, si hubo remanentes, publica su propio comentario en el PR:
+
+```bash
+gh pr comment $ARGUMENTS --body "$(cat <<'WARNEOF'
+## Warnings remanentes
+
+- Relacionado: #<N>
+WARNEOF
+)"
+```
+
+Una linea `- Relacionado: #N` por issue. Si `gh` falla, informa al usuario y sigue.
 
 ```
 docs(convenciones): ajustar [archivo local] a partir del review del PR #N
