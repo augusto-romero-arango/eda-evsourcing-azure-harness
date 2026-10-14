@@ -4,6 +4,12 @@ Todo cambio notable a este proyecto se documenta aquí. Sigue [Keep a Changelog]
 
 ## [Unreleased]
 
+## [0.53.2] - 2026-10-14
+
+### Changed
+
+- El `planner` publicado investiga precedentes del proyecto antes de recomendar una implementación (sección "Precedente primero": código, issues cerrados, ADRs del consumidor y de Mefisto, y fuentes externas solo sin precedente); la opción `(Recomendado)` nombra su base y `## Investigacion del planner` pasa a ser obligatoria, con una casilla "Consistencia con precedentes" en el checklist pre-listo.
+
 ## [0.53.1] - 2026-10-14
 
 ### Changed
@@ -3574,7 +3580,8 @@ Y reemplazar referencias en `CLAUDE.md` del proyecto: `/eda-evsourcing-azure-har
 - Los agentes `reviewer` e `implementer` mantienen el placeholder literal `ADR-XXXX` en sus plantillas de reporte (no es un bug; el agente lo sustituye en tiempo de ejecución por el número real del ADR aplicable).
 - Los ejemplos de código en `test-writer.md`, `implementer.md` y `smoke-test-writer.md` conservan nombres concretos de un proyecto consumidor (`Programacion`, `ControlHoras`) anotados en el "Contrato con el consumidor" de cada agente como ejemplos pedagógicos.
 
-[Unreleased]: https://github.com/augusto-romero-arango/mefisto/compare/v0.53.1...HEAD
+[Unreleased]: https://github.com/augusto-romero-arango/mefisto/compare/v0.53.2...HEAD
+[0.53.2]: https://github.com/augusto-romero-arango/mefisto/compare/v0.53.1...v0.53.2
 [0.53.1]: https://github.com/augusto-romero-arango/mefisto/compare/v0.53.0...v0.53.1
 [0.53.0]: https://github.com/augusto-romero-arango/mefisto/compare/v0.52.1...v0.53.0
 [0.52.1]: https://github.com/augusto-romero-arango/mefisto/compare/v0.52.0...v0.52.1
