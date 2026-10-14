@@ -156,7 +156,7 @@ for pv in SOURCE_TEXT CLAUDE_TEXT OPENCODE_TEXT; do
     contains "$text" 'sería la primera vez que el proyecto hace algo de ese estilo' "$pv conserva la regla de primera vez"
     contains "$text" '- [ ] **Consistencia con precedentes**' "$pv checklist incluye Consistencia con precedentes"
     n="$(printf '%s\n' "$text" | grep -c '^Precedentes: ')"
-    if [ "$n" -ge 2 ]; then pass "$pv tiene Precedentes: en los templates de proyeccion y MCP"; else fail "$pv sin Precedentes: en proyeccion y MCP"; fi
+    if [ "$n" -ge 3 ]; then pass "$pv tiene Precedentes: en los templates de dominio, proyeccion y MCP"; else fail "$pv sin Precedentes: en los tres templates ($n)"; fi
     contains "$text" '(Obligatoria cuando el issue sugiere una forma de implementacion; ver' "$pv template de dominio con Investigacion obligatoria"
 done
 

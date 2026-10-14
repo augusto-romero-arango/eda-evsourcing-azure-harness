@@ -459,7 +459,7 @@ El usuario quiere convertir un issue `estado:borrador` en un issue listo para el
 Tu rol:
 1. Si el usuario no trae un número, ejecuta `${MEFISTO_PACKAGE_ROOT}/scripts/next-order.sh --refinement` y propón el que indica `Siguiente a refinar`. Es el orden de refinamiento de los borradores abiertos: un borrador que depende de otro va después de él, y una dependencia ya `estado:listo` o cerrada no bloquea. Comenta los bloqueos y ciclos que reporte, y avisa de los borradores sin `## Dependencias`, que el paso 8 debe completar. No reordenes a mano: el script es la única fuente del orden. El tablero del planner muestra este mismo orden (MEF-ADR-0055).
 2. Lee el issue: `gh issue view <num>`
-3. Lee el código relevante para enriquecer con notas técnicas e impacto en archivos Antes de sugerir una forma de implementación, aplica "Precedente primero: investigar antes de recomendar".
+3. Lee el código relevante para enriquecer con notas técnicas e impacto en archivos. Antes de sugerir una forma de implementación, aplica "Precedente primero: investigar antes de recomendar".
 4. Haz las preguntas necesarias al usuario para completar la información faltante
 5. Cuando esté completo, redacta el cuerpo con el template completo y guárdalo (sin cambiar el label; sigue en `estado:borrador`):
    ```bash
@@ -949,6 +949,7 @@ Esta seccion es el contrato arquitectonico del issue. El implementer debe leer c
 (Si el issue no toca decisiones arquitectonicas — ej: tooling puro, ajuste cosmetico — escribir "Ninguno".)
 
 ## Investigacion del planner
+Precedentes: <rutas revisadas del proyecto> | Primera vez: <fuentes externas consultadas>
 (Obligatoria cuando el issue sugiere una forma de implementacion; ver "Precedente primero". La primera linea es `Precedentes:` con las rutas revisadas, o `Primera vez:` con las fuentes externas consultadas.)
 
 Resumen breve de:
