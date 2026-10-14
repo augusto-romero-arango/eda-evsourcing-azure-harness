@@ -6,6 +6,84 @@ model: "sonnet"
 ---
 <!-- GENERADO por src/published/scripts/generate-published-adapters.sh desde src/published/agents/domain-scaffolder.md. No editar a mano. -->
 ```bash
+mefisto_claude_root=''
+mefisto_claude_canonical_contaminated=0
+mefisto_claude_root_from_candidate() {
+    local root
+    case "$mefisto_claude_candidate" in /*) ;; *) return 1 ;; esac
+    root="$(cd "$mefisto_claude_candidate" 2>/dev/null && pwd -P)" || return 1
+    jq -e '
+      .name == "mefisto" and
+      (.version | type == "string" and test("^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?(\\+[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?$"))
+    ' "$root/.claude-plugin/plugin.json" >/dev/null 2>&1 || return 1
+    jq -e --arg version "$(jq -er '.version | strings' "$root/.claude-plugin/plugin.json" 2>/dev/null)" '
+      (keys | sort) == ["commit", "runtime", "schemaVersion", "version"] and
+      .schemaVersion == 1 and .runtime == "claude" and .version == $version and
+      (.commit | type == "string" and test("^[0-9a-f]{40}$"))
+    ' "$root/mefisto-manifest.json" >/dev/null 2>&1 || return 1
+    printf '%s\n' "$root"
+}
+mefisto_claude_is_opencode_root() {
+    local root
+    case "$mefisto_claude_candidate" in /*) ;; *) return 1 ;; esac
+    root="$(cd "$mefisto_claude_candidate" 2>/dev/null && pwd -P)" || return 1
+    jq -e '
+      (keys | sort) == ["commit", "minimumRuntimeVersion", "runtime", "schemaVersion", "version"] and
+      .schemaVersion == 1 and .runtime == "opencode" and
+      (.version | type == "string" and test("^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?(\\+[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?$")) and
+      (.commit | type == "string" and test("^[0-9a-f]{40}$")) and
+      (.minimumRuntimeVersion | type == "string" and test("^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"))
+    ' "$root/mefisto-manifest.json" >/dev/null 2>&1
+}
+if [ -n "${CLAUDE_PLUGIN_ROOT:-}" ]; then
+    mefisto_claude_candidate="$CLAUDE_PLUGIN_ROOT"
+    mefisto_claude_root="$(mefisto_claude_root_from_candidate)" || {
+        printf '%s\n' 'ERROR Claude: la raiz indicada por CLAUDE_PLUGIN_ROOT es invalida; reabra o reinstale el plugin.' >&2; exit 1;
+    }
+else
+    mefisto_claude_cursor="$PWD"
+    while :; do
+        if [ -f "$mefisto_claude_cursor/.mefisto/pipeline/.plugin-root" ]; then
+            mefisto_claude_candidate="$(< "$mefisto_claude_cursor/.mefisto/pipeline/.plugin-root")"
+            if mefisto_claude_root="$(mefisto_claude_root_from_candidate)"; then break; fi
+            if mefisto_claude_is_opencode_root; then
+                mefisto_claude_canonical_contaminated=1
+                break
+            else
+                printf '%s\n' 'ERROR Claude: metadata del marker canonico invalida; reabra o reinstale el plugin.' >&2; exit 1
+            fi
+        fi
+        if [ "$mefisto_claude_cursor" = / ]; then break; fi
+        mefisto_claude_cursor="$(cd "$mefisto_claude_cursor/.." && pwd -P)"
+    done
+    if [ -z "$mefisto_claude_root" ]; then
+        mefisto_claude_cursor="$PWD"
+        while :; do
+            if [ -f "$mefisto_claude_cursor/.claude/pipeline/.plugin-root" ]; then
+                mefisto_claude_candidate="$(< "$mefisto_claude_cursor/.claude/pipeline/.plugin-root")"
+                if mefisto_claude_root="$(mefisto_claude_root_from_candidate)"; then break; fi
+                if mefisto_claude_is_opencode_root; then
+                    printf '%s\n' 'ERROR Claude: el marker Claude identifica una distribucion de otro runtime; reabra Claude o reinstale el plugin.' >&2; exit 1
+                fi
+                printf '%s\n' 'ERROR Claude: metadata del marker Claude invalida; reabra o reinstale el plugin.' >&2; exit 1
+            fi
+            if [ "$mefisto_claude_cursor" = / ]; then break; fi
+            mefisto_claude_cursor="$(cd "$mefisto_claude_cursor/.." && pwd -P)"
+        done
+    fi
+fi
+if [ -z "$mefisto_claude_root" ]; then
+    if [ "$mefisto_claude_canonical_contaminated" -eq 1 ]; then
+        printf '%s\n' 'ERROR Claude: el marker canonico identifica una distribucion OpenCode y no existe un mirror Claude valido; reabra Claude o reinstale el plugin.' >&2
+    else
+        printf '%s\n' 'ERROR Claude: no se encontro una raiz Claude valida; reabra o reinstale el plugin.' >&2
+    fi
+    exit 1
+fi
+MEFISTO_PACKAGE_ROOT="$mefisto_claude_root"
+export MEFISTO_PACKAGE_ROOT
+```
+```bash
 if [ -f ".mefisto/harness.config.json" ]; then
     if [ -f ".claude/harness.config.json" ]; then
         printf '%s\n' 'AVISO: se usara el config canonico .mefisto/harness.config.json; se ignora el legacy .claude/harness.config.json. Migra o elimina conscientemente el archivo legacy para evitar divergencias.' >&2
@@ -210,6 +288,69 @@ Continuar? (s/n)
 ```
 
 ---
+
+## Cero warnings nuevos (MEF-ADR-0056)
+
+Este agente corre sin reviewer y genera codigo desde plantillas del harness: es su propia ultima instancia de la politica de cero warnings nuevos. Un warning nuevo en lo que generas es, en general, un defecto de la plantilla de Mefisto y no del consumidor.
+
+1. **Registra la base antes de escribir el primer archivo** (antes de cualquier Write/Edit y antes de commitear):
+
+   ```bash
+   SCAFFOLD_BASE=$(git rev-parse HEAD 2>/dev/null) || SCAFFOLD_BASE=""
+   echo "SCAFFOLD_BASE=$SCAFFOLD_BASE"
+   ```
+
+   Cada bloque `bash` corre en un shell nuevo: interpola el SHA impreso en los comandos siguientes. Si `SCAFFOLD_BASE` queda vacio (repo sin commits), informalo en tu reporte final y sigue sin medir.
+
+2. **Antes del commit, mide.** Lista los archivos tocados desde la base (`git diff --name-only "$SCAFFOLD_BASE"` mas `git ls-files --others --exclude-standard`) y corre una vez por toolchain aplicable:
+   - `dotnet` si tocaste `*.cs`, `*.csproj`, `*.props`, `*.targets` o `.editorconfig`: `${MEFISTO_PACKAGE_ROOT}/scripts/warnings-diff.sh --toolchain dotnet --base "$SCAFFOLD_BASE"`
+   - `terraform` si tocaste `*.tf`, una corrida por entorno existente: `${MEFISTO_PACKAGE_ROOT}/scripts/warnings-diff.sh --toolchain terraform --base "$SCAFFOLD_BASE" --path infra/environments/<env>`
+   - `shell` si tocaste `*.sh`: `${MEFISTO_PACKAGE_ROOT}/scripts/warnings-diff.sh --toolchain shell --base "$SCAFFOLD_BASE"`
+
+   Salida `0`: sin warnings nuevos. Salida `2`: lista `NEW <toolchain> <archivo> <codigo> <mensaje>`. Salida `1`: el helper no pudo medir (un lado no compila, falta la toolchain, etc.): informalo en el reporte final y sigue sin medir; no lo trates como remediado.
+
+3. **Remedia cada `NEW` corrigiendo la causa** y vuelve a correr el helper. Estan prohibidas como remediacion las supresiones (MEF-ADR-0056, decision 5): `#pragma warning disable`, `[SuppressMessage]`, `<NoWarn>`, `<WarningLevel>` rebajado, `.editorconfig` con `severity = none`/`suggestion`/`silent`, `<TreatWarningsAsErrors>false`, `# shellcheck disable` y equivalentes. El helper las cuenta como warning nuevo (codigo `SUPPRESSION`).
+
+4. **Remanente: draft cross-repo en Mefisto.** Si un warning no logras remediarlo, abre un draft en el repo de Mefisto (MEF-ADR-0019: la unica operacion cross-repo es crear drafts `estado:borrador`). Resuelve el slug (MEF-ADR-0053; default `augusto-romero-arango/mefisto`):
+
+   ```bash
+   HARNESS_REPO_SLUG=$(jq -r '.repoSlug // empty' "${MEFISTO_CONFIG_PATH}" 2>/dev/null)
+   [ -z "$HARNESS_REPO_SLUG" ] && HARNESS_REPO_SLUG="augusto-romero-arango/mefisto"
+   echo "$HARNESS_REPO_SLUG"
+   ```
+
+   Deduplica: busca un issue `warning` abierto con el mismo agente y codigo en el titulo.
+
+   ```bash
+   gh issue list -R "<slug>" --label warning --state open --search "Remediar <codigo> en la plantilla de <agente> in:title" --json number,title
+   ```
+
+   - Si existe, comenta en el: `gh issue comment <N> -R "<slug>" --body "Reproducido en <repo consumidor>: <warning literal> en <archivo generado>"`.
+   - Si no existe, crealo:
+
+     ```bash
+     HARNESS_VERSION=$(jq -r '.version' "${MEFISTO_PACKAGE_ROOT}/mefisto-manifest.json")
+     gh issue create -R "<slug>" \
+       --title "Remediar <codigo> en la plantilla de <agente>" \
+       --label "estado:borrador,tipo:tooling,warning" \
+       --body "$(cat <<'DRAFTEOF'
+     ## Warning
+     <warning literal, tal como lo imprimio el helper>
+
+     ## Origen
+     - Archivo generado: <ruta>
+     - Repo consumidor: <owner/repo del consumidor>
+     - Version del harness: <HARNESS_VERSION>
+     - Razon por la que no se pudo remediar: <razon>
+     DRAFTEOF
+     )"
+     ```
+
+   Interpola `<slug>`, `<agente>` (este agente), `<codigo>` y `<HARNESS_VERSION>` con los valores reales. Si `gh` falla (sin red, sin permisos o sin autenticar), informalo en el reporte final y sigue: no bloquea el scaffold.
+
+5. **Enlace.** Por cada draft o comentario, escribe una linea `owner/repo#N` en `.mefisto/pipeline/warnings-remanentes.txt` (append; el pipeline la anade al PR). Cierra tu reporte final con una seccion `## Warnings remanentes` con una linea `- Relacionado: owner/repo#N` por remanente (omitela si no hay ninguno).
+
+Remanentes y fallos de medicion no bloquean: el scaffold termina igual.
 
 ## Paso 1 - Crear el proyecto Function App
 

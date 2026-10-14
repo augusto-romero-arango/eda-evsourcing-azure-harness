@@ -241,6 +241,8 @@ Guarda su reporte final (Paso 13 de `/mefisto:install-apim`, incluido el checkli
   gh pr create --title "feat(auth): instalar WorkOS + APIM (camino completo, MEF-ADR-0032)" --body "Instala el camino completo de auth: adapter WorkOS en <identity-domain> (/mefisto:install-workos, #339) y gateway APIM + transicion de tenancy (a)->(b) para <dominios> (/mefisto:install-apim, #340), MEF-ADR-0028 seccion 4. Si este skill lo disparo un issue concreto, agrega aca 'Closes #<numero>'."
   ```
 
+  Si algun scaffolder reporto una seccion `## Warnings remanentes` (MEF-ADR-0056), copiala tal cual al body del PR (anadela al final del `--body`).
+
   Si no hay ningun commit nuevo en la rama (ambas etapas ya estaban completamente hechas de una corrida anterior y no escribieron nada), **no crees un PR vacio**: repórtalo como "todo ya estaba instalado, nada para commitear" en el Paso 10.
 
 - **Si alguna etapa quedo degradada** (adapter de la etapa 1 sin build verde, o algun `--domain`/dominio de tenancy de la etapa 2 sin reconciliar): **no hagas push todavia**. Detente y deja explicito en el reporte (Paso 10) que falta reconciliar antes de push + PR -- nunca un PR con algo sin construir.

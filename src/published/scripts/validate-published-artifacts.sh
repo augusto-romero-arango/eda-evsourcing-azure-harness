@@ -84,6 +84,7 @@ EOF
             if (id == "purge-store" && value == "${DOMINIO_KEBAB}") return 1
             if (id == "planner" && value ~ /^\$(SESSION_ID|INITIAL_HEAD_SHA|INITIAL_DEFAULT_BRANCH|INITIAL_STATUS|HARNESS_REPO_SLUG|CLOSING_TIMESTAMP|GLOSSARY_PATH|FIELD_NOTE_LOCAL|GLOSSARY_LOCAL|FIELD_NOTE_GLOSSARY_ARGS)$/) return 1
             if (id == "planner" && value == "${SESSION_ID}") return 1
+            if ((id == "domain-scaffolder" || id == "mcp-scaffolder" || id == "projections-scaffolder" || id == "apim-gateway-scaffolder" || id == "workos-identity-scaffolder" || id == "infra-base-scaffolder") && value ~ /^\$(SCAFFOLD_BASE|HARNESS_REPO_SLUG|HARNESS_VERSION)$/) return 1
             if (id == "tooling-investigator" && (value == "$CONFIG" || value == "$HARNESS_REPO_SLUG")) return 1
             if (id == "projections-scaffolder" && value ~ /^\$(BASE|CSPROJ|GITHUB_OUTPUT|IMAGEN_ACTIVA|INTRUSOS|LOGIN_SERVER|PROJ|REPO_ROOT|SEAM|SOURCE_REVISION_ID|destino|domainEventsCsproj|dominio|nombre|seam)$/) return 1
             if (id == "infra-base-scaffolder" && value ~ /^\$(1|2|3|ALL_SECRETS|APPS|APP_NAME|BRANCH|CONFIG|COUNT|ERR|GITHUB_STEP_SUMMARY|NUGET_AUDIT_GREENFIELD|OUT|ROWS|RUNNER_TEMP|SOLUTION|GITHUB_WORKSPACE|ISSUE_NUM|KEY_VAULT_NAME|NAME|NS|PROJECTIONS_ENABLED|PROVIDERS_TF|PR_NUM|RESOURCE_GROUP|TYPE|VALUE|VALUE_REF|attempt|delay|f|i|id|k|max_attempts|name|p|severity|url|value|version)$/) return 1
