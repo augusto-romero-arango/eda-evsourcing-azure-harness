@@ -189,7 +189,12 @@ dotnet test
 
 Si hay errores, corrigelos antes de continuar. Si un test falla por una razon no relacionada con tus cambios, informalo al usuario.
 
-**Cero warnings nuevos (MEF-ADR-0056).** Ademas de build y tests, corre el helper del plugin (el comando corre con `cwd` en el consumidor: usa la ruta del paquete, no `scripts/` relativo). Elige las toolchains segun los archivos tocados desde la base (`git diff --name-only <FIX_BASE>` mas los archivos sin seguimiento):
+**Cero warnings nuevos (MEF-ADR-0056).** Ademas de build y tests, corre el helper del plugin (el comando corre con `cwd` en el consumidor: usa la ruta del paquete, no `scripts/` relativo). Elige las toolchains segun los archivos tocados desde la base, incluidos los archivos sin seguimiento:
+
+```bash
+git diff --name-only <FIX_BASE>
+git ls-files --others --exclude-standard
+```
 
 - `dotnet`: si tocaste algun `*.cs`, `*.csproj`, `*.props`, `*.targets` o `.editorconfig`.
 - `terraform`: si tocaste algun `*.tf`; una corrida por cada entorno que exista en `infra/environments/<env>`.
@@ -201,7 +206,7 @@ ${MEFISTO_PACKAGE_ROOT}/scripts/warnings-diff.sh --toolchain terraform --path in
 ${MEFISTO_PACKAGE_ROOT}/scripts/warnings-diff.sh --toolchain shell --base <FIX_BASE>
 ```
 
-- Exit `2`: hay warnings `NEW`. Remedia cada uno antes del commit y vuelve a correrlo.
+- Exit `2`: hay warnings `NEW` (una supresion anadida aparece con codigo `SUPPRESSION`). Remedia cada uno antes del commit y vuelve a correrlo.
 - Exit `1`: no se pudo medir (p. ej. no compila). Informa al usuario y sigue; la politica no bloquea.
 - **Prohibido suprimir como remediacion**: `#pragma warning disable`, `SuppressMessage`, `NoWarn`, `WarningLevel`, bajar la severidad en `.editorconfig` y `# shellcheck disable=` no remedian nada.
 
@@ -280,6 +285,8 @@ Si la Fase 3 dejo issues de warnings remanentes, incluye tambien el comentario g
 
 - Relacionado: #N
 ```
+
+Una linea `- Relacionado: #N` por issue remanente (creado o reutilizado).
 
 **Espera aprobacion del usuario antes de publicar.**
 
@@ -419,6 +426,14 @@ DRAFTEOF
 
 Solo para lo que **realmente vive en el consumidor** (un ADR local del proyecto, una convencion de su `AGENTS.md`, un fixture/helper). Edita y commitea en la **misma rama del PR**, en commit separado del de correcciones de codigo.
 
+Los fixtures y helpers son codigo y pueden introducir warnings (MEF-ADR-0056). Antes del primer ajuste en la rama del PR, registra la base del diferencial:
+
+```bash
+ADJ_BASE=$(git rev-parse HEAD)
+```
+
+Cada bloque `bash` corre en un shell nuevo: sustituye `<ADJ_BASE>` por el SHA que imprimio este bloque.
+
 Antes de commitear, verifica que **no estas en `main`** (guard idempotente; en el flujo normal ya estas en la rama del PR por el `git checkout <headRefName>` de la Fase 1.1, asi que no dispara):
 
 ```bash
@@ -434,13 +449,19 @@ git symbolic-ref --short HEAD
 
 Si tras eso la rama sigue siendo `main`, aborta la Fase 5.4: no estas en la rama del PR.
 
-**Cero warnings nuevos (MEF-ADR-0056).** Los fixtures y helpers son codigo y pueden introducir warnings. Antes del primer ajuste en la rama del PR registra la base:
+**Cero warnings nuevos (MEF-ADR-0056).** Antes del commit, aplica la misma regla de la Fase 3.2 con `--base <ADJ_BASE>`: toolchains segun los archivos tocados desde `<ADJ_BASE>`, remediar cada `NEW`, supresiones prohibidas y exit `1` informado sin bloquear. Los warnings que no puedas remediar siguen el issue remanente de la Fase 3.2 (titulo, labels, body y deduplicacion).
 
-```bash
-ADJ_BASE=$(git rev-parse HEAD)
+Commitea con un mensaje como:
+
+```
+docs(convenciones): ajustar [archivo local] a partir del review del PR #N
+
+- [resumen del ajuste]
 ```
 
-Cada bloque `bash` corre en un shell nuevo: sustituye `<ADJ_BASE>` por el SHA que imprimio `git rev-parse HEAD`. Antes del commit, aplica la misma regla de la Fase 3.2 (toolchain segun los archivos tocados desde `<ADJ_BASE>`, remediar cada `NEW`, supresiones prohibidas, exit `1` informado sin bloquear), con `--base <ADJ_BASE>`. Los warnings que no puedas remediar siguen el issue remanente de la Fase 3.2 (titulo, labels, body y deduplicacion). Al terminar la 5.4, si hubo remanentes, publica su propio comentario en el PR:
+Push a la rama del PR. No pushees nunca directo a `main`: la politica del marco (ver el archivo efectivo de instrucciones: `AGENTS.md`) exige entregar siempre via rama + PR.
+
+Al terminar la 5.4, si sus ajustes dejaron issues de warnings remanentes, publica su propio comentario en el PR, con una linea `- Relacionado: #N` por issue:
 
 ```bash
 gh pr comment $ARGUMENTS --body "$(cat <<'WARNEOF'
@@ -451,15 +472,7 @@ WARNEOF
 )"
 ```
 
-Una linea `- Relacionado: #N` por issue. Si `gh` falla, informa al usuario y sigue.
-
-```
-docs(convenciones): ajustar [archivo local] a partir del review del PR #N
-
-- [resumen del ajuste]
-```
-
-Push a la rama del PR. No pushees nunca directo a `main`: la politica del marco (ver el archivo efectivo de instrucciones: `AGENTS.md`) exige entregar siempre via rama + PR.
+Si `gh` falla, informa al usuario y sigue.
 
 ### 5.5 Field note
 
