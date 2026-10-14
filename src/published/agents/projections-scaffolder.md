@@ -70,7 +70,7 @@ Este agente corre sin reviewer y genera codigo desde plantillas del harness: es 
 
    Cada bloque `bash` corre en un shell nuevo: interpola el SHA impreso en los comandos siguientes. Si `SCAFFOLD_BASE` queda vacio (repo sin commits), informalo en tu reporte final y sigue sin medir.
 
-2. **Antes del commit, mide.** Lista los archivos tocados desde la base (`git diff --name-only "$SCAFFOLD_BASE"` mas `git ls-files --others --exclude-standard`) y corre una vez por toolchain aplicable:
+2. **Al terminar de generar, mide** (antes del commit, si tu flujo commitea; si no, antes del reporte final). Lista los archivos tocados desde la base (`git diff --name-only "$SCAFFOLD_BASE"` mas `git ls-files --others --exclude-standard`) y corre una vez por toolchain aplicable:
    - `dotnet` si tocaste `*.cs`, `*.csproj`, `*.props`, `*.targets` o `.editorconfig`: `{{mefisto:package-root}}/scripts/warnings-diff.sh --toolchain dotnet --base "$SCAFFOLD_BASE"`
    - `terraform` si tocaste `*.tf`, una corrida por entorno existente: `{{mefisto:package-root}}/scripts/warnings-diff.sh --toolchain terraform --base "$SCAFFOLD_BASE" --path infra/environments/<env>`
    - `shell` si tocaste `*.sh`: `{{mefisto:package-root}}/scripts/warnings-diff.sh --toolchain shell --base "$SCAFFOLD_BASE"`
@@ -87,7 +87,7 @@ Este agente corre sin reviewer y genera codigo desde plantillas del harness: es 
    echo "$HARNESS_REPO_SLUG"
    ```
 
-   Deduplica: busca un issue `warning` abierto con el mismo agente y codigo en el titulo.
+   Deduplica: busca un issue `warning` abierto con el mismo agente y codigo en el titulo (la busqueda es difusa: cuenta como duplicado solo el resultado cuyo `title` coincide exacto).
 
    ```bash
    gh issue list -R "<slug>" --label warning --state open --search "Remediar <codigo> en la plantilla de <agente> in:title" --json number,title
@@ -107,7 +107,7 @@ Este agente corre sin reviewer y genera codigo desde plantillas del harness: es 
 
      ## Origen
      - Archivo generado: <ruta>
-     - Repo consumidor: <owner/repo del consumidor>
+     - Repo consumidor: <owner/repo del consumidor, de `gh repo view --json nameWithOwner -q .nameWithOwner`>
      - Version del harness: <HARNESS_VERSION>
      - Razon por la que no se pudo remediar: <razon>
      DRAFTEOF

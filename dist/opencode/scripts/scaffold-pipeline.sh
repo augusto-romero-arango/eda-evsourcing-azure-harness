@@ -533,6 +533,7 @@ Scaffold del dominio **$PASCAL_CASE** (\`$DOMAIN_NAME\`) creado con domain-scaff
 $COMMITS_LIST
 
 $(render_warning_remnants_section "$WORKTREE_PATH")
+
 $CLOSES_LINE
 EOF
 )" \
