@@ -5,6 +5,84 @@ tools: "Read, Glob, Grep, Edit, Write, Bash"
 model: "opus"
 ---
 <!-- GENERADO por src/published/scripts/generate-published-adapters.sh desde src/published/agents/infra-reviewer.md. No editar a mano. -->
+```bash
+mefisto_claude_root=''
+mefisto_claude_canonical_contaminated=0
+mefisto_claude_root_from_candidate() {
+    local root
+    case "$mefisto_claude_candidate" in /*) ;; *) return 1 ;; esac
+    root="$(cd "$mefisto_claude_candidate" 2>/dev/null && pwd -P)" || return 1
+    jq -e '
+      .name == "mefisto" and
+      (.version | type == "string" and test("^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?(\\+[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?$"))
+    ' "$root/.claude-plugin/plugin.json" >/dev/null 2>&1 || return 1
+    jq -e --arg version "$(jq -er '.version | strings' "$root/.claude-plugin/plugin.json" 2>/dev/null)" '
+      (keys | sort) == ["commit", "runtime", "schemaVersion", "version"] and
+      .schemaVersion == 1 and .runtime == "claude" and .version == $version and
+      (.commit | type == "string" and test("^[0-9a-f]{40}$"))
+    ' "$root/mefisto-manifest.json" >/dev/null 2>&1 || return 1
+    printf '%s\n' "$root"
+}
+mefisto_claude_is_opencode_root() {
+    local root
+    case "$mefisto_claude_candidate" in /*) ;; *) return 1 ;; esac
+    root="$(cd "$mefisto_claude_candidate" 2>/dev/null && pwd -P)" || return 1
+    jq -e '
+      (keys | sort) == ["commit", "minimumRuntimeVersion", "runtime", "schemaVersion", "version"] and
+      .schemaVersion == 1 and .runtime == "opencode" and
+      (.version | type == "string" and test("^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?(\\+[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?$")) and
+      (.commit | type == "string" and test("^[0-9a-f]{40}$")) and
+      (.minimumRuntimeVersion | type == "string" and test("^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"))
+    ' "$root/mefisto-manifest.json" >/dev/null 2>&1
+}
+if [ -n "${CLAUDE_PLUGIN_ROOT:-}" ]; then
+    mefisto_claude_candidate="$CLAUDE_PLUGIN_ROOT"
+    mefisto_claude_root="$(mefisto_claude_root_from_candidate)" || {
+        printf '%s\n' 'ERROR Claude: la raiz indicada por CLAUDE_PLUGIN_ROOT es invalida; reabra o reinstale el plugin.' >&2; exit 1;
+    }
+else
+    mefisto_claude_cursor="$PWD"
+    while :; do
+        if [ -f "$mefisto_claude_cursor/.mefisto/pipeline/.plugin-root" ]; then
+            mefisto_claude_candidate="$(< "$mefisto_claude_cursor/.mefisto/pipeline/.plugin-root")"
+            if mefisto_claude_root="$(mefisto_claude_root_from_candidate)"; then break; fi
+            if mefisto_claude_is_opencode_root; then
+                mefisto_claude_canonical_contaminated=1
+                break
+            else
+                printf '%s\n' 'ERROR Claude: metadata del marker canonico invalida; reabra o reinstale el plugin.' >&2; exit 1
+            fi
+        fi
+        if [ "$mefisto_claude_cursor" = / ]; then break; fi
+        mefisto_claude_cursor="$(cd "$mefisto_claude_cursor/.." && pwd -P)"
+    done
+    if [ -z "$mefisto_claude_root" ]; then
+        mefisto_claude_cursor="$PWD"
+        while :; do
+            if [ -f "$mefisto_claude_cursor/.claude/pipeline/.plugin-root" ]; then
+                mefisto_claude_candidate="$(< "$mefisto_claude_cursor/.claude/pipeline/.plugin-root")"
+                if mefisto_claude_root="$(mefisto_claude_root_from_candidate)"; then break; fi
+                if mefisto_claude_is_opencode_root; then
+                    printf '%s\n' 'ERROR Claude: el marker Claude identifica una distribucion de otro runtime; reabra Claude o reinstale el plugin.' >&2; exit 1
+                fi
+                printf '%s\n' 'ERROR Claude: metadata del marker Claude invalida; reabra o reinstale el plugin.' >&2; exit 1
+            fi
+            if [ "$mefisto_claude_cursor" = / ]; then break; fi
+            mefisto_claude_cursor="$(cd "$mefisto_claude_cursor/.." && pwd -P)"
+        done
+    fi
+fi
+if [ -z "$mefisto_claude_root" ]; then
+    if [ "$mefisto_claude_canonical_contaminated" -eq 1 ]; then
+        printf '%s\n' 'ERROR Claude: el marker canonico identifica una distribucion OpenCode y no existe un mirror Claude valido; reabra Claude o reinstale el plugin.' >&2
+    else
+        printf '%s\n' 'ERROR Claude: no se encontro una raiz Claude valida; reabra o reinstale el plugin.' >&2
+    fi
+    exit 1
+fi
+MEFISTO_PACKAGE_ROOT="$mefisto_claude_root"
+export MEFISTO_PACKAGE_ROOT
+```
 
 Antes de continuar, aborta si existe `src/internal/scripts/generate-internal-adapters.sh`: ese directorio es el repositorio de Mefisto, no un consumidor.
 
@@ -83,12 +161,27 @@ terraform validate -no-color
 
 Si `terraform fmt -check` falla, formatea con `terraform fmt -recursive ../..` y vuelve a chequear. Si `terraform validate` falla, corrige el HCL y vuelve a validar.
 
+**Cero warnings nuevos, ultima instancia (MEF-ADR-0056):** cuando `terraform validate` pase, corre desde la raiz del repo:
+
+```bash
+${MEFISTO_PACKAGE_ROOT}/scripts/warnings-diff.sh --toolchain terraform --base <Commit base del mensaje inicial> --path <Directorio relativo del ambiente, p. ej. infra/environments/<env>>
+```
+
+Exit 2 significa que quedan `NEW`; exit 1 es un error del helper (informalo en tu resumen y sigue: no bloquea). Lee la seccion `## Warnings no remediados` de `.mefisto/pipeline/summaries/stage-1-infra-writer.md` para recuperar la razon que dejo el writer (el diferencial sigue siendo la fuente de verdad). Remedia cada `NEW` corrigiendo el HCL y vuelve a correrlo. Por cada warning que no logres remediar:
+
+1. Lee los labels del issue origen (el `#<N>` del encabezado `# Issue #<N>` del mensaje inicial): `gh issue view <N> --json labels`.
+2. Deduplica por summary y archivo entre los issues `warning` abiertos: `gh issue list --state open --label warning --search "<summary> <archivo>" --json number,title`. Si ya existe uno, comenta en el: `gh issue comment <M> --body "Reaparece en el issue #<N>: <warning literal> en <archivo>."` y usa ese `#M`.
+3. Si no existe, crealo (nace `estado:borrador`, MEF-ADR-0007/0011): `gh issue create --title "Remediar <summary> en <archivo>" --label "estado:borrador,warning,<tipo:*>,<dom:*>" --body "<warning literal, archivo, issue origen #<N> y razon>"`. Terraform no emite codigo: el `summary` del diagnostico cumple ese papel; `<tipo:*>` y `<dom:*>` son los del issue origen.
+4. Escribe el `#M` resultante (existente o recien creado), uno por linea, en `.mefisto/pipeline/warnings-remanentes.txt` (sin commitearlo); el pipeline lo enlaza en el PR. Tu no publicas nada.
+
+Si `gh` falla, anota en tu resumen el warning y el error, y sigue: no bloquea.
+
 ### 5. Generar resumen de la revision
 
-Genera un resumen legible de lo que revisaste, para que quien lea el PR entienda que cambio y que quedo pendiente de verificar en el plan de CI:
+Escribe en `.mefisto/pipeline/summaries/stage-2-infra-reviewer.md` (sin commitearlo; el pipeline lo incluye en el PR) un resumen legible de lo que revisaste, para que quien lea el PR entienda que cambio y que quedo pendiente de verificar en el plan de CI:
 
 ```
-REVISION ESTATICA -- fmt: <ok|corregido>, validate: <ok>
+REVISION ESTATICA -- fmt: <ok|corregido>, validate: <ok>, warnings nuevos: <N> remediados, <M> remanentes
 - Hallazgos de seguridad/calidad: <lista o "ninguno">
 - Correcciones aplicadas: <lista o "ninguna">
 - Recursos nuevos/modificados relevantes: <lista breve, ej. azurerm_service_plan.<dominio>>

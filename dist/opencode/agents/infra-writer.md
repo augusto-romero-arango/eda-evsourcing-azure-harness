@@ -5,6 +5,26 @@ permission: {"external_directory":{"*":"deny","~/Library/Application Support/mef
 tools: {"microsoft-learn_*":false,"terraform_*":true}
 ---
 <!-- GENERADO por src/published/scripts/generate-published-adapters.sh desde src/published/agents/infra-writer.md. No editar a mano. -->
+```bash
+# Cada llamada bash que use ${MEFISTO_PACKAGE_ROOT} debe incluir este bloque antes de sus comandos: no se asume estado de shell persistente entre llamadas.
+if [ -n "${XDG_DATA_HOME:-}" ]; then mefisto_opencode_launcher="$XDG_DATA_HOME/mefisto/active/bin/mefisto-opencode"
+elif [ "${OSTYPE%%[0-9.]*}" = darwin ]; then mefisto_opencode_launcher="$HOME/Library/Application Support/mefisto/active/bin/mefisto-opencode"
+else mefisto_opencode_launcher="$HOME/.local/share/mefisto/active/bin/mefisto-opencode"; fi
+if [ ! -f "$mefisto_opencode_launcher" ] || [ -L "$mefisto_opencode_launcher" ] || [ ! -x "$mefisto_opencode_launcher" ]; then
+    printf '%s\n' 'ERROR OpenCode: no hay una release activa valida; instale o active la release OpenCode.' >&2; exit 1
+fi
+MEFISTO_PACKAGE_ROOT="$("$mefisto_opencode_launcher" package-root)" || {
+    printf '%s\n' 'ERROR OpenCode: no se pudo resolver la release activa; instale o active la release OpenCode.' >&2; exit 1;
+}
+case "$MEFISTO_PACKAGE_ROOT" in
+    /*) ;;
+    *) printf '%s\n' 'ERROR OpenCode: la release activa no devolvio una raiz absoluta; reinstale o active la release OpenCode.' >&2; exit 1 ;;
+esac
+MEFISTO_PACKAGE_ROOT="$(cd -P "$MEFISTO_PACKAGE_ROOT" 2>/dev/null && printf '%s\n' "$PWD")" || {
+    printf '%s\n' 'ERROR OpenCode: la release activa no existe; reinstale o active la release OpenCode.' >&2; exit 1;
+}
+export MEFISTO_PACKAGE_ROOT
+```
 
 Antes de continuar, aborta si existe `src/internal/scripts/generate-internal-adapters.sh`: ese directorio es el repositorio de Mefisto, no un consumidor.
 
@@ -155,6 +175,14 @@ cd infra/environments/<env> && terraform validate
 ```
 
 Si `terraform validate` falla, corrige los errores y vuelve a validar. No termines hasta que valide.
+
+**Cero warnings nuevos (MEF-ADR-0056):** cuando `terraform validate` pase, corre desde la raiz del repo:
+
+```bash
+${MEFISTO_PACKAGE_ROOT}/scripts/warnings-diff.sh --toolchain terraform --base <Commit base del mensaje inicial> --path <Directorio relativo del ambiente, p. ej. infra/environments/<env>>
+```
+
+Remedia cada warning `NEW` (atributos y bloques deprecados del provider `azurerm`, argumentos redundantes) corrigiendo el HCL y vuelve a correrlo. Terraform no tiene supresion nativa de warnings de `validate`: corregir es la unica salida. Exit 2 significa que quedan `NEW`; exit 1 es un error del helper, no un warning (informalo en tu resumen y sigue). Lo que no logres remediar va (warning literal, archivo, razon) en la seccion `## Warnings no remediados` de tu resumen de stage, `.mefisto/pipeline/summaries/stage-1-infra-writer.md` (sin commitearlo): el `infra-reviewer` lo lee de ahi. No crees issues: el `infra-reviewer` lo hace.
 
 Si `terraform init` no se ha ejecutado aun en ese ambiente:
 
