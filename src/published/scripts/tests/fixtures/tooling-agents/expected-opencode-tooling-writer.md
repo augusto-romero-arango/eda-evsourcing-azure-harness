@@ -5,6 +5,26 @@ permission: {"external_directory":{"*":"deny","~/Library/Application Support/mef
 tools: {"microsoft-learn_*":false,"terraform_*":false}
 ---
 <!-- GENERADO por src/published/scripts/generate-published-adapters.sh desde src/published/agents/tooling-writer.md. No editar a mano. -->
+```bash
+# Cada llamada bash que use ${MEFISTO_PACKAGE_ROOT} debe incluir este bloque antes de sus comandos: no se asume estado de shell persistente entre llamadas.
+if [ -n "${XDG_DATA_HOME:-}" ]; then mefisto_opencode_launcher="$XDG_DATA_HOME/mefisto/active/bin/mefisto-opencode"
+elif [ "${OSTYPE%%[0-9.]*}" = darwin ]; then mefisto_opencode_launcher="$HOME/Library/Application Support/mefisto/active/bin/mefisto-opencode"
+else mefisto_opencode_launcher="$HOME/.local/share/mefisto/active/bin/mefisto-opencode"; fi
+if [ ! -f "$mefisto_opencode_launcher" ] || [ -L "$mefisto_opencode_launcher" ] || [ ! -x "$mefisto_opencode_launcher" ]; then
+    printf '%s\n' 'ERROR OpenCode: no hay una release activa valida; instale o active la release OpenCode.' >&2; exit 1
+fi
+MEFISTO_PACKAGE_ROOT="$("$mefisto_opencode_launcher" package-root)" || {
+    printf '%s\n' 'ERROR OpenCode: no se pudo resolver la release activa; instale o active la release OpenCode.' >&2; exit 1;
+}
+case "$MEFISTO_PACKAGE_ROOT" in
+    /*) ;;
+    *) printf '%s\n' 'ERROR OpenCode: la release activa no devolvio una raiz absoluta; reinstale o active la release OpenCode.' >&2; exit 1 ;;
+esac
+MEFISTO_PACKAGE_ROOT="$(cd -P "$MEFISTO_PACKAGE_ROOT" 2>/dev/null && printf '%s\n' "$PWD")" || {
+    printf '%s\n' 'ERROR OpenCode: la release activa no existe; reinstale o active la release OpenCode.' >&2; exit 1;
+}
+export MEFISTO_PACKAGE_ROOT
+```
 
 Antes de continuar, aborta si existe `src/internal/scripts/generate-internal-adapters.sh`: ese directorio es el repositorio de Mefisto, no un consumidor.
 
@@ -14,6 +34,8 @@ Usa solamente los comandos de verificacion permitidos en el mensaje inicial. Tra
 
 Si la tarea requiere logica de dominio, artefactos de Mefisto o rutas fuera del scope recibido, no los modifiques. Registra ese bloqueo en el resumen.
 
+**Cero warnings nuevos (MEF-ADR-0056):** antes de cerrar, corre `${MEFISTO_PACKAGE_ROOT}/scripts/warnings-diff.sh --base <commit base del mensaje inicial>` con `--toolchain shell` si el diff contra el base toca `*.sh`, y con `--toolchain dotnet` si toca `*.cs`/`*.csproj`. Remedia cada warning `NEW` y vuelve a correrlo (exit 2: quedan `NEW`; exit 1: error del helper, no un warning). Prohibido suprimir como remediacion: `# shellcheck disable`, `#pragma warning disable`, `SuppressMessage`, `NoWarn` o bajar la severidad en `.editorconfig`. Los que no puedas remediar van (warning literal, archivo, razon) en la seccion `## Warnings no remediados` del summary, separada de `## Pendiente/bloqueos`. No crees issues: el revisor lo hace.
+
 El mensaje inicial indica el archivo de summary. Crealo antes de terminar, incluso si no pudiste editar, con estas secciones:
 
 ## Implementado
@@ -21,3 +43,5 @@ El mensaje inicial indica el archivo de summary. Crealo antes de terminar, inclu
 ## Verificacion
 
 ## Pendiente/bloqueos
+
+## Warnings no remediados
