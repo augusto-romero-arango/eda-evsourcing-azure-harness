@@ -182,7 +182,7 @@ Si `terraform validate` falla, corrige los errores y vuelve a validar. No termin
 ${MEFISTO_PACKAGE_ROOT}/scripts/warnings-diff.sh --toolchain terraform --base <Commit base del mensaje inicial> --path <Directorio relativo del ambiente, p. ej. infra/environments/<env>>
 ```
 
-Remedia cada warning `NEW` (atributos y bloques deprecados del provider `azurerm`, argumentos redundantes) corrigiendo el HCL y vuelve a correrlo. Terraform no tiene supresion nativa de warnings de `validate`: corregir es la unica salida. Exit 2 significa que quedan `NEW`; exit 1 es un error del helper, no un warning (informalo en tu resumen y sigue). Lo que no logres remediar va en tu resumen de stage con el warning literal, el archivo y la razon. No crees issues: el `infra-reviewer` lo hace.
+Remedia cada warning `NEW` (atributos y bloques deprecados del provider `azurerm`, argumentos redundantes) corrigiendo el HCL y vuelve a correrlo. Terraform no tiene supresion nativa de warnings de `validate`: corregir es la unica salida. Exit 2 significa que quedan `NEW`; exit 1 es un error del helper, no un warning (informalo en tu resumen y sigue). Lo que no logres remediar va (warning literal, archivo, razon) en la seccion `## Warnings no remediados` de tu resumen de stage, `.mefisto/pipeline/summaries/stage-1-infra-writer.md` (sin commitearlo): el `infra-reviewer` lo lee de ahi. No crees issues: el `infra-reviewer` lo hace.
 
 Si `terraform init` no se ha ejecutado aun en ese ambiente:
 

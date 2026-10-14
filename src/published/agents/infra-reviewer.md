@@ -92,18 +92,18 @@ Si `terraform fmt -check` falla, formatea con `terraform fmt -recursive ../..` y
 {{mefisto:package-root}}/scripts/warnings-diff.sh --toolchain terraform --base <Commit base del mensaje inicial> --path <Directorio relativo del ambiente, p. ej. infra/environments/<env>>
 ```
 
-Exit 2 significa que quedan `NEW`; exit 1 es un error del helper (informalo en tu resumen y sigue: no bloquea). Lee `{{mefisto:state-path summaries/stage-1-infra-writer.md}}` para recuperar la razon que dejo el writer (el diferencial sigue siendo la fuente de verdad). Remedia cada `NEW` corrigiendo el HCL y vuelve a correrlo. Por cada warning que no logres remediar:
+Exit 2 significa que quedan `NEW`; exit 1 es un error del helper (informalo en tu resumen y sigue: no bloquea). Lee la seccion `## Warnings no remediados` de `{{mefisto:state-path summaries/stage-1-infra-writer.md}}` para recuperar la razon que dejo el writer (el diferencial sigue siendo la fuente de verdad). Remedia cada `NEW` corrigiendo el HCL y vuelve a correrlo. Por cada warning que no logres remediar:
 
-1. Lee los labels del issue origen: `gh issue view <N> --json labels`.
-2. Deduplica por summary y archivo entre los issues `warning` abiertos: `gh issue list --state open --label warning --search "<summary> <archivo>"`. Si ya existe uno, comenta en el: `gh issue comment <M> --body "Reaparece en el issue #<N>: <warning literal> en <archivo>."` y usa ese `#M`.
+1. Lee los labels del issue origen (el `#<N>` del encabezado `# Issue #<N>` del mensaje inicial): `gh issue view <N> --json labels`.
+2. Deduplica por summary y archivo entre los issues `warning` abiertos: `gh issue list --state open --label warning --search "<summary> <archivo>" --json number,title`. Si ya existe uno, comenta en el: `gh issue comment <M> --body "Reaparece en el issue #<N>: <warning literal> en <archivo>."` y usa ese `#M`.
 3. Si no existe, crealo (nace `estado:borrador`, MEF-ADR-0007/0011): `gh issue create --title "Remediar <summary> en <archivo>" --label "estado:borrador,warning,<tipo:*>,<dom:*>" --body "<warning literal, archivo, issue origen #<N> y razon>"`. Terraform no emite codigo: el `summary` del diagnostico cumple ese papel; `<tipo:*>` y `<dom:*>` son los del issue origen.
-4. Escribe el `#N` resultante, uno por linea, en `{{mefisto:state-path warnings-remanentes.txt}}` (sin commitearlo); el pipeline lo enlaza en el PR. Tu no publicas nada.
+4. Escribe el `#M` resultante (existente o recien creado), uno por linea, en `{{mefisto:state-path warnings-remanentes.txt}}` (sin commitearlo); el pipeline lo enlaza en el PR. Tu no publicas nada.
 
 Si `gh` falla, anota en tu resumen el warning y el error, y sigue: no bloquea.
 
 ### 5. Generar resumen de la revision
 
-Genera un resumen legible de lo que revisaste, para que quien lea el PR entienda que cambio y que quedo pendiente de verificar en el plan de CI:
+Escribe en `{{mefisto:state-path summaries/stage-2-infra-reviewer.md}}` (sin commitearlo; el pipeline lo incluye en el PR) un resumen legible de lo que revisaste, para que quien lea el PR entienda que cambio y que quedo pendiente de verificar en el plan de CI:
 
 ```
 REVISION ESTATICA -- fmt: <ok|corregido>, validate: <ok>, warnings nuevos: <N> remediados, <M> remanentes

@@ -142,10 +142,11 @@ make_run_agent_stub() {
     cat > "$1" <<'STUB'
 #!/usr/bin/env bash
 set -u
-agent="" event_log="" cwd=""
+agent="" event_log="" cwd="" prompt_file=""
 while [ "$#" -gt 0 ]; do
     case "$1" in
         --agent) agent="$2"; shift 2 ;;
+        --prompt-file) prompt_file="$2"; shift 2 ;;
         --cwd) cwd="$2"; shift 2 ;;
         --event-log) event_log="$2"; shift 2 ;;
         *) shift ;;
@@ -158,6 +159,7 @@ n=0
 [ -f "$count_file" ] && n=$(cat "$count_file")
 n=$((n + 1))
 printf '%s' "$n" > "$count_file"
+[ -n "$prompt_file" ] && cp "$prompt_file" "${STUB_STATE_DIR:-/tmp}/${agent}.prompt.md"
 
 if [ "$agent" = "${STUB_FAIL_AGENT:-}" ]; then
     printf '%s\n' '{"type":"run.failed","status":"failed","session_id":null,"denials":0,"error":{"kind":"api_error"}}' > "$event_log"
@@ -243,6 +245,15 @@ else
     fail "A: orden incorrecto (dec=$L_DEC rem=$L_REM tf=$L_TF)"
 fi
 grep -qF 'Apply pendiente en CI' "$BODY_A" 2>/dev/null && pass "A: se conserva el aviso de apply pendiente" || fail "A: falta el aviso de apply pendiente"
+for ag in infra-writer infra-reviewer; do
+    PROMPT="$TMP_DIR/stub-state-a/$ag.prompt.md"
+    grep -qxF 'Directorio relativo del ambiente: infra/environments/dev' "$PROMPT" 2>/dev/null \
+        && pass "A: el prompt de $ag trae el directorio relativo del ambiente" \
+        || fail "A: el prompt de $ag no trae 'Directorio relativo del ambiente: infra/environments/dev'"
+    grep -qE '^Commit base: [0-9a-f]{40}$' "$PROMPT" 2>/dev/null \
+        && pass "A: el prompt de $ag trae el commit base" \
+        || fail "A: el prompt de $ag no trae 'Commit base: <sha>'"
+done
 
 echo ""
 echo "[B] Sin archivo de traspaso: el body no trae la seccion"
