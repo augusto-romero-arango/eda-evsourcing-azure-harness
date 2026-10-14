@@ -86,6 +86,69 @@ La version de referencia fijada por ControlPlane y verificada en MEF-ADR-0032/es
 
 ---
 
+## Cero warnings nuevos (MEF-ADR-0056)
+
+Este agente corre sin reviewer y genera codigo desde plantillas del harness: es su propia ultima instancia de la politica de cero warnings nuevos. Un warning nuevo en lo que generas es, en general, un defecto de la plantilla de Mefisto y no del consumidor.
+
+1. **Registra la base antes de escribir el primer archivo** (antes de cualquier Write/Edit y antes de commitear):
+
+   ```bash
+   SCAFFOLD_BASE=$(git rev-parse HEAD 2>/dev/null) || SCAFFOLD_BASE=""
+   echo "SCAFFOLD_BASE=$SCAFFOLD_BASE"
+   ```
+
+   Cada bloque `bash` corre en un shell nuevo: interpola el SHA impreso en los comandos siguientes. Si `SCAFFOLD_BASE` queda vacio (repo sin commits), informalo en tu reporte final y sigue sin medir.
+
+2. **Al terminar de generar, mide** (antes del commit, si tu flujo commitea; si no, antes del reporte final). Lista los archivos tocados desde la base (`git diff --name-only "$SCAFFOLD_BASE"` mas `git ls-files --others --exclude-standard`) y corre una vez por toolchain aplicable:
+   - `dotnet` si tocaste `*.cs`, `*.csproj`, `*.props`, `*.targets` o `.editorconfig`: `{{mefisto:package-root}}/scripts/warnings-diff.sh --toolchain dotnet --base "$SCAFFOLD_BASE"`
+   - `terraform` si tocaste `*.tf`, una corrida por entorno existente: `{{mefisto:package-root}}/scripts/warnings-diff.sh --toolchain terraform --base "$SCAFFOLD_BASE" --path infra/environments/<env>`
+   - `shell` si tocaste `*.sh`: `{{mefisto:package-root}}/scripts/warnings-diff.sh --toolchain shell --base "$SCAFFOLD_BASE"`
+
+   Salida `0`: sin warnings nuevos. Salida `2`: lista `NEW <toolchain> <archivo> <codigo> <mensaje>`. Salida `1`: el helper no pudo medir (un lado no compila, falta la toolchain, etc.): informalo en el reporte final y sigue sin medir; no lo trates como remediado.
+
+3. **Remedia cada `NEW` corrigiendo la causa** y vuelve a correr el helper. Estan prohibidas como remediacion las supresiones (MEF-ADR-0056, decision 5): `#pragma warning disable`, `[SuppressMessage]`, `<NoWarn>`, `<WarningLevel>` rebajado, `.editorconfig` con `severity = none`/`suggestion`/`silent`, `<TreatWarningsAsErrors>false`, `# shellcheck disable` y equivalentes. El helper las cuenta como warning nuevo (codigo `SUPPRESSION`).
+
+4. **Remanente: draft cross-repo en Mefisto.** Si un warning no logras remediarlo, abre un draft en el repo de Mefisto (MEF-ADR-0019: la unica operacion cross-repo es crear drafts `estado:borrador`). Resuelve el slug (MEF-ADR-0053; default `augusto-romero-arango/mefisto`):
+
+   ```bash
+   HARNESS_REPO_SLUG=$(jq -r '.repoSlug // empty' "{{mefisto:config-path}}" 2>/dev/null)
+   [ -z "$HARNESS_REPO_SLUG" ] && HARNESS_REPO_SLUG="augusto-romero-arango/mefisto"
+   echo "$HARNESS_REPO_SLUG"
+   ```
+
+   Deduplica: busca un issue `warning` abierto con el mismo agente y codigo en el titulo (la busqueda es difusa: cuenta como duplicado solo el resultado cuyo `title` coincide exacto).
+
+   ```bash
+   gh issue list -R "<slug>" --label warning --state open --search "Remediar <codigo> en la plantilla de <agente> in:title" --json number,title
+   ```
+
+   - Si existe, comenta en el: `gh issue comment <N> -R "<slug>" --body "Reproducido en <repo consumidor>: <warning literal> en <archivo generado>"`.
+   - Si no existe, crealo:
+
+     ```bash
+     HARNESS_VERSION=$(jq -r '.version' "{{mefisto:package-root}}/mefisto-manifest.json")
+     gh issue create -R "<slug>" \
+       --title "Remediar <codigo> en la plantilla de <agente>" \
+       --label "estado:borrador,tipo:tooling,warning" \
+       --body "$(cat <<'DRAFTEOF'
+     ## Warning
+     <warning literal, tal como lo imprimio el helper>
+
+     ## Origen
+     - Archivo generado: <ruta>
+     - Repo consumidor: <owner/repo del consumidor, de `gh repo view --json nameWithOwner -q .nameWithOwner`>
+     - Version del harness: <HARNESS_VERSION>
+     - Razon por la que no se pudo remediar: <razon>
+     DRAFTEOF
+     )"
+     ```
+
+   Interpola `<slug>`, `<agente>` (este agente), `<codigo>` y `<HARNESS_VERSION>` con los valores reales. Si `gh` falla (sin red, sin permisos o sin autenticar), informalo en el reporte final y sigue: no bloquea el scaffold.
+
+5. **Enlace.** Por cada draft o comentario, escribe una linea `owner/repo#N` en `{{mefisto:state-path warnings-remanentes.txt}}` (append; el pipeline la anade al PR). Cierra tu reporte final con una seccion `## Warnings remanentes` con una linea `- Relacionado: owner/repo#N` por remanente (omitela si no hay ninguno).
+
+Remanentes y fallos de medicion no bloquean: el scaffold termina igual.
+
 ## Paso 1 - Generar el puerto `IIdentityProvider` + DTOs (si falta)
 
 Si el Paso 0.4 marco "puerto: EXISTE", omite este paso y reportalo.

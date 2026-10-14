@@ -22,7 +22,13 @@ fail() { printf '  FAIL: %s\n' "$1"; FAIL=$((FAIL + 1)); }
 
 WORK="$(mktemp -d)"; trap 'rm -rf "$WORK"' EXIT
 
-extract_preamble() { awk '/^```bash$/{inside=1; next} /^```$/{if (inside) exit} inside' "$1"; }
+# Bloque del preambulo que resuelve el config efectivo. Desde #2411 la salida
+# generada lo precede con el bloque de la raiz del paquete, ajeno a este contrato.
+extract_preamble() {
+    awk '/^```bash$/{inside=1; buf=""; next}
+         /^```$/{if (inside && buf ~ /MEFISTO_CONFIG_PATH=/) { printf "%s", buf; exit } inside=0; next}
+         inside{buf = buf $0 "\n"}' "$1"
+}
 extract_jq_lines() { grep -E "jq -r '\.(serviceBus\.external|tenancy\.strategy)" "$1"; }
 
 echo "[1] La fuente neutral y ambas salidas generadas ya no hardcodean la ruta legacy del config"

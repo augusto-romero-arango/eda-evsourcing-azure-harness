@@ -714,6 +714,8 @@ git commit -m "tenancy(a->b): migrar a TenantExecutionContext (AsyncLocal + midd
   gh pr create --title "feat(apim): instalar gateway APIM y migrar tenancy a etapa b en <env>" --body "Instala/actualiza el gateway APIM (agente apim-gateway-scaffolder) para <dominios> y ejecuta la transicion a->b de tenancy (MEF-ADR-0028 seccion 4) sobre todos los dominios scaffoldeados. Si este skill lo disparo un issue concreto, agrega aca 'Closes #<numero>'."
   ```
 
+  Si algun scaffolder reporto una seccion `## Warnings remanentes` (MEF-ADR-0056), copiala tal cual al body del PR (anadela al final del `--body`).
+
 - **Si el agente reporto algun `--domain` omitido** (no scaffoldeado) **o el paso 9 dejo algun dominio degradado**: **no hagas push todavia**. Detente y deja explicito en el reporte (paso 13) que falta reconciliar antes de push+PR -- nunca un PR con un dominio sin construir.
 
 ### 12. Emitir el checklist post-deploy (CA-6)

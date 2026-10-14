@@ -6,6 +6,39 @@ tools: {"microsoft-learn_*":false,"terraform_*":false}
 ---
 <!-- GENERADO por src/published/scripts/generate-published-adapters.sh desde src/published/agents/apim-gateway-scaffolder.md. No editar a mano. -->
 ```bash
+# Cada llamada bash que use ${MEFISTO_PACKAGE_ROOT} debe incluir este bloque antes de sus comandos: no se asume estado de shell persistente entre llamadas.
+if [ -n "${XDG_DATA_HOME:-}" ]; then mefisto_opencode_launcher="$XDG_DATA_HOME/mefisto/active/bin/mefisto-opencode"
+elif [ "${OSTYPE%%[0-9.]*}" = darwin ]; then mefisto_opencode_launcher="$HOME/Library/Application Support/mefisto/active/bin/mefisto-opencode"
+else mefisto_opencode_launcher="$HOME/.local/share/mefisto/active/bin/mefisto-opencode"; fi
+if [ ! -f "$mefisto_opencode_launcher" ] || [ -L "$mefisto_opencode_launcher" ] || [ ! -x "$mefisto_opencode_launcher" ]; then
+    printf '%s\n' 'ERROR OpenCode: no hay una release activa valida; instale o active la release OpenCode.' >&2; exit 1
+fi
+MEFISTO_PACKAGE_ROOT="$("$mefisto_opencode_launcher" package-root)" || {
+    printf '%s\n' 'ERROR OpenCode: no se pudo resolver la release activa; instale o active la release OpenCode.' >&2; exit 1;
+}
+case "$MEFISTO_PACKAGE_ROOT" in
+    /*) ;;
+    *) printf '%s\n' 'ERROR OpenCode: la release activa no devolvio una raiz absoluta; reinstale o active la release OpenCode.' >&2; exit 1 ;;
+esac
+MEFISTO_PACKAGE_ROOT="$(cd -P "$MEFISTO_PACKAGE_ROOT" 2>/dev/null && printf '%s\n' "$PWD")" || {
+    printf '%s\n' 'ERROR OpenCode: la release activa no existe; reinstale o active la release OpenCode.' >&2; exit 1;
+}
+export MEFISTO_PACKAGE_ROOT
+```
+```bash
+if [ -f ".mefisto/harness.config.json" ]; then
+    if [ -f ".claude/harness.config.json" ]; then
+        printf '%s\n' 'AVISO: se usara el config canonico .mefisto/harness.config.json; se ignora el legacy .claude/harness.config.json. Migra o elimina conscientemente el archivo legacy para evitar divergencias.' >&2
+    fi
+    MEFISTO_CONFIG_PATH=".mefisto/harness.config.json"
+elif [ -f ".claude/harness.config.json" ]; then
+    MEFISTO_CONFIG_PATH=".claude/harness.config.json"
+else
+    printf '%s\n' 'ERROR: no se encontro el config canonico requerido .mefisto/harness.config.json.' >&2
+    printf '%s\n' '  Se acepta solo para lectura el fallback legacy .claude/harness.config.json.' >&2
+    exit 1
+fi
+export MEFISTO_CONFIG_PATH
 if [ -f "AGENTS.md" ]; then
     if [ -f "CLAUDE.md" ]; then
         printf '%s\n' 'AVISO: se usara AGENTS.md; se ignora el legacy CLAUDE.md. Migra o elimina conscientemente el archivo legacy para evitar divergencias.' >&2
@@ -107,6 +140,69 @@ Si no viene ningun servidor MCP en la lista de entrada, omite este paso entero y
 **Precondicion adicional, no bloqueante para el `plan`/HCL pero si para un `apply` real**: el modulo `apim-mcp-api` (Paso 2b) lee la system key `mcp_extension` con `azapi_resource_action` (`action = "listkeys"`), evaluado en **`apply`**, nunca en `plan` -- esa key no existe hasta que el host de Functions la genera, lo que ocurre recien con el **primer deploy exitoso del codigo** del servidor (MEF-ADR-0047 decision 5), un evento posterior al `apply` de infra (workflow de deploy encadenado, `mcp-scaffolder` Paso 6c). El `plan` del PR pasa igual (el recurso se planea como `create`, sin ejecutar la accion ARM todavia). Si `/install-apim` corre contra un servidor MCP cuya infra ya aplico pero cuyo codigo **todavia no se desplego ni una vez**, el `apply` de este HCL va a fallar en esa accion -- generalo igual (es codigo valido y correcto), pero deja explicito en el reporte final (Paso 7) que el operador debe confirmar al menos un deploy exitoso del servidor antes de mergear el PR.
 
 ---
+
+## Cero warnings nuevos (MEF-ADR-0056)
+
+Este agente corre sin reviewer y genera codigo desde plantillas del harness: es su propia ultima instancia de la politica de cero warnings nuevos. Un warning nuevo en lo que generas es, en general, un defecto de la plantilla de Mefisto y no del consumidor.
+
+1. **Registra la base antes de escribir el primer archivo** (antes de cualquier Write/Edit y antes de commitear):
+
+   ```bash
+   SCAFFOLD_BASE=$(git rev-parse HEAD 2>/dev/null) || SCAFFOLD_BASE=""
+   echo "SCAFFOLD_BASE=$SCAFFOLD_BASE"
+   ```
+
+   Cada bloque `bash` corre en un shell nuevo: interpola el SHA impreso en los comandos siguientes. Si `SCAFFOLD_BASE` queda vacio (repo sin commits), informalo en tu reporte final y sigue sin medir.
+
+2. **Al terminar de generar, mide** (antes del commit, si tu flujo commitea; si no, antes del reporte final). Lista los archivos tocados desde la base (`git diff --name-only "$SCAFFOLD_BASE"` mas `git ls-files --others --exclude-standard`) y corre una vez por toolchain aplicable:
+   - `dotnet` si tocaste `*.cs`, `*.csproj`, `*.props`, `*.targets` o `.editorconfig`: `${MEFISTO_PACKAGE_ROOT}/scripts/warnings-diff.sh --toolchain dotnet --base "$SCAFFOLD_BASE"`
+   - `terraform` si tocaste `*.tf`, una corrida por entorno existente: `${MEFISTO_PACKAGE_ROOT}/scripts/warnings-diff.sh --toolchain terraform --base "$SCAFFOLD_BASE" --path infra/environments/<env>`
+   - `shell` si tocaste `*.sh`: `${MEFISTO_PACKAGE_ROOT}/scripts/warnings-diff.sh --toolchain shell --base "$SCAFFOLD_BASE"`
+
+   Salida `0`: sin warnings nuevos. Salida `2`: lista `NEW <toolchain> <archivo> <codigo> <mensaje>`. Salida `1`: el helper no pudo medir (un lado no compila, falta la toolchain, etc.): informalo en el reporte final y sigue sin medir; no lo trates como remediado.
+
+3. **Remedia cada `NEW` corrigiendo la causa** y vuelve a correr el helper. Estan prohibidas como remediacion las supresiones (MEF-ADR-0056, decision 5): `#pragma warning disable`, `[SuppressMessage]`, `<NoWarn>`, `<WarningLevel>` rebajado, `.editorconfig` con `severity = none`/`suggestion`/`silent`, `<TreatWarningsAsErrors>false`, `# shellcheck disable` y equivalentes. El helper las cuenta como warning nuevo (codigo `SUPPRESSION`).
+
+4. **Remanente: draft cross-repo en Mefisto.** Si un warning no logras remediarlo, abre un draft en el repo de Mefisto (MEF-ADR-0019: la unica operacion cross-repo es crear drafts `estado:borrador`). Resuelve el slug (MEF-ADR-0053; default `augusto-romero-arango/mefisto`):
+
+   ```bash
+   HARNESS_REPO_SLUG=$(jq -r '.repoSlug // empty' "${MEFISTO_CONFIG_PATH}" 2>/dev/null)
+   [ -z "$HARNESS_REPO_SLUG" ] && HARNESS_REPO_SLUG="augusto-romero-arango/mefisto"
+   echo "$HARNESS_REPO_SLUG"
+   ```
+
+   Deduplica: busca un issue `warning` abierto con el mismo agente y codigo en el titulo (la busqueda es difusa: cuenta como duplicado solo el resultado cuyo `title` coincide exacto).
+
+   ```bash
+   gh issue list -R "<slug>" --label warning --state open --search "Remediar <codigo> en la plantilla de <agente> in:title" --json number,title
+   ```
+
+   - Si existe, comenta en el: `gh issue comment <N> -R "<slug>" --body "Reproducido en <repo consumidor>: <warning literal> en <archivo generado>"`.
+   - Si no existe, crealo:
+
+     ```bash
+     HARNESS_VERSION=$(jq -r '.version' "${MEFISTO_PACKAGE_ROOT}/mefisto-manifest.json")
+     gh issue create -R "<slug>" \
+       --title "Remediar <codigo> en la plantilla de <agente>" \
+       --label "estado:borrador,tipo:tooling,warning" \
+       --body "$(cat <<'DRAFTEOF'
+     ## Warning
+     <warning literal, tal como lo imprimio el helper>
+
+     ## Origen
+     - Archivo generado: <ruta>
+     - Repo consumidor: <owner/repo del consumidor, de `gh repo view --json nameWithOwner -q .nameWithOwner`>
+     - Version del harness: <HARNESS_VERSION>
+     - Razon por la que no se pudo remediar: <razon>
+     DRAFTEOF
+     )"
+     ```
+
+   Interpola `<slug>`, `<agente>` (este agente), `<codigo>` y `<HARNESS_VERSION>` con los valores reales. Si `gh` falla (sin red, sin permisos o sin autenticar), informalo en el reporte final y sigue: no bloquea el scaffold.
+
+5. **Enlace.** Por cada draft o comentario, escribe una linea `owner/repo#N` en `.mefisto/pipeline/warnings-remanentes.txt` (append; el pipeline la anade al PR). Cierra tu reporte final con una seccion `## Warnings remanentes` con una linea `- Relacionado: owner/repo#N` por remanente (omitela si no hay ninguno).
+
+Remanentes y fallos de medicion no bloquean: el scaffold termina igual.
 
 ## Paso 1 - Generar el modulo `api-management` (solo si no existe)
 

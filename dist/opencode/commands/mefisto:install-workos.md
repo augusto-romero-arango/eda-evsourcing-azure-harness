@@ -213,6 +213,8 @@ Sigue exactamente el resto del Proceso de ese documento (pasos 5 en adelante; el
   gh pr create --title "feat(identity): instalar WorkOS en <dominio>" --body "Genera el adapter WorkOS (agente workos-identity-scaffolder) y custodia workos-api-key via /mefisto:seed-secret. Si este comando lo disparo un issue concreto, agrega aca 'Closes #<numero>'."
   ```
 
+  Si algun scaffolder reporto una seccion `## Warnings remanentes` (MEF-ADR-0056), copiala tal cual al body del PR (anadela al final del `--body`).
+
 - **Si el paso 8 degrado a "proponer"** (sin build verde): **no hagas push todavia**. El working tree tiene el adapter propuesto sin commitear junto al commit ya hecho por el paso 9 (si corrio). Detente aca y deja claro en el reporte que falta reconciliar el adapter contra el SDK, correr `dotnet build` hasta que pase, commitear, y **recien entonces** `git push` + `gh pr create` -- nunca un PR con el dominio sin compilar.
 
 ### 11. Reportar
