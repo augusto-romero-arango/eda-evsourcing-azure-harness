@@ -29,7 +29,6 @@ Este ADR fija cuatro cosas: la regla de diseno de los mods del propio Mefisto, s
 
 ### Que queda fuera de este ADR
 
-- La lista de issues que el reviewer crea por reglas violadas, con su accion de cierre. Es exclusiva del lado consumidor y queda fuera hasta su propio incremento.
 - El modo de lanzamiento sin pane en el consumidor: la decision 6 es solo del lado interno y queda fuera hasta su propio incremento.
 - Una superficie equivalente para OpenCode, cuyos plugins de TUI v2 no declaran estabilidad.
 
@@ -194,7 +193,7 @@ Los mods de ambos lados no comparten codigo (MEF-ADR-0019), pero no deben diverg
 
 ## Control de cambios
 
-- 2026-10-14: "Que queda fuera de este ADR": se retira la mencion de la funcion que creaba el issue de tests ajustados por el reviewer, reemplazado por una seccion del PR (issue #2438).
+- 2026-10-14: "Que queda fuera de este ADR": se retira el punto de la lista de issues que el reviewer creaba por tests ajustados; el pipeline TDD ya no crea ese issue y la senal pasa a una seccion del body del PR (issue #2438).
 - 2026-10-11: decision 11: la referencia del par se precisa por dimension de experiencia (ubicacion, lo que ve el usuario, como se pide input, teclas, mascota) y se anade el deber de estudiar el par antes de proponer (issue #2322).
 - 2026-10-09: decision 11 nueva (experiencia de referencia entre pares: referencia y no sincronizacion, identidad visual por lado); decision 8: los tableros son independientes en codigo y la tabla de diferencias es de mecanica, no de experiencia; decision 10 remite a la 11 (issue #2192).
 - 2026-10-09: decision 10 (ubicacion): la consola no es una segunda entrada de `modules` -- el runtime la rechaza --; un punto de entrada `hooks/index.tsx` compone tablero y consola (issue #2180).
