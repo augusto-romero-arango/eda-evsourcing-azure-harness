@@ -580,6 +580,8 @@ $ISSUE_CONTEXT
 
 Ambiente target: $ENVIRONMENT
 Directorio del ambiente: $INFRA_ENV_DIR_ABS
+Directorio relativo del ambiente: $INFRA_ENV_DIR
+Commit base: $SNAPSHOT_COMMIT
 
 Tu tarea: escribe o modifica los archivos Terraform necesarios para implementar este issue en el ambiente '$ENVIRONMENT'. Sigue todas las instrucciones de tu rol de infra-writer.
 
@@ -621,6 +623,8 @@ $ISSUE_CONTEXT
 
 Ambiente target: $ENVIRONMENT
 Directorio del ambiente: $INFRA_ENV_DIR_ABS
+Directorio relativo del ambiente: $INFRA_ENV_DIR
+Commit base: $SNAPSHOT_COMMIT
 
 Diff de archivos .tf modificados en esta rama:
 $DIFF_CONTEXT
@@ -734,6 +738,8 @@ ${WR_SUMMARY}
 ${RV_SUMMARY}
 
 </details>
+
+$(render_warning_remnants_section "$WORKTREE_PATH")
 
 ## Cambios Terraform
 
