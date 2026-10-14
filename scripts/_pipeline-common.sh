@@ -1104,51 +1104,26 @@ render_warning_remnants_section() {
     printf '\n'
 }
 
-# create_reviewer_tests_review_issue <repo_slug> <issue_num> <pr_url> <worktree> <base_head> <files> <g2_output> <report_file>
+# render_reviewer_touched_tests_section <files> <blockage_resolved>
 #
-# Issue #2062: crea en el repo consumidor un issue (sin labels) pidiendo revisar
-# los tests que el reviewer ajusto. Imprime la URL. Exit != 0 si gh falla.
-create_reviewer_tests_review_issue() {
-    local repo="$1" issue_num="$2" pr_url="$3" worktree="$4" base="$5" files="$6" g2_out="$7" report="$8"
-    local diff_txt report_txt red_txt body f
-    local -a args=()
-    while IFS= read -r f; do [ -n "$f" ] && args+=("$f"); done <<< "$files"
-    diff_txt=$(git -C "$worktree" diff "$base" HEAD -- "${args[@]}" 2>/dev/null | head -c 20000)
-    red_txt=$(printf '%s\n' "$g2_out" | sed 's/\x1b\[[0-9;]*m//g' | tail -60)
-    [ -n "$red_txt" ] || red_txt="(salida del Gate 2 no disponible)"
-    report_txt=""
-    [ -f "$report" ] && report_txt=$(cat "$report")
-    [ -n "$report_txt" ] || report_txt="(sin reporte de bloqueo)"
-    body="El reviewer ajusto o elimino tests existentes al resolver tests en rojo tras la fase verde. Requiere revision humana.
-
-Issue original: #${issue_num}
-PR: ${pr_url}
-
-## Salida de los tests rojos (Gate 2)
-
-\`\`\`
-${red_txt}
-\`\`\`
-
-## Que paso (reporte de bloqueo / resolucion)
-
-${report_txt}
-
-## Tests tocados
-
-$(printf '%s\n' "$files" | sed 's/^/- /')
-
-<details>
-<summary>Diff de los tests tocados</summary>
-
-\`\`\`diff
-${diff_txt}
-\`\`\`
-
-</details>"
-    gh issue create --repo "$repo" \
-        --title "Revisar los tests ajustados por el reviewer en #${issue_num}" \
-        --body "$body" 2>/dev/null
+# Issue #2438: imprime la seccion "## Tests ajustados por el reviewer" del body del PR
+# con una linea "- `<ruta>`" por archivo (un archivo por linea en <files>). Si
+# <blockage_resolved> es "true" agrega la linea de destrabe tras la fase verde. Sin
+# archivos no imprime nada. No incluye diff ni reporte: el diff ya esta en el PR.
+render_reviewer_touched_tests_section() {
+    local files="${1:-}" blockage_resolved="${2:-false}" f
+    local -a list=()
+    while IFS= read -r f; do [ -n "$f" ] && list+=("$f"); done <<< "$files"
+    [ "${#list[@]}" -gt 0 ] || return 0
+    printf '## Tests ajustados por el reviewer\n\n'
+    printf 'El reviewer modifico, renombro o elimino estos tests existentes en la fase refactor; se revisan en el diff del PR.\n\n'
+    if [ "$blockage_resolved" = "true" ]; then
+        printf 'Lo hizo al destrabar tests en rojo despues de la fase verde.\n\n'
+    fi
+    for f in "${list[@]}"; do
+        printf -- '- `%s`\n' "$f"
+    done
+    printf '\n'
 }
 
 # --- Derivacion de log legible desde eventos de agente ----------------------

@@ -2386,6 +2386,11 @@ $COV_REMEDIATION_SUMMARY
 
 "
 
+        REVIEWER_TESTS_SECTION="$(render_reviewer_touched_tests_section "${REVIEWER_TOUCHED_TESTS:-}" "${BLOCKAGE_RESOLVED:-false}")"
+        [ -n "$REVIEWER_TESTS_SECTION" ] && REVIEWER_TESTS_SECTION="${REVIEWER_TESTS_SECTION}
+
+"
+
         PR_URL=$(gh pr create \
             --title "$ISSUE_TITLE" \
             --body "$(cat <<EOF
@@ -2409,7 +2414,7 @@ ${RV_SUMMARY}
 
 </details>
 
-${SMOKE_ANOMALY_SECTION}${COVERAGE_SECTION}${WARNING_REMNANTS_SECTION}## Commits
+${SMOKE_ANOMALY_SECTION}${COVERAGE_SECTION}${WARNING_REMNANTS_SECTION}${REVIEWER_TESTS_SECTION}## Commits
 
 $COMMITS_LIST
 
@@ -2451,15 +2456,6 @@ $BLOCKAGE_CONTENT
                 --repo "$REPO_SLUG_PR" >>"$LOG_FILE" 2>&1 \
                 || warn "No se pudo comentar reporte de bloqueo en el PR"
         fi
-    fi
-
-    # Issue #2062: avisar al humano de los tests que ajusto el reviewer
-    if [ -n "${REVIEWER_TOUCHED_TESTS:-}" ] && [ -n "${PR_URL:-}" ]; then
-        BLOCKAGE_REPORT="$(mefisto_state_read_first 'blockage-report.md' "$WORKTREE_PATH" 2>/dev/null || true)"
-        REVIEW_ISSUE_URL=$(create_reviewer_tests_review_issue "$REPO_SLUG_PR" "${ISSUE_NUM:-?}" "$PR_URL" \
-            "$WORKTREE_PATH" "$STAGE3_BASE_HEAD" "$REVIEWER_TOUCHED_TESTS" "${TEST_OUTPUT_G2:-}" "$BLOCKAGE_REPORT") \
-            && success "Issue de revision de tests creado: $REVIEW_ISSUE_URL" \
-            || warn "No se pudo crear el issue de revision de los tests ajustados por el reviewer"
     fi
 
     if [ -n "$ISSUE_NUM" ]; then
