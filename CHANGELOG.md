@@ -4,6 +4,41 @@ Todo cambio notable a este proyecto se documenta aquí. Sigue [Keep a Changelog]
 
 ## [Unreleased]
 
+## [0.53.0] - 2026-10-14
+
+### Added
+
+- `/onboard` diagnostica `.mefisto/appinsights.env` en la seccion "Estado operativo de Mefisto": `OK` si declara las cuatro claves requeridas, `FALTA` (con accion en "Proximos pasos") si falta o esta incompleto y existe `infra/environments/`, `NO VERIFICADO` en greenfield, y una fila `INFO` si `FUNCTIONAPP_NAMES` esta ausente o vacio (#2384).
+- `/onboard` agrega el paso opt-in "Provision opt-in de `.mefisto/appinsights.env`" (`scripts/onboard-provision-appinsights.sh`, `--preview`/`--apply`): descubre con `az` el App Insights, el namespace de Service Bus y las Function Apps del resource group del entorno y escribe las cinco claves sin sobrescribir un archivo existente (#2387).
+- `domain-scaffolder` (Paso 3b) emite la tolerancia a huecos de secuencia del daemon (MEF-ADR-0034 seccion 12): crea `Infraestructura/ConfiguracionDaemonProjections.cs` si falta (constante `TopeHuecosDeSecuencia` de 5 min + extension `AplicarToleranciaAHuecosDeSecuencia`) y cada `ConfiguracionMartenProjections{Dominio}.cs` la invoca dentro de `AddMartenStore`. Requiere Marten >= 9.23. El Skill `projections` (`config-test.md`) agrega la guarda por named store. **Accion manual para workers ya existentes**: crear `ConfiguracionDaemonProjections.cs`, invocar `opts.AplicarToleranciaAHuecosDeSecuencia();` en el `AddMartenStore` de cada dominio y agregar la guarda al config-test (referencia: issue #993 de Bitakora.ControlAsistencia); el scaffold no migra workers existentes.
+- MEF-ADR-0056: politica de cero warnings nuevos (diferencial contra la base del worktree, sin supresiones, ultima instancia que abre issue remanente); la propagacion a agentes queda para #2405-#2412 (#2404).
+- `scripts/warnings-diff.sh`: helper publicado que detecta los warnings nuevos del arbol de trabajo contra el commit base (nucleo + toolchain `shell` con shellcheck; multiconjunto, deteccion de supresiones, cache de la base y fixture `WARNINGS_DIFF_FIXTURE_DIR`), MEF-ADR-0056 (#2405).
+- Label `warning` en el esquema de labels del consumidor: lo provisiona `setup-github-labels.sh`, lo diagnostica `onboard-diagnose.sh` y se documenta en `/onboard` y MEF-ADR-0007 (#2406).
+- El `reviewer` del pipeline TDD es la ultima instancia de la politica de cero warnings nuevos (MEF-ADR-0056): corre `warnings-diff.sh`, prohibe las supresiones y deja un issue remanente (`estado:borrador` + `warning`, deduplicado) que el PR enlaza en `## Warnings remanentes` via `render_warning_remnants_section` (#2408).
+- `scripts/warnings-diff.sh` registra la toolchain `dotnet` (MEF-ADR-0056): corre `dotnet build --no-incremental` con file logger `warningsonly` en ambos lados, normaliza prefijos de nodo, rutas absolutas y proyecto, y cuenta como supresiones `#pragma warning disable`, `SuppressMessage`, `<NoWarn>`, `<WarningLevel>` y `dotnet_diagnostic.*.severity`. Un build fallido en cualquier lado sale con `1`.
+- `scripts/warnings-diff.sh` registra la toolchain `terraform` (`--path` obligatorio): corre `terraform init -backend=false` y `validate -json` en cada lado, cuenta los diagnosticos `warning`, falla con `valid=false` y reusa `TF_PLUGIN_CACHE_DIR` (MEF-ADR-0056, #2418).
+
+### Changed
+
+- `appinsights-query.sh` avisa, sin leerlo ni moverlo, cuando falta `.mefisto/appinsights.env` pero existe un `scripts/.env` legacy del consumidor que declara `APPINSIGHTS_APP=`, e imprime el comando para migrarlo (#2386).
+- MEF-ADR-0034 suma la seccion 12 (tolerancia a huecos de secuencia del daemon, Marten >= 9.23): tope `SkipStaleGapsDespiteLiveTransactionsAfter` de 5 min por named store, guarda 5 del config-test, prohibicion de borrar eventos con el daemon corriendo y cuatro alternativas descartadas (#2390).
+- **Cambio de contrato (issue #2394)**: el marco fija ahora los siete paquetes `Cosmos.*` en 3.1.0, Marten 9.23.0 y WolverineFx 6.27.1 en lo que emiten `domain-scaffolder`, `projections-scaffolder` e `/install-apim`. `Cosmos.MultiTenancy` rompe: `ITenantResolver` pasa a `ITenantContext` y suma `OrganizationMembershipId` (`TenantResolverMonoTenantPorDefecto` devuelve `"membresia-no-autenticada"`; `TenantExecutionContext` lo expone con getter estricto, `SetDerivedIdentity` recibe tres valores y `TenantContextMiddleware` lo lee de `X-Organization-Membership-Id` / `organization_membership_id`). `/install-apim` reconoce al migrar tanto el registro viejo (`ITenantResolver`) como el nuevo.
+- **Seguridad**: Marten 9.23.0 cierra GHSA-rfx3-98h7-v3xp / CVE-2026-75513; los consumidores nuevos ya no nacen sobre la version afectada.
+- **Migracion manual de consumidores existentes** (no la hace el scaffold; referencia: commit `64d289c1` de Bitakora.ControlAsistencia): subir los pines, renombrar `ITenantResolver` por `ITenantContext` en implementaciones y registros (`AddScoped`/`AddSingleton`/`RemoveAll`), agregar `OrganizationMembershipId` a cada implementacion y pasar el tercer valor a `SetDerivedIdentity`.
+- La politica global de APIM (`apim-gateway-scaffolder`) propaga ahora el claim `organization_membership_id` como header `X-Organization-Membership-Id` (variable `claim_organization_membership_id`, `exists-action="override"`), y `/install-workos` guia el JWT Template del entorno de WorkOS que lo agrega (MEF-ADR-0032 seccion 4, issue #2397). **Accion manual para consumidores con APIM ya desplegado**: crear el JWT Template en el dashboard de WorkOS, re-ejecutar `/install-apim` para regenerar el modulo y aplicar el Terraform; confirmar el claim decodificando un token real (B10).
+- `mcp-scaffolder` y MEF-ADR-0047 decision 6: el servidor MCP deriva tambien `organization_membership_id` del token (requerido junto a `org_id` y `sub`), lo publica con `SetDerivedIdentity` de tres argumentos y lo propaga como `X-Organization-Membership-Id`; el error de token sin identidad nombra los tres claims (#2398).
+- Doctrina de tenancy alineada con `Cosmos.MultiTenancy` 3.1.0 (#2399): `ITenantResolver` pasa a `ITenantContext` en MEF-ADR-0028/0029/0032/0035, los Agent Skills `projections` y `comment-cleanup`, los agentes `projection-implementer`, `projection-test-writer`, `reviewer`, `bug-investigator` y los comandos `/install-auth` y `/onboard`; MEF-ADR-0028 seccion 4 documenta la semantica de `OrganizationMembershipId`.
+- Los 5 agentes escritores del pipeline TDD (`test-writer`, `implementer`, `projection-test-writer`, `projection-implementer`, `smoke-test-writer`) aplican la politica de cero warnings nuevos (MEF-ADR-0056): corren `warnings-diff.sh --toolchain dotnet` antes del commit, remedian cada `NEW` sin supresiones y registran los remanentes en `## Warnings no remediados`; el gate de `smoke-test-writer` pasa a "sin warnings nuevos" (#2407).
+- `tooling-writer`/`tooling-reviewer` aplican la politica de cero warnings nuevos (MEF-ADR-0056) con `warnings-diff.sh` (toolchains `shell`/`dotnet` segun el diff); `tooling-pipeline.sh` pasa el commit base al writer, autoriza el helper y enlaza los issues remanentes en el PR.
+- `infra-writer` e `infra-reviewer` aplican la politica de cero warnings nuevos (MEF-ADR-0056) con `warnings-diff.sh --toolchain terraform`; el reviewer crea o deduplica el issue remanente y `iac-pipeline.sh` pasa `Commit base` y el directorio relativo del ambiente a los prompts y enlaza `## Warnings remanentes` en el PR.
+- Los 6 scaffolders (`domain`, `mcp`, `projections`, `apim-gateway`, `workos-identity`, `infra-base`) son su propia ultima instancia de la politica de cero warnings nuevos (MEF-ADR-0056): miden con `warnings-diff.sh` contra `SCAFFOLD_BASE`, remedian sin supresiones y abren un draft cross-repo `warning` en Mefisto por cada remanente; `scaffold-pipeline.sh` y `/install-apim`, `/install-workos`, `/install-auth` lo enlazan en `## Warnings remanentes` del PR (#2411).
+- `/fix-review` aplica la politica de cero warnings nuevos (MEF-ADR-0056) en la Fase 3 y en los ajustes en-rama de la Fase 5.4: corre `warnings-diff.sh` contra el HEAD previo a editar, prohibe las supresiones como remediacion y deja un issue remanente deduplicado, enlazado en el PR con `## Warnings remanentes`
+
+### Fixed
+
+- Declarar `.mefisto/appinsights.env` en el ALCANCE PERMITIDO de los prompts del writer y del reviewer de `tooling-pipeline.sh` (el gate ya lo admitía), sin abrir `.mefisto/` completo (#2385).
+- `/onboard`: corregida la nota de errores del paso de provision de labels; `setup-github-labels.sh` es idempotente (`--force`), la causa tipica es `gh` sin autenticar o sin permiso de escritura y ya no se aconseja borrar labels.
+
 ## [0.52.1] - 2026-10-13
 
 ### Changed
@@ -3529,7 +3564,8 @@ Y reemplazar referencias en `CLAUDE.md` del proyecto: `/eda-evsourcing-azure-har
 - Los agentes `reviewer` e `implementer` mantienen el placeholder literal `ADR-XXXX` en sus plantillas de reporte (no es un bug; el agente lo sustituye en tiempo de ejecución por el número real del ADR aplicable).
 - Los ejemplos de código en `test-writer.md`, `implementer.md` y `smoke-test-writer.md` conservan nombres concretos de un proyecto consumidor (`Programacion`, `ControlHoras`) anotados en el "Contrato con el consumidor" de cada agente como ejemplos pedagógicos.
 
-[Unreleased]: https://github.com/augusto-romero-arango/mefisto/compare/v0.52.1...HEAD
+[Unreleased]: https://github.com/augusto-romero-arango/mefisto/compare/v0.53.0...HEAD
+[0.53.0]: https://github.com/augusto-romero-arango/mefisto/compare/v0.52.1...v0.53.0
 [0.52.1]: https://github.com/augusto-romero-arango/mefisto/compare/v0.52.0...v0.52.1
 [0.52.0]: https://github.com/augusto-romero-arango/mefisto/compare/v0.51.0...v0.52.0
 [0.51.0]: https://github.com/augusto-romero-arango/mefisto/compare/v0.50.0...v0.51.0

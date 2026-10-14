@@ -160,3 +160,10 @@ no necesita estar residente en cada sesión, solo cuando se busca en qué ADR vi
 | Default de `repoSlug` tras renombrar el repo a `augusto-romero-arango/mefisto`; el nombre previo resuelve por redireccion (enmienda del routing cross-repo) | MEF-ADR-0019 |
 | Smoke tests: tamano de pagina y topes de cantidad fuera del smoke | MEF-ADR-0013, MEF-ADR-0048 |
 | Polling de arrange con varias ocurrencias en smoke tests (enmienda) | MEF-ADR-0013 |
+| Tolerancia a huecos de secuencia del daemon de proyecciones | MEF-ADR-0034 |
+| Pin del marco: Cosmos.* 3.1.0, Marten 9.23.0, WolverineFx 6.27.1 | MEF-ADR-0003 |
+| Identidad y auth en el borde (WorkOS + APIM): tercer claim organization_membership_id | MEF-ADR-0032 |
+| Doctrina de servidores MCP serverless: identidad derivada con tercer claim organization_membership_id | MEF-ADR-0047 |
+| Tenancy: `ITenantContext` y semantica de `OrganizationMembershipId` | MEF-ADR-0028 |
+| Politica de cero warnings nuevos (diferencial contra la base, sin supresiones, ultima instancia que abre issue remanente) | MEF-ADR-0056 |
+| Label especial `warning` para issues de warnings remanentes (enmienda del esquema de labels) | MEF-ADR-0007 |
