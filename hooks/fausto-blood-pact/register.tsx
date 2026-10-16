@@ -429,7 +429,7 @@ async function closeBatch($: EngineInterface) {
   await closeLogIfGone($)
 }
 
-// Lector puro del status del lote parallel (#2447); solo un lote en `running` ocupa la banda.
+// Lector puro del status del lote parallel (#2447): en curso o cerrado (#2450); un cerrado ya ocultado con `4: cerrar` no ocupa la banda.
 async function refreshParallel($: EngineInterface, runs: readonly PipelineRun[]) {
   const raw = await $.fs.read(parallelStatusPath(`${runsRepo}/${STATE_DIR}`)).catch(() => '')
   const parsed = typeof raw === 'string' && raw !== '' ? parseParallelStatus(raw) : null
@@ -1520,7 +1520,8 @@ export const register: Register = on => {
         </Box>
       )
     }
-    if (parallel && lot === 'closed-parallel') {
+    // Mientras corre un merge lanzado desde aqui, la cinta de merge toma la banda (como en las corridas terminadas).
+    if (parallel && lot === 'closed-parallel' && !ribbon) {
       const hdr = parallelClosedHeader(parallel)
       const prs = parallelPrs(parallel)
       const mergeable = parallelMergeablePrs(parallel, new Set(await read($, parallelMergedAtom)))
