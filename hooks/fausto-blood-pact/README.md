@@ -155,3 +155,15 @@ Un lote `/mefisto:parallel` se ve en la banda de la sesión que lo lanzó. El di
 - **Tabla**: debajo, a todo el ancho, la de #2361: una fila por terminado o fallido (duración y costo de `pipeline-history.jsonl`), una fila `●` por cada issue en curso con su tiempo y `…` de costo, y `total` con más de una fila.
 
 Estado en `pactParallel`, `pactParallelStats`, `pactParallelBands` y `pactParallelPage`. El par interno `mefisto-divine-wager` no tiene parallel.
+
+## Capacidad vigente (#2450): lote parallel terminado y merge de sus PRs
+
+Con `pipeline-status-parallel.json` en `completed`, `stopped` o `failed` y sin ocultar, la banda muestra el lote cerrado con la misma vista que el sequential terminado (#2332). Precedencia entre cerrados: gana el lote de `started` más reciente.
+
+- **Cabecera**: `mefisto · parallel M/N · <terminado|detenido|con fallos> <MM:SS|H:MM:SS>` (el tiempo va del `started` al último `finished`); acciones arriba a la derecha: `1: mergear`, `2: ver PR`, `3: log`, `4: cerrar`.
+- **Junto a la mascota**: la cola final, el resumen `✓ N con PR · ✗ N fallidos · ⏸ N aplazados · ⤼ N saltados` (omite lo que está en cero) y, si hay fallido, `#N <motivo>` en rojo.
+- **Tabla de cierre** a todo el ancho: una fila por terminado o fallido (marca, `#N`, título, `PR #X`/`sin PR`, duración, costo) y `total` con más de una fila.
+- **`1: mergear`**: reusa el flujo de las corridas terminadas (`mergePrs`). Con un solo PR confirma con `$.ui.ask`; con varios, selección múltiple con "Todos" y los 3 más recientes (otros números en la opción de texto). Ejecuta `/mefisto:merge <prs>` con `$.command.run` con solo los PRs del lote, nunca `--all`. Un sondeo de 15 s marca los PRs `MERGED` y dejan de ofrecerse; sin PRs abiertos la tecla no aparece.
+- **`4: cerrar`**: ocultado persistente en `$.store` con clave repo + `started`; el archivo de estado no se toca y un lote nuevo (otro `started`) vuelve a mostrarse.
+
+Estado adicional en `pactParallelMerged`.

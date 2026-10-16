@@ -742,7 +742,7 @@ export function parseBatchStatus(raw: string): BatchStatus | null {
 export const isBatchRunning = (b: BatchStatus) => b.state === 'running'
 
 /** Pose del lote sin corrida activa, como la cinta interna: terminado es el revisor aprobado; el desarrollador no tiene `aprobado`. */
-export function poseOfBatch(b: BatchStatus): MascotPose {
+export function poseOfBatch(b: { state: BatchState }): MascotPose {
   if (b.state === 'failed') return { role: 'desarrollador', state: 'error' }
   if (b.state === 'completed') return { role: 'revisor', state: 'aprobado' }
   return { role: 'desarrollador', state: 'pensando' }
@@ -1449,12 +1449,19 @@ export function parseParallelStatus(raw: string): ParallelStatus | null {
 
 export const isParallelRunning = (p: ParallelStatus | null): p is ParallelStatus => p !== null && p.state === 'running'
 
-export type LotView = 'sequential' | 'parallel' | 'closed-sequential' | null
+export type LotView = 'sequential' | 'parallel' | 'closed-sequential' | 'closed-parallel' | null
 
-/** Precedencia de la banda: lote sequential en curso, lote parallel en curso, sequential ya cerrado (sin descartar); null deja paso al resto de vistas. */
+const startedOf = (stamp: string): number => stampToMs(stamp) || Date.parse(stamp) || 0
+
+/**
+ * Precedencia de la banda: lote sequential en curso, lote parallel en curso, y entre los cerrados (sin descartar)
+ * el de `started` mas reciente; null deja paso al resto de vistas.
+ */
 export function lotViewOf(batch: BatchStatus | null, parallel: ParallelStatus | null): LotView {
   if (batch && isBatchRunning(batch)) return 'sequential'
   if (isParallelRunning(parallel)) return 'parallel'
+  if (batch && parallel) return startedOf(parallel.started) > startedOf(batch.started) ? 'closed-parallel' : 'closed-sequential'
+  if (parallel) return 'closed-parallel'
   return batch ? 'closed-sequential' : null
 }
 
@@ -1546,4 +1553,62 @@ export function parallelTable(
   const base = statsTotal(done.map(i => stats[String(i.issue)]).filter((s): s is IssueStats => s !== undefined))
   const extra = running.reduce((a, i) => a + (i.startedMs > 0 ? Math.max(0, nowMs - i.startedMs) : 0), 0)
   return { rows, total: closeTotalText(rows.length, { ...base, durationMs: base.durationMs + extra }, titleW) }
+}
+
+// ---- Lote parallel terminado (#2450): resumen, tabla de cierre y PRs que se ofrecen a mergear ----
+
+export type ParallelCounts = { withPr: number; failed: number; deferred: number; skipped: number; total: number }
+
+export function parallelCounts(p: ParallelStatus): ParallelCounts {
+  const count = (s: ParallelIssueStatus) => p.issues.filter(i => i.status === s).length
+  return { withPr: count('terminado'), failed: count('fallido'), deferred: count('aplazado'), skipped: count('saltado'), total: p.issues.length }
+}
+
+/** Resumen de cierre: `✓ N con PR · ✗ N fallidos · ⏸ N aplazados · ⤼ N saltados` (omite lo que esta en cero salvo los con PR). */
+export function parallelSummaryMarks(p: ParallelStatus): string {
+  const c = parallelCounts(p)
+  return [
+    `✓ ${c.withPr} con PR`,
+    c.failed > 0 ? `✗ ${c.failed} fallidos` : '',
+    c.deferred > 0 ? `⏸ ${c.deferred} aplazados` : '',
+    c.skipped > 0 ? `⤼ ${c.skipped} saltados` : '',
+  ]
+    .filter(Boolean)
+    .join(' · ')
+}
+
+/** Cabecera del lote cerrado: `parallel M/N` (M = terminados + fallidos), estado y tiempo `started` -> ultimo `finished` (vacio si no se conoce). */
+export function parallelClosedHeader(p: ParallelStatus): { progress: string; label: string; time: string } {
+  const finished = Math.max(0, ...p.issues.map(i => i.finishedMs))
+  const startedMs = startedOf(p.started)
+  return {
+    progress: `parallel ${p.issues.filter(isParallelDone).length}/${p.issues.length}`,
+    label: batchEndLabel(p.state),
+    time: startedMs > 0 && finished > startedMs ? elapsedText(finished - startedMs) : '',
+  }
+}
+
+/** Primer issue fallido, para mostrar su motivo en rojo junto a la mascota. */
+export const parallelFailedIssue = (p: ParallelStatus): ParallelIssue | null => p.issues.find(i => i.status === 'fallido') ?? null
+
+/** Tabla de cierre: una fila por terminado o fallido y `total` con mas de una fila (como el sequential terminado, #2332). */
+export function parallelClosedTable(
+  p: ParallelStatus,
+  stats: Record<string, IssueStats>,
+  titleW: number,
+): { rows: ParallelTableRow[]; total: string | null } {
+  return parallelTable({ ...p, issues: p.issues.filter(isParallelDone) }, stats, n => stats[String(n)]?.title ?? null, 0, titleW)
+}
+
+/** Clave de ocultado persistente del lote parallel: repo + `started`. */
+export function parallelDismissKey(repo: string, p: ParallelStatus): string {
+  return [repo, 'parallel', p.started].join('|')
+}
+
+/** PRs del lote que se ofrecen a mergear: los `terminado` con PR que aun no estan `MERGED`, del mas reciente al mas antiguo. */
+export function parallelMergeablePrs(p: ParallelStatus, merged: ReadonlySet<string>): ResultPr[] {
+  return p.issues
+    .filter(i => i.status === 'terminado' && i.pr !== null && !merged.has(i.pr))
+    .map(i => ({ pr: i.pr as string, issue: i.issue, pipeline: (i.pipeline ?? 'tdd') as PipelineKind, key: `parallel-${i.issue}` }))
+    .sort((a, b) => Number(b.pr) - Number(a.pr))
 }

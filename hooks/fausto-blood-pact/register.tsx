@@ -115,6 +115,12 @@ import {
   parseBatchStatus,
   stopQuestion,
   PARALLEL_BAND_ROWS,
+  parallelClosedHeader,
+  parallelClosedTable,
+  parallelDismissKey,
+  parallelFailedIssue,
+  parallelMergeablePrs,
+  parallelSummaryMarks,
   canStopParallel,
   isParallelRunning,
   issueFromAnswer,
@@ -183,6 +189,7 @@ type ParallelBand = { run: PipelineRun | null; lines: string[]; last: LastEvent 
 const parallelAtom = atom({ plugin: 'mefisto', key: 'pactParallel' } as const, null as ParallelStatus | null)
 const parallelStatsAtom = atom({ plugin: 'mefisto', key: 'pactParallelStats' } as const, {} as Record<string, IssueStats>)
 const parallelBandsAtom = atom({ plugin: 'mefisto', key: 'pactParallelBands' } as const, {} as Record<string, ParallelBand>)
+const parallelMergedAtom = atom({ plugin: 'mefisto', key: 'pactParallelMerged' } as const, [] as string[])
 const parallelPageAtom = atom({ plugin: 'mefisto', key: 'pactParallelPage' } as const, 0)
 const mergeAtom = atom({ plugin: 'mefisto', key: 'pactMerge' } as const, null as PactMerge | null)
 const fieldNotesAtom = atom({ plugin: 'mefisto', key: 'pactFieldNotes' } as const, null as number | null)
@@ -246,6 +253,8 @@ let batchSeenEndedMs: number | null = null
 let parallelStatsFor = ''
 let isParallelLive = false
 let lastParallelStatsReadMs = 0
+let parallelMergedFor = ''
+let isCheckingParallelPrs = false
 // Issue cuyo log sigue el pane cuando el lote es parallel (varias corridas a la vez).
 let paneIssue: number | null = null
 // El historial se relee para estadisticas faltantes a lo sumo cada BATCH_STATS_EVERY_MS (como `withStats` en la cinta interna).
@@ -424,8 +433,9 @@ async function closeBatch($: EngineInterface) {
 async function refreshParallel($: EngineInterface, runs: readonly PipelineRun[]) {
   const raw = await $.fs.read(parallelStatusPath(`${runsRepo}/${STATE_DIR}`)).catch(() => '')
   const parsed = typeof raw === 'string' && raw !== '' ? parseParallelStatus(raw) : null
-  const p = isParallelRunning(parsed) ? parsed : null
-  isParallelLive = p !== null
+  const closed = parsed !== null && !isParallelRunning(parsed) && (await readDismissed($)).includes(parallelDismissKey(runsRepo, parsed))
+  const p = closed ? null : parsed
+  isParallelLive = isParallelRunning(p)
   if (!p) {
     await update($, parallelBandsAtom, () => ({}))
     await update($, parallelAtom, () => null)
@@ -435,6 +445,10 @@ async function refreshParallel($: EngineInterface, runs: readonly PipelineRun[])
     parallelStatsFor = p.started
     lastParallelStatsReadMs = 0
     await update($, parallelStatsAtom, () => ({}))
+  }
+  if (parallelMergedFor !== p.started) {
+    parallelMergedFor = p.started
+    await update($, parallelMergedAtom, () => [])
   }
   const known = await read($, parallelStatsAtom)
   const finished = p.issues.filter(i => i.status === 'terminado' || i.status === 'fallido').map(i => String(i.issue))
@@ -467,6 +481,51 @@ async function confirmStopParallel($: EngineInterface): Promise<string> {
   await update($, parallelAtom, cur => (cur ? { ...cur, stopRequested: true } : cur))
   $.ui.toast('parada pedida: los issues en curso terminan y no se lanzan mas')
   return 'Parada pedida: los issues en curso terminan y no se lanzan mas.'
+}
+
+// Ocultado persistente del lote parallel terminado: clave repo + `started` en `$.store`; el archivo no se toca.
+async function closeParallel($: EngineInterface) {
+  const p = await read($, parallelAtom)
+  if (!p || p.state === 'running') return
+  const keys = new Set(await readDismissed($))
+  keys.add(parallelDismissKey(runsRepo, p))
+  await saveDismissed($, [...keys])
+  await update($, parallelAtom, () => null)
+  await closeLogIfGone($)
+}
+
+// Sondeo de 15 s (como el de corridas terminadas): un PR del lote ya `MERGED` deja de ofrecerse.
+async function probeParallelMerged($: EngineInterface) {
+  if (isCheckingParallelPrs || !isEligible || !isWanted) return
+  const p = await read($, parallelAtom)
+  if (!p || p.state === 'running') return
+  isCheckingParallelPrs = true
+  try {
+    const merged = await read($, parallelMergedAtom)
+    const found: string[] = []
+    for (const x of parallelMergeablePrs(p, new Set(merged))) {
+      const { exitCode, stdout } = await $.process
+        .run(['gh', 'pr', 'view', x.pr, '--json', 'state', '-q', '.state'])
+        .catch(() => ({ exitCode: 1, stdout: '' }))
+      if (exitCode === 0 && stdout.trim() === 'MERGED') found.push(x.pr)
+    }
+    if (found.length === 0) return
+    await update($, parallelMergedAtom, cur => [...new Set([...cur, ...found])])
+    void refreshOpenPrs($)
+    for (const pr of found) $.ui.toast(`PR #${pr} mergeado`)
+  } finally {
+    isCheckingParallelPrs = false
+  }
+}
+
+// `1: mergear` del lote terminado: solo los PRs del lote aun abiertos, con el mismo dialogo que las corridas terminadas.
+async function mergeParallel($: EngineInterface): Promise<string> {
+  const p = await read($, parallelAtom)
+  if (!p || p.state === 'running') return 'No hay un parallel terminado.'
+  const prs = parallelMergeablePrs(p, new Set(await read($, parallelMergedAtom)))
+  if (prs.length === 0) return 'El lote no tiene PRs abiertos que mergear.'
+  await refreshOpenPrs($)
+  return mergeListed($, prs, null)
 }
 
 async function viewParallelPr($: EngineInterface): Promise<string> {
@@ -772,6 +831,10 @@ async function closeMerge($: EngineInterface) {
 async function mergePrs($: EngineInterface, preset: string[] | null = null): Promise<string> {
   const prs = resultPrs(await read($, resultsAtom))
   if (prs.length === 0) return 'No hay PRs de corridas terminadas.'
+  return mergeListed($, prs, preset)
+}
+
+async function mergeListed($: EngineInterface, prs: ResultPr[], preset: string[] | null): Promise<string> {
   const scope = preset ? prs.filter(p => preset.includes(p.pr)) : prs
   const options = mergeOptions(scope)
   const answer = await $.ui
@@ -1031,7 +1094,10 @@ async function activate($: EngineInterface) {
     if (Object.keys(seenRuns).length > 0 || lastBatchIssues !== null || isParallelLive || Date.now() < launchPollUntilMs) void refreshRuns($)
   })
   prTimer?.cancel()
-  prTimer = $.clock.every(PR_CHECK_MS, () => void closeMergedPrs($))
+  prTimer = $.clock.every(PR_CHECK_MS, () => {
+    void closeMergedPrs($)
+    void probeParallelMerged($)
+  })
   mergeTimer?.cancel()
   mergeTimer = $.clock.every(MERGE_POLL_MS, () => void pollMerge($))
   tickTimer?.cancel()
@@ -1312,9 +1378,11 @@ export const register: Register = on => {
     isAnimating = isWorking || active !== null || (batch !== null && isBatchRunning(batch)) || lot === 'parallel' || ribbon !== null || historian !== null
     const pose: MascotPose | null = active
       ? poseOfRun(active, await read($, lastEventAtom))
-      : batch
-        ? poseOfBatch(batch)
-        : poseOfResults(results)
+      : lot === 'closed-parallel' && parallel
+        ? poseOfBatch(parallel)
+        : batch
+          ? poseOfBatch(batch)
+          : poseOfResults(results)
     const grid = ribbon
       ? cropGrid(sprite('merge', ribbon.finishedMs === null ? 'cosiendo' : 'listo', ribbon.finishedMs === null ? (sec % 2 === 0 ? 0 : 1) : 0), MASCOT_COLS)
       : historian && !batch
@@ -1438,6 +1506,56 @@ export const register: Register = on => {
           </Text>
           {visible.length === 0 && <Text dimColor>preparando los primeros issues…</Text>}
           {visible.map(bandOf)}
+          {table.rows.length > 0 && (
+            <Box flexDirection="column">
+              {table.rows.map(r => (
+                <Text key={r.key} wrap="truncate-end" color={r.color}>
+                  {`${r.mark} ${r.lead}`}
+                  <Text dimColor>{r.trail}</Text>
+                </Text>
+              ))}
+              {table.total && <Text dimColor wrap="truncate-end">{table.total}</Text>}
+            </Box>
+          )}
+        </Box>
+      )
+    }
+    if (parallel && lot === 'closed-parallel') {
+      const hdr = parallelClosedHeader(parallel)
+      const prs = parallelPrs(parallel)
+      const mergeable = parallelMergeablePrs(parallel, new Set(await read($, parallelMergedAtom)))
+      const stats = await read($, parallelStatsAtom)
+      const table = parallelClosedTable(parallel, stats, summaryTitleWidth(inner))
+      const failed = parallelFailedIssue(parallel)
+      const endColor = parallel.state === 'completed' ? 'success' : parallel.state === 'stopped' ? 'warning' : 'error'
+      return (
+        <Box flexDirection="column" borderStyle="round" borderColor="claude" borderDimColor paddingX={1}>
+          <Box justifyContent="space-between">
+            <Text wrap="truncate-end">
+              <Text color="claude">mefisto</Text>
+              <Text> · {hdr.progress}</Text>
+              <Text color={endColor}> · {hdr.label}</Text>
+              {hdr.time !== '' && <Text dimColor> {hdr.time}</Text>}
+            </Text>
+            <Box gap={2}>
+              {mergeable.length > 0 && <Button key="par-merge" hotkey="1" plain label="mergear" onPress={() => void mergeParallel($)} />}
+              {prs.length > 0 && <Button key="par-pr" hotkey="2" plain label="ver PR" onPress={() => void viewParallelPr($)} />}
+              <Button key="par-log" hotkey="3" plain label="log" onPress={() => void toggleLog($)} />
+              <Button key="par-close" hotkey="4" plain label="cerrar" onPress={() => void closeParallel($)} />
+            </Box>
+          </Box>
+          <Box gap={2} alignItems="flex-start">
+            {mascot}
+            <Box flexDirection="column" width={body}>
+              <Text wrap="truncate-end">
+                {parallelQueueMarks(parallel).map((m, n) => (
+                  <Text key={`pcq-${n}`} color={m.color} dimColor={m.color === undefined}>{`${n > 0 ? ' ─ ' : ''}${m.text}`}</Text>
+                ))}
+              </Text>
+              <Text wrap="truncate-end">{parallelSummaryMarks(parallel)}</Text>
+              {failed && <Text color="error" wrap="truncate-end">#{failed.issue} {failed.detail.replace(/^ERROR:\s*/, '')}</Text>}
+            </Box>
+          </Box>
           {table.rows.length > 0 && (
             <Box flexDirection="column">
               {table.rows.map(r => (
