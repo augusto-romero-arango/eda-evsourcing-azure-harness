@@ -78,7 +78,7 @@
 # Exit codes:
 #   0 -- hay al menos un issue lanzable (el orden no quedo vacio)
 #   1 -- no hay ningun issue lanzable (universo vacio, o todos los issues
-#        quedaron en ciclos y/o bloqueados)
+#        quedaron en ciclos, bloqueados y/o en PR)
 #   2 -- fallo 'gh issue list', o se invoco con argumentos invalidos
 #   (con --json, 0 y 1 emiten igualmente un JSON valido)
 #
@@ -290,7 +290,7 @@ tipo_plain_of() {
 
 # PR abierto (menor numero) que ya cubre el issue, o vacio (#2451).
 in_pr_of() {
-    local target="$1" row
+    local target="$1" row pr
     while IFS=$'\t' read -r row pr; do
         [ "$row" = "$target" ] && { echo "$pr"; return 0; }
     done <<< "$PR_MAP"
