@@ -15,8 +15,12 @@ export type BoardList = {
   infra: number[]
   /** Lote de `/mefisto:parallel` calculado por next-order. */
   parallel: { issues: number[]; launch: string | null } | null
+  /** Issues con PR abierto (`inPr[]` de next-order): se ven con su PR, sin tecla; ausente con un script viejo. */
+  inPr?: InPrItem[]
   error: string | null
 }
+
+export type InPrItem = { number: number; title: string; tipo: string | null; pr: number }
 
 export type PipelineKind = 'tdd' | 'tooling' | 'infra'
 

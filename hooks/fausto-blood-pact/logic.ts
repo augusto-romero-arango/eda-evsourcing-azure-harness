@@ -1,6 +1,6 @@
 import type { Role } from '../sprites'
 import { padEnd, reasonOf, typeBadge } from '../logic'
-import type { BitacoraNote, BitacoraPr, BoardItem, BoardList, Historian, PactMerge, PactMergePr, PipelineKind, PaneLine, PipelineResult, PipelineRun, RunStep } from '../types'
+import type { BitacoraNote, BitacoraPr, BoardItem, BoardList, InPrItem, Historian, PactMerge, PactMergePr, PipelineKind, PaneLine, PipelineResult, PipelineRun, RunStep } from '../types'
 
 export const NEXT_ORDER_FILE = 'scripts/next-order.sh'
 export const PLANNER_AGENT = 'mefisto:planner'
@@ -13,6 +13,7 @@ export function nextOrderPath(root: string): string {
 type NextOrderJson = {
   items?: { number: number; title: string; tipo?: string | null; after?: number[]; hasDepsSection?: boolean }[]
   blocked?: unknown[]
+  inPr?: { number: number; title: string; tipo?: string | null; pr: number }[]
   cycles?: unknown[]
   launch?: string | null
   infra?: number[]
@@ -40,8 +41,15 @@ export function parseNextOrder(exitCode: number, stdout: string, stderr: string)
     after: i.after ?? [],
     hasDepsSection: i.hasDepsSection !== false,
   }))
+  const inPr: InPrItem[] = (Array.isArray(json.inPr) ? json.inPr : []).map(i => ({
+    number: i.number,
+    title: i.title,
+    tipo: i.tipo ?? null,
+    pr: i.pr,
+  }))
   return {
     items,
+    inPr,
     blockedCount: (json.blocked ?? []).length,
     cycleCount: (json.cycles ?? []).length,
     launch: json.launch ?? null,
@@ -75,6 +83,34 @@ export function rowParts(
     label: rowText(item, numWidth, titleMax),
     after: reasonOf(item),
   }
+}
+
+/** Fila de un issue en PR: letra de tipo con color y `#N titulo… · PR #X` (sin tecla, toda atenuada en la consola). */
+export function inPrRowParts(item: InPrItem, numWidth: number, titleMax: number): { letter: string; color: string; label: string } {
+  const badge = typeBadge(item.tipo)
+  const suffix = ` · PR #${item.pr}`
+  return {
+    letter: badge.letter,
+    color: badge.color,
+    label: `${padEnd(`#${item.number}`, numWidth)} ${clip(item.title, Math.max(1, titleMax - suffix.length))}${suffix}`,
+  }
+}
+
+export type BoardRow = { kind: 'launch'; item: BoardItem } | { kind: 'inpr'; item: InPrItem }
+
+/** Filas de la lista: primero los lanzables y despues los issues en PR, en el orden en que llegan. */
+export function boardRowsOf(list: BoardList | null): BoardRow[] {
+  if (!list) return []
+  return [
+    ...list.items.map((item): BoardRow => ({ kind: 'launch', item })),
+    ...(list.inPr ?? []).map((item): BoardRow => ({ kind: 'inpr', item })),
+  ]
+}
+
+/** Cabecera de la lista: `listos N` (solo lanzables) y, con issues en PR, `· en PR M`. */
+export function listosTextOf(list: BoardList): string {
+  const m = list.inPr?.length ?? 0
+  return `listos ${list.items.length}${m > 0 ? ` · en PR ${m}` : ''}`
 }
 
 /** Etiqueta del boton: `#issue titulo`; la tecla la dibuja el boton y el tipo va en su letra. */
