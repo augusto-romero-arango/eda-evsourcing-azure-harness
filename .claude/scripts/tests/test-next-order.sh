@@ -44,6 +44,9 @@
 #             item: vinetas '-'/'*' y sin vineta se reconocen, solo el primer
 #             numero por linea, negaciones y prosa a mitad de linea se
 #             ignoran (issue #2126, CA-1..CA-3).
+#   [U]       Issues con PR abierto fuera del orden: closingIssuesReferences,
+#             rama worktree-mefisto-issue-, dependientes bloqueados con
+#             reason pr, --refinement sin consulta y fallo de 'gh pr list' (#2453).
 #
 # Uso: .claude/scripts/tests/test-next-order.sh
 # Exit code: 0 si todos los chequeos pasan, 1 si alguno falla.
@@ -119,6 +122,12 @@ if [ "$1" = "issue" ] && [ "$2" = "view" ]; then
         exit 0
     fi
     exit 1
+fi
+
+if [ "$1" = "pr" ] && [ "$2" = "list" ]; then
+    [ -f "$DATA/pr_list.fail" ] && exit 1
+    if [ -f "$DATA/pr_list.json" ]; then cat "$DATA/pr_list.json"; else echo "[]"; fi
+    exit 0
 fi
 
 if [ "$1" = "pr" ] && [ "$2" = "view" ]; then
@@ -748,6 +757,74 @@ if [ "$DEPS_OUT" = "10 12 13 " ]; then
     pass "S: '-', '*' y sin vineta reconocidos; '#11', negaciones y prosa ignorados"
 else
     fail "S: se esperaba '10 12 13 ', se obtuvo '$DEPS_OUT'"
+fi
+
+# -------- Bloque U: issues en PR (#2453) --------
+
+echo ""
+echo "[U] Issues con PR abierto salen del orden"
+
+LISTA_U='[{"number":601,"title":"A","body":""},{"number":602,"title":"B","body":"## Dependencias\n- Depende de #601"},{"number":603,"title":"C","body":"## Dependencias\n- Depende de #602"},{"number":604,"title":"D","body":""},{"number":605,"title":"E","body":""},{"number":606,"title":"F","body":""}]'
+
+reset_fixtures
+echo "$LISTA_U" | set_issue_list
+echo '[{"number":900,"headRefName":"otra","closingIssuesReferences":[{"number":601}]},{"number":899,"headRefName":"worktree-mefisto-issue-601-x","closingIssuesReferences":[]},{"number":901,"headRefName":"worktree-mefisto-issue-605-y","closingIssuesReferences":[]}]' > "$FAKE_DATA/pr_list.json"
+JSON=$(run_script --json)
+if [ "$(echo "$JSON" | jq -c '[.items[].number]')" = '[604,606]' ] \
+    && [ "$(echo "$JSON" | jq -c '.launch')" = '"/mefisto-sequential 604 606"' ] \
+    && [ "$(echo "$JSON" | jq -c '[.inPr[] | [.number,.pr]]')" = '[[601,899],[605,901]]' ]; then
+    pass "U: CA-1 en PR (closing y rama) fuera de items/launch, menor PR gana"
+else
+    fail "U: inPr inesperado: $JSON"
+fi
+if [ "$(echo "$JSON" | jq -c '[.blocked[] | [.number,.by,.reason,.pr]]')" = '[[602,601,"pr",899],[603,602,"indirect",null]]' ]; then
+    pass "U: CA-2 dependiente bloqueado reason pr con pr, y el siguiente indirecto"
+else
+    fail "U: blocked inesperado: $JSON"
+fi
+OUTPUT=$(run_script)
+if echo "$OUTPUT" | grep -q "^#601 en PR #899: pendiente de merge$" \
+    && echo "$OUTPUT" | grep -q "^#602 bloqueado por #601: espera el merge del PR #899$" \
+    && echo "$OUTPUT" | grep -q "^#603 bloqueado por #602: excluido del orden$"; then
+    pass "U: CA-1/CA-2 texto en PR y bloqueo por PR"
+else
+    fail "U: texto inesperado: $OUTPUT"
+fi
+
+reset_fixtures
+echo '[{"number":611,"title":"A","body":""}]' | set_issue_list
+echo '[{"number":950,"headRefName":"worktree-mefisto-issue-611-x","closingIssuesReferences":[]}]' > "$FAKE_DATA/pr_list.json"
+OUTPUT=$(run_script 2>&1)
+RC=$?
+if [ "$RC" -eq 1 ] && echo "$OUTPUT" | grep -q "(sin issues lanzables)"; then
+    pass "U: todo en PR -> exit 1"
+else
+    fail "U: todo en PR dio $RC: $OUTPUT"
+fi
+
+reset_fixtures
+echo "$LISTA_U" | set_issue_list
+touch "$FAKE_DATA/pr_list.fail"
+ERR=$(run_script --json 2>&1 >/dev/null)
+JSON=$(run_script --json 2>/dev/null)
+if echo "$ERR" | grep -q "ADVERTENCIA: no se pudo consultar PRs abiertos; el orden no excluye issues en PR" \
+    && [ "$(echo "$JSON" | jq -c '[.items[].number]')" = '[601,602,603,604,605,606]' ] \
+    && [ "$(echo "$JSON" | jq -c '.inPr')" = '[]' ]; then
+    pass "U: CA-3 fallo de gh pr list avisa en stderr y calcula como antes"
+else
+    fail "U: fallo de pr list inesperado: $ERR / $JSON"
+fi
+
+reset_fixtures
+echo '[{"number":621,"title":"Borr","body":""}]' | set_issue_list
+echo '[]' > "$FAKE_DATA/listo_nums"
+touch "$FAKE_DATA/pr_list.fail"
+ERR=$(run_script --refinement --json 2>&1 >/dev/null)
+JSON=$(run_script --refinement --json 2>/dev/null)
+if [ -z "$ERR" ] && [ "$(echo "$JSON" | jq -c '[.items[].number, .inPr]')" = '[621,[]]' ]; then
+    pass "U: CA-3 --refinement no consulta PRs (sin advertencia, inPr [])"
+else
+    fail "U: --refinement inesperado: $ERR / $JSON"
 fi
 
 # -------- Resumen --------
