@@ -66,6 +66,7 @@ header()  { local m="\n${CYAN}${BOLD}── $1 ──${NC}"; echo -e "$m"; _log_
 abort() {
     echo -e "\n${RED}${BOLD}✗ ERROR FATAL: $1${NC}" | tee -a "$LOG_FILE_ABS"
     echo -e "${YELLOW}Revisa el log: $LOG_FILE_ABS${NC}"
+    write_parallel_status failed
     exit 1
 }
 
@@ -81,6 +82,89 @@ BATCH_STOP_SIGNAL="pipeline-state/batch-stop"
 
 batch_stop_requested() {
     [ -f "$BATCH_STOP_SIGNAL" ]
+}
+
+# ─── Status del lote (issue #2447, MEF-ADR-0055 decision 1, MEF-ADR-0053) ─────
+# pipeline-status-parallel.json en el directorio de estado, misma forma que el
+# status del lote sequential (#2202) pero sin `current` (hay varios issues en
+# curso a la vez) y con `terminado` en vez de `mergeado` (este lote no mergea).
+# Se reescribe entero (tmp + mv) al arrancar, en cada cambio de estado de un
+# issue y al terminar; el archivo final no se borra y --keep-status no lo
+# afecta. Sin jq no se escribe nada y el lote corre igual.
+PS_NUMS=(); PS_PIPES=(); PS_STATUS=(); PS_PRS=(); PS_STARTED=(); PS_FINISHED=(); PS_DETAIL=()
+PARALLEL_STATUS_FILE=""
+PARALLEL_STATE="running"
+STOP_SEEN=false
+
+ps_add() {
+    PS_NUMS+=("$1"); PS_PIPES+=("$2"); PS_STATUS+=("$3"); PS_PRS+=(""); PS_STARTED+=(""); PS_FINISHED+=("")
+    PS_DETAIL+=("$4")
+}
+
+ps_find() {
+    local i
+    for i in "${!PS_NUMS[@]}"; do
+        if [ "${PS_NUMS[$i]}" = "$1" ]; then echo "$i"; return 0; fi
+    done
+    return 1
+}
+
+write_parallel_status() {
+    [ -n "${1:-}" ] && PARALLEL_STATE="$1"
+    [ -n "$PARALLEL_STATUS_FILE" ] || return 0
+    command -v jq >/dev/null 2>&1 || return 0
+    [ ${#PS_NUMS[@]} -gt 0 ] || return 0
+    local rows="" i stop=false detail
+    if [ "$STOP_SEEN" = "true" ] || [ -f "$BATCH_STOP_SIGNAL" ]; then stop=true; fi
+    for i in "${!PS_NUMS[@]}"; do
+        detail="$(printf '%s' "${PS_DETAIL[$i]}" | tr '\t\n' '  ')"
+        rows="${rows}${PS_NUMS[$i]}"$'\t'"${PS_PIPES[$i]}"$'\t'"${PS_STATUS[$i]}"$'\t'"${PS_PRS[$i]}"$'\t'"${PS_STARTED[$i]}"$'\t'"${PS_FINISHED[$i]}"$'\t'"$detail"$'\n'
+    done
+    printf '%s' "$rows" | jq -R -s \
+        --arg started "$TIMESTAMP" --arg state "$PARALLEL_STATE" \
+        --arg log "${LOG_FILE_ABS:-}" --argjson stop "$stop" '
+        def num: if . == "" then null else (tonumber? // .) end;
+        { pipeline: "parallel", started: $started, state: $state,
+          stop_requested: $stop, log: $log,
+          issues: [split("\n")[] | select(. != "") | split("\t")
+                   | { issue: (.[0] | tonumber? // .),
+                       pipeline: (if .[1] == "" then null else .[1] end),
+                       status: .[2], pr: (.[3] | num),
+                       started: (.[4] | num), finished: (.[5] | num),
+                       detail: (if (.[6] // "") == "" then null else .[6] end) }] }' \
+        > "$PARALLEL_STATUS_FILE.tmp" 2>/dev/null && mv "$PARALLEL_STATUS_FILE.tmp" "$PARALLEL_STATUS_FILE" || true
+}
+
+# ps_mark <issue> <status> [pr_url_o_numero] [detail]
+ps_mark() {
+    local p pr="${3:-}"
+    p=$(ps_find "$1") || return 0
+    PS_STATUS[$p]="$2"
+    [ -n "$pr" ] && PS_PRS[$p]="${pr##*/}"
+    PS_DETAIL[$p]="${4:-}"
+    case "$2" in
+        en-curso)           PS_STARTED[$p]="$(date +%s)" ;;
+        terminado|fallido)  PS_FINISHED[$p]="$(date +%s)" ;;
+    esac
+    write_parallel_status
+}
+
+# Marca terminado/fallido los lanzados cuyo proceso ya murio y cuyo status por
+# corrida lo dice; el resultado definitivo (exit code) lo fija la recoleccion.
+refresh_parallel_status() {
+    local i issue p st
+    for i in "${!PIDS[@]}"; do
+        [ -n "${PIDS[$i]:-}" ] || continue
+        kill -0 "${PIDS[$i]}" 2>/dev/null && continue
+        issue="${ISSUE_NUMS[$i]}"
+        p=$(ps_find "$issue") || continue
+        [ "${PS_STATUS[$p]}" = "en-curso" ] || continue
+        st=$(read_status_field "${STATUS_FILES[$i]}" "state")
+        case "$st" in
+            completed) ps_mark "$issue" terminado "$(read_status_field "${STATUS_FILES[$i]}" "pr" | sed 's/^-$//')" ;;
+            failed)    ps_mark "$issue" fallido "" "$(read_status_field "${STATUS_FILES[$i]}" "last_error")" ;;
+        esac
+    done
 }
 
 # ─── Parsear argumentos ───────────────────────────────────────────────────────
@@ -158,6 +242,7 @@ cd "$REPO_ROOT"
 LOG_DIR="$(dirname "$(mefisto_state_path 'logs/.state')")"
 LOG_FILE_ABS="$(mefisto_state_path "logs/parallel-$TIMESTAMP.log")"
 touch "$LOG_FILE_ABS"
+PARALLEL_STATUS_FILE="$(mefisto_state_path 'pipeline-status-parallel.json')"
 
 # events.log del checkout (issue #973): el MISMO archivo que tdd-pipeline.sh/
 # tooling-pipeline.sh/iac-pipeline.sh escriben para cada worktree que lanza
@@ -236,20 +321,27 @@ for ISSUE_NUM in "${ISSUE_NUMS[@]}"; do
 
     if [ "$ISSUE_STATE" != "OPEN" ]; then
         warn "Issue #$ISSUE_NUM esta $ISSUE_STATE --- saltando."
+        ps_add "$ISSUE_NUM" "" saltado "esta $ISSUE_STATE"
         continue
     fi
 
     if [[ "$RESOLVED" == SKIP:* ]]; then
         local_reason="${RESOLVED#SKIP:}"
         warn "Issue #$ISSUE_NUM saltado ($local_reason) --- no se puede enrutar a un pipeline."
+        ps_add "$ISSUE_NUM" "" saltado "$local_reason"
         continue
     fi
 
+    _ps_type="tdd"
+    case "$(basename "$RESOLVED")" in *tooling*) _ps_type="tooling" ;; esac
+    ps_add "$ISSUE_NUM" "$_ps_type" pendiente ""
     VALID_ISSUES+=("$ISSUE_NUM")
     ISSUE_PIPELINES+=("$RESOLVED")
     ISSUE_IS_PROJECTION+=("$IS_PROJECTION")
     log "Issue #$ISSUE_NUM -> $(basename "$RESOLVED")$([ "$IS_PROJECTION" = "true" ] && echo " (read-side: se serializa con otras projections)")"
 done
+
+write_parallel_status running
 
 if [ ${#VALID_ISSUES[@]} -eq 0 ]; then
     abort "No hay issues validos para procesar."
@@ -294,10 +386,15 @@ DEFERRED_FLAG=()   # DEFERRED_FLAG[i]="true" si el issue en esa posicion quedo a
 defer_pending_issues() {
     local idx
     rm -f "$BATCH_STOP_SIGNAL"
+    STOP_SEEN=true
     for idx in ${PENDING_IDXS[@]+"${PENDING_IDXS[@]}"}; do
         DEFERRED_FLAG[$idx]="true"
+        if declare -F ps_mark >/dev/null 2>&1; then
+        ps_mark "${ISSUE_NUMS[$idx]}" aplazado "" "parada solicitada; no se proceso en esta corrida"
+        fi
     done
     PENDING_IDXS=()
+    if declare -F write_parallel_status >/dev/null 2>&1; then write_parallel_status; fi
 }
 
 # launch_pipeline <idx>
@@ -326,6 +423,7 @@ launch_pipeline() {
     ISSUE_LOGS[$idx]="$issue_log"
     START_TIMES[$idx]="$(date +%s)"
 
+    ps_mark "$issue" en-curso
     log "Lanzado issue #$issue con $(basename "$pipeline_script") (PID $!) -> $status_file"
 }
 
@@ -546,6 +644,7 @@ while [ ${#PENDING_IDXS[@]} -gt 0 ]; do
         continue
     fi
 
+    refresh_parallel_status
     NEXT_PENDING=()
     for idx in "${PENDING_IDXS[@]}"; do
         _proj_running="false"
@@ -577,6 +676,8 @@ done
 # siguiente, y se avisa para que el humano no busque aplazados inexistentes.
 if batch_stop_requested; then
     rm -f "$BATCH_STOP_SIGNAL"
+    STOP_SEEN=true
+    write_parallel_status
     warn "Parada solicitada ($BATCH_STOP_SIGNAL): no quedaba ningun issue en cola por lanzar (todos ya estaban en vuelo). La senal se consumio igual, para no afectar la corrida siguiente."
 fi
 
@@ -601,6 +702,7 @@ while [ ${#PIDS[@]} -gt 0 ]; do
         kill -0 "$pid" 2>/dev/null && ALL_DONE=false && break
     done
 
+    refresh_parallel_status
     print_dashboard
 
     if [ "$ALL_DONE" = "true" ]; then
@@ -652,11 +754,13 @@ for i in "${!ISSUE_NUMS[@]}"; do
         fi
         ISSUE_RESULTS+=("completado")
         ISSUE_PRS+=("${PR_URL:-}")
+        ps_mark "$local_issue" terminado "${PR_URL:-}"
         COMPLETED=$((COMPLETED + 1))
     else
         ERR=$(read_status_field "$local_status" "last_error")
         [ "$ERR" = "-" ] && ERR="exit $PIPELINE_EXIT"
         ISSUE_RESULTS+=("ERROR: $ERR")
+        ps_mark "$local_issue" fallido "" "$ERR"
         ISSUE_PRS+=("")
         FAILED=$((FAILED + 1))
     fi
@@ -716,6 +820,12 @@ fi
 echo -e "  ${YELLOW}Nota: los PRs NO se mergearon automáticamente.${NC}"
 echo -e "  Para integrar a main usa: ${CYAN}/merge <PR_NUM>${NC}"
 echo ""
+
+if [ "$DEFERRED" -gt 0 ]; then
+    write_parallel_status stopped
+else
+    write_parallel_status completed
+fi
 
 # ─── Cleanup de status files ──────────────────────────────────────────────────
 if [ "$KEEP_STATUS" = "false" ]; then
