@@ -148,6 +148,8 @@ declare module 'claude-code' {
       /** Banda de cada issue en curso del parallel: su corrida, sus ultimas lineas y su ultimo evento (para la pose). */
       pactParallelBands: Record<string, { run: PipelineRun | null; lines: string[]; last: { kind: 'tool' | 'text'; tool: string } | null }>
       pactParallelPage: number
+      /** PRs del lote parallel ya mergeados desde la consola. */
+      pactParallelMerged: string[]
       pactMerge: PactMerge | null
       pactLogLines: PaneLine[]
       pactPaneRun: PipelineRun | null

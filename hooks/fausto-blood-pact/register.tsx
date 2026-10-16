@@ -1854,7 +1854,7 @@ export const register: Register = on => {
     const { page, pages } = pageOf(await read($, pageAtom), allRows.length, PAGE_ROWS)
     const visibleRows = allRows.slice(page * PAGE_ROWS, (page + 1) * PAGE_ROWS)
     const visible = visibleRows.map(r => r.item)
-    const numWidth = numberWidth(visible as never)
+    const numWidth = numberWidth(visible)
     const afterWidth = Math.min(16, Math.max(0, ...visibleRows.map(r => (r.kind === 'launch' ? reasonOf(r.item).length : 0))))
     const titleWidth = Math.max(12, body - 3 - 2 - numWidth - 1 - (afterWidth > 0 ? afterWidth + 2 : 0))
     const notesCount = bitacoraCount(await read($, fieldNotesAtom), openPrs)

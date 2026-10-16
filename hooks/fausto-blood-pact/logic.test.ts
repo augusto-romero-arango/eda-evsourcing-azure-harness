@@ -1155,7 +1155,8 @@ test('parseNextOrder lee inPr[] presente, vacio y ausente', () => {
 test('listosTextOf cuenta solo lanzables y suma en PR si hay', () => {
   expect(listosTextOf(parseNextOrder(0, withInPr, ''))).toBe('listos 1 · en PR 2')
   expect(listosTextOf(parseNextOrder(0, json, ''))).toBe('listos 1')
-  expect(listosTextOf({ ...board(1, 2), inPr: undefined })).toBe('listos 2')
+  expect(listosTextOf({ ...board(), inPr: undefined })).toBe('listos 4')
+  expect(listosTextOf(board({ inPr: [] }))).toBe('listos 4')
 })
 
 test('inPrRowParts: letra con color y PR en la etiqueta', () => {
@@ -1165,10 +1166,11 @@ test('inPrRowParts: letra con color y PR en la etiqueta', () => {
 })
 
 test('boardRowsOf pone los lanzables antes que los de PR y pagina todo junto', () => {
-  const list = { ...board(1, 2, 3, 4), inPr: [{ number: 90, title: 'a', tipo: null, pr: 5 }, { number: 91, title: 'b', tipo: null, pr: 6 }] }
+  const list = board({ inPr: [{ number: 90, title: 'a', tipo: null, pr: 5 }, { number: 91, title: 'b', tipo: null, pr: 6 }] })
   const rows = boardRowsOf(list)
-  expect(rows.map(r => `${r.kind}:${r.item.number}`)).toEqual(['launch:1', 'launch:2', 'launch:3', 'launch:4', 'inpr:90', 'inpr:91'])
+  expect(rows.map(r => `${r.kind}:${r.item.number}`)).toEqual(['launch:7', 'launch:8', 'launch:9', 'launch:10', 'inpr:90', 'inpr:91'])
   expect(pageOf(1, rows.length, 5)).toEqual({ page: 1, pages: 2 })
-  expect(boardRowsOf(board(1)).length).toBe(1)
+  expect(rows.slice(5, 10).map(r => r.kind)).toEqual(['inpr'])
+  expect(boardRowsOf(board()).length).toBe(4)
   expect(boardRowsOf(null)).toEqual([])
 })
