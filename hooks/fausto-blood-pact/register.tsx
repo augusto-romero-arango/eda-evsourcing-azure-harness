@@ -552,7 +552,7 @@ async function paneTarget($: EngineInterface): Promise<PipelineRun | null> {
   const batch = await read($, batchAtom)
   const runs = await read($, runsAtom)
   const parallel = await read($, parallelAtom)
-  if (!batch && parallel) {
+  if (parallel && lotViewOf(batch, parallel) === 'parallel') {
     const live = parallelRunning(parallel)
     const chosen = live.find(i => i.issue === paneIssue) ?? live[0]
     return chosen ? parallelRunOf(chosen, runs) : null
@@ -618,7 +618,7 @@ async function toggleLog($: EngineInterface) {
     return
   }
   const parallel = await read($, parallelAtom)
-  const live = parallel && !(await read($, batchAtom)) ? parallelRunning(parallel) : []
+  const live = parallel && lotViewOf(await read($, batchAtom), parallel) === 'parallel' ? parallelRunning(parallel) : []
   let issue: number | null = null
   if (live.length > 1) {
     const answer = await $.ui
@@ -1400,7 +1400,7 @@ export const register: Register = on => {
                     ))
                   : ' '}
               </Text>
-              <Text wrap="truncate-end">{clip(`#${i.issue} ${run?.title ?? ''}`.trim(), body)}</Text>
+              <Text dimColor wrap="truncate-end">{clip(`#${i.issue} ${run?.title ?? ''}`.trim(), body)}</Text>
               {hold ? <Text color="warning" wrap="truncate-end">{clip(hold, body)}</Text> : null}
               {recent.map((l, n) => (
                 <Text key={`pline-${i.issue}-${n}`} color={l.color} wrap="truncate-end">{clip(`${l.ts} ${l.text}`, body)}</Text>
