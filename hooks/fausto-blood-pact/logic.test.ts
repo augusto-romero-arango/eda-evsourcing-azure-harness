@@ -3,6 +3,12 @@ import { expect, test } from 'claude-code/testing'
 import { sprite } from '../sprites'
 import {
   canStopParallel,
+  parallelClosedHeader,
+  parallelClosedTable,
+  parallelCounts,
+  parallelDismissKey,
+  parallelMergeablePrs,
+  parallelSummaryMarks,
   lotViewOf,
   paginateBands,
   parallelHeader,
@@ -992,7 +998,8 @@ test('lotViewOf: sequential en curso, parallel en curso, sequential cerrado, nad
   expect(lotViewOf(null, par)).toBe('parallel')
   expect(lotViewOf(seq('completed'), par)).toBe('parallel')
   expect(lotViewOf(seq('completed'), null)).toBe('closed-sequential')
-  expect(lotViewOf(null, parallelOf('completed', []))).toBe(null)
+  expect(lotViewOf(null, parallelOf('completed', []))).toBe('closed-parallel')
+  expect(lotViewOf(seq('completed'), parallelOf('completed', [], { started: '2999-01-01T00:00:00Z' }))).toBe('closed-parallel')
   expect(lotViewOf(null, null)).toBe(null)
 })
 
@@ -1073,4 +1080,51 @@ test('parallelTable: una sola fila no lleva total y sin filas queda vacia', () =
   expect(one.rows.length).toBe(1)
   expect(one.total).toBe(null)
   expect(parallelTable(parallelOf('running', [pIssue(1, 'pendiente')]), {}, () => null, 0, 0).rows).toEqual([])
+})
+
+test('resumen del parallel terminado: conteos y estado de la cabecera', () => {
+  const p = parallelOf('stopped', [
+    pIssue(1, 'terminado', { pr: 5, started: 100, finished: 160 }),
+    pIssue(2, 'fallido'),
+    pIssue(3, 'aplazado'),
+    pIssue(4, 'saltado'),
+    pIssue(5, 'terminado'),
+  ])
+  expect(parallelCounts(p)).toEqual({ withPr: 2, failed: 1, deferred: 1, skipped: 1, total: 5 })
+  expect(parallelSummaryMarks(p)).toBe('✓ 2 con PR · ✗ 1 fallidos · ⏸ 1 aplazados · ⤼ 1 saltados')
+  expect(parallelSummaryMarks(parallelOf('completed', [pIssue(1, 'terminado')]))).toBe('✓ 1 con PR')
+  const h = parallelClosedHeader(p)
+  expect(h.progress).toBe('parallel 3/5')
+  expect(h.label).toBe('detenido')
+  expect(parallelClosedHeader(parallelOf('completed', [])).label).toBe('terminado')
+  expect(parallelClosedHeader(parallelOf('failed', [])).label).toBe('con fallos')
+  expect(parallelDismissKey('/r', p)).toContain('|parallel|')
+})
+
+test('tabla del parallel terminado: fallido con fila, saltado sin ella y total', () => {
+  const p = parallelOf('completed', [pIssue(1, 'terminado', { pr: 5 }), pIssue(2, 'fallido'), pIssue(3, 'saltado')])
+  const stats = {
+    '1': { durationMs: 60_000, costUsd: 1.5, title: 'Uno', finishedMs: 1 },
+    '2': { durationMs: 30_000, costUsd: 0.5, title: 'Dos', finishedMs: 2 },
+  }
+  const t = parallelClosedTable(p, stats, 12)
+  expect(t.rows.map(r => r.key)).toEqual(['done-1', 'done-2'])
+  expect(t.rows.map(r => r.mark)).toEqual(['✓', '✗'])
+  expect(t.rows[0]!.lead).toContain('PR #5')
+  expect(t.rows[1]!.lead).toContain('sin PR')
+  expect(t.total).toContain('$2.00')
+  expect(parallelClosedTable(parallelOf('completed', [pIssue(1, 'terminado')]), {}, 0).total).toBe(null)
+})
+
+test('parallelMergeablePrs excluye sin PR, no terminados y ya mergeados', () => {
+  const p = parallelOf('completed', [
+    pIssue(1, 'terminado', { pr: 5 }),
+    pIssue(2, 'terminado', { pr: 9 }),
+    pIssue(3, 'terminado'),
+    pIssue(4, 'fallido', { pr: 11 }),
+    pIssue(5, 'terminado', { pr: 7 }),
+  ])
+  expect(parallelMergeablePrs(p, new Set()).map(x => x.pr)).toEqual(['9', '7', '5'])
+  expect(parallelMergeablePrs(p, new Set(['9'])).map(x => x.pr)).toEqual(['7', '5'])
+  expect(parallelMergeablePrs(p, new Set(['9', '7', '5']))).toEqual([])
 })
