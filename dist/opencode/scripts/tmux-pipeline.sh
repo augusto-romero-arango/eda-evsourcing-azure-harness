@@ -180,13 +180,6 @@ launch_detached() {
     log "Log: $report_log"
 }
 
-# delegate_deferred_herdr: ejecuta la delegacion a herdr que main() difirio
-# (solo los modos de --parallel, que no tienen variante desacoplada).
-delegate_deferred_herdr() {
-    [ -n "${DEFERRED_HERDR:-}" ] || return 0
-    exec "$SCRIPT_DIR/herdr-pipeline.sh" "${DEFERRED_HERDR_ARGS[@]}"
-}
-
 # Asegurar que events.log existe para que tail no falle
 ensure_events_log() {
     touch "$(mefisto_state_path 'events.log')"
@@ -513,6 +506,16 @@ cmd_parallel() {
 
     if [ ${#issues[@]} -eq 0 ]; then
         abort "Debes especificar al menos un issue. Uso: --parallel 42 43 44"
+    fi
+
+    # Issue #2448: en modo desacoplado no hay panes; parallel-pipeline.sh es el
+    # scheduler (serializa tipo:projection, respeta --max-parallel y escalona).
+    if uses_detached_ui; then
+        local detached_args=""
+        [ -n "$pipeline_override" ] && detached_args="--pipeline $pipeline_override "
+        [ -n "$max_parallel" ] && detached_args="${detached_args}--max-parallel $max_parallel "
+        launch_detached "parallel" "$SCRIPT_DIR/parallel-pipeline.sh" "${detached_args}${issues[*]}"
+        return 0
     fi
 
     check_tmux
@@ -906,17 +909,11 @@ main() {
     # con equivalente se despachan a la interfaz herdr (pane de ejecucion en
     # el workspace actual, sin sesion tmux); fuera de herdr, o para
     # --attach, todo sigue igual que siempre.
-    # Issue #2285: con el modo desacoplado (uses_detached_ui) la delegacion se
-    # difiere: solo --parallel (un pane por issue, por diseno) la ejecuta, tras
-    # parsear; el resto de los modos corre sin pane.
-    DEFERRED_HERDR=""
-    DEFERRED_HERDR_ARGS=("$@")
-    if should_delegate_to_herdr "$@"; then
-        if uses_detached_ui; then
-            DEFERRED_HERDR=1
-        else
-            exec "$SCRIPT_DIR/herdr-pipeline.sh" "$@"
-        fi
+    # Issues #2285/#2448: con el modo desacoplado (uses_detached_ui) ningun modo
+    # delega en herdr: todos corren sin pane, incluido --parallel (que delega en
+    # parallel-pipeline.sh).
+    if should_delegate_to_herdr "$@" && ! uses_detached_ui; then
+        exec "$SCRIPT_DIR/herdr-pipeline.sh" "$@"
     fi
 
     # Pre-parsear --scaffold-domain, --pipeline, --from-stage y --if-exists
@@ -1108,7 +1105,6 @@ main() {
             [ -n "$from_stage_extra" ] && abort "--from-stage no es valido con --parallel (seria ambiguo sobre varios issues). Usalo con un unico issue: tmux-pipeline.sh <issue> --from-stage N"
             [ -n "$models_extra" ] && abort "--models no es valido con --parallel (seria ambiguo sobre varios issues). Usalo con un unico issue: tmux-pipeline.sh --tooling <issue> --models 'agente=modelo'"
             [ -n "$variant_extra" ] && abort "--variant no es valido con --parallel (seria ambiguo sobre varios issues). Usalo con un unico issue: tmux-pipeline.sh --tooling <issue> --variant <label>"
-            delegate_deferred_herdr
             # Pasar --pipeline al cmd_parallel si se proporciono
             if [ -n "$pipeline_override" ]; then
                 cmd_parallel --pipeline "$pipeline_override" "$@"
@@ -1125,8 +1121,7 @@ main() {
                 [ -n "$models_extra" ] && abort "--models no es valido con multiples issues (se interpretaria como --parallel). Usa: tmux-pipeline.sh --tooling <issue> --models 'agente=modelo'"
                 [ -n "$variant_extra" ] && abort "--variant no es valido con multiples issues (se interpretaria como --parallel). Usa: tmux-pipeline.sh --tooling <issue> --variant <label>"
                 warn "Multiples issues sin modo especificado. Usando --parallel."
-                delegate_deferred_herdr
-                if [ -n "$pipeline_override" ]; then
+                    if [ -n "$pipeline_override" ]; then
                     cmd_parallel --pipeline "$pipeline_override" "$@"
                 else
                     cmd_parallel "$@"

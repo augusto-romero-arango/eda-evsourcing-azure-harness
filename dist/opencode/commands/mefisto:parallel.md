@@ -70,6 +70,15 @@ Cada pipeline conserva sus logs por issue en `.mefisto/pipeline/logs`; el visor 
 
 ### 3. Instrucciones de conexion
 
+Seguimiento por runtime: cuando el runtime activo trae su propia cinta de seguimiento (la consola `fausto-blood-pact`) y el usuario no fijo la interfaz, el wrapper no abre panes ni sesion tmux: delega en `parallel-pipeline.sh` desacoplado (escalonado de 30s entre issues, `tipo:projection` serializados) y la corrida se sigue en la banda de la consola `fausto-blood-pact` de esta sesion; el report queda en `.mefisto/pipeline/logs/parallel-run-<timestamp>.report.log`. En ese caso responde con:
+
+```
+Pipeline paralelo corriendo sin panes: lo sigues en la banda de fausto-blood-pact.
+Los PRs NO se mergean automaticamente.
+```
+
+En el resto de los runtimes (MEF-ADR-0050), o con la interfaz fijada por el usuario, el seguimiento es con panes:
+
 Dentro de Herdr (`HERDR_ENV=1` en el entorno), el wrapper delega en la interfaz Herdr y no hay nada que adjuntar: cada issue queda corriendo en su propio pane apilado de este workspace, con el visor en vivo de su agente y arranques escalonados de 30s. En ese caso responde con:
 
 ```
@@ -92,5 +101,5 @@ Cada issue tiene su propio pane. Los PRs NO se mergean automaticamente.
 - **No implementes nada tu mismo.** Solo lanza el wrapper.
 - Los PRs creados no se mergean. Recuerdale al usuario que puede usar /mefisto:merge despues.
 - Si el usuario pasa `--pipeline tdd|tooling`, pasalo tal cual al wrapper.
-- **Issues `tipo:projection`: nunca deben correr dos a la vez.** Todas las proyecciones del BC comparten los archivos del worker de proyecciones (MEF-ADR-0034). En cualquiera de los dos modos pane (Herdr y tmux) un lote con dos o mas aborta con mensaje, antes de crear panes: el camino es /mefisto:sequential, o `${MEFISTO_PACKAGE_ROOT}/scripts/parallel-pipeline.sh` directo (su scheduler si los serializa dentro del lote sin frenar al resto).
+- **Issues `tipo:projection`: nunca deben correr dos a la vez.** Todas las proyecciones del BC comparten los archivos del worker de proyecciones (MEF-ADR-0034). En los modos pane (Herdr y tmux) un lote con dos o mas aborta con mensaje, antes de crear panes; en el modo sin panes no aborta porque el scheduler los serializa. Para los modos pane: el camino es /mefisto:sequential, o `${MEFISTO_PACKAGE_ROOT}/scripts/parallel-pipeline.sh` directo (su scheduler si los serializa dentro del lote sin frenar al resto).
 - Para limitar la concurrencia con `--max-parallel`, lanza `${MEFISTO_PACKAGE_ROOT}/scripts/parallel-pipeline.sh` directo. Para detener esa corrida con cola usa /mefisto:batch-stop; el modo pane de este comando lanza todos los issues de entrada y no tiene cola que retener.

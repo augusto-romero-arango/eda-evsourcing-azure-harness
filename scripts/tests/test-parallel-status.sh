@@ -73,7 +73,7 @@ EOS
 
 run_parallel() {
     local dir="$1"; shift
-    (cd "$dir" && env -u MEFISTO_LEGACY_STATE_DIR -u MEFISTO_REPO_ROOT -u MEFISTO_LAUNCH_ROOT MEFISTO_STATE_DIR="$dir/.mefisto/pipeline" PATH="$FAKE_BIN:$SAFE_SYSTEM_PATH" MEFISTO_RUNTIME=claude ./scripts/parallel-pipeline.sh "$@") \
+    (cd "$dir" && env -u MEFISTO_LEGACY_STATE_DIR -u MEFISTO_REPO_ROOT -u MEFISTO_LAUNCH_ROOT MEFISTO_STATE_DIR="$dir/.mefisto/pipeline" PATH="$FAKE_BIN:$SAFE_SYSTEM_PATH" MEFISTO_RUNTIME=claude ./scripts/parallel-pipeline.sh --stagger 0 "$@") \
         </dev/null >"$TMP/stdout" 2>"$TMP/stderr"
     LAST_RC=$?
     STATUS_FILE=$(find "$dir" -name 'pipeline-status-parallel.json' -not -path '*/.git/*' 2>/dev/null | head -1)

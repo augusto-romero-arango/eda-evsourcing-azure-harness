@@ -117,8 +117,37 @@ run MEFISTO_RUNTIME=claude MEFISTO_UI=herdr -- --tooling 2285
 if grep -qE "pane (split|run)" "$STUB_LOG"; then pass "MEFISTO_UI=herdr gana"; else fail "no uso herdr: $(cat "$STUB_LOG") err: $LAST_ERR"; fi
 run MEFISTO_RUNTIME=claude MEFISTO_UI=tmux -- --tooling 2285
 if grep -qF "tmux new-session" "$STUB_LOG" && no_panes; then pass "MEFISTO_UI=tmux gana"; else fail "no uso tmux: $(cat "$STUB_LOG") err: $LAST_ERR"; fi
-run MEFISTO_RUNTIME=claude -- --parallel 2285 2286
-if grep -qE "pane (split|run)" "$STUB_LOG" && no_tmux_session; then pass "--parallel con claude sigue por herdr"; else fail "--parallel cambio: $(cat "$STUB_LOG") err: $LAST_ERR"; fi
+run MEFISTO_RUNTIME=claude MEFISTO_UI=herdr -- --parallel 2285 2286
+if grep -qE "pane (split|run)" "$STUB_LOG" && no_tmux_session; then pass "--parallel con MEFISTO_UI=herdr conserva panes"; else fail "--parallel herdr cambio: $(cat "$STUB_LOG") err: $LAST_ERR"; fi
+run MEFISTO_RUNTIME=opencode -- --parallel 2285 2286
+if grep -qE "pane (split|run)" "$STUB_LOG" && no_tmux_session; then pass "--parallel con opencode conserva panes"; else fail "--parallel opencode cambio: $(cat "$STUB_LOG") err: $LAST_ERR"; fi
+run MEFISTO_RUNTIME=claude MEFISTO_UI=tmux -- --parallel 2285 2286
+if grep -qF "tmux new-session" "$STUB_LOG" && no_panes; then pass "--parallel con MEFISTO_UI=tmux conserva tmux"; else fail "--parallel tmux cambio: $(cat "$STUB_LOG") err: $LAST_ERR"; fi
+
+echo "[3b] #2448: --parallel con claude sin MEFISTO_UI corre desacoplado via parallel-pipeline.sh"
+printf '#!/usr/bin/env bash\necho "stub parallel $*"\n' > "$PKG/scripts/parallel-pipeline.sh"
+chmod +x "$PKG/scripts/parallel-pipeline.sh"
+for inside in 1 0; do
+    if [ "$inside" = 1 ]; then run MEFISTO_RUNTIME=claude -- --parallel 1 2 3; else run MEFISTO_RUNTIME=claude HERDR_ENV=0 HERDR_PANE_ID= -- --parallel 1 2 3; fi
+    if [ "$LAST_RC" -eq 0 ]; then pass "parallel(herdr=$inside): exit 0"; else fail "parallel(herdr=$inside): rc=$LAST_RC err=$LAST_ERR"; fi
+    if no_panes && no_tmux_session; then pass "parallel(herdr=$inside): sin panes ni sesion tmux"; else fail "parallel(herdr=$inside) abrio pane: $(cat "$STUB_LOG")"; fi
+    if grep -q "parallel-run-.*\.report\.log" "$TMP_DIR/stdout"; then pass "parallel(herdr=$inside): report parallel-run-<ts>.report.log"; else fail "parallel(herdr=$inside): salida: $(cat "$TMP_DIR/stdout")"; fi
+    sleep_wait() { local i=0; while [ $i -lt 50 ] && ! grep -qs "stub parallel" "$CONSUMER"/.mefisto/pipeline/logs/parallel-run-*.report.log "$CONSUMER"/pipeline-state/logs/parallel-run-*.report.log 2>/dev/null; do /bin/sleep 0.1; i=$((i+1)); done; }
+    sleep_wait
+    if grep -rqs "stub parallel 1 2 3" "$CONSUMER" --include='parallel-run-*.report.log'; then pass "parallel(herdr=$inside): lanzo parallel-pipeline.sh 1 2 3"; else fail "parallel(herdr=$inside): no llego parallel-pipeline.sh 1 2 3"; fi
+    find "$CONSUMER" -name 'parallel-run-*.report.log' -delete 2>/dev/null
+done
+run MEFISTO_RUNTIME=claude -- --parallel --max-parallel 2 --pipeline tooling 4 5
+sleep_wait
+if grep -rqs "stub parallel --pipeline tooling --max-parallel 2 4 5" "$CONSUMER" --include='parallel-run-*.report.log'; then pass "--max-parallel y --pipeline llegan a parallel-pipeline.sh"; else fail "flags no llegaron: $(cat "$TMP_DIR/stdout")"; fi
+cat > "$FAKE_BIN/gh" <<'STUB'
+#!/usr/bin/env bash
+case "$*" in *state*) printf 'OPEN|tipo:projection\n' ;; *) echo 'tipo:projection' ;; esac
+STUB
+run MEFISTO_RUNTIME=claude -- --parallel 6 7
+if [ "$LAST_RC" -eq 0 ]; then pass "dos tipo:projection no abortan en modo desacoplado"; else fail "abort con projections: $LAST_ERR"; fi
+run MEFISTO_RUNTIME=opencode -- --parallel 6 7
+if [ "$LAST_RC" -ne 0 ]; then pass "dos tipo:projection abortan en modo pane"; else fail "no abortó en modo pane"; fi
 
 echo "[4] CA-4: HERDR_PANE_ID ajeno aborta sin tocar panes"
 STUB_OWNER_PID=999999 run MEFISTO_RUNTIME=opencode -- --tooling 2285
