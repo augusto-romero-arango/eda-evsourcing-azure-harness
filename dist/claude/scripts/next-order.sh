@@ -45,7 +45,9 @@
 #   --json        Salida estructurada en vez de texto (un objeto JSON en
 #                 stdout, mismos exit codes): mode, items[] (position, number,
 #                 title, tipo, after[], hasDepsSection), blocked[] (number, by,
-#                 reason: external|indirect), cycles[][] y launch. 'tipo' es el
+#                 reason: external|indirect|pr, y pr cuando reason es 'pr'), inPr[] (number,
+#                 title, tipo, pr: los issues en PR, [] en --refinement),
+#                 cycles[][] y launch. 'tipo' es el
 #                 label 'tipo:*' sin prefijo, o null. 'launch' es
 #                 '<--launch-command><numeros>' en modo lanzamiento, y null en
 #                 --refinement o sin items. 'launch' EXCLUYE los 'tipo:infra' y
@@ -76,7 +78,7 @@
 # Exit codes:
 #   0 -- hay al menos un issue lanzable (el orden no quedo vacio)
 #   1 -- no hay ningun issue lanzable (universo vacio, o todos los issues
-#        quedaron en ciclos y/o bloqueados)
+#        quedaron en ciclos, bloqueados y/o en PR)
 #   2 -- fallo 'gh issue list', o se invoco con argumentos invalidos
 #   (con --json, 0 y 1 emiten igualmente un JSON valido)
 #
@@ -109,6 +111,18 @@
 #   (c) Bloqueo indirecto: sus dependencias son todas intra-universo, pero al
 #       menos una quedo excluida por (a), (b) o (c) -- excluido del orden,
 #       reportado como '#N bloqueado por #M: excluido del orden'.
+#   (e) En PR (#2451, solo en lanzamiento): ya tiene un PR abierto sin mergear
+#       (borradores incluidos) -- excluido del orden, de 'launch', de 'parallel'
+#       y de 'infra', reportado como '#N en PR #X: pendiente de merge' y en
+#       'inPr[]' del JSON. Esta en PR si algun PR abierto lo lista en
+#       'closingIssuesReferences' o su rama empieza con 'worktree-issue-<n>-' o
+#       'infra-issue-<n>-' (cubre los PRs 'cierre:manual', que usan Refs); con
+#       varios PRs gana el de menor numero. Un issue que depende de uno en PR
+#       queda bloqueado con reason 'pr' ('#N bloqueado por #M: espera el merge
+#       del PR #X'), y sus dependientes, bloqueados indirectamente; al mergear
+#       el PR el issue se cierra y el dependiente vuelve solo (CLOSED =
+#       satisfecha). Si 'gh pr list' falla se avisa en stderr y se calcula sin
+#       esta clasificacion. En --refinement no se consultan PRs.
 #   (d) Lanzable: todas sus dependencias abiertas estan en el orden, antes que
 #       el. Entra al orden por Kahn con seleccion golosa segun el modo:
 #       en lanzamiento el menor numero disponible en cada paso (numero de
@@ -221,6 +235,24 @@ if [ "$UNIVERSE_COUNT" -ge "$ISSUE_LIMIT" ]; then
     echo "el universo puede estar truncado y el orden calculado sobre un grafo incompleto." >&2
 fi
 
+# Issues del universo con PR abierto (#2451): 'numero<TAB>pr'. Solo en
+# lanzamiento; si la consulta falla se avisa y el orden se calcula sin esta
+# exclusion.
+PR_MAP=""
+if [ "$MODE" = "launch" ]; then
+    if PRS_JSON=$(gh pr list --state open --limit 200 --json number,headRefName,closingIssuesReferences 2>/dev/null); then
+        PR_MAP=$(echo "$ISSUES_JSON" | jq -r --argjson prs "$PRS_JSON" '
+            .[] | .number as $n
+            | ($prs | map(select(
+                (([.closingIssuesReferences[]?.number] | index($n)) != null)
+                or ((.headRefName // "") | (startswith("worktree-issue-\($n)-") or startswith("infra-issue-\($n)-")))
+              ) | .number) | min) as $p
+            | select($p != null) | "\($n)\t\($p)"')
+    else
+        echo "ADVERTENCIA: no se pudo consultar PRs abiertos; el orden no excluye issues en PR" >&2
+    fi
+fi
+
 title_of() {
     echo "$ISSUES_JSON" | jq -r --argjson n "$1" '.[] | select(.number==$n) | .title'
 }
@@ -256,6 +288,15 @@ tipo_plain_of() {
         '.[] | select(.number==$n) | [.labels[]?.name] | map(select(startswith("tipo:"))) | first // "" | sub("^tipo:"; "")'
 }
 
+# PR abierto (menor numero) que ya cubre el issue, o vacio (#2451).
+in_pr_of() {
+    local target="$1" row pr
+    while IFS=$'\t' read -r row pr; do
+        [ "$row" = "$target" ] && { echo "$pr"; return 0; }
+    done <<< "$PR_MAP"
+    return 1
+}
+
 # Estado (issue o PR) de una dependencia -- solo se consulta para
 # dependencias FUERA del universo.
 dep_state_of() {
@@ -285,9 +326,16 @@ HAS_SECTION=()  # 1 si el body declara '## Dependencias'
 DEPS_IN=()      # dependencias abiertas intra-universo
 EXCLUDED=()     # 1 si ya se sabe que no puede entrar al orden
 BLOCKED_MSGS=""
-BLOCKED_TSV=""  # numero<TAB>dependencia<TAB>razon, para --json
+BLOCKED_TSV=""  # numero<TAB>dependencia<TAB>razon[<TAB>pr], para --json
+INPR_MSGS=""
+INPR_TSV=""     # numero<TAB>pr<TAB>tipo<TAB>titulo, para --json
 
 for ISSUE in $NUMS; do
+    if PR_OF_ISSUE=$(in_pr_of "$ISSUE"); then
+        INPR_MSGS="${INPR_MSGS}#$ISSUE en PR #$PR_OF_ISSUE: pendiente de merge"$'\n'
+        INPR_TSV="${INPR_TSV}$ISSUE"$'\t'"$PR_OF_ISSUE"$'\t'"$(tipo_plain_of "$ISSUE")"$'\t'"$(title_of "$ISSUE")"$'\n'
+        continue
+    fi
     BODY=$(body_of "$ISSUE")
     DEPS=$(printf '%s\n' "$BODY" \
         | awk '/^##[[:space:]]*[Dd]ependencias/{f=1;next} /^##[[:space:]]/{f=0} f' \
@@ -299,6 +347,12 @@ for ISSUE in $NUMS; do
     IS_BLOCKED=0
     for DEP in $DEPS; do
         [ "$DEP" = "$ISSUE" ] && continue
+        if DEP_PR=$(in_pr_of "$DEP"); then
+            IS_BLOCKED=1
+            BLOCKED_MSGS="${BLOCKED_MSGS}#$ISSUE bloqueado por #$DEP: espera el merge del PR #$DEP_PR"$'\n'
+            BLOCKED_TSV="${BLOCKED_TSV}$ISSUE"$'\t'"$DEP"$'\t'"pr"$'\t'"$DEP_PR"$'\n'
+            continue
+        fi
         if in_universe "$DEP"; then
             INSET="$INSET $DEP"
             continue
@@ -505,6 +559,7 @@ if [ "$AS_JSON" -eq 1 ]; then
         --arg mode "$MODE" \
         --arg items "$ITEMS_TSV" \
         --arg blocked "$BLOCKED_TSV" \
+        --arg inpr "$INPR_TSV" \
         --arg cycles "$CYCLE_LINES" \
         --arg launch "$LAUNCH_LINE" \
         --arg infra "$INFRA_NUMS" \
@@ -524,6 +579,12 @@ if [ "$AS_JSON" -eq 1 ]; then
           })),
           blocked: ($blocked | lines | map(split("\t") | {
             number: (.[0] | tonumber), by: (.[1] | tonumber), reason: .[2]
+          } + (if .[2] == "pr" then {pr: (.[3] | tonumber)} else {} end))),
+          inPr: ($inpr | lines | map(split("\t") | {
+            number: (.[0] | tonumber),
+            title: (.[3:] | join("\t")),
+            tipo: (if .[2] == "" then null else .[2] end),
+            pr: (.[1] | tonumber)
           })),
           cycles: ($cycles | lines | map(nums)),
           launch: (if $launch == "" then null else $launch end),
@@ -537,10 +598,10 @@ if [ "$AS_JSON" -eq 1 ]; then
     exit 1
 fi
 
-if [ -z "$CYCLE_MSGS" ] && [ -z "$BLOCKED_MSGS" ] && [ -z "$INDIRECT_MSGS" ]; then
+if [ -z "$CYCLE_MSGS" ] && [ -z "$BLOCKED_MSGS" ] && [ -z "$INDIRECT_MSGS" ] && [ -z "$INPR_MSGS" ]; then
     echo "Sin ciclos ni bloqueos externos."
 else
-    printf '%s' "$CYCLE_MSGS" "$BLOCKED_MSGS" "$INDIRECT_MSGS"
+    printf '%s' "$CYCLE_MSGS" "$INPR_MSGS" "$BLOCKED_MSGS" "$INDIRECT_MSGS"
 fi
 echo
 
