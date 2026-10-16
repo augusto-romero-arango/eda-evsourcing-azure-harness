@@ -143,3 +143,15 @@ Con el lote en curso (paridad con `mefisto-divine-wager`, MEF-ADR-0055 decisión
 - Una fila por issue terminado (duración y costo de `batchStatsAtom`, que ahora se lee también mientras corre) y una fila `●` (warning) del issue en curso: `#N`, título, `PR #X` o `…`, tiempo desde el `started` de su corrida (`MM:SS` o `H:MM:SS`, mismo reloj que la cabecera, sigue contando durante una espera por rate limit) y `…` de costo.
 - La fila `total` aparece con más de una fila: cuenta la en curso y suma su tiempo, pero en costo suma solo los terminados.
 - Sin corrida del issue en curso todavía no hay fila `●`. Si su corrida termina y el issue espera su merge, la fila sigue con el tiempo congelado (como la cinta interna); al quedar mergeado o fallido pasa a la forma de terminado, sin duplicarse. La vista del lote terminado (#2332) no cambia.
+
+## Capacidad vigente (#2449): lote parallel con una banda por desarrollo
+
+Un lote `/mefisto:parallel` se ve en la banda de la sesión que lo lanzó. El disparador es `pipeline-status-parallel.json` (#2447) en `state: running`; el módulo solo lo lee, nunca lo escribe. Precedencia de la banda: lote sequential en curso, lote parallel en curso, cinta de merge, cinta del historiador, corridas y reposo (con un sequential y un parallel a la vez gana el sequential).
+
+- **Cabecera única**: `mefisto · parallel M/N <MM:SS|H:MM:SS>` (M = terminados + fallidos, tiempo desde `started`); con la parada pedida agrega `· se detiene: no lanza mas` en warning.
+- **Acciones** (una sola vez, arriba a la derecha): `1: detener` (solo con issues `pendiente` y sin parada pedida; `$.ui.ask` y escribe `pipeline-state/batch-stop` en la raíz del checkout principal, la misma señal de `/mefisto:batch-stop`; ningún proceso se mata), `2: ver PR` (con más de un PR pregunta cuál) y `3: log` (con más de una corrida en curso pregunta de cuál y abre el pane de log de esa corrida, #2321). `/fausto-blood-pact detener` también detiene el parallel.
+- **Cola**: `✓ #a ─ ● #b ─ ○ #c ─ ✗ #d` con las marcas y colores del sequential.
+- **Una banda por corrida en curso**: cada issue `en-curso` repite la vista de corrida del sequential: su mascota (rol por el sufijo del agente y pose por su último evento), la fila de pasos, `#N título` y sus últimas 3 líneas útiles con hora; en `hold`, la espera por rate limit va en warning. Se calculan en el sondeo de 5 s (el render no escribe estado). Hasta 3 bandas por página en el orden de `issues[]`; con más, `0: página k/n ▸` pagina. Pendientes y terminados no tienen banda.
+- **Tabla**: debajo, a todo el ancho, la de #2361: una fila por terminado o fallido (duración y costo de `pipeline-history.jsonl`), una fila `●` por cada issue en curso con su tiempo y `…` de costo, y `total` con más de una fila.
+
+Estado en `pactParallel`, `pactParallelStats`, `pactParallelBands` y `pactParallelPage`. El par interno `mefisto-divine-wager` no tiene parallel.

@@ -1375,3 +1375,175 @@ export function recentLines(lines: readonly string[], max = BAND_LOG_ROWS): Rece
   }
   return out.slice(-max)
 }
+
+// ---- Lote parallel (#2449): `pipeline-status-parallel.json` (#2447), una banda por issue en curso ----
+
+export const PARALLEL_STATUS_FILE = 'pipeline-status-parallel.json'
+export const PARALLEL_BAND_ROWS = 3
+export const PARALLEL_STOP_NOTE = 'se detiene: no lanza mas'
+
+export type ParallelIssueStatus = 'pendiente' | 'en-curso' | 'terminado' | 'fallido' | 'aplazado' | 'saltado'
+export type ParallelIssue = {
+  issue: number
+  pipeline: string | null
+  status: ParallelIssueStatus
+  pr: string | null
+  /** Epoch en milisegundos; 0 si el issue aun no arranca. */
+  startedMs: number
+  finishedMs: number
+  detail: string
+}
+export type ParallelStatus = {
+  started: string
+  state: BatchState
+  stopRequested: boolean
+  log?: string
+  issues: ParallelIssue[]
+}
+
+const PARALLEL_ISSUE_STATUSES: readonly string[] = ['pendiente', 'en-curso', 'terminado', 'fallido', 'aplazado', 'saltado']
+
+export function parallelStatusPath(stateDir: string): string {
+  return `${stateDir.replace(/\/+$/, '')}/${PARALLEL_STATUS_FILE}`
+}
+
+const epochMs = (value: unknown): number => {
+  const n = Number(value)
+  return value !== null && value !== undefined && value !== '' && Number.isFinite(n) && n > 0 ? n * 1000 : 0
+}
+
+/** Parseo de `pipeline-status-parallel.json`; null si no es JSON valido o no trae un `state` conocido. */
+export function parseParallelStatus(raw: string): ParallelStatus | null {
+  let json: Record<string, unknown>
+  try {
+    const parsed: unknown = JSON.parse(raw)
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null
+    json = parsed as Record<string, unknown>
+  } catch {
+    return null
+  }
+  if (typeof json.state !== 'string' || !BATCH_STATES.includes(json.state)) return null
+  const issues: ParallelIssue[] = []
+  for (const row of Array.isArray(json.issues) ? (json.issues as Record<string, unknown>[]) : []) {
+    const issue = Number(row?.issue)
+    if (!Number.isFinite(issue)) continue
+    const status = typeof row.status === 'string' && PARALLEL_ISSUE_STATUSES.includes(row.status) ? (row.status as ParallelIssueStatus) : 'pendiente'
+    issues.push({
+      issue,
+      pipeline: typeof row.pipeline === 'string' && row.pipeline !== '' ? row.pipeline : null,
+      status,
+      pr: prNumberOf(row.pr),
+      startedMs: epochMs(row.started),
+      finishedMs: epochMs(row.finished),
+      detail: typeof row.detail === 'string' ? row.detail : '',
+    })
+  }
+  return {
+    started: typeof json.started === 'string' ? json.started : '',
+    state: json.state as BatchState,
+    stopRequested: json.stop_requested === true,
+    issues,
+    ...(typeof json.log === 'string' && json.log !== '' ? { log: json.log } : {}),
+  }
+}
+
+export const isParallelRunning = (p: ParallelStatus | null): p is ParallelStatus => p !== null && p.state === 'running'
+
+export type LotView = 'sequential' | 'parallel' | 'closed-sequential' | null
+
+/** Precedencia de la banda: lote sequential en curso, lote parallel en curso, sequential ya cerrado (sin descartar); null deja paso al resto de vistas. */
+export function lotViewOf(batch: BatchStatus | null, parallel: ParallelStatus | null): LotView {
+  if (batch && isBatchRunning(batch)) return 'sequential'
+  if (isParallelRunning(parallel)) return 'parallel'
+  return batch ? 'closed-sequential' : null
+}
+
+export const isParallelDone = (i: ParallelIssue) => i.status === 'terminado' || i.status === 'fallido'
+
+/** Cabecera `parallel M/N` (M = terminados + fallidos), tiempo desde `started` y la nota de parada pedida. */
+export function parallelHeader(p: ParallelStatus, nowMs: number): { progress: string; time: string; stopNote: string } {
+  const startedMs = stampToMs(p.started) || Date.parse(p.started) || 0
+  return {
+    progress: `parallel ${p.issues.filter(isParallelDone).length}/${p.issues.length}`,
+    time: startedMs > 0 ? elapsedText(nowMs - startedMs) : '',
+    stopNote: p.stopRequested ? PARALLEL_STOP_NOTE : '',
+  }
+}
+
+/** `1: detener` solo con el lote corriendo, sin parada pedida y con issues `pendiente`. */
+export const canStopParallel = (p: ParallelStatus | null): boolean =>
+  isParallelRunning(p) && !p.stopRequested && p.issues.some(i => i.status === 'pendiente')
+
+/** Cola `✓ #a ─ ● #b ─ ○ #c ─ ✗ #d` con las marcas y colores del sequential. */
+export function parallelQueueMarks(p: ParallelStatus): { text: string; color: string | undefined }[] {
+  return p.issues.map(i => {
+    const color = i.status === 'terminado' ? 'success' : i.status === 'en-curso' ? 'warning' : i.status === 'fallido' ? 'error' : undefined
+    const mark = i.status === 'terminado' ? '✓' : i.status === 'en-curso' ? '●' : i.status === 'fallido' ? '✗' : i.status === 'pendiente' ? '○' : i.status === 'aplazado' ? '⏸' : '-'
+    return { text: `${mark} #${i.issue}`, color }
+  })
+}
+
+/** Issues con banda propia: los `en-curso`, en el orden de `issues[]`. */
+export const parallelRunning = (p: ParallelStatus): ParallelIssue[] => p.issues.filter(i => i.status === 'en-curso')
+
+/** Pagina de bandas: hasta `size` por pagina; la pagina pedida se acota al rango. */
+export function paginateBands<T>(items: readonly T[], page: number, size = PARALLEL_BAND_ROWS): { page: number; pages: number; visible: T[] } {
+  const { page: p, pages } = pageOf(page, items.length, size)
+  return { page: p, pages, visible: items.slice(p * size, (p + 1) * size) }
+}
+
+/** Corrida de un issue del lote: su status activo mas reciente, preferido el del mismo pipeline. */
+export function parallelRunOf(i: ParallelIssue, runs: readonly PipelineRun[]): PipelineRun | null {
+  const mine = runs.filter(r => r.issue === i.issue && isActive(r)).sort((a, c) => c.updated.localeCompare(a.updated))
+  return mine.find(r => r.pipeline === i.pipeline) ?? mine[0] ?? null
+}
+
+/** PRs del lote, uno por issue, en el orden de `issues[]`. */
+export function parallelPrs(p: ParallelStatus): { issue: number; pr: string }[] {
+  return p.issues.filter(i => i.pr).map(i => ({ issue: i.issue, pr: i.pr as string }))
+}
+
+export const parallelPrLabel = (x: { issue: number; pr: string }): string => `#${x.issue} · PR #${x.pr}`
+
+/** Elegido de un dialogo de issue (PR o log): el `#N` de la respuesta si es uno de los ofrecidos. */
+export function issueFromAnswer(answer: unknown, issues: readonly number[]): number | null {
+  if (typeof answer !== 'string') return null
+  const n = Number(/#?(\d+)/.exec(answer)?.[1])
+  return issues.includes(n) ? n : null
+}
+
+/** Pregunta del dialogo de parada del lote parallel. */
+export function parallelStopQuestion(p: ParallelStatus): string {
+  const n = parallelRunning(p).length
+  return `¿Detener el parallel? ${n} en curso terminan y no se lanzan más`
+}
+
+export type ParallelTableRow = { key: string; mark: string; color: string | undefined; lead: string; trail: string }
+
+/**
+ * Tabla bajo las bandas: una fila por terminado o fallido (duracion y costo del historial), una fila `●` por issue
+ * en curso con su tiempo y `…` de costo, y `total` con mas de una fila (el tiempo de los en curso se suma, el costo no).
+ */
+export function parallelTable(
+  p: ParallelStatus,
+  stats: Record<string, IssueStats>,
+  titleOf: (issue: number) => string | null,
+  nowMs: number,
+  titleW: number,
+): { rows: ParallelTableRow[]; total: string | null } {
+  const rows: ParallelTableRow[] = []
+  const done = p.issues.filter(isParallelDone)
+  for (const i of done) {
+    const t = closeRowText({ issue: i.issue, status: 'mergeado', pr: i.pr, detail: i.detail }, stats[String(i.issue)], titleW)
+    rows.push({ key: `done-${i.issue}`, mark: i.status === 'fallido' ? '✗' : '✓', color: i.status === 'fallido' ? 'error' : 'success', ...t })
+  }
+  const running = parallelRunning(p)
+  for (const i of running) {
+    const t = runningRowText(i.issue, i.pr, titleOf(i.issue) ?? stats[String(i.issue)]?.title ?? null, i.startedMs, nowMs, titleW)
+    rows.push({ key: `cur-${i.issue}`, mark: '●', color: 'warning', ...t })
+  }
+  if (rows.length <= 1) return { rows, total: null }
+  const base = statsTotal(done.map(i => stats[String(i.issue)]).filter((s): s is IssueStats => s !== undefined))
+  const extra = running.reduce((a, i) => a + (i.startedMs > 0 ? Math.max(0, nowMs - i.startedMs) : 0), 0)
+  return { rows, total: closeTotalText(rows.length, { ...base, durationMs: base.durationMs + extra }, titleW) }
+}

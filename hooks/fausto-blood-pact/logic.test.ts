@@ -2,6 +2,15 @@ import { expect, test } from 'claude-code/testing'
 
 import { sprite } from '../sprites'
 import {
+  canStopParallel,
+  lotViewOf,
+  paginateBands,
+  parallelHeader,
+  parallelQueueMarks,
+  parallelRunOf,
+  parallelStopQuestion,
+  parallelTable,
+  parseParallelStatus,
   batchSeparator,
   cleanLogLine,
   durationText,
@@ -956,4 +965,112 @@ test('nextCurrentRow: corrida activa del eslabon y, al esperar su merge, tiempo 
   const other = parseStatus('pipeline-status-tdd-40.json', JSON.stringify({ issue: 40, started: '20261009-100000', stage: '2-implementer', state: 'running' }))!
   expect(nextCurrentRow(b, null, { run: other, endMs: null }, 5_000)).toBeNull()
   expect(nextCurrentRow(parseBatchStatus(batchRaw({ state: 'completed' }))!, live, row, 5_000)).toBeNull()
+})
+
+// ---- Lote parallel (#2449) ----
+
+const parallelRaw = (state: string, issues: Record<string, unknown>[], extra: Record<string, unknown> = {}) =>
+  JSON.stringify({ pipeline: 'parallel', started: '20260101-120000', state, stop_requested: false, log: '/x/l.log', issues, ...extra })
+const pIssue = (issue: number, status: string, extra: Record<string, unknown> = {}) => ({ issue, pipeline: 'tdd', status, pr: null, started: null, finished: null, detail: null, ...extra })
+const parallelOf = (state: string, issues: Record<string, unknown>[], extra: Record<string, unknown> = {}) =>
+  parseParallelStatus(parallelRaw(state, issues, extra))!
+
+test('parseParallelStatus lee la forma del lote y rechaza lo invalido', () => {
+  const p = parseParallelStatus(parallelRaw('running', [pIssue(1, 'en-curso', { started: 1000, pr: 'https://x/pull/9' }), pIssue(2, 'pendiente')]))!
+  expect(p.issues.length).toBe(2)
+  expect(p.issues[0]!.startedMs).toBe(1_000_000)
+  expect(p.issues[0]!.pr).toBe('9')
+  expect(p.issues[1]!.startedMs).toBe(0)
+  expect(parseParallelStatus('no json')).toBe(null)
+  expect(parseParallelStatus(JSON.stringify({ state: 'raro', issues: [] }))).toBe(null)
+})
+
+test('lotViewOf: sequential en curso, parallel en curso, sequential cerrado, nada', () => {
+  const seq = (state: string) => ({ pipeline: 'sequential', started: '', state, current: null, stopRequested: false, holdSeconds: 0, issues: [] }) as never
+  const par = parallelOf('running', [pIssue(1, 'en-curso')])
+  expect(lotViewOf(seq('running'), par)).toBe('sequential')
+  expect(lotViewOf(null, par)).toBe('parallel')
+  expect(lotViewOf(seq('completed'), par)).toBe('parallel')
+  expect(lotViewOf(seq('completed'), null)).toBe('closed-sequential')
+  expect(lotViewOf(null, parallelOf('completed', []))).toBe(null)
+  expect(lotViewOf(null, null)).toBe(null)
+})
+
+test('parallelHeader cuenta terminados + fallidos sobre el total y marca la parada', () => {
+  const p = parallelOf('running', [pIssue(1, 'terminado'), pIssue(2, 'fallido'), pIssue(3, 'en-curso'), pIssue(4, 'pendiente')])
+  const h = parallelHeader(p, new Date(2026, 0, 1, 12, 5, 7).getTime())
+  expect(h.progress).toBe('parallel 2/4')
+  expect(h.time).toBe('05:07')
+  expect(h.stopNote).toBe('')
+  expect(parallelHeader({ ...p, stopRequested: true }, 0).stopNote).toBe('se detiene: no lanza mas')
+})
+
+test('canStopParallel exige corriendo, sin parada pedida y con pendientes', () => {
+  const issues = [pIssue(1, 'en-curso'), pIssue(2, 'pendiente')]
+  expect(canStopParallel(parallelOf('running', issues))).toBe(true)
+  expect(canStopParallel(parallelOf('running', issues, { stop_requested: true }))).toBe(false)
+  expect(canStopParallel(parallelOf('running', [pIssue(1, 'en-curso')]))).toBe(false)
+  expect(canStopParallel(parallelOf('completed', issues))).toBe(false)
+  expect(canStopParallel(null)).toBe(false)
+  expect(parallelStopQuestion(parallelOf('running', issues))).toContain('1 en curso')
+})
+
+test('parallelQueueMarks usa las marcas y colores del sequential', () => {
+  const p = parallelOf('running', [pIssue(1, 'terminado'), pIssue(2, 'en-curso'), pIssue(3, 'pendiente'), pIssue(4, 'fallido')])
+  expect(parallelQueueMarks(p)).toEqual([
+    { text: '✓ #1', color: 'success' },
+    { text: '● #2', color: 'warning' },
+    { text: '○ #3', color: undefined },
+    { text: '✗ #4', color: 'error' },
+  ])
+})
+
+test('paginateBands: 1, 3 y 4 corridas con 3 por pagina', () => {
+  expect(paginateBands([1], 0).visible).toEqual([1])
+  expect(paginateBands([1], 0).pages).toBe(1)
+  expect(paginateBands([1, 2, 3], 0).pages).toBe(1)
+  expect(paginateBands([1, 2, 3], 0).visible).toEqual([1, 2, 3])
+  const second = paginateBands([1, 2, 3, 4], 1)
+  expect(second.pages).toBe(2)
+  expect(second.page).toBe(1)
+  expect(second.visible).toEqual([4])
+  expect(paginateBands([1, 2, 3, 4], 5).page).toBe(1)
+})
+
+test('parallelRunOf elige la corrida activa del issue, preferida la del mismo pipeline', () => {
+  const run = (pipeline: string, updated: string, state = 'running') => ({ issue: 7, pipeline, state, updated, started: '', variant: null }) as never
+  const p = parallelOf('running', [pIssue(7, 'en-curso', { pipeline: 'tooling' })])
+  const found = parallelRunOf(p.issues[0]!, [run('tdd', '2026-01-01T00:00:02Z'), run('tooling', '2026-01-01T00:00:01Z'), run('tooling', '2026-01-01T00:00:09Z', 'completed')])
+  expect(found?.pipeline).toBe('tooling')
+  expect(parallelRunOf(p.issues[0]!, [])).toBe(null)
+})
+
+test('parallelTable: terminados, una fila ● por corrida en curso y total', () => {
+  const p = parallelOf('running', [
+    pIssue(1, 'terminado', { pr: 5 }),
+    pIssue(2, 'fallido'),
+    pIssue(3, 'en-curso', { started: 100 }),
+    pIssue(4, 'en-curso', { started: 160 }),
+    pIssue(5, 'pendiente'),
+  ])
+  const stats = {
+    '1': { durationMs: 60_000, costUsd: 1.5, title: 'Uno', finishedMs: 1 },
+    '2': { durationMs: 30_000, costUsd: 0.5, title: 'Dos', finishedMs: 2 },
+  }
+  const t = parallelTable(p, stats, n => `titulo ${n}`, 220_000, 12)
+  expect(t.rows.map(r => r.key)).toEqual(['done-1', 'done-2', 'cur-3', 'cur-4'])
+  expect(t.rows.map(r => r.mark)).toEqual(['✓', '✗', '●', '●'])
+  expect(t.rows[0]!.trail).toContain('$1.50')
+  expect(t.rows[2]!.trail).toContain('…')
+  expect(t.rows[2]!.lead).toContain('titulo 3')
+  expect(t.total).toContain('4')
+  expect(t.total).toContain('$2.00')
+  expect(t.total).toContain('04:30')
+})
+
+test('parallelTable: una sola fila no lleva total y sin filas queda vacia', () => {
+  const one = parallelTable(parallelOf('running', [pIssue(1, 'en-curso', { started: 100 })]), {}, () => null, 160_000, 0)
+  expect(one.rows.length).toBe(1)
+  expect(one.total).toBe(null)
+  expect(parallelTable(parallelOf('running', [pIssue(1, 'pendiente')]), {}, () => null, 0, 0).rows).toEqual([])
 })

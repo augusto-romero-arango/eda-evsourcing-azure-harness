@@ -124,6 +124,26 @@ declare module 'claude-code' {
       }
       /** Fila `●` del sequential en curso: su corrida y, si espera el merge, el instante en que se congela su tiempo (#2361). */
       pactBatchCurrent: { run: PipelineRun; endMs: number | null } | null
+      /** Lote parallel en curso (#2449), leido de `pipeline-status-parallel.json`; null si no corre. */
+      pactParallel: {
+        started: string
+        state: 'running' | 'completed' | 'failed' | 'stopped'
+        stopRequested: boolean
+        log?: string
+        issues: {
+          issue: number
+          pipeline: string | null
+          status: 'pendiente' | 'en-curso' | 'terminado' | 'fallido' | 'aplazado' | 'saltado'
+          pr: string | null
+          startedMs: number
+          finishedMs: number
+          detail: string
+        }[]
+      } | null
+      pactParallelStats: Record<string, { durationMs: number; costUsd: number | null; title: string | null; finishedMs: number }>
+      /** Banda de cada issue en curso del parallel: su corrida, sus ultimas lineas y su ultimo evento (para la pose). */
+      pactParallelBands: Record<string, { run: PipelineRun | null; lines: string[]; last: { kind: 'tool' | 'text'; tool: string } | null }>
+      pactParallelPage: number
       pactMerge: PactMerge | null
       pactLogLines: PaneLine[]
       pactPaneRun: PipelineRun | null
