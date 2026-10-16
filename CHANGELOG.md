@@ -4,6 +4,24 @@ Todo cambio notable a este proyecto se documenta aquí. Sigue [Keep a Changelog]
 
 ## [Unreleased]
 
+## [0.54.0] - 2026-10-16
+
+### Added
+
+- `parallel-pipeline.sh` escribe `pipeline-status-parallel.json` (issues, estado por issue, PR, parada solicitada y estado del lote) de forma atomica al arrancar, en cada cambio de estado y al terminar; sobrevive a la limpieza de status por corrida y no se escribe sin `jq` (#2447, MEF-ADR-0055).
+- `fausto-blood-pact` muestra el lote `/mefisto:parallel` en curso (`pipeline-status-parallel.json`) con cabecera `parallel M/N`, acciones `detener`/`ver PR`/`log`, cola de issues, una banda por corrida en curso (mascota, pasos, título y últimas 3 líneas; hasta 3 por página con `0` para paginar) y la tabla con duración y costo del historial (#2449, MEF-ADR-0055).
+- `fausto-blood-pact` muestra el lote `/mefisto:parallel` terminado, detenido o con fallos (`pipeline-status-parallel.json`): cabecera `parallel M/N · <terminado|detenido|con fallos>`, cola, resumen `✓ N con PR · ✗ N fallidos · ⏸ N aplazados · ⤼ N saltados`, motivo del fallido y tabla de cierre con duración y costo; `1: mergear` ejecuta `/mefisto:merge` solo con los PRs del lote aún abiertos (nunca `--all`), `2: ver PR`, `3: log` y `4: cerrar` (ocultado persistente por repo + `started`) (#2450, MEF-ADR-0055).
+
+### Changed
+
+- `/parallel` con el runtime Claude Code y sin `MEFISTO_UI` corre sin panes: `tmux-pipeline.sh --parallel` delega en `parallel-pipeline.sh` desacoplado (los `tipo:projection` se serializan en lugar de abortar), y la corrida se sigue en la consola `fausto-blood-pact`. OpenCode y `MEFISTO_UI=tmux|herdr` conservan los panes. `parallel-pipeline.sh` escalona 30 s entre lanzamientos (`--stagger <s>`, `0` lo apaga). MEF-ADR-0055 decision 6 cubre ahora ambos lados.
+- `fausto-blood-pact` muestra los issues con PR abierto (`inPr[]` de `next-order.sh --json`) tras los lanzables como `T #N titulo · PR #X`, sin tecla y atenuados, y la cabecera suma `· en PR M`.
+
+### Fixed
+
+- `scripts/next-order.sh` excluye del orden de lanzamiento (`items`, `launch`, `parallel`, `infra`) los issues `estado:listo` con PR abierto, los reporta en `inPr[]` y bloquea con `reason: "pr"` a sus dependientes; en `--refinement` no consulta PRs (#2451).
+- `mefisto-next-order.sh` excluye del orden de lanzamiento los issues con PR abierto (`closingIssuesReferences` o rama `worktree-mefisto-issue-<n>-`): salen de `items`/`launch`, se reportan en `inPr[]` y sus dependientes quedan bloqueados con `reason: "pr"` (misma regla que `next-order.sh`, #2451) (#2453)
+
 ## [0.53.2] - 2026-10-14
 
 ### Changed
@@ -3580,7 +3598,8 @@ Y reemplazar referencias en `CLAUDE.md` del proyecto: `/eda-evsourcing-azure-har
 - Los agentes `reviewer` e `implementer` mantienen el placeholder literal `ADR-XXXX` en sus plantillas de reporte (no es un bug; el agente lo sustituye en tiempo de ejecución por el número real del ADR aplicable).
 - Los ejemplos de código en `test-writer.md`, `implementer.md` y `smoke-test-writer.md` conservan nombres concretos de un proyecto consumidor (`Programacion`, `ControlHoras`) anotados en el "Contrato con el consumidor" de cada agente como ejemplos pedagógicos.
 
-[Unreleased]: https://github.com/augusto-romero-arango/mefisto/compare/v0.53.2...HEAD
+[Unreleased]: https://github.com/augusto-romero-arango/mefisto/compare/v0.54.0...HEAD
+[0.54.0]: https://github.com/augusto-romero-arango/mefisto/compare/v0.53.2...v0.54.0
 [0.53.2]: https://github.com/augusto-romero-arango/mefisto/compare/v0.53.1...v0.53.2
 [0.53.1]: https://github.com/augusto-romero-arango/mefisto/compare/v0.53.0...v0.53.1
 [0.53.0]: https://github.com/augusto-romero-arango/mefisto/compare/v0.52.1...v0.53.0
