@@ -97,7 +97,7 @@ export function reasonOf(item: BoardItem): string {
 }
 
 /** Ancho comun de la columna de numeros (#801 y #1981 alineados). */
-export function numberWidth(items: BoardItem[]): number {
+export function numberWidth(items: { number: number }[]): number {
   return Math.max(4, ...items.map(i => String(i.number).length + 1))
 }
 

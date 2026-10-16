@@ -166,6 +166,9 @@ import {
   orderedNotes,
   pendingNotes,
   withProcessedNotes,
+  boardRowsOf,
+  inPrRowParts,
+  listosTextOf,
 } from './logic'
 import { shouldRearm, versionLabel } from '../logic'
 import type { ResultPr } from './logic'
@@ -1392,7 +1395,7 @@ export const register: Register = on => {
       : cropGrid(waitingFace(face('normal'), isWorking ? sec : null), MASCOT_COLS)
     const version = await read($, versionAtom)
     const list = await read($, listAtom)
-    const listosText = list && !list.error ? `listos ${list.items.length}` : ''
+    const listosText = list && !list.error ? listosTextOf(list) : ''
     const headRoom = Math.max(8, inner - 20)
     const head = (state: string | null, key: string, stateColor?: string, withListos = true) => (
       <Text key={key} wrap="truncate-end">
@@ -1847,10 +1850,12 @@ export const register: Register = on => {
       )
     }
     if (!list) void refresh($)
-    const { page, pages } = pageOf(await read($, pageAtom), list?.items.length ?? 0, PAGE_ROWS)
-    const visible = list?.items.slice(page * PAGE_ROWS, (page + 1) * PAGE_ROWS) ?? []
+    const allRows = boardRowsOf(list)
+    const { page, pages } = pageOf(await read($, pageAtom), allRows.length, PAGE_ROWS)
+    const visibleRows = allRows.slice(page * PAGE_ROWS, (page + 1) * PAGE_ROWS)
+    const visible = visibleRows.map(r => r.item)
     const numWidth = numberWidth(visible)
-    const afterWidth = Math.min(16, Math.max(0, ...visible.map(i => reasonOf(i).length)))
+    const afterWidth = Math.min(16, Math.max(0, ...visibleRows.map(r => (r.kind === 'launch' ? reasonOf(r.item).length : 0))))
     const titleWidth = Math.max(12, body - 3 - 2 - numWidth - 1 - (afterWidth > 0 ? afterWidth + 2 : 0))
     const notesCount = bitacoraCount(await read($, fieldNotesAtom), openPrs)
     const footerRest = list ? footerRestOf(list, Boolean(list.launch || list.parallel?.launch)) : ''
@@ -1877,8 +1882,18 @@ export const register: Register = on => {
           <Box flexDirection="column" width={body} marginTop={1} marginBottom={hasFooter ? 1 : 0}>
             {!list && <Text dimColor>cargando…</Text>}
             {list?.error && <Text color="error">next-order falló: {clip(list.error, body - 20)}</Text>}
-            {list && !list.error && visible.length === 0 && <Text dimColor>Sin issues en estado:listo.</Text>}
-            {visible.map((item, i) => {
+            {list && !list.error && visibleRows.length === 0 && <Text dimColor>Sin issues en estado:listo.</Text>}
+            {visibleRows.map((r, i) => {
+              if (r.kind === 'inpr') {
+                const pr = inPrRowParts(r.item, numWidth, titleWidth + (afterWidth > 0 ? afterWidth + 2 : 0))
+                return (
+                  <Box key={`row-pr-${r.item.number}`}>
+                    <Text color={pr.color}>{`${pr.letter} `}</Text>
+                    <Text dimColor wrap="truncate-end">{pr.label}</Text>
+                  </Box>
+                )
+              }
+              const item = r.item
               const row = rowParts(item, numWidth, titleWidth)
               return (
                 <Box key={`row-${item.number}`}>
@@ -1890,7 +1905,7 @@ export const register: Register = on => {
                 </Box>
               )
             })}
-            {Array.from({ length: Math.max(0, PAGE_ROWS - Math.max(visible.length, 1)) }, (_, i) => (
+            {Array.from({ length: Math.max(0, PAGE_ROWS - Math.max(visibleRows.length, 1)) }, (_, i) => (
               <Text key={`blank-${i}`}> </Text>
             ))}
             {results.length > 0 && (

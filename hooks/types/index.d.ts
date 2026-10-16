@@ -15,8 +15,12 @@ export type BoardList = {
   infra: number[]
   /** Lote de `/mefisto:parallel` calculado por next-order. */
   parallel: { issues: number[]; launch: string | null } | null
+  /** Issues con PR abierto (`inPr[]` de next-order): se ven con su PR, sin tecla; ausente con un script viejo. */
+  inPr?: InPrItem[]
   error: string | null
 }
+
+export type InPrItem = { number: number; title: string; tipo: string | null; pr: number }
 
 export type PipelineKind = 'tdd' | 'tooling' | 'infra'
 
@@ -144,6 +148,8 @@ declare module 'claude-code' {
       /** Banda de cada issue en curso del parallel: su corrida, sus ultimas lineas y su ultimo evento (para la pose). */
       pactParallelBands: Record<string, { run: PipelineRun | null; lines: string[]; last: { kind: 'tool' | 'text'; tool: string } | null }>
       pactParallelPage: number
+      /** PRs del lote parallel ya mergeados desde la consola. */
+      pactParallelMerged: string[]
       pactMerge: PactMerge | null
       pactLogLines: PaneLine[]
       pactPaneRun: PipelineRun | null
