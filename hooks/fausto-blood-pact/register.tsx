@@ -6,7 +6,7 @@ import type { Role } from '../sprites'
 import { cropGrid, numberWidth, padEnd, reasonOf, usedColumns } from '../logic'
 import type { BoardList, Historian, PaneLine, PactMerge, PipelineResult, PipelineRun } from '../types'
 import type { IssueStats } from './logic'
-import type { BatchStatus, CurrentRow, LastEvent, LaunchKind, LaunchPlan, MascotPose, OpenPr } from './logic'
+import type { BatchStatus, CurrentRow, LastEvent, LaunchKind, LaunchPlan, MascotPose, OpenPr, ParallelStatus } from './logic'
 import {
   BAND_FETCH_ROWS,
   BAND_LOG_ROWS,
@@ -114,6 +114,22 @@ import {
   newlyMerged,
   parseBatchStatus,
   stopQuestion,
+  PARALLEL_BAND_ROWS,
+  canStopParallel,
+  isParallelRunning,
+  issueFromAnswer,
+  lotViewOf,
+  paginateBands,
+  parallelHeader,
+  parallelPrLabel,
+  parallelPrs,
+  parallelQueueMarks,
+  parallelRunOf,
+  parallelRunning,
+  parallelStatusPath,
+  parallelStopQuestion,
+  parallelTable,
+  parseParallelStatus,
   MERGE_POLL_MS,
   finishMerge,
   mergeRunArgsOf,
@@ -163,6 +179,11 @@ const batchAtom = atom({ plugin: 'mefisto', key: 'pactBatch' } as const, null as
 type BatchStats = { stats: Record<string, IssueStats>; endedMs: number | null }
 const batchStatsAtom = atom({ plugin: 'mefisto', key: 'pactBatchStats' } as const, { stats: {}, endedMs: null } as BatchStats)
 const batchCurrentAtom = atom({ plugin: 'mefisto', key: 'pactBatchCurrent' } as const, null as CurrentRow | null)
+type ParallelBand = { run: PipelineRun | null; lines: string[]; last: LastEvent | null }
+const parallelAtom = atom({ plugin: 'mefisto', key: 'pactParallel' } as const, null as ParallelStatus | null)
+const parallelStatsAtom = atom({ plugin: 'mefisto', key: 'pactParallelStats' } as const, {} as Record<string, IssueStats>)
+const parallelBandsAtom = atom({ plugin: 'mefisto', key: 'pactParallelBands' } as const, {} as Record<string, ParallelBand>)
+const parallelPageAtom = atom({ plugin: 'mefisto', key: 'pactParallelPage' } as const, 0)
 const mergeAtom = atom({ plugin: 'mefisto', key: 'pactMerge' } as const, null as PactMerge | null)
 const fieldNotesAtom = atom({ plugin: 'mefisto', key: 'pactFieldNotes' } as const, null as number | null)
 const historianAtom = atom({ plugin: 'mefisto', key: 'pactHistorian' } as const, null as Historian | null)
@@ -221,6 +242,12 @@ let lastBatchIssues: BatchStatus['issues'] | null = null
 let batchStatsFor = ''
 // Primer instante en que se vio el lote ya terminado: cierra el reloj de la cabecera si el historial no lo da.
 let batchSeenEndedMs: number | null = null
+// Lote parallel (#2449): el `started` de las estadisticas en cache y, con el lote vivo, el sondeo rapido de corridas.
+let parallelStatsFor = ''
+let isParallelLive = false
+let lastParallelStatsReadMs = 0
+// Issue cuyo log sigue el pane cuando el lote es parallel (varias corridas a la vez).
+let paneIssue: number | null = null
 // El historial se relee para estadisticas faltantes a lo sumo cada BATCH_STATS_EVERY_MS (como `withStats` en la cinta interna).
 const BATCH_STATS_EVERY_MS = 5_000
 let lastBatchStatsReadMs = 0
@@ -393,6 +420,71 @@ async function closeBatch($: EngineInterface) {
   await closeLogIfGone($)
 }
 
+// Lector puro del status del lote parallel (#2447); solo un lote en `running` ocupa la banda.
+async function refreshParallel($: EngineInterface, runs: readonly PipelineRun[]) {
+  const raw = await $.fs.read(parallelStatusPath(`${runsRepo}/${STATE_DIR}`)).catch(() => '')
+  const parsed = typeof raw === 'string' && raw !== '' ? parseParallelStatus(raw) : null
+  const p = isParallelRunning(parsed) ? parsed : null
+  isParallelLive = p !== null
+  if (!p) {
+    await update($, parallelBandsAtom, () => ({}))
+    await update($, parallelAtom, () => null)
+    return
+  }
+  if (parallelStatsFor !== p.started) {
+    parallelStatsFor = p.started
+    lastParallelStatsReadMs = 0
+    await update($, parallelStatsAtom, () => ({}))
+  }
+  const known = await read($, parallelStatsAtom)
+  const finished = p.issues.filter(i => i.status === 'terminado' || i.status === 'fallido').map(i => String(i.issue))
+  const missing = statsPending(finished, known)
+  if (missing.length > 0 && Date.now() - lastParallelStatsReadMs >= BATCH_STATS_EVERY_MS) {
+    lastParallelStatsReadMs = Date.now()
+    const stats = { ...known, ...issueStatsFromHistory(await readHistory($), missing, stampToMs(p.started)) }
+    await update($, parallelStatsAtom, () => stats)
+  }
+  const bands: Record<string, ParallelBand> = {}
+  for (const i of parallelRunning(p)) {
+    const run = parallelRunOf(i, runs)
+    const eventsTail = await readEventsTail($, run)
+    bands[String(i.issue)] = { run, lines: await readBandLines($, run, eventsTail), last: eventsTail ? lastEventOf(eventsTail) : null }
+  }
+  await update($, parallelBandsAtom, () => bands)
+  await update($, parallelAtom, () => p)
+}
+
+// Parada suave (MEF-ADR-0017): la misma senal que /mefisto:batch-stop y el sequential; ningun proceso se mata.
+async function confirmStopParallel($: EngineInterface): Promise<string> {
+  const p = await read($, parallelAtom)
+  if (p && isParallelRunning(p) && p.stopRequested) return 'La parada ya esta pedida: no se lanzan mas issues.'
+  if (!p || !canStopParallel(p)) return 'No hay un parallel en curso con issues pendientes que detener.'
+  const answer = await $.ui
+    .ask(parallelStopQuestion(p), { header: 'Detener', options: [BATCH_STOP_ANSWER, BATCH_KEEP_ANSWER] })
+    .catch(() => null)
+  if (answer !== BATCH_STOP_ANSWER) return 'Sin cambios.'
+  await $.fs.write(batchStopPath(runsRepo), '')
+  await update($, parallelAtom, cur => (cur ? { ...cur, stopRequested: true } : cur))
+  $.ui.toast('parada pedida: los issues en curso terminan y no se lanzan mas')
+  return 'Parada pedida: los issues en curso terminan y no se lanzan mas.'
+}
+
+async function viewParallelPr($: EngineInterface): Promise<string> {
+  const p = await read($, parallelAtom)
+  const prs = p ? parallelPrs(p) : []
+  if (prs.length === 0) return 'El lote no tiene PR que abrir.'
+  let pr = prs[0]!.pr
+  if (prs.length > 1) {
+    const answer = await $.ui.ask('¿Cuál PR ver?', { header: 'PR', options: prs.map(parallelPrLabel) }).catch(() => null)
+    const issue = issueFromAnswer(answer, prs.map(x => x.issue))
+    const chosen = prs.find(x => x.issue === issue)
+    if (!chosen) return 'Sin PR elegido.'
+    pr = chosen.pr
+  }
+  await $.process.run(['gh', 'pr', 'view', pr, '--web']).catch(() => undefined)
+  return `PR #${pr} abierto en GitHub.`
+}
+
 // ---- Pane de log (#2321): dos `tail -F` (eventos del agente y log del pipeline) mezclados en un mismo atom ----
 
 const PANE = 'fausto-blood-pact'
@@ -459,6 +551,12 @@ const isSameRun = (a: PipelineRun, b: PipelineRun) => a.issue === b.issue && a.p
 async function paneTarget($: EngineInterface): Promise<PipelineRun | null> {
   const batch = await read($, batchAtom)
   const runs = await read($, runsAtom)
+  const parallel = await read($, parallelAtom)
+  if (!batch && parallel) {
+    const live = parallelRunning(parallel)
+    const chosen = live.find(i => i.issue === paneIssue) ?? live[0]
+    return chosen ? parallelRunOf(chosen, runs) : null
+  }
   return batch ? batchRunOf(batch, runs) : activeRunOf(runs)
 }
 
@@ -494,12 +592,14 @@ async function closeLog($: EngineInterface) {
   isLogOpen = false
   await stopFollows()
   separatedIssue = null
+  paneIssue = null
   await update($, logLinesAtom, () => [])
   await update($, paneRunAtom, () => null)
   await $.ui.close({ id: PANE })
 }
 
-async function openLog($: EngineInterface): Promise<boolean> {
+async function openLog($: EngineInterface, issue: number | null = null): Promise<boolean> {
+  if (issue !== null) paneIssue = issue
   const run = await paneTarget($)
   if (!run) return false
   isLogOpen = true
@@ -513,8 +613,21 @@ async function openLog($: EngineInterface): Promise<boolean> {
 
 // La tecla 3 abre el log o, si ya estaba abierto, lo cierra.
 async function toggleLog($: EngineInterface) {
-  if (isLogOpen) await closeLog($)
-  else if (!(await openLog($))) $.ui.toast('No hay corrida que seguir')
+  if (isLogOpen) {
+    await closeLog($)
+    return
+  }
+  const parallel = await read($, parallelAtom)
+  const live = parallel && !(await read($, batchAtom)) ? parallelRunning(parallel) : []
+  let issue: number | null = null
+  if (live.length > 1) {
+    const answer = await $.ui
+      .ask('¿Log de cuál corrida?', { header: 'Log', options: live.map(i => `#${i.issue}`) })
+      .catch(() => null)
+    issue = issueFromAnswer(answer, live.map(i => i.issue))
+    if (issue === null) return
+  }
+  if (!(await openLog($, issue))) $.ui.toast('No hay corrida que seguir')
 }
 
 // Cuando la vista se va (cerrar, ocultar o una corrida que cierra sola) el pane y sus `tail` se van con ella.
@@ -523,7 +636,7 @@ async function closeLogIfGone($: EngineInterface) {
   const batch = await read($, batchAtom)
   const runs = await read($, runsAtom)
   const results = await read($, resultsAtom)
-  if (!batch && runs.length === 0 && results.length === 0) await closeLog($)
+  if (!batch && !(await read($, parallelAtom)) && runs.length === 0 && results.length === 0) await closeLog($)
 }
 
 async function refreshRuns($: EngineInterface) {
@@ -555,6 +668,7 @@ async function refreshRuns($: EngineInterface) {
     await update($, bandLinesAtom, () => lines)
     await update($, runsAtom, () => view.runs)
     await refreshBatch($)
+    await refreshParallel($, view.runs)
     await update($, resultsAtom, () => view.results)
     await syncLog($)
     await closeLogIfGone($)
@@ -914,7 +1028,7 @@ async function activate($: EngineInterface) {
   runsTimer?.cancel()
   // Ritmo rapido solo con corridas activas; sin ellas, `refresh` las relee al ritmo de los listos (CA-5).
   runsTimer = $.clock.every(RUNS_POLL_MS, () => {
-    if (Object.keys(seenRuns).length > 0 || lastBatchIssues !== null || Date.now() < launchPollUntilMs) void refreshRuns($)
+    if (Object.keys(seenRuns).length > 0 || lastBatchIssues !== null || isParallelLive || Date.now() < launchPollUntilMs) void refreshRuns($)
   })
   prTimer?.cancel()
   prTimer = $.clock.every(PR_CHECK_MS, () => void closeMergedPrs($))
@@ -1045,7 +1159,10 @@ export const register: Register = on => {
     }
     if (arg === 'detener') {
       const batch = await read($, batchAtom)
-      if (!batch || !isBatchRunning(batch)) return { text: 'No hay un sequential en curso.' }
+      if (!batch || !isBatchRunning(batch)) {
+        if (isParallelRunning(await read($, parallelAtom))) return { text: await confirmStopParallel($) }
+        return { text: 'No hay un sequential ni un parallel en curso.' }
+      }
       return { text: await confirmStop($) }
     }
     if (arg === 'merge' || arg.startsWith('merge ')) {
@@ -1178,6 +1295,8 @@ export const register: Register = on => {
     const runs = await read($, runsAtom)
     const results = await read($, resultsAtom)
     const batch = await read($, batchAtom)
+    const parallel = await read($, parallelAtom)
+    const lot = lotViewOf(batch, parallel)
     const bandLines = await read($, bandLinesAtom)
     const openPrs = await read($, openPrsAtom)
     const mergeRun = await read($, mergeAtom)
@@ -1188,9 +1307,9 @@ export const register: Register = on => {
     const active = batch ? batchRun : activeRunOf(runs)
     // El vencimiento se calcula al dibujar: el render nunca escribe estado. La cinta terminada sigue pidiendo
     // re-render por segundo hasta vencer, asi se oculta a los 15 s sin depender de $.clock.after.
-    const ribbon = mergeRibbonShown(batch, mergeRun, Date.now())
+    const ribbon = lot === 'parallel' ? null : mergeRibbonShown(batch, mergeRun, Date.now())
     const historian = liveHistorian(await read($, historianAtom), Date.now())
-    isAnimating = isWorking || active !== null || (batch !== null && isBatchRunning(batch)) || ribbon !== null || historian !== null
+    isAnimating = isWorking || active !== null || (batch !== null && isBatchRunning(batch)) || lot === 'parallel' || ribbon !== null || historian !== null
     const pose: MascotPose | null = active
       ? poseOfRun(active, await read($, lastEventAtom))
       : batch
@@ -1250,6 +1369,89 @@ export const register: Register = on => {
     ) : (
       raster
     )
+    if (parallel && lot === 'parallel') {
+      const head3 = parallelHeader(parallel, Date.now())
+      const prs = parallelPrs(parallel)
+      const bands = await read($, parallelBandsAtom)
+      const stats = await read($, parallelStatsAtom)
+      const titleW = summaryTitleWidth(inner)
+      const live = parallelRunning(parallel)
+      const { page, pages, visible } = paginateBands(live, await read($, parallelPageAtom), PARALLEL_BAND_ROWS)
+      const table = parallelTable(parallel, stats, n => bands[String(n)]?.run?.title ?? null, Date.now(), titleW)
+      const bandOf = (i: (typeof live)[number]) => {
+        const b = bands[String(i.issue)]
+        const run = b?.run ?? null
+        const pose: MascotPose = run ? poseOfRun(run, b?.last ?? null) : { role: 'desarrollador', state: 'pensando' }
+        const grid3 = mascotGrid(pose, sec % 2 === 0 ? 0 : 1)
+        const hold = batchHoldLine(run)
+        const recent = recentLines(b?.lines ?? [], hold ? BAND_LOG_ROWS - 1 : BAND_LOG_ROWS)
+        return (
+          <Box key={`pband-${i.issue}`} gap={2} alignItems="flex-start">
+            {'Raster' in elements ? (
+              <elements.Raster key={`pband-raster-${i.issue}`} columns={MASCOT_WIDTH} rows={RASTER_ROWS} cells={toRasterCells(grid3, MASCOT_WIDTH)} />
+            ) : (
+              <Box width={MASCOT_WIDTH} />
+            )}
+            <Box flexDirection="column" width={body}>
+              <Text wrap="truncate-end">
+                {run
+                  ? stepsOf(run).map((st, n) => (
+                      <Text key={`pstep-${i.issue}-${n}`} color={st.color} dimColor={st.dim}>{`${n > 0 ? ' ─ ' : ''}${st.mark} ${st.name}`}</Text>
+                    ))
+                  : ' '}
+              </Text>
+              <Text wrap="truncate-end">{clip(`#${i.issue} ${run?.title ?? ''}`.trim(), body)}</Text>
+              {hold ? <Text color="warning" wrap="truncate-end">{clip(hold, body)}</Text> : null}
+              {recent.map((l, n) => (
+                <Text key={`pline-${i.issue}-${n}`} color={l.color} wrap="truncate-end">{clip(`${l.ts} ${l.text}`, body)}</Text>
+              ))}
+              {Array.from({ length: Math.max(0, BAND_LOG_ROWS - recent.length - (hold ? 1 : 0)) }, (_, n) => (
+                <Text key={`ppad-${i.issue}-${n}`}> </Text>
+              ))}
+            </Box>
+          </Box>
+        )
+      }
+      return (
+        <Box flexDirection="column" borderStyle="round" borderColor="claude" borderDimColor paddingX={1}>
+          <Box justifyContent="space-between">
+            <Text wrap="truncate-end">
+              <Text color="claude">mefisto</Text>
+              <Text> · {head3.progress}</Text>
+              {head3.time !== '' && <Text dimColor> {head3.time}</Text>}
+              {head3.stopNote !== '' && <Text color="warning"> · {head3.stopNote}</Text>}
+            </Text>
+            <Box gap={2}>
+              {canStopParallel(parallel) && <Button key="par-stop" hotkey="1" plain label="detener" onPress={() => void confirmStopParallel($)} />}
+              {prs.length > 0 && <Button key="par-pr" hotkey="2" plain label="ver PR" onPress={() => void viewParallelPr($)} />}
+              <Button key="par-log" hotkey="3" plain dimColor label="log" onPress={() => void toggleLog($)} />
+              {pages > 1 && (
+                <Button key="par-page" hotkey="0" plain dimColor label={`página ${page + 1}/${pages} ▸`}
+                  onPress={() => void update($, parallelPageAtom, () => (page + 1) % pages)} />
+              )}
+            </Box>
+          </Box>
+          <Text wrap="truncate-end">
+            {parallelQueueMarks(parallel).map((m, n) => (
+              <Text key={`pq-${n}`} color={m.color} dimColor={m.color === undefined}>{`${n > 0 ? ' ─ ' : ''}${m.text}`}</Text>
+            ))}
+          </Text>
+          {visible.length === 0 && <Text dimColor>preparando los primeros issues…</Text>}
+          {visible.map(bandOf)}
+          {table.rows.length > 0 && (
+            <Box flexDirection="column">
+              {table.rows.map(r => (
+                <Text key={r.key} wrap="truncate-end" color={r.color}>
+                  {`${r.mark} ${r.lead}`}
+                  <Text dimColor>{r.trail}</Text>
+                </Text>
+              ))}
+              {table.total && <Text dimColor wrap="truncate-end">{table.total}</Text>}
+            </Box>
+          )}
+        </Box>
+      )
+    }
     if (batch) {
       const running = isBatchRunning(batch)
       const c = batchCounts(batch)
