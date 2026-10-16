@@ -144,6 +144,10 @@ cat > "$FAKE_BIN/gh" <<'STUB'
 #!/usr/bin/env bash
 case "$*" in *state*) printf 'OPEN|tipo:projection\n' ;; *) echo 'tipo:projection' ;; esac
 STUB
+run MEFISTO_RUNTIME=claude -- --parallel --max-parallel '2;x' 4 5
+if [ "$LAST_RC" -ne 0 ] && no_panes; then pass "--max-parallel no numerico aborta en modo desacoplado"; else fail "acepto --max-parallel invalido: rc=$LAST_RC"; fi
+run MEFISTO_RUNTIME=claude -- --parallel 4 '5;x'
+if [ "$LAST_RC" -ne 0 ] && no_panes; then pass "issue no numerico aborta en modo desacoplado"; else fail "acepto issue invalido: rc=$LAST_RC"; fi
 run MEFISTO_RUNTIME=claude -- --parallel 6 7
 if [ "$LAST_RC" -eq 0 ]; then pass "dos tipo:projection no abortan en modo desacoplado"; else fail "abort con projections: $LAST_ERR"; fi
 run MEFISTO_RUNTIME=opencode -- --parallel 6 7

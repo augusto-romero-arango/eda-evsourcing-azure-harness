@@ -1,5 +1,5 @@
 ---
-description: "Lanza pipelines en paralelo para multiples issues, cada uno en su propio pane."
+description: "Lanza pipelines en paralelo para multiples issues, sin panes en Claude Code o cada uno en su propio pane."
 argument-hint: "<issue1> <issue2> ... [--pipeline tdd|tooling]"
 model: "haiku"
 ---
@@ -85,7 +85,7 @@ export MEFISTO_PACKAGE_ROOT
 
 Antes de continuar, aborta si existe `src/internal/scripts/generate-internal-adapters.sh`: ese directorio es el repositorio de Mefisto, no un consumidor.
 
-Lanza pipelines en paralelo para multiples issues. Dentro de Herdr cada issue corre en su propio pane apilado en el workspace actual; fuera de Herdr, en un pane de una sesion tmux. Los PRs se crean pero NO se mergean automaticamente. Comunicate en **espanol**.
+Lanza pipelines en paralelo para multiples issues. Con el runtime que trae su propia cinta de seguimiento (consola `fausto-blood-pact`) y sin la interfaz fijada, corren sin panes y se siguen desde esta sesion; en el resto, dentro de Herdr cada issue corre en su propio pane apilado en el workspace actual y fuera de Herdr, en un pane de una sesion tmux (MEF-ADR-0055 decision 6). Los PRs se crean pero NO se mergean automaticamente. Comunicate en **espanol**.
 
 **Grupos homogeneos**: todos los issues del grupo deben pertenecer al repo activo. El script subyacente (`parallel-pipeline.sh`) consulta cada issue con `gh issue view N` sin `-R`, asi que issues de otros repos se descartan automaticamente como UNKNOWN. No uses flags `-R` con este comando.
 
@@ -112,7 +112,7 @@ Si algun issue no existe o esta cerrado, informalo y excluyelo de la lista. Si n
 Muestra la lista de issues que se procesaran:
 
 ```
-Paralelo — 3 issues (cada uno en su propio pane):
+Paralelo — 3 issues:
   #42: Implementar calculo de horas extras nocturnas
   #43: Agregar validacion de jornada maxima
   #44: Calcular recargos dominicales
@@ -130,7 +130,7 @@ Cada pipeline conserva sus logs por issue en `.mefisto/pipeline/logs`; el visor 
 
 ### 3. Instrucciones de conexion
 
-Seguimiento por runtime: cuando el runtime activo trae su propia cinta de seguimiento (la consola `fausto-blood-pact`) y el usuario no fijo la interfaz, el wrapper no abre panes ni sesion tmux: delega en `parallel-pipeline.sh` desacoplado (escalonado de 30s entre issues, `tipo:projection` serializados) y la corrida se sigue en la banda de la consola `fausto-blood-pact` de esta sesion; el report queda en `.mefisto/pipeline/logs/parallel-run-<timestamp>.report.log`. En ese caso responde con:
+Seguimiento por runtime: cuando el runtime activo trae su propia cinta de seguimiento (la consola `fausto-blood-pact`) y el usuario no fijo la interfaz, el wrapper no abre panes ni sesion tmux: delega en `parallel-pipeline.sh` desacoplado (escalonado de 30s entre issues, `tipo:projection` serializados) y la corrida se sigue en la banda de la consola `fausto-blood-pact` de esta sesion; el report queda en `.mefisto/pipeline/logs/parallel-run-<timestamp>.report.log`. Lo reconoces porque la salida del wrapper dice `sin pane`. En ese caso responde con:
 
 ```
 Pipeline paralelo corriendo sin panes: lo sigues en la banda de fausto-blood-pact.
@@ -162,4 +162,4 @@ Cada issue tiene su propio pane. Los PRs NO se mergean automaticamente.
 - Los PRs creados no se mergean. Recuerdale al usuario que puede usar /mefisto:merge despues.
 - Si el usuario pasa `--pipeline tdd|tooling`, pasalo tal cual al wrapper.
 - **Issues `tipo:projection`: nunca deben correr dos a la vez.** Todas las proyecciones del BC comparten los archivos del worker de proyecciones (MEF-ADR-0034). En los modos pane (Herdr y tmux) un lote con dos o mas aborta con mensaje, antes de crear panes; en el modo sin panes no aborta porque el scheduler los serializa. Para los modos pane: el camino es /mefisto:sequential, o `${MEFISTO_PACKAGE_ROOT}/scripts/parallel-pipeline.sh` directo (su scheduler si los serializa dentro del lote sin frenar al resto).
-- Para limitar la concurrencia con `--max-parallel`, lanza `${MEFISTO_PACKAGE_ROOT}/scripts/parallel-pipeline.sh` directo. Para detener esa corrida con cola usa /mefisto:batch-stop; el modo pane de este comando lanza todos los issues de entrada y no tiene cola que retener.
+- `--max-parallel N`: en el modo sin panes, pasalo tal cual al wrapper (llega a `parallel-pipeline.sh`) y /mefisto:batch-stop detiene la cola. En los modos pane, lanza `${MEFISTO_PACKAGE_ROOT}/scripts/parallel-pipeline.sh` directo para limitar la concurrencia: el modo pane lanza todos los issues de entrada y no tiene cola que retener.

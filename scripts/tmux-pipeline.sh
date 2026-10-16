@@ -511,6 +511,13 @@ cmd_parallel() {
     # Issue #2448: en modo desacoplado no hay panes; parallel-pipeline.sh es el
     # scheduler (serializa tipo:projection, respeta --max-parallel y escalona).
     if uses_detached_ui; then
+        # Issues y flags viajan dentro del string de `bash -c` (idem cmd_batch).
+        local n
+        for n in "${issues[@]}"; do
+            [[ "$n" =~ ^[0-9]+$ ]] || abort "Issue invalido para --parallel: '$n' (solo numeros)."
+        done
+        [[ -z "$pipeline_override" || "$pipeline_override" =~ ^[a-z-]+$ ]] || abort "Valor invalido para --pipeline: '$pipeline_override'."
+        [[ -z "$max_parallel" || "$max_parallel" =~ ^[0-9]+$ ]] || abort "Valor invalido para --max-parallel: '$max_parallel'."
         local detached_args=""
         [ -n "$pipeline_override" ] && detached_args="--pipeline $pipeline_override "
         [ -n "$max_parallel" ] && detached_args="${detached_args}--max-parallel $max_parallel "
@@ -1121,7 +1128,7 @@ main() {
                 [ -n "$models_extra" ] && abort "--models no es valido con multiples issues (se interpretaria como --parallel). Usa: tmux-pipeline.sh --tooling <issue> --models 'agente=modelo'"
                 [ -n "$variant_extra" ] && abort "--variant no es valido con multiples issues (se interpretaria como --parallel). Usa: tmux-pipeline.sh --tooling <issue> --variant <label>"
                 warn "Multiples issues sin modo especificado. Usando --parallel."
-                    if [ -n "$pipeline_override" ]; then
+                if [ -n "$pipeline_override" ]; then
                     cmd_parallel --pipeline "$pipeline_override" "$@"
                 else
                     cmd_parallel "$@"
