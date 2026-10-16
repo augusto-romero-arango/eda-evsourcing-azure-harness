@@ -792,6 +792,17 @@ else
 fi
 
 reset_fixtures
+echo '[{"number":611,"title":"A","body":""}]' | set_issue_list
+echo '[{"number":950,"headRefName":"worktree-mefisto-issue-611-x","closingIssuesReferences":[]}]' > "$FAKE_DATA/pr_list.json"
+OUTPUT=$(run_script 2>&1)
+RC=$?
+if [ "$RC" -eq 1 ] && echo "$OUTPUT" | grep -q "(sin issues lanzables)"; then
+    pass "U: todo en PR -> exit 1"
+else
+    fail "U: todo en PR dio $RC: $OUTPUT"
+fi
+
+reset_fixtures
 echo "$LISTA_U" | set_issue_list
 touch "$FAKE_DATA/pr_list.fail"
 ERR=$(run_script --json 2>&1 >/dev/null)
