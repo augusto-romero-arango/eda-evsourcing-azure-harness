@@ -174,12 +174,14 @@ ISSUE_NUMS=()
 MAX_PARALLEL=0   # 0 = sin limite
 KEEP_STATUS=false
 PIPELINE_OVERRIDE=""  # vacio = enrutamiento automatico por label
+STAGGER=30       # segundos entre lanzamientos (issue #2448); 0 = sin espera
 
 if [ $# -eq 0 ]; then
     echo "Uso: $0 [--pipeline tdd|tooling] <issue1> <issue2> ... [--max-parallel N] [--keep-status]"
     echo "  --pipeline TYPE    Forzar pipeline: 'tdd' o 'tooling' (sin flag: enruta por label tipo:*)"
     echo "  issue1 ...         Numeros de issues a procesar en paralelo"
     echo "  --max-parallel N   Limitar a N pipelines simultaneos (por defecto: sin limite)"
+    echo "  --stagger S        Segundos entre lanzamientos (por defecto: 30; 0 = sin espera)"
     echo "  --keep-status      No borrar los archivos status-N.json al terminar"
     exit 1
 fi
@@ -197,6 +199,12 @@ while [ $# -gt 0 ]; do
         --max-parallel)
             [ $# -lt 2 ] && { echo "Falta el valor de --max-parallel"; exit 1; }
             MAX_PARALLEL="$2"
+            shift 2
+            ;;
+        --stagger)
+            [ $# -lt 2 ] && { echo "Falta el valor de --stagger"; exit 1; }
+            [[ "$2" =~ ^[0-9]+$ ]] || { echo "--stagger debe ser un entero >= 0 (recibido: '$2')"; exit 1; }
+            STAGGER="$2"
             shift 2
             ;;
         --keep-status) KEEP_STATUS=true; shift ;;
@@ -622,6 +630,7 @@ MONITOR_INTERVAL=10
 # ninguna senal de los issues que si estan corriendo.
 PENDING_IDXS=()
 for ((i = 0; i < TOTAL; i++)); do PENDING_IDXS+=("$i"); done
+LAUNCHED_ANY=false   # escalonado (issue #2448): espera STAGGER antes de cada lanzamiento salvo el primero
 
 while [ ${#PENDING_IDXS[@]} -gt 0 ]; do
     if batch_stop_requested; then
@@ -652,7 +661,12 @@ while [ ${#PENDING_IDXS[@]} -gt 0 ]; do
         _proj_running="false"
         is_projection_running && _proj_running="true"
         if can_launch_now "$MAX_PARALLEL" "$(running_count)" "${ISSUE_IS_PROJECTION[$idx]}" "$_proj_running"; then
+            if [ "$LAUNCHED_ANY" = "true" ] && [ "$STAGGER" -gt 0 ]; then
+                log "Escalonado: esperando ${STAGGER}s antes del siguiente lanzamiento..."
+                sleep "$STAGGER"
+            fi
             launch_pipeline "$idx"
+            LAUNCHED_ANY=true
         else
             NEXT_PENDING+=("$idx")
         fi

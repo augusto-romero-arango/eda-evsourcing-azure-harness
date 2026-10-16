@@ -2,7 +2,7 @@
 
 - **Fecha**: 2026-10-08
 - **Estado**: aceptado
-- **Aplica a**: la consola de operacion `mefisto-divine-wager` (lado interno de MEF-ADR-0019) y el tablero del planner en sus dos lados, interno y publicado (decision 8), con los nombres de la decision 9. La consola publicada `fausto-blood-pact` (decision 10) tambien aplica. La paridad de experiencia entre pares (decision 11) aplica a ambos lados. Los issues que genera el reviewer y el modo de lanzamiento sin pane en el consumidor quedan para enmiendas posteriores. Se apoya en MEF-ADR-0049 (adaptadores por runtime) y en MEF-ADR-0050 (neutralidad de toda operacion), y reserva el identificador `0055` (MEF-ADR-0030).
+- **Aplica a**: la consola de operacion `mefisto-divine-wager` (lado interno de MEF-ADR-0019) y el tablero del planner en sus dos lados, interno y publicado (decision 8), con los nombres de la decision 9. La consola publicada `fausto-blood-pact` (decision 10) tambien aplica. La paridad de experiencia entre pares (decision 11) aplica a ambos lados. Los issues que genera el reviewer quedan para enmiendas posteriores. Se apoya en MEF-ADR-0049 (adaptadores por runtime) y en MEF-ADR-0050 (neutralidad de toda operacion), y reserva el identificador `0055` (MEF-ADR-0030).
 
 ## Contexto
 
@@ -29,7 +29,6 @@ Este ADR fija cuatro cosas: la regla de diseno de los mods del propio Mefisto, s
 
 ### Que queda fuera de este ADR
 
-- El modo de lanzamiento sin pane en el consumidor: la decision 6 es solo del lado interno y queda fuera hasta su propio incremento.
 - Una superficie equivalente para OpenCode, cuyos plugins de TUI v2 no declaran estabilidad.
 
 ## Decision
@@ -91,6 +90,8 @@ Con `MEFISTO_UI=mod`, `mefisto-tmux-pipeline.sh --tooling` no abre sesion tmux n
 El hijo arranca sin `HERDR_*` ni `MEFISTO_UI`, para que los gates que corren tests del repo no hereden el modo, y conserva `MEFISTO_RUNTIME`. La corrida sobrevive al cierre de la sesion de Claude Code, y otra sesion con el mod la retoma desde los archivos.
 
 El mod activa el modo: su hook `tool.call` antepone `MEFISTO_UI=mod` al comando del skill, salvo que ya traiga un `MEFISTO_UI` explicito. Por eso `/mefisto-tooling` no cambia, y sin el mod el comando llega intacto. Con el modo activo, la fila de herdr baja de tres panes a dos: planner y ejecucion.
+
+En el lado publicado el modo lo decide el runtime resuelto (#2285): con el runtime claude y sin `MEFISTO_UI`, o con `MEFISTO_UI=mod`, `tmux-pipeline.sh` corre desacoplado y la consola `fausto-blood-pact` sigue la corrida. Incluye `--parallel`: delega en `parallel-pipeline.sh` (con `--pipeline` y `--max-parallel` si vienen), cuyo scheduler serializa los `tipo:projection` (MEF-ADR-0034), por lo que un lote con dos o mas ya no aborta; el report queda en `logs/parallel-run-<ts>.report.log`. Ese scheduler espera 30 s entre lanzamientos (`--stagger <s>`, `0` lo apaga). Un `MEFISTO_UI=tmux|herdr` explicito y el runtime opencode conservan los panes, y ahi el abort de proyecciones se mantiene.
 
 ### 7. Requisitos de construccion
 
@@ -193,6 +194,7 @@ Los mods de ambos lados no comparten codigo (MEF-ADR-0019), pero no deben diverg
 
 ## Control de cambios
 
+- 2026-10-16: decision 6 cubre los dos lados: el modo sin pane del consumidor lo decide el runtime resuelto e incluye `--parallel` (delega en `parallel-pipeline.sh`, con escalonado `--stagger`); se retira de "Aplica a" y de "Que queda fuera" el modo sin pane en el consumidor (issue #2448).
 - 2026-10-14: "Que queda fuera de este ADR": se retira el punto de la lista de issues que el reviewer creaba por tests ajustados; el pipeline TDD ya no crea ese issue y la senal pasa a una seccion del body del PR (issue #2438).
 - 2026-10-11: decision 11: la referencia del par se precisa por dimension de experiencia (ubicacion, lo que ve el usuario, como se pide input, teclas, mascota) y se anade el deber de estudiar el par antes de proponer (issue #2322).
 - 2026-10-09: decision 11 nueva (experiencia de referencia entre pares: referencia y no sincronizacion, identidad visual por lado); decision 8: los tableros son independientes en codigo y la tabla de diferencias es de mecanica, no de experiencia; decision 10 remite a la 11 (issue #2192).

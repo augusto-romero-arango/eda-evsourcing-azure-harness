@@ -2,7 +2,7 @@
 {
   "kind": "command",
   "id": "parallel",
-  "description": "Lanza pipelines en paralelo para multiples issues, cada uno en su propio pane.",
+  "description": "Lanza pipelines en paralelo para multiples issues, sin panes en Claude Code o cada uno en su propio pane.",
   "profile": "fast",
   "arguments": "<issue1> <issue2> ... [--pipeline tdd|tooling]"
 }
@@ -10,7 +10,7 @@
 
 {{mefisto:assert-consumer-repo}}
 
-Lanza pipelines en paralelo para multiples issues. Dentro de Herdr cada issue corre en su propio pane apilado en el workspace actual; fuera de Herdr, en un pane de una sesion tmux. Los PRs se crean pero NO se mergean automaticamente. Comunicate en **espanol**.
+Lanza pipelines en paralelo para multiples issues. Con el runtime que trae su propia cinta de seguimiento (consola `fausto-blood-pact`) y sin la interfaz fijada, corren sin panes y se siguen desde esta sesion; en el resto, dentro de Herdr cada issue corre en su propio pane apilado en el workspace actual y fuera de Herdr, en un pane de una sesion tmux (MEF-ADR-0055 decision 6). Los PRs se crean pero NO se mergean automaticamente. Comunicate en **espanol**.
 
 **Grupos homogeneos**: todos los issues del grupo deben pertenecer al repo activo. El script subyacente (`parallel-pipeline.sh`) consulta cada issue con `gh issue view N` sin `-R`, asi que issues de otros repos se descartan automaticamente como UNKNOWN. No uses flags `-R` con este comando.
 
@@ -37,7 +37,7 @@ Si algun issue no existe o esta cerrado, informalo y excluyelo de la lista. Si n
 Muestra la lista de issues que se procesaran:
 
 ```
-Paralelo — 3 issues (cada uno en su propio pane):
+Paralelo — 3 issues:
   #42: Implementar calculo de horas extras nocturnas
   #43: Agregar validacion de jornada maxima
   #44: Calcular recargos dominicales
@@ -54,6 +54,15 @@ Luego lanza, pasando `--pipeline` si el usuario lo proporciono:
 Cada pipeline conserva sus logs por issue en `{{mefisto:state-path logs}}`; el visor en vivo consume `{{mefisto:state-path events.log}}`.
 
 ### 3. Instrucciones de conexion
+
+Seguimiento por runtime: cuando el runtime activo trae su propia cinta de seguimiento (la consola `fausto-blood-pact`) y el usuario no fijo la interfaz, el wrapper no abre panes ni sesion tmux: delega en `parallel-pipeline.sh` desacoplado (escalonado de 30s entre issues, `tipo:projection` serializados) y la corrida se sigue en la banda de la consola `fausto-blood-pact` de esta sesion; el report queda en `{{mefisto:state-path logs}}/parallel-run-<timestamp>.report.log`. Lo reconoces porque la salida del wrapper dice `sin pane`. En ese caso responde con:
+
+```
+Pipeline paralelo corriendo sin panes: lo sigues en la banda de fausto-blood-pact.
+Los PRs NO se mergean automaticamente.
+```
+
+En el resto de los runtimes (MEF-ADR-0050), o con la interfaz fijada por el usuario, el seguimiento es con panes:
 
 Dentro de Herdr (`HERDR_ENV=1` en el entorno), el wrapper delega en la interfaz Herdr y no hay nada que adjuntar: cada issue queda corriendo en su propio pane apilado de este workspace, con el visor en vivo de su agente y arranques escalonados de 30s. En ese caso responde con:
 
@@ -77,5 +86,5 @@ Cada issue tiene su propio pane. Los PRs NO se mergean automaticamente.
 - **No implementes nada tu mismo.** Solo lanza el wrapper.
 - Los PRs creados no se mergean. Recuerdale al usuario que puede usar {{mefisto:command merge}} despues.
 - Si el usuario pasa `--pipeline tdd|tooling`, pasalo tal cual al wrapper.
-- **Issues `tipo:projection`: nunca deben correr dos a la vez.** Todas las proyecciones del BC comparten los archivos del worker de proyecciones (MEF-ADR-0034). En cualquiera de los dos modos pane (Herdr y tmux) un lote con dos o mas aborta con mensaje, antes de crear panes: el camino es {{mefisto:command sequential}}, o `{{mefisto:package-root}}/scripts/parallel-pipeline.sh` directo (su scheduler si los serializa dentro del lote sin frenar al resto).
-- Para limitar la concurrencia con `--max-parallel`, lanza `{{mefisto:package-root}}/scripts/parallel-pipeline.sh` directo. Para detener esa corrida con cola usa {{mefisto:command batch-stop}}; el modo pane de este comando lanza todos los issues de entrada y no tiene cola que retener.
+- **Issues `tipo:projection`: nunca deben correr dos a la vez.** Todas las proyecciones del BC comparten los archivos del worker de proyecciones (MEF-ADR-0034). En los modos pane (Herdr y tmux) un lote con dos o mas aborta con mensaje, antes de crear panes; en el modo sin panes no aborta porque el scheduler los serializa. Para los modos pane: el camino es {{mefisto:command sequential}}, o `{{mefisto:package-root}}/scripts/parallel-pipeline.sh` directo (su scheduler si los serializa dentro del lote sin frenar al resto).
+- `--max-parallel N`: en el modo sin panes, pasalo tal cual al wrapper (llega a `parallel-pipeline.sh`) y {{mefisto:command batch-stop}} detiene la cola. En los modos pane, lanza `{{mefisto:package-root}}/scripts/parallel-pipeline.sh` directo para limitar la concurrencia: el modo pane lanza todos los issues de entrada y no tiene cola que retener.
