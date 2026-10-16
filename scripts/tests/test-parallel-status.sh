@@ -95,7 +95,7 @@ run_parallel "$W" 11 12
 check "A: cabecera (pipeline, state completed, stop false, sin current)" \
     '.pipeline=="parallel" and .state=="completed" and .stop_requested==false and (has("current")|not) and (.started|type=="string") and (.log|test("parallel-.*\\.log$"))'
 check "A: issues terminados con PR, pipeline y tiempos" \
-    '(.issues|map(.status)==["terminado","terminado"]) and (.issues|map(.pr)==[1011,1012]) and (.issues|map(.issue)==[11,12]) and (.issues|map(.pipeline)==["tooling","tooling"]) and (.issues|all(.started!=null and .finished!=null))'
+    '(.issues|map(.status)==["terminado","terminado"]) and (.issues|map(.pr)==[1011,1012]) and (.issues|map(.issue)==[11,12]) and (.issues|map(.pipeline)==["tooling","tooling"]) and (.issues|all(.started!=null and .finished!=null and .finished>=.started))'
 [ -f "$W/.mefisto/pipeline/pipeline-status-parallel.json" ] && pass "A: el archivo sobrevive a la limpieza" || fail "A: archivo borrado"
 
 echo "[B] issue fallido"

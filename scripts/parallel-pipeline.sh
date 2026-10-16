@@ -142,9 +142,11 @@ ps_mark() {
     PS_STATUS[$p]="$2"
     [ -n "$pr" ] && PS_PRS[$p]="${pr##*/}"
     PS_DETAIL[$p]="${4:-}"
+    # Los tiempos se fijan una sola vez: la recoleccion final vuelve a marcar
+    # terminado/fallido un issue que refresh_parallel_status ya cerro.
     case "$2" in
-        en-curso)           PS_STARTED[$p]="$(date +%s)" ;;
-        terminado|fallido)  PS_FINISHED[$p]="$(date +%s)" ;;
+        en-curso)           [ -n "${PS_STARTED[$p]}" ] || PS_STARTED[$p]="$(date +%s)" ;;
+        terminado|fallido)  [ -n "${PS_FINISHED[$p]}" ] || PS_FINISHED[$p]="$(date +%s)" ;;
     esac
     write_parallel_status
 }
@@ -390,7 +392,7 @@ defer_pending_issues() {
     for idx in ${PENDING_IDXS[@]+"${PENDING_IDXS[@]}"}; do
         DEFERRED_FLAG[$idx]="true"
         if declare -F ps_mark >/dev/null 2>&1; then
-        ps_mark "${ISSUE_NUMS[$idx]}" aplazado "" "parada solicitada; no se proceso en esta corrida"
+            ps_mark "${ISSUE_NUMS[$idx]}" aplazado "" "parada solicitada; no se proceso en esta corrida"
         fi
     done
     PENDING_IDXS=()
